@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "189e3b02-82b2-4b90-9662-411eb64486d4",
+    "title": "Potential Invoke-Mimikatz PowerShell Script",
+    "level": "high",
+    "status": "test",
+    "author": "Tim Rauch, Elastic (idea)",
+    "path": "windows/powershell/powershell_script/posh_ps_potential_invoke_mimikatz.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_potential_invoke_mimikatz.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell registró un bloque de script (Script Block Logging, evento 4104) con cadenas propias de Invoke-Mimikatz o de comandos de Mimikatz para volcar credenciales o certificados. Trátelo como posible robo de credenciales hasta que se demuestre lo contrario.",
+      "what_it_detects": "Valores de ScriptBlockText que contienen 'DumpCreds' y 'DumpCerts' juntos (parámetros de Invoke-Mimikatz), 'sekurlsa::logonpasswords', o 'crypto::certificates' junto con 'CERT_SYSTEM_STORE_LOCAL_MACHINE'.",
+      "why_it_matters": "Mimikatz extrae contraseñas en texto plano, hashes, tickets Kerberos y certificados de la memoria de LSASS o de los almacenes del equipo (ATT&CK T1003, OS Credential Dumping). Con eso un atacante puede moverse lateralmente y escalar privilegios.",
+      "triage_steps": [
+        "Revise ScriptBlockText completo y reconstruya el script uniendo los fragmentos con el mismo ScriptBlockId (MessageNumber/MessageTotal).",
+        "Identifique qué selección coincidió: DumpCreds/DumpCerts indica Invoke-Mimikatz cargado; sekurlsa::logonpasswords indica volcado de LSASS; crypto::certificates indica exportación de certificados.",
+        "Determine el usuario y el host; verifique si la cuenta es administrativa y si pertenece a un equipo de pentest autorizado.",
+        "Busque en el mismo host, +/- 15 minutos, el proceso powershell.exe, su ParentImage y su CommandLine (por ejemplo -EncodedCommand, IEX o DownloadString).",
+        "Revise accesos a lsass.exe (Sysmon 10), conexiones de red salientes y archivos .pfx, .kirbi o volcados creados en ese intervalo.",
+        "Busque inicios de sesión posteriores de las cuentas que usaron el host (4624 tipo 3/10, 4648) para detectar movimiento lateral.",
+        "Consulte alertas previas del mismo usuario, host o IP de origen, incluidas detecciones del antivirus o EDR."
+      ],
+      "false_positives": [
+        "Pruebas de penetración o ejercicios de red team autorizados que usan Mimikatz o Invoke-Mimikatz.",
+        "Investigadores o equipos de detección que ejecutan scripts de prueba en laboratorios controlados.",
+        "Scripts de validación de controles de seguridad (emulación de adversarios) que incluyen estas cadenas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o el equipo de pentest si la actividad estaba autorizada; si no hay confirmación, escale como incidente.",
+        "Aísle el endpoint mediante el EDR y preserve evidencia: registros 4104, memoria y artefactos del script.",
+        "Restablezca las contraseñas de las cuentas que iniciaron sesión en el host y revoque certificados exportados; considere rotar krbtgt si hubo cuentas de dominio privilegiadas.",
+        "Elimine el script y cualquier mecanismo de persistencia, habilite LSA Protection/Credential Guard y restaure el equipo desde una imagen limpia si es necesario."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque estas cadenas son muy específicas de Mimikatz y suelen indicar robo real de credenciales, salvo pruebas autorizadas."
+    },
+    "en": {
+      "summary": "PowerShell Script Block Logging (event 4104) captured a script containing strings typical of Invoke-Mimikatz or Mimikatz commands that dump credentials or certificates. Treat it as likely credential theft until proven otherwise.",
+      "what_it_detects": "ScriptBlockText values containing both 'DumpCreds' and 'DumpCerts' (Invoke-Mimikatz parameters), 'sekurlsa::logonpasswords', or 'crypto::certificates' together with 'CERT_SYSTEM_STORE_LOCAL_MACHINE'.",
+      "why_it_matters": "Mimikatz extracts plaintext passwords, hashes, Kerberos tickets and certificates from LSASS memory or machine stores (ATT&CK T1003, OS Credential Dumping). Attackers use these to move laterally and escalate privileges.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and rebuild the script by joining fragments with the same ScriptBlockId (MessageNumber/MessageTotal).",
+        "Identify which selection matched: DumpCreds/DumpCerts means Invoke-Mimikatz loaded; sekurlsa::logonpasswords means LSASS dumping; crypto::certificates means certificate export.",
+        "Identify the user and host; check whether the account is privileged and belongs to an authorized pentest team.",
+        "On the same host within +/- 15 minutes, find the powershell.exe process, its ParentImage and CommandLine (e.g. -EncodedCommand, IEX, DownloadString).",
+        "Look for lsass.exe access (Sysmon 10), outbound connections, and new .pfx, .kirbi or dump files in that window.",
+        "Hunt for later logons by accounts that used the host (4624 type 3/10, 4648) to spot lateral movement.",
+        "Check earlier alerts for the same user, host or source IP, including antivirus or EDR detections."
+      ],
+      "false_positives": [
+        "Authorized penetration tests or red team exercises using Mimikatz or Invoke-Mimikatz.",
+        "Researchers or detection engineers running test scripts in controlled labs.",
+        "Security control validation or adversary emulation scripts that include these strings."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or pentest team whether the activity was authorized; without confirmation, escalate as an incident.",
+        "Isolate the endpoint via EDR and preserve evidence: 4104 logs, memory and script artifacts.",
+        "Reset passwords of accounts that logged on to the host and revoke exported certificates; consider rotating krbtgt if privileged domain accounts were exposed.",
+        "Remove the script and any persistence, enable LSA Protection/Credential Guard, and reimage the host if needed."
+      ],
+      "severity_rationale": "High fits because these strings are highly specific to Mimikatz and usually indicate real credential theft unless a test is authorized."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Invoke-Mimikatz function loaded in memory; script block contains both DumpCreds and DumpCerts parameters (selection_1).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5a1c2e7b-3f4d-4b8a-9c11-0e2f6d7a8b90",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "function Invoke-Mimikatz { [CmdletBinding(DefaultParameterSetName=\"DumpCreds\")] Param( [Parameter(ParameterSetName = \"DumpCreds\")] [Switch] $DumpCreds, [Parameter(ParameterSetName = \"DumpCerts\")] [Switch] $DumpCerts, [String[]] $ComputerName ) }",
+          "UserID": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Mimikatz command to dump logon passwords passed through PowerShell (selection_2).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ScriptBlockId": "c3d9e0f1-2a4b-4c5d-8e6f-7a8b9c0d1e2f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\Public\\run.ps1",
+          "ScriptBlockText": "Invoke-Mimikatz -Command '\"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\"'",
+          "UserID": "ANDES\\adm-mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Certificate listing for the current user store only; crypto::certificates is present but CERT_SYSTEM_STORE_LOCAL_MACHINE is not, so selection_3 does not match.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "9b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Lab\\cert-test.ps1",
+          "ScriptBlockText": "$cmd = 'crypto::certificates /systemstore:CERT_SYSTEM_STORE_CURRENT_USER'; Write-Output \"Lab command: $cmd\"",
+          "UserID": "ANDES\\lgomez"
+        }
+      },
+      {
+        "description": "Admin backup script that uses a DumpCreds variable name but never DumpCerts, so selection_1 (|all) is not satisfied.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-BKP-01.andes.example.com",
+          "ScriptBlockId": "1f2e3d4c-5b6a-4978-8a9b-0c1d2e3f4a5b",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\backup-config.ps1",
+          "ScriptBlockText": "$DumpCreds = $false; Export-Clixml -Path 'D:\\Backup\\config.xml' -InputObject (Get-Content 'C:\\App\\settings.json' | ConvertFrom-Json)",
+          "UserID": "ANDES\\svc-backup"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

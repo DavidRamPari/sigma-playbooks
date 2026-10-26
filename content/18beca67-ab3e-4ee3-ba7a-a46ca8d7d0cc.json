@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "18beca67-ab3e-4ee3-ba7a-a46ca8d7d0cc",
+    "title": "Sysmon Channel Reference Deletion",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/builtin/security/win_security_sysmon_channel_reference_deletion.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_sysmon_channel_reference_deletion.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cambió a 0 el valor Enabled del canal o publisher de Sysmon en el registro, o pidió acceso DELETE a esas claves. Puede ser un intento de silenciar Sysmon sin detener su servicio.",
+      "what_it_detects": "Eventos de Security 4657 (valor de registro modificado) en los que Enabled pasa a 0, y eventos 4663 con AccessMask 0x10000 (DELETE). Ambos deben afectar a WINEVT\\Publishers\\{5770385f-c22a-43e0-bf4c-06f5698ffbd9} o a WINEVT\\Channels\\Microsoft-Windows-Sysmon/Operational. Solo funciona si hay una SACL de auditoría sobre esas claves.",
+      "why_it_matters": "Si se deshabilita o se borra la referencia del canal, Sysmon sigue en ejecución pero deja de escribir eventos, y el SOC pierde telemetría de procesos, red y registro sin darse cuenta. Corresponde a ATT&CK T1112 (Modify Registry) usada para debilitar las defensas.",
+      "triage_steps": [
+        "Revise EventID, ObjectName, ObjectValueName, NewValue o AccessMask para saber si la clave se deshabilitó o se borró.",
+        "Identifique SubjectUserName, SubjectDomainName y ProcessName. Confirme si la cuenta y el binario (reg.exe, powershell.exe, una herramienta desconocida) son esperables en ese host.",
+        "Compruebe en el SIEM si dejaron de llegar eventos de Microsoft-Windows-Sysmon/Operational desde el host después de la hora del alerta.",
+        "Pivote en el mismo host +/- 15 minutos: eventos 4688 con CommandLine del proceso, el proceso padre, inicios de sesión 4624 y otros cambios de registro.",
+        "Busque alertas anteriores del mismo usuario o host, sobre todo de ejecución, escalamiento de privilegios o manipulación de logs (1102, 104).",
+        "Valide con el equipo de TI si hubo una desinstalación, actualización o reconfiguración autorizada de Sysmon."
+      ],
+      "false_positives": [
+        "Desinstalación o reinstalación legítima de Sysmon (sysmon -u), que elimina las claves del manifiesto.",
+        "Actualizaciones de Sysmon o cambios de configuración hechos desde SCCM, Intune u otra herramienta de gestión.",
+        "Pruebas autorizadas de red team o de validación de detecciones."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del endpoint si el cambio estaba autorizado. Si no lo estaba, trátelo como un incidente.",
+        "Restaure el valor Enabled a 1 o reinstale el manifiesto de Sysmon, y confirme que vuelven a llegar eventos al SIEM.",
+        "Aísle el host si encuentra actividad maliciosa relacionada, y revise la cuenta implicada (restablecer credenciales, revocar sesiones).",
+        "Use EDR y otras fuentes para investigar la ventana sin telemetría de Sysmon, y busque el mismo cambio en otros hosts."
+      ],
+      "severity_rationale": "El nivel high es adecuado: es raro que alguien modifique estas claves fuera de un mantenimiento, y hacerlo deja al equipo sin una fuente clave de detección."
+    },
+    "en": {
+      "summary": "A process set the Enabled value of the Sysmon event channel or publisher to 0, or requested DELETE access on those registry keys. This may be an attempt to silence Sysmon without stopping its service.",
+      "what_it_detects": "Security event 4657 (registry value modified) where Enabled becomes 0, and event 4663 with AccessMask 0x10000 (DELETE). Both must target WINEVT\\Publishers\\{5770385f-c22a-43e0-bf4c-06f5698ffbd9} or WINEVT\\Channels\\Microsoft-Windows-Sysmon/Operational. The rule only works if those keys have an auditing SACL.",
+      "why_it_matters": "If the channel reference is disabled or deleted, Sysmon keeps running but stops writing events, so process, network and registry telemetry disappears without anyone noticing. This is ATT&CK T1112 (Modify Registry) used to weaken defenses.",
+      "triage_steps": [
+        "Check EventID, ObjectName, ObjectValueName, NewValue or AccessMask to tell whether the key was disabled or deleted.",
+        "Identify SubjectUserName, SubjectDomainName and ProcessName. Decide whether that account and binary (reg.exe, powershell.exe, an unknown tool) are expected on this host.",
+        "Check the SIEM for Microsoft-Windows-Sysmon/Operational events from the host stopping after the alert time.",
+        "Pivot on the same host +/- 15 minutes: 4688 events with the process CommandLine, the parent process, 4624 logons and other registry changes.",
+        "Look for earlier alerts for the same user or host, especially execution, privilege escalation or log tampering (1102, 104).",
+        "Ask IT whether Sysmon was uninstalled, upgraded or reconfigured with approval."
+      ],
+      "false_positives": [
+        "A legitimate Sysmon uninstall or reinstall (sysmon -u), which removes the manifest keys.",
+        "Sysmon upgrades or configuration changes pushed by SCCM, Intune or other management tools.",
+        "Authorized red team or detection-validation exercises."
+      ],
+      "response_steps": [
+        "Confirm with the endpoint owner whether the change was authorized. If it was not, treat it as an incident.",
+        "Set the Enabled value back to 1 or reinstall the Sysmon manifest, then confirm that events reach the SIEM again.",
+        "Isolate the host if you find related malicious activity, and review the account involved (reset credentials, revoke sessions).",
+        "Use EDR and other sources to investigate the period without Sysmon telemetry, and hunt for the same change on other hosts."
+      ],
+      "severity_rationale": "High fits because these keys are rarely changed outside maintenance, and changing them removes a key detection source."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets Enabled to 0 on the Sysmon Operational channel (4657)",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-Sysmon/Operational",
+          "ObjectValueName": "Enabled",
+          "OperationType": "%%1905",
+          "OldValue": "1",
+          "NewValue": 0,
+          "ProcessName": "C:\\Windows\\System32\\reg.exe"
+        }
+      },
+      {
+        "description": "PowerShell requests DELETE access on the Sysmon publisher key (4663)",
+        "event": {
+          "EventID": 4663,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Publishers\\{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+          "AccessList": "%%1537",
+          "AccessMask": "0x10000",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Sysmon channel re-enabled (NewValue 1), so it does not match selection1",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "SYSTEM",
+          "SubjectDomainName": "NT AUTHORITY",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-Sysmon/Operational",
+          "ObjectValueName": "Enabled",
+          "OperationType": "%%1905",
+          "OldValue": "0",
+          "NewValue": 1,
+          "ProcessName": "C:\\Windows\\Sysmon64.exe"
+        }
+      },
+      {
+        "description": "Read-only query of the Sysmon publisher key (AccessMask 0x1), not DELETE",
+        "event": {
+          "EventID": 4663,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Publishers\\{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+          "AccessList": "%%4432",
+          "AccessMask": "0x1",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

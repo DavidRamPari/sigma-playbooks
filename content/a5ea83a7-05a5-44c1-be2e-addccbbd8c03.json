@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "a5ea83a7-05a5-44c1-be2e-addccbbd8c03",
+    "title": "UAC Bypass With Fake DLL",
+    "level": "high",
+    "status": "test",
+    "author": "oscd.community, Dmitry Uchakin",
+    "path": "windows/image_load/image_load_uac_bypass_via_dism.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_uac_bypass_via_dism.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002",
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "dism.exe cargó un dismcore.dll desde una ruta distinta de C:\\Windows\\System32\\Dism\\. Esto sugiere secuestro del orden de búsqueda de DLL para obtener privilegios elevados sin pasar por UAC.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon EventID 7) en los que Image termina en \\dism.exe e ImageLoaded termina en \\dismcore.dll, excepto cuando la DLL es exactamente C:\\Windows\\System32\\Dism\\dismcore.dll.",
+      "why_it_matters": "Un atacante deja un dismcore.dll falso junto a un dism.exe que se ejecuta con elevación automática. Así ejecuta código con integridad alta sin aviso de UAC (T1548.002) mediante secuestro de DLL (T1574.001).",
+      "triage_steps": [
+        "Revise ImageLoaded: ruta, firma (Signed, Signature, SignatureStatus) y hash. Si no tiene firma de Microsoft o está en Temp, AppData o Public, el riesgo es alto.",
+        "Revise Image: ¿dism.exe se ejecuta desde System32 o se copió a una carpeta escribible por el usuario?",
+        "Busque el evento de creación de archivo (Sysmon EventID 11) del dismcore.dll y del dism.exe copiado, e identifique qué proceso los escribió.",
+        "Revise el proceso padre, el CommandLine y el usuario de dism.exe; investigue a qué cadena pertenece el proceso padre.",
+        "Revise los procesos hijos de dism.exe y su nivel de integridad; cmd, powershell o rundll32 con integridad alta indican explotación.",
+        "Correlacione en el mismo host +/- 15 minutos: conexiones de red, descargas, persistencia y alertas previas del mismo usuario.",
+        "Consulte el hash de la DLL en su inventario y en sus fuentes de threat intelligence."
+      ],
+      "false_positives": [
+        "El campo falsepositives de la regla menciona un cliente telnet legítimo. Parece un error de copia y no tiene relación con esta detección.",
+        "Windows ADK o WinPE con dism.exe y dismcore.dll en Program Files (x86)\\Windows Kits.",
+        "dism.exe de 32 bits que carga C:\\Windows\\SysWOW64\\Dism\\dismcore.dll en sistemas de 64 bits.",
+        "Tareas de mantenimiento o actualización que usan una copia temporal de DISM desde medios de instalación."
+      ],
+      "response_steps": [
+        "Valide con el equipo de TI si hubo mantenimiento con DISM o ADK en ese host y en ese horario.",
+        "Si no hay justificación, aísle el endpoint y conserve como evidencia la DLL, el dism.exe copiado y la memoria del proceso.",
+        "Termine los procesos elevados derivados. Después de verificarlos, elimine los archivos dejados y la persistencia relacionada.",
+        "Restablezca las credenciales del usuario afectado. Fije UAC en 'Notificar siempre' y verifique que el usuario no sea administrador local sin necesidad."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque una carga de dismcore.dll fuera de la ruta del sistema rara vez es legítima e indica una escalada de privilegios activa."
+    },
+    "en": {
+      "summary": "dism.exe loaded a dismcore.dll from a path other than C:\\Windows\\System32\\Dism\\. This suggests DLL search-order hijacking to gain elevated privileges without a UAC prompt.",
+      "what_it_detects": "Image load events (Sysmon EventID 7) where Image ends with \\dism.exe and ImageLoaded ends with \\dismcore.dll. Loads of exactly C:\\Windows\\System32\\Dism\\dismcore.dll are excluded.",
+      "why_it_matters": "Attackers place a fake dismcore.dll next to an auto-elevating dism.exe. This runs their code at high integrity without a UAC prompt (T1548.002) through DLL hijacking (T1574.001).",
+      "triage_steps": [
+        "Check ImageLoaded: path, signature (Signed, Signature, SignatureStatus) and hash. A DLL that is unsigned or sits in Temp, AppData or Public is high risk.",
+        "Check Image: is dism.exe running from System32, or was it copied to a folder the user can write to?",
+        "Find the file-creation events (Sysmon EventID 11) for the DLL and any copied dism.exe, and identify the process that wrote them.",
+        "Review the parent process, CommandLine and user of dism.exe.",
+        "Check dism.exe child processes and their integrity level. A high-integrity cmd, powershell or rundll32 indicates exploitation.",
+        "Look at the same host within +/- 15 minutes for network connections, downloads, persistence and earlier alerts for the same user.",
+        "Look up the DLL hash in your inventory and threat intelligence sources."
+      ],
+      "false_positives": [
+        "The rule's falsepositives field lists a legitimate telnet client. This looks like a copy error and has nothing to do with this detection.",
+        "Windows ADK or WinPE tooling with dism.exe and dismcore.dll under Program Files (x86)\\Windows Kits.",
+        "32-bit dism.exe loading C:\\Windows\\SysWOW64\\Dism\\dismcore.dll on 64-bit systems.",
+        "Servicing or upgrade tasks that run a temporary DISM copy from installation media."
+      ],
+      "response_steps": [
+        "Ask IT whether DISM or ADK maintenance ran on this host at that time.",
+        "If there is no valid reason, isolate the endpoint and keep the DLL, any copied dism.exe and process memory as evidence.",
+        "Kill the elevated child processes. Once verified, remove the dropped files and any related persistence.",
+        "Reset the affected user's credentials. Set UAC to 'Always notify' and remove local admin rights the user does not need."
+      ],
+      "severity_rationale": "High fits because dismcore.dll rarely loads from a non-system path for legitimate reasons, and such a load points to active privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dism.exe copied to a user-writable folder loads an unsigned dismcore.dll from that same folder",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 10:22:31.118",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\Public\\Libraries\\dism.exe",
+          "ImageLoaded": "C:\\Users\\Public\\Libraries\\dismcore.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "System dism.exe loads a dismcore.dll dropped in the user's Temp folder",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 10:25:02.540",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 6388,
+          "Image": "C:\\Windows\\System32\\dism.exe",
+          "ImageLoaded": "C:\\Users\\jperez\\AppData\\Local\\Temp\\dismcore.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate DISM servicing loading the genuine DLL from System32\\Dism (excluded by the filter)",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 03:00:12.004",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 4412,
+          "Image": "C:\\Windows\\System32\\Dism.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\Dism\\dismcore.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "dism.exe loading a different DISM provider DLL, not dismcore.dll",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 03:00:12.310",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 4412,
+          "Image": "C:\\Windows\\System32\\Dism.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\Dism\\DismProv.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

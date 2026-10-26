@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "6c304b02-06e6-402d-8be4-d5833cdf8198",
+    "title": "Potential SentinelOne Shell Context Menu Scan Command Tampering",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_sentinelone_shell_context_tampering.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_sentinelone_shell_context_tampering.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto de SentinelOne modificó el comando del menú contextual \"SentinelOneScan\" y el nuevo valor no apunta al binario legítimo SentinelScanFromContextMenu.exe. Esto puede ser persistencia: el código del atacante se ejecuta cuando un usuario elige escanear un archivo.",
+      "what_it_detects": "Escrituras de registro (registry_set) en claves cuyo TargetObject contiene \\shell\\SentinelOneScan\\command\\, cuando Details no empieza por la carpeta Sentinel Agent con SentinelScanFromContextMenu.exe. Ojo: el filtro de Image termina en barra invertida, así que casi nunca excluye nada.",
+      "why_it_matters": "Si un atacante secuestra la opción \"Scan with SentinelOne\", logra persistencia (TA0003) que se activa cuando el usuario hace clic derecho, y además se disfraza como una acción del EDR que parece confiable.",
+      "triage_steps": [
+        "Lea Details completo: identifique el ejecutable, los scripts o los LOLBins (cmd, powershell, rundll32, mshta) y si sigue llamando a SentinelScanFromContextMenu.exe para no levantar sospechas.",
+        "Revise Image, User y ProcessId: ¿fue reg.exe, powershell, un instalador o un binario desconocido? Reconstruya el árbol de procesos padre e hijos.",
+        "Compruebe si el binario mencionado en Details existe en el disco, y obtenga su hash, su firma, su fecha de creación y su reputación.",
+        "En el mismo host, busque otros cambios de registro, archivos creados y conexiones de red en un rango de +/- 15 minutos.",
+        "Busque ejecuciones posteriores del binario de Details cuyo padre sea explorer.exe, porque eso indica que la trampa ya se activó.",
+        "Revise el estado del agente SentinelOne (manipulación, desinstalación, exclusiones) y las alertas anteriores del mismo host y del mismo usuario."
+      ],
+      "false_positives": [
+        "Instalaciones o actualizaciones del agente SentinelOne que escriben la ruta entre comillas o desde msiexec.exe, de modo que el filtro no las reconoce.",
+        "Herramientas de personalización del menú contextual o scripts de administración que reescriben verbos de shell.",
+        "Pruebas autorizadas de red team o validación de EDR."
+      ],
+      "response_steps": [
+        "Compare el valor con el de un equipo sano que tenga la misma versión del agente y confirme con TI si hubo algún despliegue.",
+        "Si se confirma que es malicioso, aísle el endpoint desde la consola y conserve como evidencia la clave, el binario y los logs.",
+        "Restaure el valor legítimo del comando y elimine el binario malicioso solo después de recolectarlo y analizarlo.",
+        "Busque el mismo valor de Details en toda la flota, reinicie las credenciales del usuario afectado y verifique la integridad del agente."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque esta clave casi nunca cambia fuera de las actualizaciones del agente, pero la persistencia necesita que el usuario interactúe y el filtro puede producir falsos positivos por diferencias de formato."
+    },
+    "en": {
+      "summary": "A process other than SentinelOne changed the \"SentinelOneScan\" context menu command, and the new value does not point to the legitimate SentinelScanFromContextMenu.exe binary. This may be persistence that runs attacker code when a user chooses to scan a file.",
+      "what_it_detects": "Registry value writes (registry_set) to keys whose TargetObject contains \\shell\\SentinelOneScan\\command\\, where Details does not start with the Sentinel Agent folder plus SentinelScanFromContextMenu.exe. Note: the Image filter ends with a backslash, so it rarely excludes anything.",
+      "why_it_matters": "Hijacking the \"Scan with SentinelOne\" verb gives an attacker persistence (TA0003) that fires when a user right-clicks a file. The payload also hides behind an EDR action that users trust.",
+      "triage_steps": [
+        "Read the full Details value: identify the executable, any scripts or LOLBins (cmd, powershell, rundll32, mshta), and whether it still calls SentinelScanFromContextMenu.exe to stay stealthy.",
+        "Check Image, User and ProcessId: was the writer reg.exe, powershell, an installer or an unknown binary? Rebuild the parent and child process tree.",
+        "Check whether the binary named in Details exists on disk, and get its hash, signature, creation time and reputation.",
+        "On the same host, look for other registry changes, file creations and network connections within +/- 15 minutes.",
+        "Search for later runs of the Details binary with explorer.exe as parent, which means the trap has already fired.",
+        "Check the SentinelOne agent's health (tampering, uninstall attempts, exclusions) and earlier alerts for the same host and user."
+      ],
+      "false_positives": [
+        "SentinelOne agent installs or upgrades that write the path in quotes or through msiexec.exe, so the filter does not recognize them.",
+        "Context menu customization tools or admin scripts that rewrite shell verbs.",
+        "Authorized red team or EDR validation tests."
+      ],
+      "response_steps": [
+        "Compare the value with a clean host running the same agent version, and confirm with IT whether any deployment took place.",
+        "If it is confirmed malicious, isolate the endpoint and preserve the key, the binary and the logs.",
+        "Restore the legitimate command value, and remove the malicious binary only after you have collected and analyzed it.",
+        "Search the whole fleet for the same Details value, reset the affected user's credentials and verify the agent's integrity."
+      ],
+      "severity_rationale": "Medium fits because this key rarely changes outside agent updates, but the persistence needs a user to trigger it and formatting differences can cause false positives."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe repoints the SentinelOne scan verb to a binary in ProgramData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\*\\shell\\SentinelOneScan\\command\\(Default)",
+          "Details": "C:\\ProgramData\\Updater\\svcupd.exe \"%1\""
+        }
+      },
+      {
+        "description": "PowerShell wraps the real scanner in cmd.exe so a payload also runs; the value contains the legitimate binary but does not start with the agent path",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0198.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4388,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\*\\shell\\SentinelOneScan\\command\\(Default)",
+          "Details": "C:\\Windows\\System32\\cmd.exe /c start /b C:\\Users\\Public\\helper.exe & \"C:\\Program Files\\SentinelOne\\Sentinel Agent 23.4.2.14\\SentinelScanFromContextMenu.exe\" \"%1\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate value written during an agent upgrade, which the default scan binary filter excludes",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2716,
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\*\\shell\\SentinelOneScan\\command\\(Default)",
+          "Details": "C:\\Program Files\\SentinelOne\\Sentinel Agent 23.4.2.14\\SentinelScanFromContextMenu.exe \"%1\""
+        }
+      },
+      {
+        "description": "Change to a different shell verb (open), which does not match the SentinelOneScan key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\txtfile\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Program Files\\Notepad++\\notepad++.exe \"%1\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

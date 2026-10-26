@@ -1,0 +1,119 @@
+{
+  "rule": {
+    "id": "d84c0ded-edd7-4123-80ed-348bb3ccc4d5",
+    "title": "Suspicious SQL Query",
+    "level": "medium",
+    "status": "test",
+    "author": "@juju4",
+    "path": "category/database/db_anomalous_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/category/database/db_anomalous_query.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190",
+      "T1505.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró una consulta SQL con las palabras clave drop, truncate, dump o \"select *\", que suelen aparecer en reconocimiento, exfiltración o acciones destructivas sobre la base de datos.",
+      "what_it_detects": "Coincidencia por keywords, sin distinguir mayúsculas, en el log de consultas de la base de datos: 'drop', 'truncate', 'dump' o el literal 'select *'. Es una coincidencia de subcadena, así que también coincide con nombres como dropdown_items o mysqldump.",
+      "why_it_matters": "Las herramientas de inyección SQL como sqlmap enumeran y extraen tablas con SELECT * y pueden borrar datos con DROP/TRUNCATE. Esto se relaciona con explotación de aplicaciones expuestas (T1190) y con abuso de procedimientos almacenados (T1505.001).",
+      "triage_steps": [
+        "Lea la consulta completa en el mensaje: identifique la keyword, la tabla u objeto afectado y si se trata de DDL destructivo o de una lectura masiva.",
+        "Identifique el usuario de base de datos, la base, el host o IP cliente y la aplicación. ¿Es una cuenta de servicio esperada o una cuenta interactiva?",
+        "Compare con la línea base: ¿esa cuenta ejecuta esta consulta habitualmente, por ejemplo en un job programado, una migración o un respaldo?",
+        "Revise las consultas de la misma sesión o IP en +/- 15 minutos: UNION, information_schema, SLEEP, comentarios '--' o enumeración secuencial.",
+        "Si el origen es un servidor de aplicaciones, correlacione con los logs web de ese momento (cs-uri-query, user agent) buscando payloads de inyección SQL o el user agent de sqlmap.",
+        "Para DROP/TRUNCATE, confirme si el objeto todavía existe y si hubo un cambio aprobado. Para SELECT *, estime el volumen de filas devueltas.",
+        "Busque alertas anteriores para el mismo usuario, host e IP de origen."
+      ],
+      "false_positives": [
+        "Herramientas de inventario y monitoreo que consultan tablas con SELECT *.",
+        "Escáneres de vulnerabilidades autorizados que prueban inyección SQL.",
+        "Aplicaciones legítimas, ORMs o scripts de migración que usan SELECT *, DROP TEMPORARY TABLE o TRUNCATE en tablas de staging.",
+        "Respaldos con mysqldump o pg_dump, y objetos cuyo nombre contiene drop o dump."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la aplicación o el DBA si la consulta forma parte de una actividad aprobada antes de tomar acciones.",
+        "Si se confirma un abuso, bloquee la IP de origen o desactive o rote las credenciales de la cuenta de base de datos implicada.",
+        "Si el origen es una aplicación web, aísle o aplique WAF al endpoint vulnerable y preserve los logs web y de base de datos.",
+        "Ante borrado de datos, restaure desde un respaldo verificado. Ante exfiltración, determine qué datos se expusieron y escale según la política.",
+        "Ajuste la regla con exclusiones documentadas para jobs y cuentas legítimas recurrentes."
+      ],
+      "severity_rationale": "Es medium porque las keywords son amplias y comunes en uso legítimo, pero en un contexto inesperado pueden indicar exfiltración o destrucción de datos."
+    },
+    "en": {
+      "summary": "A database query containing drop, truncate, dump or \"select *\" was logged. These keywords are common in recon, exfiltration or destructive activity against the database.",
+      "what_it_detects": "A case-insensitive keyword match in the database query log for 'drop', 'truncate', 'dump' or the literal 'select *'. It is a substring match, so names like dropdown_items or mysqldump also hit.",
+      "why_it_matters": "SQL injection tools such as sqlmap enumerate and dump tables with SELECT * and can destroy data with DROP/TRUNCATE. This relates to exploiting public-facing applications (T1190) and abusing SQL stored procedures (T1505.001).",
+      "triage_steps": [
+        "Read the full query in the message: find the keyword, the affected table or object, and whether it is destructive DDL or a bulk read.",
+        "Identify the database user, database, client host or IP, and application. Is it an expected service account or an interactive login?",
+        "Compare with the baseline: does this account normally run this query, for example in a scheduled job, migration or backup?",
+        "Review queries from the same session or IP within +/- 15 minutes: UNION, information_schema, SLEEP, '--' comments or sequential enumeration.",
+        "If the source is an app server, correlate with web logs at that time (cs-uri-query, user agent) for SQL injection payloads or a sqlmap user agent.",
+        "For DROP/TRUNCATE, check whether the object still exists and whether an approved change covers it. For SELECT *, estimate the number of rows returned.",
+        "Look for earlier alerts on the same user, host and source IP."
+      ],
+      "false_positives": [
+        "Inventory and monitoring tools that query tables with SELECT *.",
+        "Authorized vulnerability scanners testing for SQL injection.",
+        "Legitimate applications, ORMs or migration scripts using SELECT *, DROP TEMPORARY TABLE or TRUNCATE on staging tables.",
+        "Backups with mysqldump or pg_dump, and objects whose names contain drop or dump."
+      ],
+      "response_steps": [
+        "Confirm with the application owner or DBA whether the query was part of approved activity before you act.",
+        "If abuse is confirmed, block the source IP or disable or rotate the credentials of the database account involved.",
+        "If a web app is the source, isolate the vulnerable endpoint or put a WAF rule in front of it, and preserve web and database logs.",
+        "If data was deleted, restore from a verified backup. If data was exfiltrated, scope what was exposed and escalate per policy.",
+        "Tune the rule with documented exclusions for recurring legitimate jobs and accounts."
+      ],
+      "severity_rationale": "Medium fits because the keywords are broad and common in legitimate use, but in an unexpected context they can mean data exfiltration or destruction."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PostgreSQL statement log showing an application account dropping a table (matches 'drop').",
+        "event": {
+          "message": "2024-10-25 14:03:12.345 UTC [48211] appsvc@ventas LOG:  statement: DROP TABLE clientes;",
+          "host": "db-pg-01",
+          "src_ip": "192.0.2.45"
+        }
+      },
+      {
+        "description": "MySQL general query log showing a wildcard select on a users table (matches the literal 'select *').",
+        "event": {
+          "message": "2024-10-25T14:05:01.123456Z\t   57 Query\tSELECT * FROM usuarios",
+          "host": "db-mysql-02",
+          "src_ip": "198.51.100.23"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal application lookup with explicit columns. No drop, truncate, dump or 'select *'.",
+        "event": {
+          "message": "2024-10-25 14:10:44.912 UTC [48230] appsvc@ventas LOG:  statement: SELECT id, nombre, email FROM clientes WHERE id = 42;",
+          "host": "db-pg-01",
+          "src_ip": "192.0.2.45"
+        }
+      },
+      {
+        "description": "Routine UPDATE from the same application. None of the keywords appear.",
+        "event": {
+          "message": "2024-10-25T14:12:09.004211Z\t   61 Query\tUPDATE pedidos SET estado = 'enviado' WHERE pedido_id = 1187",
+          "host": "db-mysql-02",
+          "src_ip": "198.51.100.23"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

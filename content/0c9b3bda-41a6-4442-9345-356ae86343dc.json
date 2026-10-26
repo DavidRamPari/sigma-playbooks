@@ -1,0 +1,175 @@
+{
+  "rule": {
+    "id": "0c9b3bda-41a6-4442-9345-356ae86343dc",
+    "title": "Kubernetes CronJob/Job Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "kelnage",
+    "path": "application/kubernetes/audit/kubernetes_audit_cronjob_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_cronjob_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó o eliminó un Job o CronJob de Kubernetes (API group batch). Puede ser un cambio legítimo o un intento de ejecutar código o lograr persistencia en el clúster.",
+      "what_it_detects": "Eventos del audit log de Kubernetes con objectRef.apiGroup igual a batch, objectRef.resource igual a jobs o cronjobs y verb igual a create, delete, patch, replace o update.",
+      "why_it_matters": "Un atacante con permisos sobre batch puede programar un CronJob que lance contenedores maliciosos de forma recurrente (persistencia y ejecución, ATT&CK T1053.007, Container Orchestration Job). Si el pod usa una service account privilegiada o hostPath, permite escalar privilegios. Eliminar Jobs puede ocultar rastros.",
+      "triage_steps": [
+        "Identifique quién actuó: user.username, user.groups, sourceIPs y userAgent. Distinga kubectl manual, pipelines de CI/CD y controladores del sistema.",
+        "Revise objectRef.namespace, objectRef.name, verb y responseStatus.code; un intento rechazado (403) también indica reconocimiento o abuso de credenciales.",
+        "Si el usuario es system:serviceaccount:kube-system:cronjob-controller creando jobs, valide que el CronJob padre sea conocido y descarte el evento si lo es.",
+        "Obtenga el manifiesto (requestObject o kubectl get -o yaml): imagen, registro, command/args, schedule, serviceAccountName, privileged, hostPath, hostNetwork.",
+        "Busque imágenes de registros no confiables, comandos con curl, wget, base64, shells inversas o mineros, y schedules muy frecuentes.",
+        "Pivotee sobre el mismo usuario y sourceIPs en +/- 15 minutos: creación de RoleBindings, secrets leídos, exec en pods u otros cambios en kube-system.",
+        "Compare con tickets de cambio, commits de GitOps (Argo CD, Flux) y alertas previas para la misma identidad o namespace."
+      ],
+      "false_positives": [
+        "Administradores que crean o ajustan Jobs y CronJobs de mantenimiento, backups o migraciones.",
+        "Pipelines de CI/CD, Helm u operadores GitOps que despliegan o actualizan workloads batch.",
+        "El cronjob-controller creando Jobs a partir de CronJobs existentes y el TTL controller eliminando Jobs terminados.",
+        "Operadores de terceros que gestionan Jobs (por ejemplo, de bases de datos o certificados)."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del namespace o del pipeline si el cambio estaba autorizado.",
+        "Si no lo estaba, suspenda el CronJob (spec.suspend=true) y conserve el manifiesto y los logs de los pods antes de eliminar nada.",
+        "Revoque o rote las credenciales, tokens o kubeconfig de la identidad usada y revise sus RBAC.",
+        "Investigue los nodos donde corrieron los pods y elimine los objetos maliciosos tras documentarlos.",
+        "Restrinja permisos sobre batch, aplique políticas de admisión para registros confiables y Pod Security Standards."
+      ],
+      "severity_rationale": "Medium es adecuado porque los cambios en Jobs y CronJobs son frecuentes y legítimos, pero un uso malicioso otorga ejecución persistente en el clúster."
+    },
+    "en": {
+      "summary": "An identity created, modified or deleted a Kubernetes Job or CronJob (batch API group). This may be a routine change or an attempt to run code or persist in the cluster.",
+      "what_it_detects": "Kubernetes audit events where objectRef.apiGroup is batch, objectRef.resource is jobs or cronjobs, and verb is create, delete, patch, replace or update.",
+      "why_it_matters": "An attacker with batch permissions can schedule a CronJob that repeatedly launches malicious containers (persistence and execution, ATT&CK T1053.007 Container Orchestration Job). Privileged service accounts or hostPath mounts enable privilege escalation; deleting Jobs can hide traces.",
+      "triage_steps": [
+        "Identify the actor: user.username, user.groups, sourceIPs and userAgent. Separate manual kubectl, CI/CD pipelines and system controllers.",
+        "Check objectRef.namespace, objectRef.name, verb and responseStatus.code; denied attempts (403) still suggest reconnaissance or credential misuse.",
+        "If the user is system:serviceaccount:kube-system:cronjob-controller creating jobs, confirm the parent CronJob is known and close if so.",
+        "Retrieve the manifest (requestObject or kubectl get -o yaml): image, registry, command/args, schedule, serviceAccountName, privileged, hostPath, hostNetwork.",
+        "Look for untrusted registries, commands using curl, wget, base64, reverse shells or miners, and unusually frequent schedules.",
+        "Pivot on the same user and sourceIPs within +/- 15 minutes: RoleBinding creation, secret reads, pod exec or other kube-system changes.",
+        "Compare with change tickets, GitOps commits (Argo CD, Flux) and earlier alerts for the same identity or namespace."
+      ],
+      "false_positives": [
+        "Administrators creating or adjusting maintenance, backup or migration Jobs and CronJobs.",
+        "CI/CD pipelines, Helm or GitOps operators deploying or updating batch workloads.",
+        "The cronjob-controller spawning Jobs from existing CronJobs and the TTL controller deleting finished Jobs.",
+        "Third-party operators that manage Jobs (for example database or certificate operators)."
+      ],
+      "response_steps": [
+        "Confirm with the namespace or pipeline owner whether the change was authorized.",
+        "If not, suspend the CronJob (spec.suspend=true) and preserve the manifest and pod logs before deleting anything.",
+        "Revoke or rotate the credentials, tokens or kubeconfig used and review that identity's RBAC.",
+        "Investigate nodes where the pods ran and remove malicious objects after documenting them.",
+        "Restrict batch permissions, enforce admission policies for trusted registries and apply Pod Security Standards."
+      ],
+      "severity_rationale": "Medium fits because Job and CronJob changes are common and usually legitimate, yet malicious use grants persistent code execution in the cluster."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user creates a new CronJob in kube-system with kubectl from an external IP",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "RequestResponse",
+          "stage": "ResponseComplete",
+          "auditID": "7f3c2a1e-5b8d-4e2f-9a61-0c4d2e8b1f10",
+          "verb": "create",
+          "requestURI": "/apis/batch/v1/namespaces/kube-system/cronjobs",
+          "user.username": "jperez@example.com",
+          "user.groups": "system:authenticated",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "objectRef.resource": "cronjobs",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "node-health-sync",
+          "objectRef.apiGroup": "batch",
+          "objectRef.apiVersion": "v1",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T14:03:12.118Z"
+        }
+      },
+      {
+        "description": "A service account patches an existing Job in the payments namespace",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "auditID": "b21e9d44-0c7a-4f3b-8e15-6a2f7c9d0e33",
+          "verb": "patch",
+          "requestURI": "/apis/batch/v1/namespaces/payments/jobs/db-migrate",
+          "user.username": "system:serviceaccount:payments:deployer",
+          "user.groups": "system:serviceaccounts",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "helm/v3.14.0",
+          "objectRef.resource": "jobs",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "db-migrate",
+          "objectRef.apiGroup": "batch",
+          "objectRef.apiVersion": "v1",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:10:47.502Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of CronJobs (verb list is not in the rule)",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "auditID": "c4a8f0e2-9d31-4b77-a2c5-1e6f8b3d7a90",
+          "verb": "list",
+          "requestURI": "/apis/batch/v1/namespaces/kube-system/cronjobs",
+          "user.username": "jperez@example.com",
+          "user.groups": "system:authenticated",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "objectRef.resource": "cronjobs",
+          "objectRef.namespace": "kube-system",
+          "objectRef.apiGroup": "batch",
+          "objectRef.apiVersion": "v1",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:01:05.330Z"
+        }
+      },
+      {
+        "description": "Creation of a Deployment in the apps API group, not batch",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "auditID": "e9d7b3a1-2f45-4c8e-b6d0-5a1c3e7f9b22",
+          "verb": "create",
+          "requestURI": "/apis/apps/v1/namespaces/payments/deployments",
+          "user.username": "system:serviceaccount:payments:deployer",
+          "user.groups": "system:serviceaccounts",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "helm/v3.14.0",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "payments-api",
+          "objectRef.apiGroup": "apps",
+          "objectRef.apiVersion": "v1",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T14:12:30.871Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

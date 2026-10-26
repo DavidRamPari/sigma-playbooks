@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "4ac1f50b-3bd0-4968-902d-868b4647937e",
+    "title": "DPAPI Domain Backup Key Extraction",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/builtin/security/win_security_dpapi_domain_backupkey_extraction.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_dpapi_domain_backupkey_extraction.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró un acceso de lectura (AccessMask 0x2) al secreto LSA que guarda la clave de respaldo DPAPI del dominio (BCKUPKEY). Suele indicar extracción de esa clave con herramientas como Mimikatz, SharpDPAPI o DSInternals.",
+      "what_it_detects": "Eventos 4662 del registro Security de un controlador de dominio con ObjectType 'SecretObject', AccessMask '0x2' y un ObjectName que contiene 'BCKUPKEY', por ejemplo Policy\\Secrets\\G$BCKUPKEY_PREFERRED o G$BCKUPKEY_<GUID>.",
+      "why_it_matters": "Con la clave de respaldo DPAPI del dominio se pueden descifrar los blobs DPAPI de cualquier usuario del dominio: contraseñas guardadas en navegadores, credenciales almacenadas y claves privadas. Corresponde a ATT&CK T1003.004, robo de secretos LSA.",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId del evento 4662 y confirme si la cuenta debería operar sobre secretos LSA del controlador de dominio.",
+        "Busque el evento 4624 con el mismo SubjectLogonId para obtener el tipo de logon, IpAddress y WorkstationName de origen.",
+        "Revise en el DC, en una ventana de +/- 15 minutos, los eventos 5145 hacia IPC$ con lsarpc y otros 4662 del mismo usuario.",
+        "Si el origen es remoto, revise en ese host los procesos de la misma ventana: mimikatz, SharpDPAPI, PowerShell con DSInternals o binarios desconocidos.",
+        "Revise el ObjectName: G$BCKUPKEY_PREFERRED seguido de G$BCKUPKEY_<GUID> muestra que se resolvió y leyó la clave activa.",
+        "Busque alertas previas de la misma cuenta o IP, como DCSync, volcado de LSASS o movimiento lateral.",
+        "Confirme con el equipo de seguridad si había un pentest o red team autorizado en curso."
+      ],
+      "false_positives": [
+        "Pruebas de penetración o ejercicios de red team autorizados que extraen la clave de respaldo DPAPI.",
+        "Auditorías de seguridad o tareas de migración de administradores que usan DSInternals u otras herramientas similares de forma documentada."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta y con el equipo de cambios si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, deshabilite o restablezca la cuenta que hizo el acceso y aísle el host de origen.",
+        "Recolecte evidencia del host de origen (memoria, archivos de la herramienta, historial de PowerShell) y conserve los registros del DC.",
+        "Considere el dominio comprometido: busque DCSync, persistencia y abuso de credenciales; planifique restablecer las credenciales de los usuarios.",
+        "Evalúe con el equipo de Active Directory generar una nueva clave de respaldo DPAPI siguiendo la guía oficial de Microsoft."
+      ],
+      "severity_rationale": "Es alta porque leer la clave de respaldo DPAPI requiere privilegios de dominio y permite descifrar secretos de todos los usuarios, sin causas legítimas habituales."
+    },
+    "en": {
+      "summary": "A domain controller logged read access (AccessMask 0x2) to the LSA secret that stores the domain DPAPI backup key (BCKUPKEY). This usually means the key was extracted with tools such as Mimikatz, SharpDPAPI or DSInternals.",
+      "what_it_detects": "Security event 4662 on a domain controller with ObjectType 'SecretObject', AccessMask '0x2' and an ObjectName containing 'BCKUPKEY', for example Policy\\Secrets\\G$BCKUPKEY_PREFERRED or G$BCKUPKEY_<GUID>.",
+      "why_it_matters": "The domain DPAPI backup key can decrypt any domain user's DPAPI blobs: saved browser passwords, stored credentials and private keys. This maps to ATT&CK T1003.004, theft of LSA secrets.",
+      "triage_steps": [
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId in the 4662 event and check whether the account should touch LSA secrets on the domain controller.",
+        "Find the 4624 event with the same SubjectLogonId to get the logon type, source IpAddress and WorkstationName.",
+        "On the DC, check +/- 15 minutes for 5145 events to IPC$ with lsarpc and for other 4662 events by the same user.",
+        "If the source is remote, review processes on that host in the same window: mimikatz, SharpDPAPI, PowerShell loading DSInternals, or unknown binaries.",
+        "Check the ObjectName: G$BCKUPKEY_PREFERRED followed by G$BCKUPKEY_<GUID> shows the active key was resolved and read.",
+        "Look for earlier alerts on the same account or IP, such as DCSync, LSASS dumping or lateral movement.",
+        "Ask the security team whether an authorized pentest or red team exercise was running."
+      ],
+      "false_positives": [
+        "Authorized penetration tests or red team exercises that extract the DPAPI backup key.",
+        "Documented security audits or migration work by administrators using DSInternals or similar tools."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the account owner and change management whether the activity was authorized.",
+        "If it was not authorized, disable or reset the account that made the access and isolate the source host.",
+        "Collect evidence from the source host (memory, tool artifacts, PowerShell history) and keep the DC logs.",
+        "Treat the domain as compromised: hunt for DCSync, persistence and credential abuse, and plan user credential resets.",
+        "Work with the AD team on whether to generate a new DPAPI backup key, following Microsoft's official guidance."
+      ],
+      "severity_rationale": "High because reading the DPAPI backup key takes domain-level privileges, exposes every user's DPAPI secrets and has no common legitimate cause."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote read of the preferred DPAPI backup key secret on a DC by a compromised admin account",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "LSA",
+          "ObjectType": "SecretObject",
+          "ObjectName": "Policy\\Secrets\\G$BCKUPKEY_PREFERRED",
+          "OperationType": "Object Access",
+          "AccessMask": "0x2",
+          "HandleId": "0x0"
+        }
+      },
+      {
+        "description": "Read of the GUID-named DPAPI backup key secret right after resolving the preferred key",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "LSA",
+          "ObjectType": "SecretObject",
+          "ObjectName": "Policy\\Secrets\\G$BCKUPKEY_7c3a9e12-5b4f-4d2a-9e61-0a8f3b2c1d45",
+          "OperationType": "Object Access",
+          "AccessMask": "0x2",
+          "HandleId": "0x0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Access to a different LSA secret (machine account) with the same access mask, so ObjectName does not contain BCKUPKEY",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "DC-01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectServer": "LSA",
+          "ObjectType": "SecretObject",
+          "ObjectName": "Policy\\Secrets\\$MACHINE.ACC",
+          "OperationType": "Object Access",
+          "AccessMask": "0x2",
+          "HandleId": "0x0"
+        }
+      },
+      {
+        "description": "BCKUPKEY secret touched with a different access mask (0x1), which the rule does not select",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "DC-01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectServer": "LSA",
+          "ObjectType": "SecretObject",
+          "ObjectName": "Policy\\Secrets\\G$BCKUPKEY_PREFERRED",
+          "OperationType": "Object Access",
+          "AccessMask": "0x1",
+          "HandleId": "0x0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

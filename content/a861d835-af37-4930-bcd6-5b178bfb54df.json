@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "a861d835-af37-4930-bcd6-5b178bfb54df",
+    "title": "Suspicious Kerberos Ticket Request via PowerShell Script - ScriptBlock",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_request_kerberos_ticket.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_request_kerberos_ticket.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell usó la clase .NET System.IdentityModel.Tokens.KerberosRequestorSecurityToken para solicitar un ticket de servicio Kerberos (TGS). Es una técnica habitual de Kerberoasting: el ticket queda en caché y puede extraerse después para crackearlo offline.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) cuyo ScriptBlockText contiene la cadena 'System.IdentityModel.Tokens.KerberosRequestorSecurityToken', es decir, código que pide un TGS para un SPN de forma nativa, sin herramientas externas.",
+      "why_it_matters": "Kerberoasting (ATT&CK T1558.003) permite a cualquier usuario del dominio pedir tickets de cuentas de servicio y crackear sus contraseñas offline. Si esas cuentas tienen privilegios, el atacante puede escalar y moverse lateralmente sin generar fallos de autenticación.",
+      "triage_steps": [
+        "Lea ScriptBlockText e identifique el SPN o SPN pasados a -ArgumentList; un bucle sobre muchos SPN apunta a Kerberoasting masivo.",
+        "Reconstruya el script completo uniendo los eventos 4104 con el mismo ScriptBlockId (MessageNumber/MessageTotal) y revise Path para conocer el archivo de origen.",
+        "Identifique al usuario y al host; revise el proceso PowerShell y su proceso padre (4688/Sysmon 1) para ver si se lanzó desde Office, cmd, WMI o una sesión remota.",
+        "En los controladores de dominio, busque eventos 4769 del mismo usuario e IP en +/- 15 minutos; preste atención a muchos SPN distintos y a cifrado RC4 (0x17).",
+        "Busque en el mismo host enumeración previa de SPN (setspn, Get-ADUser con servicePrincipalName, DirectorySearcher) y extracción posterior de tickets (klist, kerberos::list /export, Rubeus).",
+        "Revise alertas anteriores para el mismo usuario y host, y confirme con el responsable si se trata de desarrollo o diagnóstico de Kerberos autorizado."
+      ],
+      "false_positives": [
+        "Scripts legítimos de desarrollo o diagnóstico de autenticación Kerberos que solicitan un ticket para un servicio concreto.",
+        "Pruebas autorizadas de pentesting o red team, o ejercicios de Atomic Red Team en laboratorio.",
+        "Herramientas internas de monitoreo que validan la configuración de SPN de un servicio."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o su responsable la legitimidad del script antes de actuar; documente los SPN solicitados.",
+        "Si no es legítimo, aísle el endpoint, conserve los registros de PowerShell y la memoria, y deshabilite o restablezca la cuenta de usuario usada.",
+        "Restablezca con contraseñas largas y aleatorias las cuentas de servicio cuyos SPN fueron solicitados, priorizando las privilegiadas, y vigile su uso posterior.",
+        "Endurezca: migre a gMSA, exija AES y deshabilite RC4 en cuentas de servicio, y mantenga activo Script Block Logging."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque esta API rara vez aparece en la administración diaria y suele ser un paso directo hacia el robo de credenciales de cuentas de servicio."
+    },
+    "en": {
+      "summary": "A PowerShell script used the .NET class System.IdentityModel.Tokens.KerberosRequestorSecurityToken to request a Kerberos service ticket (TGS). This is a common Kerberoasting technique: the cached ticket can later be extracted and cracked offline.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains 'System.IdentityModel.Tokens.KerberosRequestorSecurityToken', meaning code that natively requests a TGS for an SPN without external tools.",
+      "why_it_matters": "Kerberoasting (ATT&CK T1558.003) lets any domain user request service account tickets and crack their passwords offline. Privileged service accounts give the attacker escalation and lateral movement without failed logons.",
+      "triage_steps": [
+        "Read ScriptBlockText and identify the SPN(s) passed to -ArgumentList; a loop over many SPNs suggests bulk Kerberoasting.",
+        "Rebuild the full script by joining 4104 events sharing the ScriptBlockId (MessageNumber/MessageTotal) and check Path for the source file.",
+        "Identify user and host; review the PowerShell process and its parent (4688/Sysmon 1) for launch from Office, cmd, WMI or a remote session.",
+        "On domain controllers, search 4769 events for the same user and IP within +/- 15 minutes; watch for many distinct SPNs and RC4 encryption (0x17).",
+        "Look on the same host for prior SPN enumeration (setspn, Get-ADUser servicePrincipalName, DirectorySearcher) and later ticket extraction (klist, kerberos::list /export, Rubeus).",
+        "Review earlier alerts for the same user and host, and confirm with the owner whether this is authorized Kerberos development or troubleshooting."
+      ],
+      "false_positives": [
+        "Legitimate Kerberos authentication development or troubleshooting scripts requesting a ticket for a specific service.",
+        "Authorized penetration tests, red team work, or Atomic Red Team runs in a lab.",
+        "Internal monitoring tools that validate a service's SPN configuration."
+      ],
+      "response_steps": [
+        "Verify legitimacy with the user or their manager before acting; record the requested SPNs.",
+        "If unauthorized, isolate the endpoint, preserve PowerShell logs and memory, and disable or reset the user account involved.",
+        "Reset targeted service accounts with long random passwords, prioritizing privileged ones, and monitor their subsequent use.",
+        "Harden: move to gMSA, enforce AES and disable RC4 for service accounts, and keep Script Block Logging enabled."
+      ],
+      "severity_rationale": "High fits because this API rarely appears in routine administration and usually directly precedes theft of service account credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block requesting a TGS for a single SPN via KerberosRequestorSecurityToken (Atomic-style Kerberoasting).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f6c2a9e-8b1d-4e57-9c0a-12ab34cd56ef",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "Add-Type -AssemblyName System.IdentityModel; New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList 'MSSQLSvc/sql01.andes.example.com:1433'"
+        }
+      },
+      {
+        "description": "Loop over enumerated SPNs requesting tickets for each one.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UserID": "ANDES\\mrojas",
+          "ScriptBlockId": "9a1b7c3d-2e4f-4a6b-8c9d-0e1f2a3b4c5d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\svc.ps1",
+          "ScriptBlockText": "$spns = Get-ADUser -Filter {ServicePrincipalName -like '*'} -Properties ServicePrincipalName | Select -Expand ServicePrincipalName; foreach ($s in $spns) { $t = New-Object -TypeName system.identitymodel.tokens.kerberosrequestorsecuritytoken -ArgumentList $s }"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Script only loads the System.IdentityModel assembly and uses the receiver-side token class, not the requestor class.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WEB-03.andes.example.com",
+          "UserID": "ANDES\\svc_webapp",
+          "ScriptBlockId": "c4d5e6f7-1a2b-4c3d-8e9f-a0b1c2d3e4f5",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "D:\\Apps\\auth\\validate.ps1",
+          "ScriptBlockText": "Add-Type -AssemblyName System.IdentityModel; $tok = New-Object System.IdentityModel.Tokens.KerberosReceiverSecurityToken -ArgumentList $requestBytes"
+        }
+      },
+      {
+        "description": "Administrator listing cached tickets with klist, without requesting a TGS via the .NET class.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\admin.lgomez",
+          "ScriptBlockId": "7e8f9a0b-1c2d-4e3f-a4b5-c6d7e8f9a0b1",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "klist tickets; Get-ADUser -Identity svc_sql -Properties ServicePrincipalName"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

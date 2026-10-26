@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "45545954-4016-43c6-855e-eae8f1c369dc",
+    "title": "Protected Storage Service Access",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/builtin/security/win_security_protected_storage_service_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_protected_storage_service_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente remoto abrió el named pipe protected_storage a través del recurso compartido IPC$ de este host, normalmente un Domain Controller. Puede indicar un intento de extraer la clave de respaldo DPAPI del dominio mediante el protocolo BackupKey Remote Protocol (MS-BKRP).",
+      "what_it_detects": "Eventos 5145 (auditoría detallada de recursos compartidos) en los que ShareName contiene 'IPC' y RelativeTargetName es exactamente 'protected_storage', es decir, acceso por red al pipe del servicio BackupKey.",
+      "why_it_matters": "Con privilegios de Domain Admin, herramientas como Mimikatz (lsadump::backupkeys), SharpDPAPI o DSInternals usan este pipe para obtener la clave de respaldo DPAPI del dominio. Con ella se pueden descifrar contraseñas, cookies y credenciales protegidas con DPAPI de cualquier usuario del dominio. Corresponde a ATT&CK T1021.002 (SMB/Windows Admin Shares).",
+      "triage_steps": [
+        "Identifique el origen con IpAddress e IpPort, y la cuenta con SubjectUserName, SubjectDomainName y SubjectLogonId del evento 5145.",
+        "Determine si la cuenta es privilegiada (Domain Admins, Enterprise Admins) y si el host de origen es una estación de administración autorizada o un equipo de usuario común.",
+        "Busque en el mismo DC, +/- 15 minutos, el evento 4624 tipo 3 con el mismo SubjectLogonId para confirmar el método de autenticación y la estación de origen.",
+        "Revise eventos 4662 en el DC que referencien objetos secretos BCKUPKEY; su lectura por una cuenta de usuario sugiere extracción de la clave de respaldo.",
+        "En el host de origen, revise la creación de procesos y la telemetría del EDR en busca de mimikatz, SharpDPAPI, DSInternals, scripts de impacket o binarios desconocidos.",
+        "Compare con el comportamiento habitual: ¿esta IP o cuenta genera este evento con regularidad? Revise alertas previas del mismo usuario y host."
+      ],
+      "false_positives": [
+        "Clientes DPAPI legítimos del dominio que contactan al DC por MS-BKRP para respaldar o recuperar master keys, por ejemplo tras un cambio o restablecimiento de contraseña.",
+        "Herramientas de respaldo, migración de perfiles o auditoría de seguridad autorizadas que usan la API BackupKey.",
+        "Ejercicios de red team o pruebas de penetración aprobados."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la cuenta y el equipo de AD si la actividad estaba autorizada antes de actuar.",
+        "Si no es legítima, aísle el host de origen desde el EDR y deshabilite o restablezca la cuenta involucrada, preservando evidencia forense.",
+        "Escale como posible compromiso del dominio: la clave de respaldo DPAPI no se puede rotar fácilmente; planifique la remediación con los responsables de AD.",
+        "Busque otras técnicas asociadas (DCSync, volcado de LSASS, movimiento lateral) y restablezca credenciales expuestas una vez erradicado el acceso."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque el acceso remoto a este pipe es poco frecuente fuera de los flujos DPAPI normales y su abuso expone secretos de todo el dominio."
+    },
+    "en": {
+      "summary": "A remote client opened the protected_storage named pipe over this host's IPC$ share, typically on a Domain Controller. This may be an attempt to extract the domain DPAPI backup key via the BackupKey Remote Protocol (MS-BKRP).",
+      "what_it_detects": "Event 5145 (detailed file share auditing) where ShareName contains 'IPC' and RelativeTargetName is exactly 'protected_storage', meaning network access to the BackupKey service pipe.",
+      "why_it_matters": "With Domain Admin rights, tools such as Mimikatz (lsadump::backupkeys), SharpDPAPI or DSInternals use this pipe to retrieve the domain DPAPI backup key, allowing decryption of any domain user's DPAPI-protected secrets. Maps to ATT&CK T1021.002 (SMB/Windows Admin Shares).",
+      "triage_steps": [
+        "Identify the source from IpAddress and IpPort, and the account from SubjectUserName, SubjectDomainName and SubjectLogonId in the 5145 event.",
+        "Check whether the account is privileged (Domain Admins, Enterprise Admins) and whether the source is an approved admin workstation or an ordinary user endpoint.",
+        "On the same DC within +/- 15 minutes, find the matching 4624 logon type 3 with the same SubjectLogonId to confirm authentication method and source workstation.",
+        "Review 4662 events on the DC referencing BCKUPKEY secret objects; reads by a user account suggest backup key extraction.",
+        "On the source host, review process creation and EDR telemetry for mimikatz, SharpDPAPI, DSInternals, impacket scripts or unknown binaries.",
+        "Baseline: does this IP or account produce this event regularly? Check earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate domain DPAPI clients contacting the DC over MS-BKRP to back up or recover master keys, for example after a password change or reset.",
+        "Authorized backup, profile migration or security auditing tools using the BackupKey API.",
+        "Approved red team or penetration testing exercises."
+      ],
+      "response_steps": [
+        "Confirm with the account owner and AD team whether the activity was authorized before acting.",
+        "If unauthorized, isolate the source host via EDR and disable or reset the account, preserving forensic evidence.",
+        "Escalate as potential domain compromise: the DPAPI backup key cannot be easily rotated, so plan remediation with AD owners.",
+        "Hunt for related techniques (DCSync, LSASS dumping, lateral movement) and reset exposed credentials once access is eradicated."
+      ],
+      "severity_rationale": "High fits because remote access to this pipe is uncommon outside normal DPAPI flows and its abuse exposes secrets for the entire domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Domain admin account from a workstation opens the protected_storage pipe over IPC$ on a DC, consistent with backup key extraction.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserName": "adm-jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50122",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "protected_storage",
+          "AccessMask": "0x3",
+          "AccessList": "%%4416 %%4417"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal SMB access to IPC$ for the lsarpc pipe; RelativeTargetName does not equal protected_storage.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x4B1C09",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.88",
+          "IpPort": "51344",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "lsarpc",
+          "AccessMask": "0x3",
+          "AccessList": "%%4416 %%4417"
+        }
+      },
+      {
+        "description": "File share access to SYSVOL for a group policy file; ShareName lacks IPC and target differs.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x4C2210",
+          "ObjectType": "File",
+          "IpAddress": "198.51.100.20",
+          "IpPort": "49821",
+          "ShareName": "\\\\*\\SYSVOL",
+          "ShareLocalPath": "\\??\\C:\\Windows\\SYSVOL\\sysvol",
+          "RelativeTargetName": "andes.example.com\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\gpt.ini",
+          "AccessMask": "0x120089",
+          "AccessList": "%%1538 %%1541 %%4416"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

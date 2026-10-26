@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "53b1b378-9b06-4992-b972-dde6e423d2b4",
+    "title": "Credentials In Files",
+    "level": "high",
+    "status": "test",
+    "author": "Igor Fits, Mikhail Larin, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_find_cred_in_files.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_find_cred_in_files.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en macOS ejecutó grep buscando la cadena \"password\" o invocó la herramienta LaZagne. Esto puede indicar un intento de extraer credenciales guardadas en archivos o aplicaciones del endpoint.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde Image termina en /grep y CommandLine contiene \"password\", o donde CommandLine contiene \"laZagne\" con cualquier binario (por ejemplo python3 laZagne.py).",
+      "why_it_matters": "Corresponde a ATT&CK T1552.001 (Credentials In Files): el atacante busca contraseñas en texto claro dentro de scripts, configuraciones o historiales. LaZagne es una herramienta open source que recupera credenciales almacenadas por navegadores y otras aplicaciones locales.",
+      "triage_steps": [
+        "Revise CommandLine completo: rutas buscadas (home, /etc, repositorios), opciones recursivas (-r, -R) y si incluye laZagne con módulos como \"all\".",
+        "Identifique el usuario y ParentImage: una shell interactiva, un script, un agente remoto (sshd) o un proceso inusual cambian mucho la interpretación.",
+        "Si aparece laZagne, ubique el archivo en disco, calcule su hash y confirme su origen (descarga reciente, carpeta /tmp o Downloads).",
+        "Pivote en el mismo host +/- 15 minutos: procesos hijos, conexiones de red salientes, compresión o copia de archivos de resultados.",
+        "Busque redirecciones de salida (> archivo, | curl, | nc) que indiquen recopilación o exfiltración de lo encontrado.",
+        "Revise alertas previas del mismo usuario y host, y si el inicio de sesión vino de una IP o horario atípicos.",
+        "Consulte con el usuario o su responsable si la actividad corresponde a una tarea legítima documentada."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores que buscan con grep referencias a \"password\" en código o configuraciones para auditar secretos expuestos.",
+        "Pruebas de seguridad autorizadas o ejercicios de red team que usan LaZagne o pruebas de Atomic Red Team.",
+        "Scripts de cumplimiento o escaneo de secretos que invocan grep con ese patrón."
+      ],
+      "response_steps": [
+        "Verifique con el usuario y el equipo de seguridad si existe una prueba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint de la red con el EDR y preserve los archivos de salida y el binario o script para análisis.",
+        "Rote las contraseñas de las cuentas y servicios cuyas credenciales pudieron quedar expuestas en los archivos buscados o en el llavero local.",
+        "Elimine la herramienta y cualquier persistencia encontrada, y retire credenciales en texto claro de scripts y configuraciones.",
+        "Restaure el equipo a operación normal y monitoree uso anómalo de las credenciales rotadas."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque la búsqueda de contraseñas o el uso de LaZagne apuntan directamente al robo de credenciales, con pocas causas legítimas habituales."
+    },
+    "en": {
+      "summary": "A macOS process ran grep searching for \"password\" or invoked the LaZagne tool. This may indicate an attempt to harvest credentials stored in files or applications on the endpoint.",
+      "what_it_detects": "macOS process creation events where Image ends with /grep and CommandLine contains \"password\", or where CommandLine contains \"laZagne\" with any binary (for example python3 laZagne.py).",
+      "why_it_matters": "Maps to ATT&CK T1552.001 (Credentials In Files): attackers search scripts, configs and histories for plaintext passwords. LaZagne is an open-source tool that recovers credentials stored by browsers and other local applications.",
+      "triage_steps": [
+        "Read the full CommandLine: paths searched (home, /etc, repositories), recursive flags (-r, -R), and whether laZagne runs modules such as \"all\".",
+        "Identify the user and ParentImage: an interactive shell, a script, a remote session (sshd) or an unusual parent changes the interpretation.",
+        "If laZagne appears, locate the file on disk, hash it and confirm its origin (recent download, /tmp or Downloads).",
+        "Pivot on the same host +/- 15 minutes: child processes, outbound connections, archiving or copying of result files.",
+        "Look for output redirection (> file, | curl, | nc) suggesting collection or exfiltration of findings.",
+        "Check earlier alerts for the same user and host, and whether the login came from an unusual IP or time.",
+        "Ask the user or their manager whether the activity matches a documented legitimate task."
+      ],
+      "false_positives": [
+        "Administrators or developers grepping code or configs for \"password\" to audit exposed secrets.",
+        "Authorized penetration tests, red team exercises or Atomic Red Team tests using LaZagne.",
+        "Compliance or secret-scanning scripts that call grep with this pattern."
+      ],
+      "response_steps": [
+        "Confirm with the user and security team whether an authorized test is in progress before acting.",
+        "If unauthorized, isolate the endpoint via EDR and preserve output files and the tool or script for analysis.",
+        "Rotate passwords for accounts and services whose credentials may be exposed in searched files or the local keychain.",
+        "Remove the tool and any persistence found, and clean plaintext credentials from scripts and configs.",
+        "Return the host to service and monitor for anomalous use of the rotated credentials."
+      ],
+      "severity_rationale": "High fits because searching for passwords or running LaZagne points directly at credential theft, with few common legitimate causes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "grep recursively searching a user's home for the string password",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -ri password /Users/jperez",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4821,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "LaZagne executed via python3 to dump all stored credentials",
+        "event": {
+          "Image": "/usr/bin/python3",
+          "CommandLine": "python3 /tmp/laZagne.py all -oN -output /tmp/out",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 5133,
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "grep used legitimately to search logs for errors, no password string",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -i error /var/log/system.log",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4902,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "cat reading a password policy document; contains password but the image is not grep",
+        "event": {
+          "Image": "/bin/cat",
+          "CommandLine": "cat /Users/jperez/Documents/password_policy.txt",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4950,
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

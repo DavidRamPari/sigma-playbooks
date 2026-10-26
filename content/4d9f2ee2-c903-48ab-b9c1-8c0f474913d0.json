@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "4d9f2ee2-c903-48ab-b9c1-8c0f474913d0",
+    "title": "Google Cloud Storage Buckets Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_bucket_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_bucket_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó o eliminó un bucket de Google Cloud Storage. Hay que confirmar si el cambio fue autorizado y si afecta la disponibilidad, la retención o la exposición de los datos.",
+      "what_it_detects": "Eventos de GCP Audit Logs cuyo gcp.audit.method_name es storage.buckets.delete, storage.buckets.insert, storage.buckets.update o storage.buckets.patch. Abarca la eliminación, la creación y los cambios de configuración de buckets.",
+      "why_it_matters": "Corresponde a la táctica Impact de ATT&CK. Un atacante puede borrar buckets para destruir datos o respaldos. También puede quitar retención o versionado, agregar reglas de lifecycle destructivas o cambiar ACL para exponer datos.",
+      "triage_steps": [
+        "Identifique el método exacto en gcp.audit.method_name, el bucket en resource_name y el proyecto. Un delete o un patch sobre buckets de respaldo o producción tiene prioridad.",
+        "Revise el principal (principal_email): ¿es un usuario conocido, una service account de CI/CD o una cuenta nueva o poco usada?",
+        "Examine la IP de origen y el user agent: ¿coinciden con la consola, gcloud o Terraform que usa su equipo, o vienen de una red o ASN desconocidos?",
+        "En los campos request de un update o patch, verifique qué se cambió: ACL, retentionPolicy, versioning, lifecycle, logging o iamConfiguration.",
+        "Busque otros eventos del mismo principal en +/- 15 minutos: storage.objects.delete masivo, setIamPolicy, creación de llaves de service account o desactivación de logging.",
+        "Compare con tickets de cambio, despliegues de IaC y alertas previas sobre la misma identidad o el mismo proyecto."
+      ],
+      "false_positives": [
+        "Administradores que gestionan buckets desde la consola o con gcloud como parte de su trabajo normal.",
+        "Pipelines de Terraform, Deployment Manager o CI/CD que crean o actualizan buckets durante los despliegues.",
+        "Entornos efímeros de pruebas que crean y borran buckets automáticamente.",
+        "Herramientas de backup o de gestión de datos que ajustan lifecycle o retención."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del proyecto o el titular de la identidad si el cambio fue legítimo antes de actuar.",
+        "Si no fue autorizado, suspenda la cuenta o revoque las llaves de la service account y cierre las sesiones activas.",
+        "Revierta los cambios de configuración (ACL, retención, versionado, lifecycle) y restaure los datos desde versiones, Object Versioning o respaldos.",
+        "Revise la actividad completa del principal en todos los proyectos para encontrar persistencia o más cambios.",
+        "Si el comportamiento es conocido y recurrente, documente una exclusión acotada por principal y proyecto."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque estos cambios son frecuentes en la administración normal, pero un borrado o una reconfiguración maliciosa puede causar pérdida o exposición de datos."
+    },
+    "en": {
+      "summary": "An identity created, modified or deleted a Google Cloud Storage bucket. Confirm the change was authorized and whether it affects data availability, retention or exposure.",
+      "what_it_detects": "GCP Audit Log events where gcp.audit.method_name is storage.buckets.delete, storage.buckets.insert, storage.buckets.update or storage.buckets.patch. That covers bucket deletion, creation and configuration changes.",
+      "why_it_matters": "This falls under the ATT&CK Impact tactic. An attacker can delete buckets to destroy data or backups. They can also remove retention or versioning, add destructive lifecycle rules, or change ACLs to expose data.",
+      "triage_steps": [
+        "Note the exact method in gcp.audit.method_name, the bucket in resource_name and the project. Deletes or patches on backup or production buckets come first.",
+        "Review the principal (principal_email): is it a known admin, a CI/CD service account, or a new or rarely used identity?",
+        "Check the source IP and user agent: do they match the console, gcloud or Terraform your team uses, or an unfamiliar network?",
+        "For update or patch events, inspect the request fields to see what changed: ACL, retentionPolicy, versioning, lifecycle, logging or iamConfiguration.",
+        "Look for other activity by the same principal within +/- 15 minutes: bulk storage.objects.delete, setIamPolicy, service account key creation or logging changes.",
+        "Match against change tickets, IaC deployments and earlier alerts for the same identity or project."
+      ],
+      "false_positives": [
+        "Administrators managing buckets through the console or gcloud as part of normal work.",
+        "Terraform, Deployment Manager or CI/CD pipelines that create or update buckets during deployments.",
+        "Ephemeral test environments that create and delete buckets automatically.",
+        "Backup or data-management tools that adjust lifecycle or retention settings."
+      ],
+      "response_steps": [
+        "Before acting, ask the project owner or the identity's owner to confirm whether the change was legitimate.",
+        "If it was unauthorized, disable the account or revoke the service account keys and end active sessions.",
+        "Revert the configuration changes (ACL, retention, versioning, lifecycle) and restore data from object versions or backups.",
+        "Review all of the principal's activity across projects for persistence or further changes.",
+        "If the behavior is known and recurring, document a narrow exclusion scoped by principal and project."
+      ],
+      "severity_rationale": "Medium fits because these changes are common in normal administration, but a malicious delete or reconfiguration can lead to data loss or exposure."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unfamiliar user deletes a backup bucket with gcloud from an external IP",
+        "event": {
+          "@timestamp": "2024-05-14T03:12:45Z",
+          "gcp.audit.method_name": "storage.buckets.delete",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-prod-backups",
+          "gcp.audit.status.code": 0,
+          "source.ip": "203.0.113.47",
+          "user_agent.original": "google-cloud-sdk gcloud/470.0.0 command/gcloud.storage.buckets.delete",
+          "cloud.project.id": "andes-prod-01"
+        }
+      },
+      {
+        "description": "A service account patches a bucket configuration (versioning disabled)",
+        "event": {
+          "@timestamp": "2024-05-14T03:10:02Z",
+          "gcp.audit.method_name": "storage.buckets.patch",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.principal_email": "ci-deployer@andes-prod-01.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-prod-backups",
+          "gcp.audit.status.code": 0,
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "Terraform/1.7.5 terraform-provider-google/5.20.0",
+          "cloud.project.id": "andes-prod-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only bucket metadata lookup, which the rule does not cover",
+        "event": {
+          "@timestamp": "2024-05-14T09:01:11Z",
+          "gcp.audit.method_name": "storage.buckets.get",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.principal_email": "mrodriguez@example.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-prod-backups",
+          "gcp.audit.status.code": 0,
+          "source.ip": "192.0.2.15",
+          "user_agent.original": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0",
+          "cloud.project.id": "andes-prod-01"
+        }
+      },
+      {
+        "description": "Object deletion inside a bucket (storage.objects.delete), not a bucket-level change",
+        "event": {
+          "@timestamp": "2024-05-14T09:05:40Z",
+          "gcp.audit.method_name": "storage.objects.delete",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.principal_email": "etl-runner@andes-prod-01.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-etl-staging/objects/tmp/batch-0001.csv",
+          "gcp.audit.status.code": 0,
+          "source.ip": "198.51.100.40",
+          "user_agent.original": "gcloud-python/2.16.0",
+          "cloud.project.id": "andes-prod-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

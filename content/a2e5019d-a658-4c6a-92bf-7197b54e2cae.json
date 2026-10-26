@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "a2e5019d-a658-4c6a-92bf-7197b54e2cae",
+    "title": "PowerShell Scripts Installed as Services",
+    "level": "high",
+    "status": "test",
+    "author": "oscd.community, Natalia Shornikova",
+    "path": "windows/builtin/system/service_control_manager/win_system_powershell_script_installed_as_service.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_powershell_script_installed_as_service.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un nuevo servicio de Windows (evento 7045 del Service Control Manager) cuyo ImagePath invoca PowerShell (powershell o pwsh). Puede ser persistencia o ejecución remota de un atacante.",
+      "what_it_detects": "Eventos 7045 del registro System con Provider_Name 'Service Control Manager' en los que el campo ImagePath contiene 'powershell' o 'pwsh', es decir, un servicio recién creado que ejecuta un comando o script de PowerShell.",
+      "why_it_matters": "Crear servicios es una vía habitual para ejecutar código como SYSTEM, moverse lateralmente (PsExec, herramientas de post-explotación) y persistir (ATT&CK T1569.002, ejecución mediante servicios). Rara vez un servicio legítimo apunta directamente a PowerShell.",
+      "triage_steps": [
+        "Revise ImagePath completo: busque -enc/-EncodedCommand, -w hidden, -nop, IEX, DownloadString, FromBase64String o rutas en Temp, ProgramData o carpetas de usuario.",
+        "Decodifique cualquier payload en base64 y extraiga URLs, IPs y nombres de archivo para buscarlos en proxy, DNS y EDR.",
+        "Anote ServiceName, ServiceType, StartType y AccountName; los nombres aleatorios y el inicio por demanda con LocalSystem son típicos de ejecución remota.",
+        "Correlacione en el mismo host +/- 15 minutos: inicios de sesión 4624 tipo 3, eventos 4697, acceso a ADMIN$/IPC$ (5140/5145) e IP de origen.",
+        "Revise en el EDR los procesos hijos de services.exe que ejecuten powershell.exe o pwsh.exe y sus conexiones de red.",
+        "Busque el mismo ImagePath o ServiceName en otros hosts y alertas previas para la cuenta y la IP de origen.",
+        "Confirme con el equipo de TI si existe un cambio aprobado o una herramienta de administración que explique el servicio."
+      ],
+      "false_positives": [
+        "Herramientas de despliegue o administración (SCCM, RMM, scripts de TI) que crean servicios temporales con PowerShell; validar contra cambios aprobados.",
+        "Agentes de terceros o soluciones de monitoreo que registran wrappers de PowerShell como servicio.",
+        "Pruebas de red team o pentesting autorizadas."
+      ],
+      "response_steps": [
+        "Si el comando es malicioso o no se explica, aísle el endpoint en el EDR y preserve los eventos System y Security.",
+        "Deshabilite el servicio y, tras documentarlo, elimínelo; detenga procesos PowerShell asociados.",
+        "Restablezca las credenciales de la cuenta usada para la instalación remota y revise su actividad en otros hosts.",
+        "Bloquee los indicadores extraídos (dominios, IPs, hashes) y busque el mismo servicio en todo el entorno.",
+        "Restaure el host desde una imagen confiable si hubo ejecución confirmada como SYSTEM."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque un servicio que ejecuta PowerShell otorga ejecución como SYSTEM y es poco común en uso legítimo."
+    },
+    "en": {
+      "summary": "A new Windows service was installed (Service Control Manager event 7045) whose ImagePath launches PowerShell (powershell or pwsh). This may be attacker persistence or remote execution.",
+      "what_it_detects": "System log event 7045 from Provider_Name 'Service Control Manager' where ImagePath contains 'powershell' or 'pwsh', meaning a newly created service runs a PowerShell command or script.",
+      "why_it_matters": "Service creation is a common way to run code as SYSTEM, move laterally (PsExec-style tools, post-exploitation frameworks) and persist (ATT&CK T1569.002, Service Execution). Legitimate services rarely point straight at PowerShell.",
+      "triage_steps": [
+        "Read the full ImagePath: look for -enc/-EncodedCommand, -w hidden, -nop, IEX, DownloadString, FromBase64String, or paths in Temp, ProgramData or user folders.",
+        "Decode any base64 payload and extract URLs, IPs and file names; search them in proxy, DNS and EDR data.",
+        "Note ServiceName, ServiceType, StartType and AccountName; random names with demand start under LocalSystem typify remote execution.",
+        "Correlate on the same host +/- 15 minutes: 4624 type 3 logons, 4697 events, ADMIN$/IPC$ share access (5140/5145) and the source IP.",
+        "In EDR, review powershell.exe or pwsh.exe children of services.exe and their network connections.",
+        "Hunt for the same ImagePath or ServiceName on other hosts and earlier alerts for the account and source IP.",
+        "Confirm with IT whether an approved change or admin tool explains the service."
+      ],
+      "false_positives": [
+        "Deployment or admin tools (SCCM, RMM, IT scripts) creating temporary PowerShell services; validate against approved changes.",
+        "Third-party agents or monitoring products that register PowerShell wrappers as services.",
+        "Authorized red team or penetration testing."
+      ],
+      "response_steps": [
+        "If the command is malicious or unexplained, isolate the endpoint via EDR and preserve System and Security logs.",
+        "Disable the service and, after documenting it, delete it; stop related PowerShell processes.",
+        "Reset credentials of the account used for remote installation and review its activity on other hosts.",
+        "Block extracted indicators (domains, IPs, hashes) and hunt for the same service across the estate.",
+        "Reimage the host from a trusted baseline if SYSTEM-level execution is confirmed."
+      ],
+      "severity_rationale": "High fits because a PowerShell-backed service yields SYSTEM-level execution and is uncommon in legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote-execution style service with hidden encoded PowerShell command",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "xKq7TzP",
+          "ImagePath": "%COMSPEC% /b /c start /b /min powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Auto-start service running a PowerShell 7 script from ProgramData",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ServiceName": "UpdaterSvc",
+          "ImagePath": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -ExecutionPolicy Bypass -File C:\\ProgramData\\upd\\run.ps1",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service install with a normal executable ImagePath",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "Google Update Service (gupdate)",
+          "ImagePath": "\"C:\\Program Files (x86)\\Google\\Update\\GoogleUpdate.exe\" /svc",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service state change event 7036 mentioning PowerShell in the name, not a service install",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7036,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "param1": "Windows PowerShell Remoting Helper",
+          "param2": "running"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

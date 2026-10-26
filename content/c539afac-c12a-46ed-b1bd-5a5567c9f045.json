@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "c539afac-c12a-46ed-b1bd-5a5567c9f045",
+    "title": "Potential Remote PowerShell Session Initiated",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/network_connection/net_connection_win_susp_remote_powershell_session.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/network_connection/net_connection_win_susp_remote_powershell_session.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.006",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso inició una conexión saliente IPv4 hacia los puertos WinRM 5985 (HTTP) o 5986 (HTTPS) con una cuenta distinta de Network Service. Esto puede indicar una sesión remota de PowerShell hacia otro equipo.",
+      "what_it_detects": "Eventos de conexión de red de Windows (por ejemplo, Sysmon Event ID 3) con Initiated=true, SourceIsIpv6=false y DestinationPort 5985 o 5986. Se excluyen las cuentas Network Service en varios idiomas, el tráfico de loopback (127.0.0.1/::1) y AvastSvc.exe.",
+      "why_it_matters": "WinRM permite ejecutar comandos de PowerShell en equipos remotos (T1059.001) y es una vía habitual de movimiento lateral mediante servicios remotos (T1021.006). Un atacante con credenciales válidas puede usarla para ejecutar código en otros hosts sin dejar binarios nuevos.",
+      "triage_steps": [
+        "Identifique Image, User, SourceIp y DestinationIp. Confirme si el usuario y el host de origen pertenecen a administradores o servidores de gestión autorizados.",
+        "Revise el proceso padre y la línea de comandos de Image en la creación de procesos (Event ID 1/4688). Busque Invoke-Command, Enter-PSSession, New-PSSession o código codificado.",
+        "Determine si el proceso de origen es inusual para WinRM, por ejemplo Office, navegadores, rundll32 o binarios en carpetas de usuario o Temp.",
+        "En el host destino, busque procesos wsmprovhost.exe y eventos 4624 de tipo de inicio de sesión 3 del mismo usuario en un rango de +/- 15 minutos.",
+        "Revise los logs de PowerShell (4103/4104) y Microsoft-Windows-WinRM/Operational en origen y destino para ver los comandos ejecutados.",
+        "Compruebe si el mismo usuario o SourceIp se conectó a varios hosts por 5985/5986 en poco tiempo, lo que sugiere movimiento lateral.",
+        "Consulte alertas previas del usuario y de ambos hosts, como volcado de credenciales o inicios de sesión anómalos."
+      ],
+      "false_positives": [
+        "Administración remota legítima con PowerShell Remoting por parte de administradores o herramientas de gestión de configuración.",
+        "Herramientas de monitoreo, inventario o backup que usan WinRM con cuentas de servicio dedicadas.",
+        "Cuenta Network Service con un nombre localizado que el filtro no cubre."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la cuenta o el equipo de TI si la sesión fue autorizada antes de actuar.",
+        "Si no está autorizada, aísle el host de origen y, de ser necesario, el destino mediante el EDR.",
+        "Deshabilite o restablezca las credenciales del usuario involucrado y revoque sus sesiones activas.",
+        "Elimine la persistencia o los artefactos identificados en los hosts afectados tras recolectar evidencia.",
+        "Restrinja WinRM a hosts de administración autorizados mediante firewall o GPO y documente las excepciones legítimas."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque WinRM iniciado por una cuenta de usuario es una técnica directa de ejecución remota y movimiento lateral, aunque el uso administrativo legítimo es común."
+    },
+    "en": {
+      "summary": "A process opened an outbound IPv4 connection to WinRM port 5985 (HTTP) or 5986 (HTTPS) under an account other than Network Service. This may be a remote PowerShell session to another host.",
+      "what_it_detects": "Windows network connection events (for example Sysmon Event ID 3) with Initiated=true, SourceIsIpv6=false and DestinationPort 5985 or 5986. Localized Network Service accounts, loopback traffic (127.0.0.1/::1) and AvastSvc.exe are excluded.",
+      "why_it_matters": "WinRM lets PowerShell run commands on remote hosts (T1059.001) and is a common lateral movement path via remote services (T1021.006). An attacker with valid credentials can execute code elsewhere without dropping new binaries.",
+      "triage_steps": [
+        "Note Image, User, SourceIp and DestinationIp. Confirm whether the user and source host belong to authorized admins or management servers.",
+        "Check the parent process and command line of Image in process creation logs (Event ID 1/4688). Look for Invoke-Command, Enter-PSSession, New-PSSession or encoded commands.",
+        "Flag unusual source processes for WinRM, such as Office apps, browsers, rundll32 or binaries in user or Temp folders.",
+        "On the destination host, look for wsmprovhost.exe and 4624 logon type 3 events for the same user within +/- 15 minutes.",
+        "Review PowerShell logs (4103/4104) and Microsoft-Windows-WinRM/Operational on both hosts to see executed commands.",
+        "Check whether the same user or SourceIp reached several hosts over 5985/5986 in a short window, suggesting lateral movement.",
+        "Search earlier alerts for the user and both hosts, such as credential dumping or anomalous logons."
+      ],
+      "false_positives": [
+        "Legitimate remote administration with PowerShell Remoting by admins or configuration management tools.",
+        "Monitoring, inventory or backup tools using WinRM with dedicated service accounts.",
+        "A Network Service account with a localized name not covered by the filter."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or IT whether the session was authorized before acting.",
+        "If unauthorized, isolate the source host, and the destination if needed, through EDR.",
+        "Disable or reset the involved user's credentials and revoke active sessions.",
+        "After collecting evidence, remove any persistence or artifacts found on affected hosts.",
+        "Restrict WinRM to authorized admin hosts via firewall or GPO and document legitimate exceptions."
+      ],
+      "severity_rationale": "High fits because user-initiated WinRM is a direct remote execution and lateral movement technique, even though legitimate admin use is common."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "powershell.exe run by a domain user opens a WinRM HTTP connection to another workstation",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\jperez",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIsIpv6": "false",
+          "SourceIp": "192.0.2.15",
+          "SourcePort": 51544,
+          "DestinationIp": "192.0.2.40",
+          "DestinationPort": 5985,
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Unusual binary in a user Temp folder connects to WinRM HTTPS on a server",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\svc_update.exe",
+          "User": "ANDES\\mrojas",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIsIpv6": "false",
+          "SourceIp": "198.51.100.22",
+          "SourcePort": 49812,
+          "DestinationIp": "198.51.100.10",
+          "DestinationPort": 5986,
+          "Computer": "WS-0207.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WinRM connection initiated by the Network Service account, excluded by filter_main_service_users",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIsIpv6": "false",
+          "SourceIp": "192.0.2.15",
+          "SourcePort": 52010,
+          "DestinationIp": "192.0.2.40",
+          "DestinationPort": 5985,
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Avast service connecting to port 5985, excluded by filter_optional_avast",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Program Files\\Avast Software\\Avast\\AvastSvc.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIsIpv6": "false",
+          "SourceIp": "192.0.2.15",
+          "SourcePort": 52233,
+          "DestinationIp": "192.0.2.41",
+          "DestinationPort": 5985,
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

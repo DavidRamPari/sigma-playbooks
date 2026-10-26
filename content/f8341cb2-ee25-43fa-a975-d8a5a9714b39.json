@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "f8341cb2-ee25-43fa-a975-d8a5a9714b39",
+    "title": "BPFtrace Unsafe Option Usage",
+    "level": "medium",
+    "status": "test",
+    "author": "Andreas Hunkeler (@Karneades)",
+    "path": "linux/process_creation/proc_creation_lnx_bpftrace_unsafe_option_usage.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_bpftrace_unsafe_option_usage.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó bpftrace con la opción --unsafe en un host Linux. Esta opción habilita funciones como system(), que permiten ejecutar comandos desde un programa de trazado del kernel.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en 'bpftrace' y CommandLine contiene '--unsafe'.",
+      "why_it_matters": "bpftrace corre con privilegios de root y, con --unsafe, puede ejecutar comandos de shell (system()), enviar señales o alterar el comportamiento de procesos. Un atacante puede usarlo para ejecución (T1059.004, Unix Shell), persistencia sigilosa o espionaje de datos de otros procesos.",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique el script inline (-e) o el archivo .bt usado y busque llamadas a system(), signal(), override() o cat().",
+        "Si se usó un archivo .bt, obtenga su contenido, hash, propietario y fecha de modificación en el host.",
+        "Identifique el usuario que lo ejecutó y cómo obtuvo root: revise registros de sudo y sesiones SSH en el mismo host +/- 15 minutos.",
+        "Analice ParentImage y la cadena de procesos padre: una shell interactiva de un administrador es distinta de un cron, servicio web o script desconocido.",
+        "Busque procesos hijos de bpftrace (sh, bash, curl, nc, python) que indiquen ejecución de comandos vía system().",
+        "Valide si el host es un servidor de desarrollo o diagnóstico donde bpftrace se usa habitualmente y si existe un ticket de cambio asociado.",
+        "Consulte alertas previas para el mismo host y usuario, y verifique si bpftrace fue instalado recientemente."
+      ],
+      "false_positives": [
+        "Uso legítimo de --unsafe por ingenieros de rendimiento o SRE durante diagnósticos, por ejemplo scripts que invocan system() para capturar estado adicional.",
+        "Herramientas de observabilidad o pruebas automatizadas que ejecutan scripts bpftrace con --unsafe en entornos de laboratorio o CI."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del host si la ejecución fue autorizada y documentada.",
+        "Si no está autorizada, termine el proceso bpftrace y conserve el script, el historial de shell y la salida generada como evidencia.",
+        "Aísle el host de la red si hay evidencia de comandos ejecutados por system() o actividad posterior sospechosa.",
+        "Revise credenciales y accesos sudo del usuario implicado; rote credenciales comprometidas.",
+        "Busque persistencia (cron, unidades systemd, claves SSH) y restrinja el uso de bpftrace a administradores autorizados."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque --unsafe permite ejecución arbitraria como root, pero también tiene usos legítimos de diagnóstico que requieren validación de contexto."
+    },
+    "en": {
+      "summary": "bpftrace was run with the --unsafe option on a Linux host. This option enables builtins such as system() that let a kernel tracing program execute commands.",
+      "what_it_detects": "Linux process creation events where Image ends with 'bpftrace' and CommandLine contains '--unsafe'.",
+      "why_it_matters": "bpftrace runs as root and, with --unsafe, can run shell commands (system()), send signals or alter process behavior. Attackers can abuse it for execution (T1059.004, Unix Shell), stealthy persistence or snooping on other processes.",
+      "triage_steps": [
+        "Review the full CommandLine: identify the inline program (-e) or the .bt file and look for system(), signal(), override() or cat() calls.",
+        "If a .bt file was used, collect its contents, hash, owner and modification time from the host.",
+        "Identify the executing user and how root was obtained: check sudo logs and SSH sessions on the same host within +/- 15 minutes.",
+        "Examine ParentImage and the parent chain: an admin's interactive shell differs from cron, a web service or an unknown script.",
+        "Look for child processes of bpftrace (sh, bash, curl, nc, python) indicating command execution through system().",
+        "Check whether the host is a development or diagnostics server where bpftrace is routinely used, and whether a change ticket exists.",
+        "Review earlier alerts for the same host and user, and check whether bpftrace was recently installed."
+      ],
+      "false_positives": [
+        "Legitimate --unsafe use by performance engineers or SREs during troubleshooting, such as scripts calling system() to capture extra state.",
+        "Observability tooling or automated tests running bpftrace scripts with --unsafe in lab or CI environments."
+      ],
+      "response_steps": [
+        "Confirm with the user or host owner whether the run was authorized and documented.",
+        "If unauthorized, terminate the bpftrace process and preserve the script, shell history and output as evidence.",
+        "Isolate the host if system() executed commands or other suspicious follow-up activity is found.",
+        "Review the user's credentials and sudo rights; rotate any compromised credentials.",
+        "Hunt for persistence (cron, systemd units, SSH keys) and restrict bpftrace use to authorized administrators."
+      ],
+      "severity_rationale": "Medium fits because --unsafe allows arbitrary root execution, yet it also has legitimate diagnostic uses that require context validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "bpftrace run via sudo with --unsafe and an inline program calling system()",
+        "event": {
+          "Image": "/usr/bin/bpftrace",
+          "CommandLine": "bpftrace --unsafe -e 'tracepoint:syscalls:sys_enter_execve /comm == \"sshd\"/ { system(\"id\"); }'",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo bpftrace --unsafe -e 'tracepoint:syscalls:sys_enter_execve /comm == \"sshd\"/ { system(\"id\"); }'",
+          "User": "root",
+          "ProcessId": 48211,
+          "ParentProcessId": 48209,
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "bpftrace with --unsafe running a script file from a user's home directory",
+        "event": {
+          "Image": "/usr/local/bin/bpftrace",
+          "CommandLine": "/usr/local/bin/bpftrace --unsafe /home/jperez/trace_open.bt",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 30122,
+          "ParentProcessId": 30001,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "app-srv-07"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal bpftrace usage without the --unsafe option",
+        "event": {
+          "Image": "/usr/bin/bpftrace",
+          "CommandLine": "bpftrace -e 'tracepoint:syscalls:sys_enter_openat { @[comm] = count(); }'",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 51002,
+          "ParentProcessId": 50990,
+          "CurrentDirectory": "/root",
+          "Computer": "perf-lab-02"
+        }
+      },
+      {
+        "description": "grep searching bpftrace documentation for the --unsafe string; Image is not bpftrace",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -r -- --unsafe /usr/share/doc/bpftrace/",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 52310,
+          "ParentProcessId": 52300,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "perf-lab-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

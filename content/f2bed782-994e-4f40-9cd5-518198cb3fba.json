@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "f2bed782-994e-4f40-9cd5-518198cb3fba",
+    "title": "Linux Sudo Chroot Execution",
+    "level": "low",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawn Poudel (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_chroot_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_chroot_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó sudo con la opción de cambio de directorio raíz (--chroot o -R). Puede ser administración legítima o un intento de escalamiento de privilegios local como el descrito en CVE-2025-32463.",
+      "what_it_detects": "Procesos cuyo Image termina en /sudo y cuyo CommandLine contiene ' --chroot ' o 'sudo -R ', es decir, sudo ejecutando un comando dentro de un directorio raíz alternativo.",
+      "why_it_matters": "La opción chroot de sudo puede usarse para escalar privilegios (ATT&CK T1068, explotación para escalamiento). En CVE-2025-32463, un usuario sin privilegios prepara un directorio raíz falso con configuración NSS y una biblioteca propias, y sudo las carga como root.",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique el directorio raíz indicado y el comando ejecutado; nombres arbitrarios o rutas en /tmp, /dev/shm o el home del usuario son sospechosos.",
+        "Identifique el usuario que ejecutó sudo y confirme si tiene un rol administrativo y si usa chroot habitualmente.",
+        "Examine ParentImage y CurrentDirectory: un shell interactivo o un script en un directorio temporal es más sospechoso que una herramienta de build conocida.",
+        "Busque en el mismo host, +/- 15 minutos, la creación de etc/nsswitch.conf, archivos .so o compilaciones con gcc dentro de ese directorio.",
+        "Verifique los procesos hijos de sudo: un shell con UID 0 lanzado por un usuario sin privilegios indica explotación exitosa.",
+        "Compruebe la versión de sudo instalada y si el host tiene aplicado el parche para CVE-2025-32463.",
+        "Revise alertas previas del mismo usuario y host, y los registros de autenticación de sudo en /var/log/auth.log o journald."
+      ],
+      "false_positives": [
+        "Administradores o scripts que usan sudo --chroot para mantenimiento de sistemas, imágenes o entornos de recuperación.",
+        "Pipelines de build o pruebas que ejecutan comandos dentro de un rootfs de compilación o contenedor ligero."
+      ],
+      "response_steps": [
+        "Valide con el usuario o el responsable del sistema si la ejecución fue planificada y documentada.",
+        "Si no está justificada, aísle el host de la red y preserve el directorio chroot, los binarios y las bibliotecas creadas como evidencia.",
+        "Termine shells o procesos root iniciados por el usuario afectado, deshabilite temporalmente la cuenta y rote sus credenciales.",
+        "Actualice sudo a una versión parcheada en todos los hosts afectados y revise la persistencia creada con privilegios root.",
+        "Restaure desde una imagen confiable si se confirma compromiso a nivel root."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque sudo con chroot tiene usos administrativos legítimos; el contexto (rutas temporales, usuario sin privilegios, versión vulnerable) debe elevar la prioridad."
+    },
+    "en": {
+      "summary": "sudo was run with its change-root option (--chroot or -R). This may be legitimate administration or a local privilege escalation attempt such as CVE-2025-32463.",
+      "what_it_detects": "Processes whose Image ends with /sudo and whose CommandLine contains ' --chroot ' or 'sudo -R ', meaning sudo runs a command inside an alternate root directory.",
+      "why_it_matters": "sudo's chroot option can be abused for privilege escalation (ATT&CK T1068, exploitation for privilege escalation). In CVE-2025-32463 an unprivileged user stages a fake root with its own NSS configuration and library, which sudo loads as root.",
+      "triage_steps": [
+        "Read the full CommandLine: note the root directory and the command run; arbitrary names or paths under /tmp, /dev/shm or the user's home are suspicious.",
+        "Identify the user who ran sudo and confirm whether they hold an admin role and normally use chroot.",
+        "Check ParentImage and CurrentDirectory: an interactive shell or script in a temp directory is more suspicious than a known build tool.",
+        "On the same host within +/- 15 minutes, look for creation of etc/nsswitch.conf, .so files or gcc compilation inside that directory.",
+        "Inspect sudo's child processes: a UID 0 shell spawned by an unprivileged user indicates successful exploitation.",
+        "Check the installed sudo version and whether the host is patched for CVE-2025-32463.",
+        "Review earlier alerts for the same user and host, plus sudo entries in /var/log/auth.log or journald."
+      ],
+      "false_positives": [
+        "Administrators or scripts using sudo --chroot for system maintenance, image building or recovery environments.",
+        "Build or test pipelines that run commands inside a build rootfs or lightweight container."
+      ],
+      "response_steps": [
+        "Confirm with the user or system owner whether the execution was planned and documented.",
+        "If unjustified, isolate the host and preserve the chroot directory, created binaries and libraries as evidence.",
+        "Kill root shells or processes started by the user, temporarily disable the account and rotate its credentials.",
+        "Upgrade sudo to a patched version on all affected hosts and hunt for root-level persistence.",
+        "Rebuild from a trusted image if root compromise is confirmed."
+      ],
+      "severity_rationale": "Low fits because sudo chroot has legitimate admin uses; context such as temp paths, unprivileged users or a vulnerable sudo version should raise priority."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Exploit-style use: unprivileged user runs sudo -R with an attacker-staged root from a temp directory.",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo -R woot woot",
+          "User": "jperez",
+          "ParentImage": "/usr/bin/bash",
+          "CurrentDirectory": "/tmp/sudowoot.stage.Xa91",
+          "ProcessId": 48211,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Long-form --chroot option running a shell inside a custom root.",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo --chroot /srv/buildroot /bin/sh",
+          "User": "mrodriguez",
+          "ParentImage": "/usr/bin/bash",
+          "CurrentDirectory": "/home/mrodriguez",
+          "ProcessId": 50377,
+          "Computer": "build-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin uses the separate chroot binary through sudo, not the sudo chroot option.",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo chroot /srv/jail /bin/bash",
+          "User": "admin.ops",
+          "ParentImage": "/usr/bin/bash",
+          "CurrentDirectory": "/root",
+          "ProcessId": 31002,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Routine sudo privilege listing; no chroot option present.",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo -l",
+          "User": "jperez",
+          "ParentImage": "/usr/bin/bash",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 31544,
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

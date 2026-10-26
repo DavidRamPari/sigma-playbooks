@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "2f7979ae-f82b-45af-ac1d-2b10e93b0baa",
+    "title": "Potential DCOM InternetExplorer.Application DLL Hijack",
+    "level": "critical",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g, Open Threat Research (OTR), wagga",
+    "path": "windows/file/file_event/file_event_win_dcom_iertutil_dll_hijack.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_dcom_iertutil_dll_hijack.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002",
+      "T1021.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso System (PID 4) escribió un archivo iertutil.dll dentro de la carpeta de Internet Explorer. Esto suele indicar una copia remota por SMB que prepara un DLL hijack para movimiento lateral vía DCOM.",
+      "what_it_detects": "Eventos de creación de archivo cuyo Image es System y cuyo TargetFilename termina en \\Internet Explorer\\iertutil.dll. El proceso System registra las escrituras que llegan por SMB, por ejemplo a través de C$ o ADMIN$.",
+      "why_it_matters": "La DLL legítima iertutil.dll está en System32, no en la carpeta de Internet Explorer. Si un atacante deja una copia maliciosa junto a iexplore.exe y después instancia InternetExplorer.Application por DCOM remoto, iexplore.exe la carga y ejecuta su código. Corresponde a movimiento lateral con SMB/Admin Shares (T1021.002) y DCOM (T1021.003).",
+      "triage_steps": [
+        "Confirme en el evento el TargetFilename, el host, la hora y que Image sea System con ProcessId 4.",
+        "Obtenga el hash y la firma de la DLL escrita. Compárela con C:\\Windows\\System32\\iertutil.dll; si no tiene firma de Microsoft, es altamente sospechosa.",
+        "Busque eventos 4624 tipo 3 y 5140/5145 (acceso a C$ o ADMIN$) en +/- 15 minutos para identificar la IP de origen y la cuenta usada.",
+        "Busque iexplore.exe con -Embedding y con padre svchost.exe (DcomLaunch) poco después de la escritura, así como cargas de imagen (Sysmon 7) de esa DLL.",
+        "Revise las conexiones de red y los procesos hijos de iexplore.exe en ese host.",
+        "Pivotee por la IP de origen y la cuenta: otras escrituras remotas, alertas previas y actividad DCOM hacia otros hosts."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ejercicios autorizados de red team o pentest que reproduzcan esta técnica; valide contra el calendario aprobado.",
+        "Copias administrativas inusuales por recurso compartido, como un paquete de software mal construido; verifique la firma y quién lo autorizó."
+      ],
+      "response_steps": [
+        "Valide con el hash, la firma y la cuenta de origen si la actividad está autorizada antes de actuar.",
+        "Si no está autorizada, aísle el host destino y, si corresponde, también el host de origen.",
+        "Preserve la DLL y la memoria de iexplore.exe; después termine sus instancias y elimine la DLL maliciosa.",
+        "Deshabilite la cuenta usada o restablezca sus credenciales y revise dónde más se autenticó.",
+        "Busque el mismo hash y la misma ruta en todo el entorno y restrinja el acceso remoto a DCOM y a los recursos administrativos."
+      ],
+      "severity_rationale": "Es crítica porque una escritura remota de iertutil.dll en esa ruta casi no tiene usos legítimos y apunta directamente a ejecución de código con movimiento lateral."
+    },
+    "en": {
+      "summary": "The System process (PID 4) wrote iertutil.dll into the Internet Explorer folder. This usually means a remote SMB copy that stages a DLL hijack for DCOM lateral movement.",
+      "what_it_detects": "File creation events where Image is System and TargetFilename ends with \\Internet Explorer\\iertutil.dll. The System process records writes that arrive over SMB, for example through C$ or ADMIN$.",
+      "why_it_matters": "The legitimate iertutil.dll lives in System32, not in the Internet Explorer folder. If an attacker drops a malicious copy next to iexplore.exe and then starts InternetExplorer.Application through remote DCOM, iexplore.exe loads it and runs its code. This is lateral movement over SMB/Admin Shares (T1021.002) and DCOM (T1021.003).",
+      "triage_steps": [
+        "Check the event's TargetFilename, host and timestamp, and confirm Image is System with ProcessId 4.",
+        "Get the hash and signature of the dropped DLL and compare them with C:\\Windows\\System32\\iertutil.dll. A DLL without a Microsoft signature is highly suspicious.",
+        "Look for 4624 type 3 logons and 5140/5145 share access (C$ or ADMIN$) within +/- 15 minutes to find the source IP and account.",
+        "Look for iexplore.exe started with -Embedding under svchost.exe (DcomLaunch) shortly after the write, and for Sysmon 7 image loads of the DLL.",
+        "Review network connections and child processes of iexplore.exe on that host.",
+        "Pivot on the source IP and account: other remote file writes, earlier alerts and DCOM activity against other hosts."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Authorized red team or penetration tests that use this technique. Check them against the approved schedule.",
+        "Unusual admin copies over a file share, such as a badly built software package. Check the signature and who approved it."
+      ],
+      "response_steps": [
+        "Before acting, use the hash, signature and source account to check whether the activity was authorized.",
+        "If it was not authorized, isolate the target host, and the source host if needed.",
+        "Preserve the DLL and iexplore.exe memory. Then terminate those instances and remove the malicious DLL.",
+        "Disable the account or reset its credentials, and review where else it authenticated.",
+        "Hunt for the same hash and path across the environment. Restrict remote DCOM and admin share access."
+      ],
+      "severity_rationale": "Critical, because a remote write of iertutil.dll to this path has almost no legitimate use and points straight to code execution for lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Sysmon event 11: the System process writes iertutil.dll into the Internet Explorer folder after an SMB copy through C$.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "System",
+          "ProcessId": 4,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Program Files\\Internet Explorer\\iertutil.dll",
+          "CreationUtcTime": "2024-10-25 14:03:12.481"
+        }
+      },
+      {
+        "description": "The same SMB-staged write into the 32-bit Internet Explorer folder.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0188.andes.example.com",
+          "Image": "System",
+          "ProcessId": 4,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Program Files (x86)\\Internet Explorer\\iertutil.dll",
+          "CreationUtcTime": "2024-10-25 14:05:40.112"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The System process writes iertutil.dll to System32, its normal location. The path does not end with \\Internet Explorer\\iertutil.dll.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "System",
+          "ProcessId": 4,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Windows\\System32\\iertutil.dll",
+          "CreationUtcTime": "2024-10-25 09:12:03.020"
+        }
+      },
+      {
+        "description": "A local servicing process writes the file. The path matches, but Image is not System.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.4170_none_7e6f0a1b2c3d4e5f\\TiWorker.exe",
+          "ProcessId": 5120,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Program Files\\Internet Explorer\\iertutil.dll",
+          "CreationUtcTime": "2024-10-25 03:00:15.774"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

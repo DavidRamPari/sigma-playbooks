@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "0d933542-1f1f-420d-97d4-21b2c3c492d9",
+    "title": "Kubernetes Unauthorized or Unauthenticated Access",
+    "level": "low",
+    "status": "test",
+    "author": "kelnage",
+    "path": "application/kubernetes/audit/kubernetes_audit_unauthorized_unauthenticated_actions.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_unauthorized_unauthenticated_actions.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "El API server de Kubernetes rechazó una solicitud con código 401 (no autenticado) o 403 (prohibido). Puede ser un error de configuración o alguien probando credenciales obtenidas o los permisos de un token robado.",
+      "what_it_detects": "Eventos de auditoría de Kubernetes cuyo responseStatus.code es 401 o 403. El 401 suele indicar un token inválido o expirado. El 403 indica una identidad autenticada que no tiene permiso RBAC para el verbo y el recurso solicitados.",
+      "why_it_matters": "Cuando un atacante consigue un token de service account o un kubeconfig, suele enumerar qué puede hacer (secrets, pods/exec, rolebindings) y le aparecen errores 403. Los 401 repetidos pueden indicar tokens robados o vencidos. Encaja en la táctica de escalamiento de privilegios: intentos de obtener más acceso en el clúster.",
+      "triage_steps": [
+        "Revise responseStatus.code: un 401 apunta a un problema de autenticación (token inválido o expirado) y un 403 a una falta de permisos RBAC de una identidad válida.",
+        "Identifique user.username y user.groups. Si es system:serviceaccount:<ns>:<nombre>, ubique el pod que usa esa service account y su imagen.",
+        "Revise verb, objectRef.resource, objectRef.namespace y requestURI. Los intentos sobre secrets, pods/exec, clusterrolebindings o kube-system son más sospechosos.",
+        "Analice sourceIPs y userAgent: compare con las IP de nodos, de CI/CD o de administradores conocidos. curl, python-requests o kubectl desde un pod no son habituales.",
+        "Cuente los rechazos de la misma identidad o la misma IP en +/- 15 minutos. Muchos recursos distintos rechazados en poco tiempo sugieren enumeración de permisos.",
+        "Busque solicitudes exitosas (2xx) de la misma identidad o IP, sobre todo create, patch o exec, antes y después del rechazo.",
+        "Revise alertas anteriores de esa identidad, ese pod o esa IP, y los cambios recientes de RBAC o la rotación de tokens."
+      ],
+      "false_positives": [
+        "Una política RBAC mal configurada o incompleta después de un despliegue o de un cambio de Role o RoleBinding.",
+        "Un usuario válido que se equivoca de contexto, de namespace o de recurso al usar kubectl.",
+        "Tokens expirados o rotados que siguen usando controladores, operadores, pipelines de CI/CD o kubeconfigs antiguos.",
+        "Herramientas de monitoreo o escáneres de seguridad autorizados que comprueban permisos con kubectl auth can-i o con SelfSubjectAccessReview."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la identidad o de la carga de trabajo si la solicitud era esperada. Si fue un error, corrija el RBAC o el token y documente el caso.",
+        "Si es sospechoso, revoque o rote el token: borre el secret de la service account o invalide las credenciales del usuario y regenere el kubeconfig.",
+        "Aísle el pod de origen con una NetworkPolicy o bloquee la IP de origen. Conserve los logs y el estado del pod antes de eliminarlo.",
+        "Revise las acciones exitosas de esa identidad, elimine los bindings o recursos no autorizados y refuerce el principio de mínimo privilegio en el RBAC."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque los 401 y 403 son frecuentes por errores de configuración. Conviene escalarlo cuando hay volumen, recursos sensibles u orígenes inusuales."
+    },
+    "en": {
+      "summary": "The Kubernetes API server rejected a request with 401 (unauthenticated) or 403 (forbidden). It may be a misconfiguration, or someone testing obtained credentials or probing a stolen token's permissions.",
+      "what_it_detects": "Kubernetes audit events where responseStatus.code is 401 or 403. A 401 usually means an invalid or expired token. A 403 means an authenticated identity has no RBAC permission for the requested verb and resource.",
+      "why_it_matters": "Attackers who obtain a service account token or a kubeconfig usually enumerate what they can do (secrets, pods/exec, rolebindings), which produces 403s. Repeated 401s may point to stolen or expired tokens. This fits the privilege escalation tactic: attempts to gain more access in the cluster.",
+      "triage_steps": [
+        "Check responseStatus.code: a 401 points to an authentication problem (invalid or expired token), and a 403 to missing RBAC permissions for a valid identity.",
+        "Identify user.username and user.groups. If it is system:serviceaccount:<ns>:<name>, find the pod that uses that service account and its image.",
+        "Review verb, objectRef.resource, objectRef.namespace and requestURI. Attempts on secrets, pods/exec, clusterrolebindings or kube-system are more suspicious.",
+        "Check sourceIPs and userAgent against known node, CI/CD and admin addresses. curl, python-requests or kubectl running inside a pod are unusual.",
+        "Count rejections for the same identity or IP within +/- 15 minutes. Many different resources rejected in a short time suggest permission enumeration.",
+        "Look for successful (2xx) requests from the same identity or IP, especially create, patch or exec, before and after the rejection.",
+        "Review earlier alerts for that identity, pod or IP, plus recent RBAC changes or token rotations."
+      ],
+      "false_positives": [
+        "An RBAC policy that is misconfigured or incomplete after a deployment or a Role or RoleBinding change.",
+        "A valid user who uses the wrong kubectl context, namespace or resource by mistake.",
+        "Expired or rotated tokens still used by controllers, operators, CI/CD pipelines or old kubeconfigs.",
+        "Authorized monitoring tools or security scanners that check permissions with kubectl auth can-i or SelfSubjectAccessReview."
+      ],
+      "response_steps": [
+        "Confirm with the owner of the identity or workload whether the request was expected. If it was a mistake, fix the RBAC or the token and document the case.",
+        "If it is suspicious, revoke or rotate the token: delete the service account secret or invalidate the user's credentials and reissue the kubeconfig.",
+        "Isolate the source pod with a NetworkPolicy or block the source IP. Preserve logs and the pod's state before deleting it.",
+        "Review the identity's successful actions, remove unauthorized bindings or resources, and tighten RBAC to least privilege."
+      ],
+      "severity_rationale": "Low fits because 401 and 403 errors are common with misconfigurations. Escalate when you see high volume, sensitive resources or unusual sources."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service account token used from an unexpected IP is forbidden from listing secrets in kube-system (403).",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "requestURI": "/api/v1/namespaces/kube-system/secrets",
+          "user.username": "system:serviceaccount:default:web-frontend",
+          "user.groups": "system:serviceaccounts,system:serviceaccounts:default,system:authenticated",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "curl/8.5.0",
+          "objectRef.resource": "secrets",
+          "objectRef.namespace": "kube-system",
+          "responseStatus.code": 403,
+          "responseStatus.reason": "Forbidden"
+        }
+      },
+      {
+        "description": "Request with an invalid or expired bearer token is rejected as unauthenticated (401).",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseStarted",
+          "verb": "get",
+          "requestURI": "/api/v1/namespaces/default/pods",
+          "sourceIPs": "198.51.100.77",
+          "userAgent": "python-requests/2.31.0",
+          "responseStatus.code": 401,
+          "responseStatus.status": "Failure",
+          "responseStatus.message": "Unauthorized"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An authorized CI service account successfully lists pods in its own namespace (200).",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "requestURI": "/api/v1/namespaces/ci/pods",
+          "user.username": "system:serviceaccount:ci:deployer",
+          "user.groups": "system:serviceaccounts,system:serviceaccounts:ci,system:authenticated",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "ci",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "An admin requests a ConfigMap that does not exist and gets 404 Not Found, which is not an authorization failure.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "get",
+          "requestURI": "/api/v1/namespaces/payments/configmaps/app-settings",
+          "user.username": "jperez@example.com",
+          "user.groups": "platform-admins,system:authenticated",
+          "sourceIPs": "192.0.2.25",
+          "userAgent": "kubectl/v1.29.2 (darwin/arm64) kubernetes/4b8e819",
+          "objectRef.resource": "configmaps",
+          "objectRef.namespace": "payments",
+          "responseStatus.code": 404,
+          "responseStatus.reason": "NotFound"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

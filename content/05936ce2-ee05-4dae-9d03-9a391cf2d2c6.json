@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "05936ce2-ee05-4dae-9d03-9a391cf2d2c6",
+    "title": "WMI Persistence - Command Line Event Consumer",
+    "level": "high",
+    "status": "test",
+    "author": "Thomas Patzke",
+    "path": "windows/image_load/image_load_wmi_persistence_commandline_event_consumer.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_wmi_persistence_commandline_event_consumer.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso WMI Provider Host (WmiPrvSE.exe) cargó wbemcons.dll, la biblioteca de los consumidores de eventos estándar de WMI, entre ellos CommandLineEventConsumer. Esto suele indicar que se disparó una suscripción WMI permanente que ejecuta un comando.",
+      "what_it_detects": "Eventos de carga de imagen (por ejemplo, Sysmon Event ID 7) en los que Image es exactamente C:\\Windows\\System32\\wbem\\WmiPrvSE.exe e ImageLoaded termina en \\wbemcons.dll.",
+      "why_it_matters": "Las suscripciones de eventos WMI (ATT&CK T1546.003) permiten persistencia sin archivos y ejecución como SYSTEM: un filtro de eventos se vincula a un consumidor que lanza un comando cada vez que ocurre el evento, incluso después de reiniciar.",
+      "triage_steps": [
+        "Confirmar el host, la hora y el ProcessId de WmiPrvSE.exe en la alerta; verificar que ImageLoaded sea C:\\Windows\\System32\\wbem\\wbemcons.dll y que esté firmado por Microsoft.",
+        "Enumerar suscripciones: Get-CimInstance -Namespace root\\subscription para las clases CommandLineEventConsumer, __EventFilter y __FilterToConsumerBinding. Registrar CommandLineTemplate y ExecutablePath.",
+        "Revisar los procesos hijos de WmiPrvSE.exe en el mismo host dentro de +/- 15 minutos y analizar su CommandLine, hashes y conexiones de red.",
+        "Buscar eventos Sysmon 19, 20 y 21 (WmiEvent) y Microsoft-Windows-WMI-Activity/Operational 5861 para identificar quién creó la suscripción y cuándo.",
+        "Determinar si la suscripción se creó en remoto: revisar inicios de sesión 4624 tipo 3 y la actividad DCOM/WinRM desde otros hosts en esa ventana.",
+        "Consultar alertas previas para el mismo host y la misma cuenta, y buscar el mismo nombre de consumidor o filtro en otros endpoints."
+      ],
+      "false_positives": [
+        "Software de gestión o monitoreo legítimo que use suscripciones WMI permanentes con CommandLineEventConsumer.",
+        "Scripts de administradores que automatizan tareas con eventos WMI; validar con el responsable y el registro de cambios.",
+        "Otros consumidores estándar alojados en wbemcons.dll (por ejemplo, de registro en archivo o en el visor de eventos) usados por herramientas internas."
+      ],
+      "response_steps": [
+        "Verificar con el dueño del sistema si la suscripción es autorizada antes de actuar.",
+        "Si es maliciosa, aislar el endpoint y exportar el filtro, el consumidor, el binding y los binarios referenciados como evidencia.",
+        "Eliminar el binding, el consumidor y el filtro, y luego los payloads asociados, solo después de preservar la evidencia.",
+        "Restablecer las credenciales usadas para crear la suscripción y buscar la misma persistencia en toda la flota.",
+        "Monitorear el host para detectar recreación de suscripciones o nuevas cargas de wbemcons.dll."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque esta carga suele indicar que se ejecutó una persistencia WMI con privilegios SYSTEM, y su uso legítimo es poco común."
+    },
+    "en": {
+      "summary": "WMI Provider Host (WmiPrvSE.exe) loaded wbemcons.dll, the library for WMI standard event consumers such as CommandLineEventConsumer. This usually means a permanent WMI subscription that runs a command has fired.",
+      "what_it_detects": "Image load events (for example Sysmon Event ID 7) where Image is exactly C:\\Windows\\System32\\wbem\\WmiPrvSE.exe and ImageLoaded ends with \\wbemcons.dll.",
+      "why_it_matters": "WMI event subscriptions (ATT&CK T1546.003) give fileless persistence and SYSTEM-level execution. An event filter bound to a consumer runs a command whenever the event occurs, and it survives reboots.",
+      "triage_steps": [
+        "Confirm the host, time and WmiPrvSE.exe ProcessId from the alert. Check that ImageLoaded is C:\\Windows\\System32\\wbem\\wbemcons.dll and is Microsoft-signed.",
+        "Enumerate subscriptions: Get-CimInstance -Namespace root\\subscription for CommandLineEventConsumer, __EventFilter and __FilterToConsumerBinding. Record CommandLineTemplate and ExecutablePath.",
+        "Review child processes of WmiPrvSE.exe on the same host within +/- 15 minutes. Check their CommandLine, hashes and network connections.",
+        "Look for Sysmon events 19, 20 and 21 (WmiEvent) and WMI-Activity/Operational event 5861 to find who created the subscription and when.",
+        "Check whether it was created remotely: look at 4624 logon type 3 and DCOM/WinRM activity from other hosts in that window.",
+        "Check earlier alerts for the same host and account. Hunt for the same consumer or filter name on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate management or monitoring software that uses permanent WMI subscriptions with CommandLineEventConsumer.",
+        "Administrator automation built on WMI events. Confirm with the owner and the change records.",
+        "Other standard consumers in wbemcons.dll (such as log file or event log consumers) used by internal tooling."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the subscription is authorized before you act.",
+        "If it is malicious, isolate the endpoint. Export the filter, consumer, binding and any referenced binaries as evidence.",
+        "After you preserve evidence, remove the binding, consumer and filter, then the related payloads.",
+        "Reset the credentials used to create the subscription and hunt for the same persistence across the fleet.",
+        "Watch the host for recreated subscriptions or new wbemcons.dll loads."
+      ],
+      "severity_rationale": "High fits because this load usually means WMI persistence ran with SYSTEM privileges, and legitimate use is uncommon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "WmiPrvSE.exe loads wbemcons.dll when a malicious CommandLineEventConsumer fires",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:03:12.481",
+          "ProcessId": 3184,
+          "Image": "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\wbem\\wbemcons.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Same load with upper-case paths; Sigma matching is case-insensitive",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "UtcTime": "2024-10-26 02:15:40.117",
+          "ProcessId": 4120,
+          "Image": "C:\\WINDOWS\\SYSTEM32\\WBEM\\WMIPRVSE.EXE",
+          "ImageLoaded": "C:\\WINDOWS\\SYSTEM32\\WBEM\\WBEMCONS.DLL",
+          "Signed": "true",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WmiPrvSE.exe loads wbemcomn.dll during normal WMI queries; ImageLoaded does not end with \\wbemcons.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 13:58:02.300",
+          "ProcessId": 3184,
+          "Image": "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\wbemcomn.dll",
+          "Signed": "true",
+          "User": "NT AUTHORITY\\NETWORK SERVICE"
+        }
+      },
+      {
+        "description": "wbemcons.dll loaded by a process other than WmiPrvSE.exe, so the Image condition fails",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0187.andes.example.com",
+          "UtcTime": "2024-10-25 15:20:44.902",
+          "ProcessId": 1022,
+          "Image": "C:\\Windows\\System32\\mmc.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\wbem\\wbemcons.dll",
+          "Signed": "true",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

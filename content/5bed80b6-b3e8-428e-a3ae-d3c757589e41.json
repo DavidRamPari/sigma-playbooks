@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "5bed80b6-b3e8-428e-a3ae-d3c757589e41",
+    "title": "RDP over Reverse SSH Tunnel WFP",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden",
+    "path": "windows/builtin/security/win_security_rdp_reverse_tunnel.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_rdp_reverse_tunnel.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.001",
+      "T1090.001",
+      "T1090.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Windows Filtering Platform (evento 5156) permitió una conexión RDP en el puerto 3389 con una dirección loopback en el otro extremo. Suele indicar RDP tunelizado, por ejemplo mediante un túnel SSH inverso.",
+      "what_it_detects": "Evento de seguridad 5156 de una conexión permitida con SourcePort 3389 y DestAddress loopback (127.* o ::1), o con DestPort 3389 y SourceAddress loopback. Se excluyen las conexiones con FilterOrigin 'AppContainer Loopback' y las del escáner THOR (thor.exe, thor64.exe).",
+      "why_it_matters": "Un atacante reenvía un puerto local hacia el servicio RDP del equipo mediante SSH u otro túnel (proxy, T1090.001/T1090.002). Así accede por RDP desde fuera (T1021.001) sin reglas de firewall entrantes, y la sesión parece tráfico local.",
+      "triage_steps": [
+        "Revise Application, ProcessID, Direction, SourceAddress, SourcePort, DestAddress y DestPort. El patrón típico es svchost.exe con TermService en 3389 y un extremo local.",
+        "Identifique el proceso dueño del puerto cliente loopback: busque otro 5156 del mismo host con los puertos invertidos, o el evento 3 de Sysmon de esa conexión.",
+        "Busque ssh.exe, plink.exe, chisel u otras herramientas de túnel en el host +/- 15 minutos. En la creación de procesos (4688/Sysmon 1), revise si el CommandLine incluye -R, -L o -D.",
+        "Verifique si ese proceso de túnel tiene conexiones salientes a IP externas, normalmente por los puertos 22 o 443. Anote la dirección y el dominio remotos.",
+        "Busque inicios de sesión 4624 con LogonType 10 y origen 127.0.0.1 o ::1, además de los eventos 4778/4779. Identifique la cuenta utilizada.",
+        "Revise cambios recientes que habiliten RDP, como fDenyTSConnections, reglas de firewall o cuentas locales nuevas. Consulte también alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Programas que se conectan localmente al puerto RDP, como gateways RDP, agentes de broker o de monitoreo, o health checks.",
+        "Administradores o herramientas de TI que usan reenvío de puertos SSH aprobado para llegar a RDP.",
+        "Escáneres de vulnerabilidades distintos de THOR que prueban RDP por localhost."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo si el túnel y la sesión RDP están autorizados.",
+        "Si no lo están, aísle el host, cierre la sesión RDP y detenga el proceso de túnel. Conserve en lo posible el binario, el CommandLine y la memoria.",
+        "Bloquee en el perímetro el extremo externo del túnel. Restablezca las credenciales de las cuentas que iniciaron sesión por el túnel.",
+        "Elimine las herramientas de túnel y cualquier persistencia (servicios, tareas programadas, claves Run). Luego busque el mismo endpoint remoto en el resto de los equipos."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un flujo RDP por loopback rara vez es legítimo y apunta con fuerza a un acceso remoto tunelizado que evade los controles perimetrales."
+    },
+    "en": {
+      "summary": "Windows Filtering Platform (event 5156) allowed an RDP connection on port 3389 where the other end is a loopback address. This often means RDP is being tunneled, for example through a reverse SSH tunnel.",
+      "what_it_detects": "Security event 5156 for a permitted connection with SourcePort 3389 and a loopback DestAddress (127.* or ::1), or DestPort 3389 and a loopback SourceAddress. Connections with FilterOrigin 'AppContainer Loopback' and connections from the THOR scanner (thor.exe, thor64.exe) are excluded.",
+      "why_it_matters": "Attackers forward a local port to the host's RDP service through SSH or another tunnel (T1090.001/T1090.002 proxy). This lets them reach RDP from outside (T1021.001) without inbound firewall rules, and the sessions look like local traffic.",
+      "triage_steps": [
+        "Review Application, ProcessID, Direction, SourceAddress, SourcePort, DestAddress and DestPort. An svchost.exe hosting TermService on 3389 with a local peer is the classic pattern.",
+        "Find the process that owns the loopback client port: look for another 5156 on the same host whose ports mirror this one, or check Sysmon event 3 for the same connection.",
+        "Look for ssh.exe, plink.exe, chisel or other tunneling tools on the host +/- 15 minutes. Check process creation (4688/Sysmon 1) for -R, -L or -D in CommandLine.",
+        "Check that tunnel process for outbound connections to external IPs, usually on 22 or 443. Record the remote address and domain.",
+        "Look for 4624 logons with LogonType 10 and a source IP of 127.0.0.1 or ::1, plus 4778/4779 events. Identify the account used.",
+        "Check recent changes that enable RDP, such as fDenyTSConnections, firewall rules or new local accounts. Also look for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Programs that connect locally to the RDP port, such as RDP gateways, broker or monitoring agents, or health checks.",
+        "Administrators or IT tooling that use approved SSH port forwarding to reach RDP.",
+        "Vulnerability scanners other than THOR that test RDP over localhost."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the tunnel and the RDP session are authorized.",
+        "If not, isolate the host, end the RDP session and stop the tunnel process. Keep the binary, the command line and memory where you can.",
+        "Block the external tunnel endpoint at the perimeter. Reset passwords for the accounts that logged on through the tunnel.",
+        "Remove the tunneling tools and any persistence (services, scheduled tasks, Run keys). Then hunt for the same remote endpoint across the fleet."
+      ],
+      "severity_rationale": "High fits because a loopback RDP flow rarely happens legitimately and strongly suggests tunneled remote access that bypasses perimeter controls."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "svchost.exe hosting TermService accepts an RDP connection on 3389 from the loopback address (inbound side of a reverse SSH tunnel)",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessID": 1032,
+          "Application": "\\device\\harddiskvolume2\\windows\\system32\\svchost.exe",
+          "Direction": "%%14592",
+          "SourceAddress": "127.0.0.1",
+          "SourcePort": 3389,
+          "DestAddress": "127.0.0.1",
+          "DestPort": 50211,
+          "Protocol": 6,
+          "FilterOrigin": "Stealth",
+          "LayerName": "%%14610"
+        }
+      },
+      {
+        "description": "plink.exe connects from ::1 to local port 3389 (outbound side of the tunnel)",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessID": 6844,
+          "Application": "\\device\\harddiskvolume2\\users\\public\\plink.exe",
+          "Direction": "%%14593",
+          "SourceAddress": "::1",
+          "SourcePort": 50213,
+          "DestAddress": "::1",
+          "DestPort": 3389,
+          "Protocol": 6,
+          "FilterOrigin": "Unknown",
+          "LayerName": "%%14611"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "THOR scanner checks the local RDP service for BlueKeep; excluded by filter_thor",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessID": 7720,
+          "Application": "\\device\\harddiskvolume2\\tools\\thor\\thor64.exe",
+          "Direction": "%%14593",
+          "SourceAddress": "127.0.0.1",
+          "SourcePort": 50320,
+          "DestAddress": "127.0.0.1",
+          "DestPort": 3389,
+          "Protocol": 6,
+          "FilterOrigin": "Unknown",
+          "LayerName": "%%14611"
+        }
+      },
+      {
+        "description": "Regular inbound RDP from a remote workstation; the peer is not loopback",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessID": 1032,
+          "Application": "\\device\\harddiskvolume2\\windows\\system32\\svchost.exe",
+          "Direction": "%%14592",
+          "SourceAddress": "198.51.100.23",
+          "SourcePort": 51544,
+          "DestAddress": "192.0.2.15",
+          "DestPort": 3389,
+          "Protocol": 6,
+          "FilterOrigin": "Remote Desktop - User Mode (TCP-In)",
+          "LayerName": "%%14610"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

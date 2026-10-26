@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "d2d642d7-b393-43fe-bae4-e81ed5915c4b",
+    "title": "Scheduled Task/Job At",
+    "level": "low",
+    "status": "stable",
+    "author": "Ömer Günal, oscd.community",
+    "path": "linux/process_creation/proc_creation_lnx_at_command.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_at_command.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario at o el daemon atd en un host Linux. Puede tratarse de administración legítima o de un atacante que programa la ejecución diferida de código para persistir o ejecutar payloads.",
+      "what_it_detects": "Eventos de creación de procesos en Linux cuyo Image termina en /at o /atd, es decir, el uso de la utilidad at para programar tareas o el inicio del daemon atd que las ejecuta.",
+      "why_it_matters": "Los adversarios usan at (ATT&CK T1053.002, Scheduled Task/Job: At) para ejecutar código en un momento posterior, mantener persistencia, evadir el monitoreo en tiempo real o ejecutar comandos con los privilegios de otra cuenta.",
+      "triage_steps": [
+        "Revise Image, CommandLine y User: identifique si se invocó at con -f, una hora relativa (now + N minutes) o comandos por stdin.",
+        "Si Image es /usr/sbin/atd y ParentImage es systemd o init durante el arranque, probablemente es el inicio normal del servicio; confirme la hora de boot.",
+        "Revise ParentImage y la cadena de procesos padres: una shell interactiva de SSH, un servidor web o un script en /tmp son señales sospechosas.",
+        "En el host, liste los trabajos con atq y vea su contenido con at -c <jobid>; revise /var/spool/cron/atjobs o /var/spool/at.",
+        "Si se usó -f, obtenga el archivo referenciado, calcule su hash y analice si descarga, ejecuta o persiste código.",
+        "Pivotee en el mismo host +/- 15 minutos: inicios de sesión, uso de sudo, descargas con curl/wget y conexiones de red salientes.",
+        "Busque alertas previas para el mismo usuario o host y confirme con el equipo responsable si había un cambio programado."
+      ],
+      "false_positives": [
+        "Administradores que programan reinicios, respaldos o tareas de mantenimiento puntuales con at.",
+        "Inicio del servicio atd por systemd al arrancar o reiniciar el host.",
+        "Scripts de despliegue o herramientas de gestión de configuración que usan at para tareas diferidas."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o el usuario si el trabajo programado es legítimo antes de actuar.",
+        "Si es malicioso, documente el contenido del trabajo (at -c) y luego elimínelo con atrm; preserve el archivo -f como evidencia.",
+        "Aísle el host si hay indicios de ejecución de payloads o movimiento lateral, y rote las credenciales de la cuenta implicada.",
+        "Busque otros mecanismos de persistencia (cron, systemd timers, authorized_keys) y restrinja at mediante /etc/at.allow o /etc/at.deny."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque at es una utilidad administrativa común y la regla no evalúa argumentos, por lo que requiere contexto para confirmar actividad maliciosa."
+    },
+    "en": {
+      "summary": "The at utility or the atd daemon was executed on a Linux host. This may be legitimate administration or an attacker scheduling deferred execution of code for persistence or payload execution.",
+      "what_it_detects": "Linux process creation events whose Image ends with /at or /atd, meaning the at utility was used to schedule a job or the atd daemon that runs those jobs started.",
+      "why_it_matters": "Adversaries abuse at (ATT&CK T1053.002, Scheduled Task/Job: At) to run code later, maintain persistence, avoid real-time scrutiny or execute commands under another account's privileges.",
+      "triage_steps": [
+        "Review Image, CommandLine and User: check whether at was called with -f, a relative time (now + N minutes) or commands piped via stdin.",
+        "If Image is /usr/sbin/atd and ParentImage is systemd or init at boot, it is likely normal service startup; confirm the boot time.",
+        "Review ParentImage and the parent chain: an SSH interactive shell, a web server process or a script in /tmp is suspicious.",
+        "On the host, list jobs with atq and dump them with at -c <jobid>; inspect /var/spool/cron/atjobs or /var/spool/at.",
+        "If -f was used, collect the referenced file, hash it and check whether it downloads, executes or persists code.",
+        "Pivot on the same host +/- 15 minutes: logins, sudo use, curl/wget downloads and outbound network connections.",
+        "Look for earlier alerts on the same user or host and confirm with the owning team whether a change was planned."
+      ],
+      "false_positives": [
+        "Administrators scheduling one-off reboots, backups or maintenance tasks with at.",
+        "atd service started by systemd during host boot or restart.",
+        "Deployment scripts or configuration management tools using at for deferred tasks."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or user whether the scheduled job is legitimate before acting.",
+        "If malicious, record the job content (at -c), then remove it with atrm; preserve any -f file as evidence.",
+        "Isolate the host if payload execution or lateral movement is indicated, and rotate credentials of the involved account.",
+        "Hunt for other persistence (cron, systemd timers, authorized_keys) and restrict at via /etc/at.allow or /etc/at.deny."
+      ],
+      "severity_rationale": "Low fits because at is a common administrative tool and the rule ignores arguments, so context is needed to confirm malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User schedules a script from /tmp with at one minute in the future from an interactive shell",
+        "event": {
+          "Image": "/usr/bin/at",
+          "CommandLine": "at now + 1 minute -f /tmp/.update.sh",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "atd daemon process started on the host",
+        "event": {
+          "Image": "/usr/sbin/atd",
+          "CommandLine": "/usr/sbin/atd -f",
+          "ParentImage": "/usr/lib/systemd/systemd",
+          "User": "root",
+          "ProcessId": 912,
+          "Computer": "web-srv-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Listing pending jobs with atq; Image ends with /atq, not /at",
+        "event": {
+          "Image": "/usr/bin/atq",
+          "CommandLine": "atq",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48230,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "cat reading a file; Image ends with 'cat', not '/at'",
+        "event": {
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /etc/at.deny",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 50114,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

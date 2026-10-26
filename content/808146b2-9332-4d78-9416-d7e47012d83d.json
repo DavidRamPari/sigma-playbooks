@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "808146b2-9332-4d78-9416-d7e47012d83d",
+    "title": "BPFDoor Abnormal Process ID or Lock File Accessed",
+    "level": "high",
+    "status": "test",
+    "author": "Rafal Piasecki",
+    "path": "linux/auditd/path/lnx_auditd_bpfdoor_file_accessed.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/path/lnx_auditd_bpfdoor_file_accessed.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059",
+      "T1106"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró una entrada PATH para un archivo .pid o .lock en /var/run cuyo nombre coincide con los que usa el backdoor BPFDoor para Linux. Esto suele indicar que hay un implante BPFDoor activo en el host.",
+      "what_it_detects": "Registros PATH de auditd (type=PATH) cuyo campo name coincide exactamente con alguno de los 19 nombres que las variantes de BPFDoor usan como mutex o archivo PID, como /var/run/haldrund.pid o /var/run/xinetd.lock.",
+      "why_it_matters": "BPFDoor es un backdoor pasivo. Coloca un filtro BPF sobre un raw socket y espera un paquete 'mágico', por lo que no necesita abrir ningún puerto. Luego abre una shell para el operador (ATT&CK T1059) y opera mediante llamadas nativas al sistema (T1106). Es sigiloso y persistente.",
+      "triage_steps": [
+        "Use el serial del evento de auditoría para ubicar el registro SYSCALL correspondiente. Anote exe, comm, pid, ppid, uid, auid y la syscall (open, creat, unlink).",
+        "Verifique si algún paquete es dueño del archivo y del proceso: rpm -qf o dpkg -S sobre ambos. Un exe sin paquete es un indicador fuerte.",
+        "Ejecute ls -l /proc/<pid>/exe. Un binario que corre desde /dev/shm o /tmp, o marcado como '(deleted)', es consistente con BPFDoor.",
+        "Busque raw sockets o packet sockets abiertos por ese pid (ss -0p, lsof -p <pid>) y filtros BPF adjuntos a ellos.",
+        "Compare el nombre del proceso con su binario real. BPFDoor se disfraza con nombres de daemons del sistema.",
+        "Revise iptables/nftables en busca de reglas de redirección de puertos inesperadas, y revise scripts de arranque, cron y unidades systemd que hayan lanzado el binario.",
+        "Pivotee sobre el mismo host en +/- 15 minutos. Luego busque en toda la flota los mismos nombres de archivo y el hash del exe, y revise alertas previas de este host."
+      ],
+      "false_positives": [
+        "La propia regla considera improbables los falsos positivos.",
+        "Un daemon legítimo con nombre coincidente puede crear uno de estos archivos, por ejemplo mcelog, lldpad o los agentes de salud de hardware HP. Confírmelo con la propiedad del paquete y la ruta esperada del binario."
+      ],
+      "response_steps": [
+        "Confirme el hallazgo: el exe no pertenece a ningún paquete o está borrado, o mantiene un raw socket. Después aísle el host a nivel de red.",
+        "Antes de terminar cualquier proceso, tome un volcado de memoria, copie /proc/<pid>/exe, calcule su hash y recolecte los logs de auditoría.",
+        "Termine el proceso del implante. Elimine su binario, sus archivos PID/lock, la persistencia y las reglas de firewall ilegítimas.",
+        "Rote las credenciales y llaves SSH usadas en el host. Busque los mismos indicadores en otros sistemas.",
+        "Si se confirma un compromiso con privilegios de root, reconstruya el host desde una imagen confiable y vuelva a incorporarlo al monitoreo."
+      ],
+      "severity_rationale": "Estos nombres exactos son indicadores específicos de un backdoor sigiloso con privilegios de root y rara vez son legítimos, por lo que la severidad alta es adecuada."
+    },
+    "en": {
+      "summary": "auditd recorded a PATH entry for a /var/run .pid or .lock file name that the BPFDoor Linux backdoor is known to use. This often means an active BPFDoor implant on the host.",
+      "what_it_detects": "auditd PATH records (type=PATH) whose name field exactly matches one of 19 file names that BPFDoor variants use as mutex or PID files, such as /var/run/haldrund.pid or /var/run/xinetd.lock.",
+      "why_it_matters": "BPFDoor is a passive backdoor. It attaches a BPF filter to a raw socket and waits for a 'magic' packet, so it needs no listening port. It then opens a shell for the operator (ATT&CK T1059) and works through native system calls (T1106). It is stealthy and long-lived.",
+      "triage_steps": [
+        "Use the audit event serial to find the matching SYSCALL record. Note exe, comm, pid, ppid, uid, auid and the syscall (open, creat, unlink).",
+        "Check whether a package owns the file and the process: rpm -qf or dpkg -S on both. An unowned exe is a strong indicator.",
+        "Run ls -l /proc/<pid>/exe. A binary running from /dev/shm or /tmp, or marked '(deleted)', fits BPFDoor.",
+        "Look for raw or packet sockets that this pid holds (ss -0p, lsof -p <pid>) and for BPF filters attached to them.",
+        "Compare the process name with its real binary. BPFDoor disguises itself with the names of system daemons.",
+        "Check iptables/nftables for unexpected port-redirect rules, and check boot scripts, cron and systemd units for persistence that started the binary.",
+        "Pivot on the same host within +/- 15 minutes. Then search the whole fleet for the same file names and the exe hash, and review earlier alerts for this host."
+      ],
+      "false_positives": [
+        "The rule itself lists false positives as unlikely.",
+        "A legitimate daemon with a matching name may create one of these files, for example mcelog, lldpad or HP hardware health agents. Confirm with package ownership and the expected binary path."
+      ],
+      "response_steps": [
+        "Confirm the finding: the exe is not owned by any package or is deleted, or it holds a raw socket. Then isolate the host at the network level.",
+        "Before you kill anything, take a memory dump, copy /proc/<pid>/exe, hash it, and collect the audit logs.",
+        "Kill the implant process. Remove its binary, its PID/lock files, any persistence entries and any rogue firewall rules.",
+        "Rotate credentials and SSH keys that were used on the host. Hunt for the same indicators on other systems.",
+        "If root-level compromise is confirmed, rebuild the host from a trusted image, then add it back to monitoring."
+      ],
+      "severity_rationale": "These exact file names are specific indicators of a stealthy root-level backdoor and are rarely legitimate, so high severity fits."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "BPFDoor implant creates its mutex PID file /var/run/haldrund.pid",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865012.331:48211)",
+          "host": "bastion-01",
+          "item": 0,
+          "name": "/var/run/haldrund.pid",
+          "inode": 40213,
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE"
+        }
+      },
+      {
+        "description": "Process accesses the BPFDoor lock file /var/run/xinetd.lock",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865390.118:48377)",
+          "host": "db-07",
+          "item": 1,
+          "name": "/var/run/xinetd.lock",
+          "inode": 40987,
+          "mode": "0100600",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate auditd daemon writes its normal PID file /var/run/auditd.pid (the rule lists auditd.lock, not .pid)",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729861000.004:47002)",
+          "host": "bastion-01",
+          "item": 0,
+          "name": "/var/run/auditd.pid",
+          "inode": 39811,
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE"
+        }
+      },
+      {
+        "description": "Legitimate xinetd service writes /var/run/xinetd.pid, which is not on the rule's list",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729861202.517:47110)",
+          "host": "db-07",
+          "item": 0,
+          "name": "/var/run/xinetd.pid",
+          "inode": 39902,
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "a94cdd87-6c54-4678-a6cc-2814ffe5a13d",
+    "title": "Unix Shell Configuration Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "Peter Matkovski, IAI",
+    "path": "linux/auditd/path/lnx_auditd_unix_shell_configuration_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/path/lnx_auditd_unix_shell_configuration_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un evento PATH sobre un archivo de inicio de shell, ya sea global o de un usuario, como /etc/profile, /etc/profile.d/*, ~/.bashrc o ~/.zshrc. Los comandos que se agregan a estos archivos se ejecutan cada vez que se abre una shell.",
+      "what_it_detects": "Registros PATH de auditd (type=PATH) cuyo campo name es un archivo de configuración conocido de Bash, Zsh o Csh en /etc, /root o /home/*. La regla no filtra por syscall ni por nametype, así que coinciden tanto las lecturas como las escrituras.",
+      "why_it_matters": "Los atacantes agregan comandos a los archivos de inicio de shell para mantener el acceso o escalar privilegios (ATT&CK T1546.004, Unix Shell Configuration Modification). El código se ejecuta con la identidad de quien abre la shell, incluso root.",
+      "triage_steps": [
+        "Con el ID msg=audit(timestamp:serial), busque el registro SYSCALL del mismo evento. Anote exe, comm, syscall, success, auid, uid y euid.",
+        "Revise nametype y la syscall (open con flags de escritura, openat, rename, unlink, chmod) para separar las modificaciones reales (NORMAL, CREATE, DELETE) de las simples lecturas de una shell de login.",
+        "Identifique al responsable: auid es el usuario que inició sesión y uid/euid la identidad efectiva. Compárelos con los administradores esperados y con el dueño del home que aparece en name.",
+        "Revise el contenido actual del archivo y compárelo con un respaldo, con el paquete (rpm -V, debsums) o con la gestión de configuración. Busque curl, wget, base64, nc, /dev/tcp, alias sudo, LD_PRELOAD o PROMPT_COMMAND.",
+        "Revise el proceso padre y la sesión del proceso que escribió, en el mismo host +/- 15 minutos. Un editor interactivo es normal; un script en /tmp, un servidor web o un cron es sospechoso.",
+        "Verifique si el mismo auid o exe modificó otros archivos de inicio o puntos de persistencia como cron, unidades systemd o authorized_keys, y busque alertas previas del host."
+      ],
+      "false_positives": [
+        "Administradores o usuarios que editan su propio .bashrc, .profile o .zshrc para cambiar alias, el PATH o el prompt.",
+        "Instalaciones o actualizaciones de paquetes (bash, zsh, SDK, conda, nvm) que escriben en /etc/profile.d o en los dotfiles del usuario.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) o el aprovisionamiento de usuarios que copia los archivos de /etc/skel.",
+        "Shells de login que leen estos archivos al iniciar, ya que la regla no excluye los accesos de lectura."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme que el cambio es malicioso revisando el contenido del archivo, el proceso que escribió y si hubo una autorización.",
+        "Si es malicioso, aísle el host o restrinja la cuenta, y guarde una copia del archivo modificado junto con los registros de auditd relacionados.",
+        "Elimine las líneas inyectadas o restaure el archivo desde una fuente confiable. Termine los procesos y elimine los payloads que se hayan lanzado.",
+        "Restablezca las credenciales de las cuentas afectadas, busque otros mecanismos de persistencia y agregue watches de auditd (-w ... -p wa) o monitoreo de integridad sobre estos archivos."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque estos archivos son un punto común de persistencia, pero usuarios y administradores los editan con frecuencia y la regla también coincide con lecturas legítimas."
+    },
+    "en": {
+      "summary": "auditd logged a PATH record for a system-wide or per-user shell startup file such as /etc/profile, /etc/profile.d/*, ~/.bashrc or ~/.zshrc. Commands added to these files run every time a shell opens.",
+      "what_it_detects": "auditd PATH records (type=PATH) whose name field is a known Bash, Zsh or Csh configuration file under /etc, /root or /home/*. The rule does not filter on syscall or nametype, so reads can match as well as writes.",
+      "why_it_matters": "Adversaries add commands to shell startup files to keep access or escalate privileges (ATT&CK T1546.004, Unix Shell Configuration Modification). The code runs as whoever opens a shell, root included.",
+      "triage_steps": [
+        "Use the msg=audit(timestamp:serial) ID to pull the SYSCALL record from the same event. Note exe, comm, syscall, success, auid, uid and euid.",
+        "Check nametype and the syscall (open with write flags, openat, rename, unlink, chmod). Tell real modifications (NORMAL, CREATE, DELETE) apart from plain reads by login shells.",
+        "Find who did it: auid is the original login user and uid/euid the effective identity. Compare against expected administrators and the owner of the home directory in name.",
+        "Review the file now and compare it with a backup, package version (rpm -V, debsums) or config management copy. Look for curl, wget, base64, nc, /dev/tcp, alias sudo, LD_PRELOAD or PROMPT_COMMAND.",
+        "Look at the writing process's parent and session on the same host within +/- 15 minutes. An interactive editor is normal; a script in /tmp, a web server or a cron job is suspicious.",
+        "Check whether the same auid or exe touched other startup files or persistence spots like cron, systemd units or authorized_keys, and look for earlier alerts on this host."
+      ],
+      "false_positives": [
+        "Administrators or users editing their own .bashrc, .profile or .zshrc to change aliases, PATH or prompts.",
+        "Package installs or updates (bash, zsh, SDKs, conda, nvm) that write to /etc/profile.d or user dotfiles.",
+        "Configuration management tools (Ansible, Puppet, Chef) or user provisioning that copies /etc/skel files.",
+        "Login shells reading these files at startup, because the rule does not exclude read access."
+      ],
+      "response_steps": [
+        "Confirm the change is malicious by checking file content, the writing process and who approved it before you act.",
+        "If it is malicious, isolate the host or limit the account, and keep a copy of the modified file plus the related audit logs.",
+        "Remove the injected lines or restore the file from a trusted source. Kill any processes and remove any payloads it launched.",
+        "Reset credentials for affected accounts, look for other persistence, and add watches on these files (auditd -w ... -p wa) or file integrity monitoring."
+      ],
+      "severity_rationale": "Medium fits because shell startup files are a common persistence spot, but users and admins edit them often and the rule also matches benign reads."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "auditd PATH record for a write to the user's ~/.bashrc, logged in the same event as a SYSCALL record from a script running out of /tmp.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865012.431:8841)",
+          "item": 0,
+          "name": "/home/jperez/.bashrc",
+          "inode": 524312,
+          "dev": "fd:01",
+          "mode": "0100644",
+          "ouid": 1001,
+          "ogid": 1001,
+          "nametype": "NORMAL",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "auditd PATH record for a new file created in /etc/profile.d, which matches the /etc/profile.d/* wildcard.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865390.112:8907)",
+          "item": 1,
+          "name": "/etc/profile.d/sysupdate.sh",
+          "inode": 131447,
+          "dev": "fd:01",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE",
+          "host": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A Vim swap file next to .bashrc. The name ends in .swp, so it does not match the exact /home/*/.bashrc pattern.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729866001.778:9012)",
+          "item": 1,
+          "name": "/home/jperez/.bashrc.swp",
+          "inode": 524399,
+          "dev": "fd:01",
+          "mode": "0100600",
+          "ouid": 1001,
+          "ogid": 1001,
+          "nametype": "CREATE",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "A PATH record for /etc/passwd, a watched file that is not in the rule's list of shell configuration files.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729866120.045:9031)",
+          "item": 0,
+          "name": "/etc/passwd",
+          "inode": 131090,
+          "dev": "fd:01",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL",
+          "host": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

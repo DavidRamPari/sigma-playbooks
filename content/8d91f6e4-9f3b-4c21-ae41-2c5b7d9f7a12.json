@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "8d91f6e4-9f3b-4c21-ae41-2c5b7d9f7a12",
+    "title": "Unsigned or Unencrypted SMB Connection to Share Established",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Mohamed Abdelghani",
+    "path": "windows/builtin/smbserver/connectivity/win_smbserver_connectivity_unsigned_and_unencrypted_share_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/smbserver/connectivity/win_smbserver_connectivity_unsigned_and_unencrypted_share_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente SMB se conectó a un recurso administrativo (IPC$, ADMIN$ o C$) de este servidor sin firma SMB o sin cifrado. La dirección del cliente no es loopback ni link-local, así que proviene de otro equipo.",
+      "what_it_detects": "Evento 4000 de SMBServer Connectivity donde ShareName contiene IPC$, ADMIN$ o C$ y SigningUsed o EncyptionUsed es false. Se excluyen valores de ClientAddress en rangos loopback, link-local o IPv6 privados.",
+      "why_it_matters": "El acceso remoto a recursos administrativos es una vía clásica de movimiento lateral (T1021.002 SMB/Windows Admin Shares). Herramientas como PsExec copian archivos a ADMIN$ y usan IPC$ para controlar servicios. Sin firma o cifrado también hay riesgo de relay y manipulación.",
+      "triage_steps": [
+        "Identifique ClientAddress y resuélvalo a hostname y responsable. Verifique si es un jump host, servidor de gestión o de respaldo conocido.",
+        "Revise el recurso usado. ADMIN$ o C$ desde una estación de trabajo es más sospechoso que IPC$ desde un servidor.",
+        "Revise SigningUsed y EncyptionUsed. Si hay firma y solo falta cifrado, el riesgo es menor; sesiones sin firma requieren más análisis.",
+        "Pivotee a los logs de Security del servidor +/- 15 minutos: 4624 tipo 3 desde ClientAddress, 5140/5145 de acceso a recursos y la cuenta usada.",
+        "Busque ejecución posterior en el servidor: instalación de servicios 7045 o 4697, archivos nuevos en C:\\Windows, tareas programadas o actividad WMI/WinRM remota.",
+        "Revise en el equipo cliente procesos como PsExec, Impacket o comandos net use en el mismo intervalo.",
+        "Busque alertas previas del mismo ClientAddress y cuenta en otros servidores para detectar conexiones en abanico."
+      ],
+      "false_positives": [
+        "Sistemas antiguos o dispositivos (escáneres, NAS, Windows heredado, clientes Samba en Linux) que no negocian firma ni cifrado.",
+        "Herramientas de administración, despliegue de software, inventario o respaldo que usan recursos administrativos de forma rutinaria.",
+        "Entornos con firma habilitada pero sin cifrado SMB obligatorio, donde casi todas las sesiones coinciden por EncyptionUsed."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema o de la cuenta si la conexión fue una tarea administrativa planificada.",
+        "Si no está autorizada, aísle el equipo cliente y deshabilite o restablezca la cuenta usada, previa confirmación con el líder del incidente.",
+        "Recolecte evidencia y luego elimine servicios, archivos o tareas maliciosas encontradas en el servidor destino.",
+        "Endurezca: exija firma SMB por GPO, habilite cifrado en recursos sensibles y limite el acceso a recursos administrativos a jump hosts.",
+        "Ajuste la regla con listas de permitidos para hosts de gestión verificados."
+      ],
+      "severity_rationale": "Medium es adecuado porque el acceso a recursos administrativos sin firma es una señal real de movimiento lateral y relay, pero clientes heredados y la administración rutinaria lo generan con frecuencia."
+    },
+    "en": {
+      "summary": "An SMB client connected to an administrative share (IPC$, ADMIN$ or C$) on this server without SMB signing or without encryption. The client address is not loopback or link-local, so the connection came from another host.",
+      "what_it_detects": "SMBServer Connectivity event 4000 where ShareName contains IPC$, ADMIN$ or C$ and SigningUsed or EncyptionUsed is false. Connections from ClientAddress values in loopback, link-local or IPv6 private ranges are excluded.",
+      "why_it_matters": "Remote access to admin shares is how attackers move laterally (T1021.002 SMB/Windows Admin Shares). Tools like PsExec copy files to ADMIN$ and use IPC$ for remote service control. Unsigned or unencrypted sessions also allow relay and tampering.",
+      "triage_steps": [
+        "Identify ClientAddress and resolve it to a hostname and owner. Check if it is a known admin jump host, management server or backup system.",
+        "Check which share was used. ADMIN$ or C$ from a workstation is more suspicious than IPC$ from a server.",
+        "Check SigningUsed and EncyptionUsed. If signing is on and only encryption is off, risk is lower; unsigned sessions call for closer review.",
+        "Pivot to Security logs on the server +/- 15 minutes: 4624 logon type 3 from ClientAddress, 5140/5145 share access, and the account used.",
+        "Look for follow-up execution on the server: 7045 or 4697 service installs, new files under C:\\Windows, scheduled tasks, or remote WMI/WinRM activity.",
+        "Review the client host for tools like PsExec, Impacket or net use commands in process telemetry around the same time.",
+        "Search earlier alerts for the same ClientAddress and account across other servers to spot fan-out connections."
+      ],
+      "false_positives": [
+        "Older systems or appliances (scanners, NAS, legacy Windows, Linux Samba clients) that do not negotiate signing or encryption.",
+        "Admin tools, software deployment, inventory or backup servers that routinely use admin shares.",
+        "Environments where signing is enabled but SMB encryption is not required, which makes most sessions match on EncyptionUsed."
+      ],
+      "response_steps": [
+        "Confirm with the system or account owner whether the connection was planned administrative work.",
+        "If unauthorized, isolate the client host and disable or reset the account used, after confirming with the incident lead.",
+        "Remove malicious services, files or tasks found on the target server and collect evidence first.",
+        "Harden: require SMB signing via GPO, enable encryption for sensitive shares, and limit admin share access to jump hosts.",
+        "Tune the rule with allowlists for known management hosts once verified."
+      ],
+      "severity_rationale": "Medium fits because admin share access without signing is a real lateral movement and relay signal, but legacy clients and routine administration often cause it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote client connects to ADMIN$ with neither signing nor encryption, typical of a PsExec-style lateral movement attempt.",
+        "event": {
+          "EventID": 4000,
+          "Channel": "Microsoft-Windows-SMBServer/Connectivity",
+          "Computer": "FS-01.andes.example.com",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ClientAddress": "198.51.100.23",
+          "SigningUsed": "false",
+          "EncyptionUsed": "false"
+        }
+      },
+      {
+        "description": "Remote client connects to C$ with signing but without encryption; matches because EncyptionUsed is false.",
+        "event": {
+          "EventID": 4000,
+          "Channel": "Microsoft-Windows-SMBServer/Connectivity",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ShareName": "\\\\*\\C$",
+          "ClientAddress": "203.0.113.77",
+          "SigningUsed": "true",
+          "EncyptionUsed": "false"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Unsigned IPC$ connection from loopback, excluded by the local IP filter.",
+        "event": {
+          "EventID": 4000,
+          "Channel": "Microsoft-Windows-SMBServer/Connectivity",
+          "Computer": "FS-01.andes.example.com",
+          "ShareName": "\\\\*\\IPC$",
+          "ClientAddress": "127.0.0.1",
+          "SigningUsed": "false",
+          "EncyptionUsed": "false"
+        }
+      },
+      {
+        "description": "Remote ADMIN$ connection with both signing and encryption enabled, so the status selection does not match.",
+        "event": {
+          "EventID": 4000,
+          "Channel": "Microsoft-Windows-SMBServer/Connectivity",
+          "Computer": "FS-01.andes.example.com",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ClientAddress": "198.51.100.40",
+          "SigningUsed": "true",
+          "EncyptionUsed": "true"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

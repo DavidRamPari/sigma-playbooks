@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "b494b165-6634-483d-8c47-2026a6c52372",
+    "title": "Telegram API Access",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "web/proxy_generic/proxy_telegram_api.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/web/proxy_generic/proxy_telegram_api.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1071.001",
+      "T1102.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un equipo interno envió una solicitud HTTP(S) a api.telegram.org con un user agent que no contiene 'Telegram' ni 'Bot'. Puede indicar malware que usa la Bot API de Telegram como canal de comando y control o de exfiltración.",
+      "what_it_detects": "Registros de proxy donde cs-host es exactamente api.telegram.org y c-useragent no contiene 'Telegram' ni 'Bot', es decir, clientes que no se identifican como bibliotecas de bots conocidas (por ejemplo curl, python-requests, PowerShell o un user agent de navegador falsificado).",
+      "why_it_matters": "El malware abusa de la Bot API de Telegram para recibir órdenes y enviar datos robados por HTTPS a un dominio legítimo que suele estar permitido. Corresponde a ATT&CK T1071.001 (protocolos web) y T1102.002 (servicio web bidireccional).",
+      "triage_steps": [
+        "Identifique el host de origen (c-ip) y el usuario autenticado en el proxy; confirme a qué equipo y persona corresponden según el CMDB o DHCP.",
+        "Revise c-useragent: herramientas genéricas (curl, python-requests, WinHTTP, PowerShell) o un navegador falsificado son más sospechosos que un cliente con nombre de aplicación.",
+        "Si el proxy inspecciona TLS, examine cs-uri-path: métodos como sendDocument, sendMessage o getUpdates sugieren exfiltración o polling de órdenes.",
+        "Mida la frecuencia: un polling regular a getUpdates o un volumen alto de bytes enviados (cs-bytes) indica beaconing o exfiltración.",
+        "En el EDR del host, busque el proceso que abrió la conexión a api.telegram.org en +/- 15 minutos, su proceso padre, ruta, hash y firma.",
+        "Busque otros hosts que contacten api.telegram.org con el mismo user agent y revise alertas previas del mismo host o usuario.",
+        "Consulte con el equipo responsable si existe un bot o integración de Telegram autorizada en ese equipo."
+      ],
+      "false_positives": [
+        "Bots o integraciones de Telegram legítimas de la empresa (alertas de monitoreo, CI/CD, ChatOps) que usan un user agent genérico.",
+        "Scripts de administradores o desarrolladores que prueban la Bot API con curl o python-requests.",
+        "Herramientas de terceros que envían notificaciones a Telegram sin identificarse en el user agent."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema si el tráfico es autorizado; si lo es, documente y agregue una excepción acotada por host y user agent.",
+        "Si no está autorizado, aísle el endpoint desde el EDR y bloquee api.telegram.org para ese host en el proxy.",
+        "Recolecte el binario o script responsable, su hash y artefactos de persistencia antes de eliminar nada.",
+        "Erradique el malware, restablezca credenciales del usuario afectado y revise qué datos pudieron enviarse.",
+        "Restaure el equipo desde una imagen limpia si hay compromiso confirmado y monitoree nuevas conexiones a Telegram."
+      ],
+      "severity_rationale": "Nivel medio porque el acceso a la Bot API sin user agent conocido es un indicador fuerte de C2, pero las integraciones legítimas de Telegram también pueden activarlo."
+    },
+    "en": {
+      "summary": "An internal host made an HTTP(S) request to api.telegram.org with a user agent that contains neither 'Telegram' nor 'Bot'. This may be malware using the Telegram Bot API for command and control or exfiltration.",
+      "what_it_detects": "Proxy records where cs-host equals api.telegram.org and c-useragent does not contain 'Telegram' or 'Bot', meaning the client does not identify as a known bot library (for example curl, python-requests, PowerShell or a spoofed browser).",
+      "why_it_matters": "Malware abuses the Telegram Bot API to receive commands and send stolen data over HTTPS to a legitimate, usually allowed domain. This maps to ATT&CK T1071.001 (web protocols) and T1102.002 (bidirectional web service).",
+      "triage_steps": [
+        "Identify the source host (c-ip) and the proxy-authenticated user; map them to an asset and owner via CMDB or DHCP.",
+        "Review c-useragent: generic tools (curl, python-requests, WinHTTP, PowerShell) or a spoofed browser are more suspicious than a named application client.",
+        "If TLS is inspected, check cs-uri-path: methods such as sendDocument, sendMessage or getUpdates suggest exfiltration or command polling.",
+        "Measure frequency: regular getUpdates polling or large outbound bytes (cs-bytes) points to beaconing or exfiltration.",
+        "In EDR, find the process that connected to api.telegram.org within +/- 15 minutes, plus its parent, path, hash and signature.",
+        "Hunt for other hosts reaching api.telegram.org with the same user agent and review earlier alerts for this host or user.",
+        "Ask the owning team whether an approved Telegram bot or integration runs on that host."
+      ],
+      "false_positives": [
+        "Approved company Telegram bots or integrations (monitoring alerts, CI/CD, ChatOps) that use a generic user agent.",
+        "Admin or developer scripts testing the Bot API with curl or python-requests.",
+        "Third-party tools sending Telegram notifications without identifying themselves in the user agent."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the traffic is approved; if so, document it and add a narrow exception by host and user agent.",
+        "If not approved, isolate the endpoint via EDR and block api.telegram.org for that host at the proxy.",
+        "Collect the responsible binary or script, its hash and persistence artifacts before removing anything.",
+        "Eradicate the malware, reset the affected user's credentials and assess what data may have been sent.",
+        "Reimage if compromise is confirmed and monitor for new Telegram connections."
+      ],
+      "severity_rationale": "Medium because Bot API access without a known user agent is a strong C2 indicator, yet legitimate Telegram integrations can also trigger it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Workstation polls the Telegram Bot API using python-requests, no Telegram/Bot in the user agent",
+        "event": {
+          "cs-host": "api.telegram.org",
+          "c-useragent": "python-requests/2.31.0",
+          "c-ip": "192.0.2.45",
+          "cs-username": "ANDES\\jperez",
+          "cs-method": "POST",
+          "cs-uri-path": "/bot000000000:PLACEHOLDER/getUpdates",
+          "sc-status": 200,
+          "cs-bytes": 412,
+          "sc-bytes": 1830
+        }
+      },
+      {
+        "description": "Exfiltration-like upload to the Bot API using a spoofed browser user agent",
+        "event": {
+          "cs-host": "api.telegram.org",
+          "c-useragent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "c-ip": "192.0.2.77",
+          "cs-username": "ANDES\\mlopez",
+          "cs-method": "POST",
+          "cs-uri-path": "/bot000000000:PLACEHOLDER/sendDocument",
+          "sc-status": 200,
+          "cs-bytes": 2483012,
+          "sc-bytes": 950
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Approved monitoring integration using the python-telegram-bot library, excluded by the user agent filter",
+        "event": {
+          "cs-host": "api.telegram.org",
+          "c-useragent": "python-telegram-bot v20.7 (https://python-telegram-bot.org)",
+          "c-ip": "198.51.100.20",
+          "cs-username": "svc-monitor",
+          "cs-method": "POST",
+          "cs-uri-path": "/bot000000000:PLACEHOLDER/sendMessage",
+          "sc-status": 200,
+          "cs-bytes": 620,
+          "sc-bytes": 740
+        }
+      },
+      {
+        "description": "Request with curl to the Telegram web client, not api.telegram.org",
+        "event": {
+          "cs-host": "web.telegram.org",
+          "c-useragent": "curl/8.4.0",
+          "c-ip": "192.0.2.45",
+          "cs-username": "ANDES\\jperez",
+          "cs-method": "GET",
+          "cs-uri-path": "/",
+          "sc-status": 200,
+          "cs-bytes": 180,
+          "sc-bytes": 5120
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

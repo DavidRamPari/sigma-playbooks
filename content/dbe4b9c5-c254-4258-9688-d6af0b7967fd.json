@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "dbe4b9c5-c254-4258-9688-d6af0b7967fd",
+    "title": "Screen Capture with Import Tool",
+    "level": "low",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/execve/lnx_auditd_screencapture_import.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_screencapture_import.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1113"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró la ejecución de la herramienta import de ImageMagick escribiendo una imagen PNG o JPEG, lo que suele indicar una captura de pantalla del escritorio o de una ventana.",
+      "what_it_detects": "Registros EXECVE de auditd con a0 igual a 'import' y la salida en a1 (.png/.jpg/.jpeg), o bien 'import -window root <archivo>' con el archivo en a3, que captura la pantalla completa del servidor X.",
+      "why_it_matters": "Un atacante puede capturar pantallas para robar información visible como credenciales, documentos o sesiones de administración (MITRE ATT&CK T1113, Screen Capture, táctica de Collection). En servidores casi nunca hay un uso legítimo.",
+      "triage_steps": [
+        "Revise a1 a a3: identifique la ruta de salida y si se usó '-window root'. Las rutas en /tmp, /dev/shm o directorios ocultos son más sospechosas.",
+        "Correlacione el registro SYSCALL con el mismo ID de evento de auditd para obtener auid, uid, exe, ppid y tty, y así saber qué usuario real lo ejecutó.",
+        "Reconstruya el árbol de procesos desde el ppid: ¿proviene de una terminal interactiva, de cron, de una sesión SSH o de un script o binario desconocido?",
+        "Confirme el rol del host: en un servidor o bastión es mucho más anómalo que en una estación de trabajo con escritorio gráfico.",
+        "Revise el mismo host en +/- 15 minutos: ejecuciones repetidas de import, compresión de archivos de imagen o conexiones salientes (curl, scp, nc) que indiquen exfiltración.",
+        "Verifique si el archivo de imagen existe todavía, su tamaño y su hash, y consulte alertas anteriores para el mismo usuario y host."
+      ],
+      "false_positives": [
+        "Uso legítimo de la herramienta de capturas por un usuario o administrador, sobre todo en estaciones de trabajo con escritorio gráfico.",
+        "Scripts de soporte, documentación o pruebas automatizadas de interfaz que generan capturas con ImageMagick."
+      ],
+      "response_steps": [
+        "Valide con el usuario o con el responsable del sistema si la captura era esperada antes de tomar cualquier medida.",
+        "Si no está justificada, preserve la imagen y los registros de auditd y luego aísle el host o suspenda la cuenta implicada.",
+        "Busque y elimine el mecanismo de persistencia o el script que invoca import y revise la exfiltración de las capturas.",
+        "Rote las credenciales que pudieron quedar visibles en pantalla y considere desinstalar ImageMagick en servidores donde no se necesita."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque las capturas de pantalla son comunes y legítimas en equipos de usuario. En servidores debe revisarse con mayor prioridad."
+    },
+    "en": {
+      "summary": "Auditd recorded ImageMagick's import tool writing a PNG or JPEG image. This usually means someone took a screenshot of the desktop or of a window.",
+      "what_it_detects": "Auditd EXECVE records where a0 is 'import' and the output file is a1 (.png/.jpg/.jpeg), or 'import -window root <file>' with the file in a3, which captures the whole X display.",
+      "why_it_matters": "Attackers take screenshots to collect whatever is on screen, such as credentials, documents or admin sessions (MITRE ATT&CK T1113, Screen Capture, Collection tactic). Servers rarely have a legitimate reason to do this.",
+      "triage_steps": [
+        "Review a1 to a3 for the output path and whether '-window root' was used. Paths in /tmp, /dev/shm or hidden directories are more suspicious.",
+        "Correlate the SYSCALL record with the same auditd event ID to get auid, uid, exe, ppid and tty, and identify the real user.",
+        "Rebuild the process tree from ppid: did it come from an interactive terminal, cron, an SSH session or an unknown script or binary?",
+        "Confirm the host's role. On a server or bastion this is far more anomalous than on a graphical workstation.",
+        "Check the same host within +/- 15 minutes for repeated import runs, archiving of image files, or outbound transfers (curl, scp, nc).",
+        "Check whether the image file still exists and record its size and hash. Look for earlier alerts on the same user and host."
+      ],
+      "false_positives": [
+        "A user or administrator legitimately taking screenshots, especially on desktop workstations.",
+        "Support, documentation or automated UI test scripts that generate screenshots with ImageMagick."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the user or system owner whether the capture was expected.",
+        "If it was not, preserve the image and auditd logs, then isolate the host or suspend the account involved.",
+        "Find and remove the script or persistence that runs import, and investigate whether the screenshots were exfiltrated.",
+        "Rotate credentials that may have been visible on screen. Consider removing ImageMagick from servers that do not need it."
+      ],
+      "severity_rationale": "Low fits because screenshots are common and legitimate on user workstations. Raise the priority when the host is a server."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Full-display capture with 'import -window root' to a hidden PNG in /tmp on a server",
+        "event": {
+          "type": "EXECVE",
+          "argc": 4,
+          "a0": "import",
+          "a1": "-window",
+          "a2": "root",
+          "a3": "/tmp/.cache/screen_0142.png",
+          "node": "bastion-01",
+          "msg": "audit(1729865000.123:4471)"
+        }
+      },
+      {
+        "description": "Interactive window capture with the output JPEG as the first argument",
+        "event": {
+          "type": "EXECVE",
+          "argc": 2,
+          "a0": "import",
+          "a1": "/dev/shm/cap.jpg",
+          "node": "app-srv-03",
+          "msg": "audit(1729865102.551:4498)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "import -window root writing a GIF. The extension is not in the list and a1 is '-window', so neither selection matches",
+        "event": {
+          "type": "EXECVE",
+          "argc": 4,
+          "a0": "import",
+          "a1": "-window",
+          "a2": "root",
+          "a3": "/home/jperez/doc/shot.gif",
+          "node": "WS-0142",
+          "msg": "audit(1729865300.010:5120)"
+        }
+      },
+      {
+        "description": "ImageMagick convert resizing a PNG. a0 is 'convert', not 'import'",
+        "event": {
+          "type": "EXECVE",
+          "argc": 4,
+          "a0": "convert",
+          "a1": "logo.png",
+          "a2": "-resize",
+          "a3": "small.png",
+          "node": "WS-0142",
+          "msg": "audit(1729865400.778:5133)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

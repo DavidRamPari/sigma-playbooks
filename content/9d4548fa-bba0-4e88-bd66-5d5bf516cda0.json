@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "9d4548fa-bba0-4e88-bd66-5d5bf516cda0",
+    "title": "Masquerading as Linux Crond Process",
+    "level": "medium",
+    "status": "test",
+    "author": "Timur Zinniatullin, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_masquerading_crond.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_masquerading_crond.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró un comando cp que copia /bin/sh a una ruta terminada en /crond. Es probable que alguien quiera ejecutar un shell con el nombre del demonio de cron para no llamar la atención.",
+      "what_it_detects": "Registros EXECVE de auditd con a0='cp', a1='/bin/sh' y a2 terminado en '/crond' (por ejemplo, /tmp/crond). Coincide con la prueba de Atomic Red Team para T1036.003.",
+      "why_it_matters": "Un shell renombrado como crond se ve como el demonio legítimo de cron en ps o top. Así el atacante puede mantener un shell interactivo o persistente sin levantar sospechas (MITRE ATT&CK T1036.003, Masquerading: Rename System Utilities).",
+      "triage_steps": [
+        "Revise a2 para conocer la ruta de destino. Las rutas como /tmp, /dev/shm, /var/tmp o los directorios home son más sospechosas que /usr/sbin.",
+        "Correlacione el mismo número de serie del evento de audit con los registros SYSCALL y CWD para obtener auid, uid, exe, ppid, tty y el directorio de trabajo.",
+        "Identifique al usuario real (auid) y verifique si tiene una sesión SSH o sudo activa en ese momento en /var/log/auth.log o secure.",
+        "Busque en el mismo host, +/- 15 minutos, ejecuciones de la ruta de a2 o de procesos llamados crond fuera de /usr/sbin/crond.",
+        "En el host, liste los procesos crond con ps -eo pid,ppid,user,cmd y compare /proc/<pid>/exe con el binario legítimo.",
+        "Compare el hash del archivo de destino con /bin/sh. Si es idéntico, se trata de un shell renombrado.",
+        "Revise si hubo alertas previas para el mismo host o usuario, como descarga de herramientas, cambios en crontab o conexiones salientes."
+      ],
+      "false_positives": [
+        "Ejercicios de red team o pruebas de Atomic Red Team autorizadas (T1036.003).",
+        "Pruebas de detección o de laboratorio hechas por el equipo de seguridad.",
+        "Muy rara vez, scripts de empaquetado o de construcción de contenedores que preparan binarios con ese nombre. Confirme el caso con el responsable."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema si existe un ejercicio o cambio autorizado. Si no lo hay, trate el evento como incidente.",
+        "Aísle el host de la red si existe un proceso crond falso en ejecución o si hay señales de acceso no autorizado.",
+        "Conserve evidencia antes de eliminar nada: copie el archivo, guarde su hash, la salida de ps y la información de /proc/<pid>.",
+        "Detenga el proceso falso, elimine la copia y revise si hay persistencia en crontab, systemd, rc.local y authorized_keys.",
+        "Restablezca las credenciales del usuario implicado y revise cómo obtuvo acceso.",
+        "Vuelva a poner el host en servicio con monitoreo reforzado y considere ampliar la regla para cubrir variantes como cp -i o bash."
+      ],
+      "severity_rationale": "Medium es adecuado porque copiar un shell con el nombre crond casi nunca tiene una razón legítima, aunque el evento solo muestra la preparación y no la ejecución ni el impacto."
+    },
+    "en": {
+      "summary": "Auditd recorded a cp command that copies /bin/sh to a path ending in /crond. Someone likely wants to run a shell under the cron daemon's name to avoid notice.",
+      "what_it_detects": "Auditd EXECVE records with a0='cp', a1='/bin/sh' and a2 ending in '/crond' (for example, /tmp/crond). This matches the Atomic Red Team test for T1036.003.",
+      "why_it_matters": "A shell renamed to crond looks like the legitimate cron daemon in ps or top. This lets an attacker keep an interactive or persistent shell without drawing attention (MITRE ATT&CK T1036.003, Masquerading: Rename System Utilities).",
+      "triage_steps": [
+        "Check a2 for the destination path. Paths in /tmp, /dev/shm, /var/tmp or home directories are more suspicious than /usr/sbin.",
+        "Correlate the audit event serial with its SYSCALL and CWD records to get auid, uid, exe, ppid, tty and the working directory.",
+        "Identify the real user (auid) and check auth.log or secure for an SSH or sudo session active at that time.",
+        "On the same host, search +/- 15 minutes for executions of the a2 path or for crond processes outside /usr/sbin/crond.",
+        "On the host, list crond processes with ps -eo pid,ppid,user,cmd and compare /proc/<pid>/exe with the legitimate binary.",
+        "Compare the destination file's hash with /bin/sh. If they are identical, it is a renamed shell.",
+        "Look for earlier alerts on the same host or user, such as tool downloads, crontab changes or outbound connections."
+      ],
+      "false_positives": [
+        "Authorized red team exercises or Atomic Red Team tests (T1036.003).",
+        "Detection or lab testing by the security team.",
+        "Very rarely, packaging or container build scripts that stage binaries under that name. Confirm with the owner."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether an authorized exercise or change exists. If not, treat the event as an incident.",
+        "Isolate the host from the network if a fake crond is running or there are signs of unauthorized access.",
+        "Preserve evidence before deleting anything: copy the file and save its hash, the ps output and the /proc/<pid> details.",
+        "Stop the fake process, remove the copy, and check crontab, systemd, rc.local and authorized_keys for persistence.",
+        "Reset the involved user's credentials and find out how they got access.",
+        "Put the host back in service with closer monitoring. Consider extending the rule to cover variants such as cp -i or bash."
+      ],
+      "severity_rationale": "Medium fits because copying a shell under the crond name almost never has a legitimate reason, but the event only shows preparation, not execution or impact."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Auditd EXECVE record of cp copying /bin/sh to /tmp/crond (Atomic Red Team T1036.003 test 2).",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698242592.481:52731):",
+          "argc": 3,
+          "a0": "cp",
+          "a1": "/bin/sh",
+          "a2": "/tmp/crond",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Shell copied to a hidden directory under /dev/shm with the crond name.",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698243011.102:52890):",
+          "argc": 3,
+          "a0": "cp",
+          "a1": "/bin/sh",
+          "a2": "/dev/shm/.x/crond",
+          "host": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator backs up the real crond binary. a1 is not /bin/sh, so the rule does not match.",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698244100.334:53012):",
+          "argc": 3,
+          "a0": "cp",
+          "a1": "/usr/sbin/crond",
+          "a2": "/opt/backup/crond",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "/bin/sh copied to a destination that does not end in /crond.",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698244522.910:53077):",
+          "argc": 3,
+          "a0": "cp",
+          "a1": "/bin/sh",
+          "a2": "/srv/chroot/bin/sh",
+          "host": "build-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

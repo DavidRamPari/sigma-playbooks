@@ -1,0 +1,119 @@
+{
+  "rule": {
+    "id": "a136ac98-b2bc-4189-a14d-f0d0388e57a7",
+    "title": "AWS S3 Bucket Versioning Disable",
+    "level": "medium",
+    "status": "test",
+    "author": "Sean Johnstone | Unit 42",
+    "path": "cloud/aws/cloudtrail/aws_disable_bucket_versioning.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_disable_bucket_versioning.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1490"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad suspendió el versionado de un bucket de S3. A partir de ese momento, los objetos eliminados o sobrescritos ya no pueden recuperarse desde versiones anteriores, algo que los atacantes hacen antes de borrar datos o pedir un rescate.",
+      "what_it_detects": "Eventos de administración de CloudTrail con eventSource s3.amazonaws.com, eventName PutBucketVersioning y requestParameters que contiene 'Suspended', es decir, el Status de VersioningConfiguration quedó en Suspended.",
+      "why_it_matters": "Corresponde a ATT&CK T1490 (Inhibit System Recovery). Sin versionado se pierde una vía clave de recuperación, así que un DeleteObjects masivo o una sobrescritura posterior provoca pérdida permanente o extorsión tipo ransomware en la nube.",
+      "triage_steps": [
+        "En requestParameters, anote el bucketName y confirme que el Status es Suspended. Revise errorCode para saber si la llamada tuvo éxito o fue denegada.",
+        "Identifique al autor: userIdentity.arn, accessKeyId, el session issuer si es un rol asumido y si usó MFA (sessionContext mfaAuthenticated).",
+        "Compare sourceIPAddress y userAgent con el comportamiento habitual de la identidad. Sospeche de CLI, SDK o herramientas inusuales desde una IP o ASN desconocidos.",
+        "Busque un ticket de cambio o una ejecución de IaC (Terraform, CloudFormation) que justifique el cambio en ese bucket.",
+        "Pivotee por la misma identidad e IP en +/- 15 minutos: DeleteObject(s), PutBucketLifecycleConfiguration, PutBucketPolicy, PutBucketEncryption, DeleteBucket, ListBuckets, ráfagas de GetObject.",
+        "Revise la actividad previa de la identidad: CreateAccessKey, ConsoleLogin desde ubicaciones nuevas, AttachUserPolicy, reconocimiento con GetCallerIdentity y alertas anteriores.",
+        "Determine si el bucket guarda respaldos o datos críticos y si los data events de S3 están habilitados para medir los borrados."
+      ],
+      "false_positives": [
+        "Un administrador de AWS suspende el versionado de forma legítima para reducir costos o dar de baja un bucket, con un cambio aprobado.",
+        "Despliegues de IaC (Terraform, CloudFormation, CDK) que configuran el versionado como Suspended en buckets temporales o de prueba.",
+        "Cuentas de laboratorio, sandbox o desarrollo donde los buckets se reconfiguran con frecuencia."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con el dueño del bucket y de la identidad si el cambio estaba autorizado.",
+        "Si no estaba autorizado, vuelva a poner el versionado en Enabled y active MFA Delete u Object Lock cuando sea posible.",
+        "Contenga la identidad: desactive sus access keys, revoque las sesiones activas del rol y restablezca las credenciales. Preserve los logs de CloudTrail como evidencia.",
+        "Evalúe el impacto con los data events y el inventario de S3. Restaure los objetos eliminados desde las versiones que queden, réplicas o respaldos.",
+        "Refuerce los controles: agregue una SCP o una restricción de IAM que niegue PutBucketVersioning a principales no administradores y alerte sobre acciones destructivas posteriores en S3."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque los administradores también suspenden el versionado de forma legítima. Escale a alta si el autor es inesperado o si después hay borrados o cambios de cifrado."
+    },
+    "en": {
+      "summary": "An identity suspended versioning on an S3 bucket. After that, deleted or overwritten objects can no longer be recovered from earlier versions. Attackers do this before they delete data or hold it for ransom.",
+      "what_it_detects": "CloudTrail management events where eventSource is s3.amazonaws.com, eventName is PutBucketVersioning and requestParameters contains 'Suspended', meaning the VersioningConfiguration Status was set to Suspended.",
+      "why_it_matters": "This maps to ATT&CK T1490 (Inhibit System Recovery). Removing versioning destroys a key recovery path, so a later mass DeleteObjects or overwrite causes permanent data loss or supports cloud ransomware extortion.",
+      "triage_steps": [
+        "From requestParameters, note the bucketName and confirm Status is Suspended. Check errorCode to see whether the call succeeded or was denied.",
+        "Identify the caller: userIdentity.arn, accessKeyId, the session issuer for assumed roles, and whether MFA was used (sessionContext mfaAuthenticated).",
+        "Check sourceIPAddress and userAgent against the identity's baseline. CLI, SDK or unusual tooling from an unfamiliar IP or ASN is suspicious.",
+        "Look for a change ticket or IaC pipeline run (Terraform, CloudFormation) that explains the change for this bucket.",
+        "Pivot on the same identity and source IP within +/- 15 minutes: DeleteObject(s), PutBucketLifecycleConfiguration, PutBucketPolicy, PutBucketEncryption, DeleteBucket, ListBuckets, GetObject bursts.",
+        "Review earlier activity by the identity: CreateAccessKey, ConsoleLogin from new locations, AttachUserPolicy, GetCallerIdentity reconnaissance and prior alerts.",
+        "Check whether the bucket holds backups or critical data, and whether S3 data events are logged so you can measure deletions."
+      ],
+      "false_positives": [
+        "An AWS administrator legitimately suspends versioning to cut storage costs or decommission a bucket under an approved change.",
+        "IaC deployments (Terraform, CloudFormation, CDK) that set versioning to Suspended for temporary or test buckets.",
+        "Lab, sandbox or development accounts where buckets are routinely reconfigured."
+      ],
+      "response_steps": [
+        "Confirm with the bucket owner and identity owner whether the change was authorized before you act.",
+        "If it was not authorized, set versioning back to Enabled and turn on MFA Delete or Object Lock where you can.",
+        "Contain the identity: deactivate its access keys, revoke active role sessions and reset credentials. Preserve CloudTrail logs as evidence.",
+        "Assess the damage with S3 data events and inventory. Restore deleted objects from surviving versions, replicas or backups.",
+        "Harden: add an SCP or IAM guardrail denying PutBucketVersioning to non-admin principals, and alert on follow-up destructive S3 API calls."
+      ],
+      "severity_rationale": "Medium fits because administrators also suspend versioning legitimately, but escalate to high when the caller is unexpected or when deletions or encryption changes follow."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Access key used from an unfamiliar IP with the AWS CLI suspends versioning on a backup bucket",
+        "event": {
+          "eventVersion": "1.09",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "PutBucketVersioning",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "[aws-cli/2.15.10 Python/3.11.6 Linux/5.15.0 exe/x86_64.ubuntu.22]",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE7QX2N4ZPL",
+          "requestParameters": "{\"bucketName\":\"finance-backups-example\",\"Host\":\"finance-backups-example.s3.amazonaws.com\",\"versioning\":\"\",\"VersioningConfiguration\":{\"Status\":\"Suspended\",\"xmlns\":\"http://s3.amazonaws.com/doc/2006-03-01/\"}}",
+          "responseElements": null,
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator re-enables versioning on the same bucket (Status Enabled), so the 'Suspended' value is absent",
+        "event": {
+          "eventVersion": "1.09",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "PutBucketVersioning",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "[S3Console/0.4, aws-internal/3]",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/CloudAdmin/jperez",
+          "requestParameters": "{\"bucketName\":\"finance-backups-example\",\"Host\":\"finance-backups-example.s3.amazonaws.com\",\"versioning\":\"\",\"VersioningConfiguration\":{\"Status\":\"Enabled\",\"xmlns\":\"http://s3.amazonaws.com/doc/2006-03-01/\"}}",
+          "responseElements": null,
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

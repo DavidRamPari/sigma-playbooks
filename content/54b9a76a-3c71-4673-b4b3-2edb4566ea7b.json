@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "54b9a76a-3c71-4673-b4b3-2edb4566ea7b",
+    "title": "AWS EC2 VM Export Failure",
+    "level": "low",
+    "status": "test",
+    "author": "Diogo Braz",
+    "path": "cloud/aws/cloudtrail/aws_ec2_vm_export_failure.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_ec2_vm_export_failure.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1005",
+      "T1537"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un principal llamó a CreateInstanceExportTask en EC2 y CloudTrail no registró ningún error, por lo que la exportación de la imagen de disco de una instancia hacia S3 probablemente se aceptó. El título dice \"Failure\", pero los filtros excluyen las llamadas fallidas, así que la regla en realidad se activa con solicitudes exitosas.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ec2.amazonaws.com y eventName CreateInstanceExportTask que no tienen errorMessage ni errorCode y cuyo responseElements no contiene 'Failure'.",
+      "why_it_matters": "Una imagen de VM exportada contiene el disco completo de la instancia: datos, credenciales y llaves. Un atacante puede copiarla a un bucket y analizarla sin conexión. Corresponde a Data from Local System (T1005) y Transfer Data to Cloud Account (T1537).",
+      "triage_steps": [
+        "Identifique a quien hizo la llamada con userIdentity.arn, userIdentity.type y accessKeyId. Verifique si ese principal suele ejecutar tareas de VM Import/Export.",
+        "Revise sourceIPAddress, userAgent y awsRegion. Marque las IP, herramientas o regiones poco habituales para la cuenta.",
+        "Lea en requestParameters los campos instanceId, targetEnvironment, diskImageFormat y el bucket de exportToS3. Determine quién es el dueño del bucket destino.",
+        "Lea exportTaskId y el estado en responseElements, y luego ejecute DescribeExportTasks para saber si la exportación sigue en curso o ya terminó.",
+        "Revise el mismo principal en +/- 15 minutos en busca de CreateSnapshot, ModifySnapshotAttribute, PutBucketPolicy, PutBucketAcl, CreateAccessKey o AssumeRole.",
+        "Verifique el rol de la instancia y los datos que contiene, busque un ticket de cambio y revise alertas previas del mismo principal o IP."
+      ],
+      "false_positives": [
+        "Migraciones o respaldos planificados que usan VM Import/Export para mover instancias a VMware, Hyper-V o Citrix.",
+        "Automatización de infraestructura o herramientas de DR que exportan imágenes de forma programada desde roles conocidos."
+      ],
+      "response_steps": [
+        "Confirme la exportación con el dueño de la instancia y el registro de cambios antes de actuar.",
+        "Si no está autorizada, ejecute CancelExportTask sobre exportTaskId y preserve como evidencia los logs de CloudTrail y la metadata de los objetos en S3.",
+        "Desactive o rote las access keys y revoque las sesiones del principal. Bloquee el acceso al bucket destino o restrinja su política.",
+        "Rote los secretos guardados en la instancia exportada y luego limite ec2:CreateInstanceExportTask a los roles aprobados."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque las exportaciones son poco frecuentes pero a menudo legítimas, y la alerta necesita contexto antes de escalarla."
+    },
+    "en": {
+      "summary": "A principal called CreateInstanceExportTask on EC2 and CloudTrail logged no error, so an export of an instance's disk image to S3 was probably accepted. The title says \"Failure\", but the filters exclude failed calls, so the rule actually fires on successful requests.",
+      "what_it_detects": "CloudTrail events with eventSource ec2.amazonaws.com and eventName CreateInstanceExportTask that have no errorMessage and no errorCode, and whose responseElements do not contain 'Failure'.",
+      "why_it_matters": "An exported VM image holds the instance's whole disk: data, credentials and keys. An attacker can copy it to a bucket and read it offline. This maps to Data from Local System (T1005) and Transfer Data to Cloud Account (T1537).",
+      "triage_steps": [
+        "Identify the caller from userIdentity.arn, userIdentity.type and accessKeyId. Check whether this principal normally runs VM Import/Export tasks.",
+        "Review sourceIPAddress, userAgent and awsRegion. Flag IPs, tools or regions that are unusual for this account.",
+        "Read requestParameters for instanceId, targetEnvironment, diskImageFormat and the exportToS3 bucket. Find out who owns the target bucket.",
+        "Read exportTaskId and state in responseElements, then run DescribeExportTasks to see whether the export is still running or has completed.",
+        "Look at the same principal within +/- 15 minutes for CreateSnapshot, ModifySnapshotAttribute, PutBucketPolicy, PutBucketAcl, CreateAccessKey or AssumeRole.",
+        "Check the instance's role and the data it holds, look for a change ticket, and search for earlier alerts on the same principal or IP."
+      ],
+      "false_positives": [
+        "Planned migrations or backups that use VM Import/Export to move instances to VMware, Hyper-V or Citrix.",
+        "Infrastructure automation or DR tooling that exports images on a schedule from known roles."
+      ],
+      "response_steps": [
+        "Confirm the export with the instance owner and the change record before you act.",
+        "If it is unauthorized, run CancelExportTask on exportTaskId and preserve the CloudTrail logs and the S3 object metadata as evidence.",
+        "Disable or rotate the access keys and revoke sessions of the principal. Block access to the destination bucket or lock down its policy.",
+        "Rotate secrets stored on the exported instance, then limit ec2:CreateInstanceExportTask to approved roles."
+      ],
+      "severity_rationale": "Low fits because exports are uncommon but often legitimate, and the alert needs context before anyone escalates it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CreateInstanceExportTask accepted with no error fields. responseElements shows an active export task to an S3 bucket.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "CreateInstanceExportTask",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters": "{\"instanceId\":\"i-0abc123def4567890\",\"targetEnvironment\":\"vmware\",\"exportToS3\":{\"diskImageFormat\":\"VMDK\",\"containerFormat\":\"ova\",\"s3Bucket\":\"export-bucket-example\",\"s3Prefix\":\"exports/\"}}",
+          "responseElements": "{\"exportTask\":{\"exportTaskId\":\"export-i-0a1b2c3d4e5f67890\",\"state\":\"active\",\"instanceExport\":{\"instanceId\":\"i-0abc123def4567890\",\"targetEnvironment\":\"vmware\"}}}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same API call denied for lack of permissions. errorCode and errorMessage are present, so the filters exclude it.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "CreateInstanceExportTask",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mgomez",
+          "errorCode": "Client.UnauthorizedOperation",
+          "errorMessage": "You are not authorized to perform this operation.",
+          "responseElements": null
+        }
+      },
+      {
+        "description": "Related but different EC2 call (DescribeExportTasks), which does not match the eventName selection.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DescribeExportTasks",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "responseElements": null
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

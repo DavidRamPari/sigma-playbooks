@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "407aecb1-e762-4acf-8c7b-d087bcff3bb6",
+    "title": "Credential Manager Access By Uncommon Applications",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_access/file_access_win_susp_credential_manager_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_access/file_access_win_susp_credential_manager_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de Program Files, System32, SysWOW64 o explorer.exe accedió a archivos de Credential Manager o del Vault de Windows. Esto puede indicar robo de credenciales protegidas con DPAPI.",
+      "what_it_detects": "Eventos de acceso a archivos (proveedor ETW Microsoft-Windows-Kernel-File) en los que FileName contiene \\AppData\\Local|Roaming\\Microsoft\\Credentials\\, \\AppData\\Local\\Microsoft\\Vault\\ o \\ProgramData\\Microsoft\\Vault\\, y el Image no está en carpetas del sistema ni es C:\\Windows\\explorer.exe.",
+      "why_it_matters": "Estos archivos guardan credenciales cifradas con DPAPI: contraseñas de RDP, recursos compartidos, sitios web y tareas programadas. Herramientas como mimikatz (dpapi::cred, vault::cred) los leen y descifran. Corresponde a ATT&CK T1003, volcado de credenciales del sistema operativo.",
+      "triage_steps": [
+        "Identifique el Image, su ruta y el usuario. Si la ruta está en Temp, Downloads, Public o un directorio aleatorio, la sospecha es mayor.",
+        "Obtenga el hash del Image, revise la firma digital y consulte su reputación en su plataforma de threat intelligence.",
+        "Revise el proceso padre y la CommandLine en la telemetría de creación de procesos y busque cadenas como dpapi::, vault::, sekurlsa o argumentos ofuscados.",
+        "Determine si el FileName pertenece al perfil del mismo usuario o al de otro usuario. Acceder a perfiles ajenos o a ProgramData\\Microsoft\\Vault es más grave.",
+        "Pivote en el mismo host +/- 15 minutos: acceso a LSASS, lectura de claves maestras en \\Microsoft\\Protect\\, archivos de navegador o conexiones salientes.",
+        "Busque el mismo hash o la misma ruta en otros endpoints y revise alertas previas del host y del usuario.",
+        "Verifique si es un software legítimo instalado en AppData (gestor de contraseñas, cliente de sincronización) y confírmelo con el usuario o con TI."
+      ],
+      "false_positives": [
+        "Software legítimo instalado por el usuario en AppData, como gestores de contraseñas, clientes de nube o herramientas de acceso remoto que usan Credential Manager.",
+        "Herramientas de backup, migración de perfiles o inventario que se ejecutan desde rutas no estándar.",
+        "Pruebas autorizadas de pentesting o red team, que deben estar documentadas."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa con el hash, la CommandLine y el proceso padre antes de actuar.",
+        "Si se confirma, aísle el endpoint desde el EDR y preserve la memoria y el binario para análisis forense.",
+        "Restablezca las contraseñas del usuario afectado y las credenciales almacenadas en su Credential Manager, y revoque sesiones y tokens.",
+        "Elimine el binario y los mecanismos de persistencia, busque movimiento lateral con las credenciales expuestas y restaure el equipo.",
+        "Si es legítimo, documente la aplicación y cree una exclusión acotada por ruta y hash."
+      ],
+      "severity_rationale": "Nivel medio: el acceso a estos archivos desde rutas no estándar es un indicador sólido de robo de credenciales, pero hay software legítimo en AppData que genera falsos positivos."
+    },
+    "en": {
+      "summary": "A process running outside Program Files, System32, SysWOW64 or explorer.exe accessed Windows Credential Manager or Vault files. This may indicate theft of DPAPI-protected credentials.",
+      "what_it_detects": "File access events (Microsoft-Windows-Kernel-File ETW provider) where FileName contains \\AppData\\Local|Roaming\\Microsoft\\Credentials\\, \\AppData\\Local\\Microsoft\\Vault\\ or \\ProgramData\\Microsoft\\Vault\\, and Image is not in a system folder and is not C:\\Windows\\explorer.exe.",
+      "why_it_matters": "These files hold DPAPI-encrypted credentials such as RDP, network share, website and scheduled task passwords. Tools like mimikatz (dpapi::cred, vault::cred) read and decrypt them. This maps to ATT&CK T1003, OS Credential Dumping.",
+      "triage_steps": [
+        "Identify the Image, its path and the user. Paths in Temp, Downloads, Public or random folders raise suspicion.",
+        "Hash the Image, check its digital signature and look up its reputation in your threat intelligence platform.",
+        "Review the parent process and CommandLine in process creation telemetry. Look for dpapi::, vault::, sekurlsa or obfuscated arguments.",
+        "Check whether FileName is in the same user's profile or another user's. Access to other profiles or ProgramData\\Microsoft\\Vault is more serious.",
+        "Pivot on the same host +/- 15 minutes: LSASS access, reads of master keys under \\Microsoft\\Protect\\, browser credential files, outbound connections.",
+        "Search for the same hash or path on other endpoints and review earlier alerts for the host and user.",
+        "Check whether this is legitimate software installed in AppData, such as a password manager or sync client, and confirm with the user or IT."
+      ],
+      "false_positives": [
+        "Legitimate user-installed software in AppData, such as password managers, cloud clients or remote access tools that use Credential Manager.",
+        "Backup, profile migration or inventory tools running from non-standard paths.",
+        "Authorized penetration testing or red team activity, which should be documented."
+      ],
+      "response_steps": [
+        "Confirm malicious activity using the hash, CommandLine and parent process before acting.",
+        "If confirmed, isolate the endpoint through EDR and preserve memory and the binary for forensics.",
+        "Reset the affected user's passwords and the credentials stored in their Credential Manager, and revoke sessions and tokens.",
+        "Remove the binary and any persistence, hunt for lateral movement with the exposed credentials, then restore the host.",
+        "If benign, document the application and add a narrow exclusion by path and hash."
+      ],
+      "severity_rationale": "Medium: access to these files from non-standard paths strongly suggests credential theft, but legitimate AppData-installed software still causes false positives."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder reads a Credential Manager blob in the roaming profile, as mimikatz dpapi::cred would.",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6412,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\mm64.exe",
+          "FileName": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\Credentials\\DFBE70A7E5CC19A398EBF1B96859CE5D"
+        }
+      },
+      {
+        "description": "Process running from C:\\Users\\Public accesses the system-wide Vault in ProgramData.",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 3388,
+          "Image": "C:\\Users\\Public\\svchelper.exe",
+          "FileName": "C:\\ProgramData\\Microsoft\\Vault\\AC658CB4-9126-49BD-B877-31EEDAB3F204\\Policy.vpol"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Windows process in System32 accesses the user's Vault, so the system folder filter excludes it.",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 1204,
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "FileName": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Vault\\4BF4C442-9B8A-41A0-B380-DD4A704DDB28\\Policy.vpol"
+        }
+      },
+      {
+        "description": "Process from AppData reads a file under Microsoft\\Windows, not under the Credentials or Vault folders.",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 5120,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Programs\\NoteApp\\NoteApp.exe",
+          "FileName": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\notes.lnk"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

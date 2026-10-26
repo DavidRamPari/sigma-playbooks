@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "526cc8bc-1cdc-48ad-8b26-f19bff969cec",
+    "title": "Removal Of Index Value to Hide Schedule Task - Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_delete/registry_delete_schtasks_hide_task_via_index_value_removal.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_delete/registry_delete_schtasks_hide_task_via_index_value_removal.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminó el valor \"Index\" de una tarea programada en la clave TaskCache\\Tree del registro. Con esto la tarea deja de aparecer en herramientas como \"schtasks /query\", pero puede seguir ejecutándose.",
+      "what_it_detects": "Eventos de eliminación de registro (por ejemplo, Sysmon Event ID 12 DeleteValue) cuyo TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\ y la cadena \"Index\".",
+      "why_it_matters": "Un atacante con privilegios de SYSTEM puede ocultar una tarea programada de persistencia borrando su valor Index. Esto evade el inventario y la revisión de los defensores. La regla lo clasifica como deterioro de defensas (ATT&CK T1685).",
+      "triage_steps": [
+        "Extraiga el nombre de la tarea desde la ruta de TargetObject. Confirme que se borró el valor Index y no una tarea o carpeta que solo lleva \"index\" en su nombre.",
+        "Revise Image y User. reg.exe, powershell.exe o un binario desconocido ejecutado como SYSTEM es sospechoso. Lo esperable es que svchost.exe (servicio Schedule) gestione estas claves.",
+        "Identifique el proceso padre de Image y su línea de comandos. Busque PsExec/PSEXESVC, herramientas que escalan a SYSTEM o shells remotos.",
+        "Lea el valor Id que queda en la clave Tree y revise TaskCache\\Tasks\\{Id} y C:\\Windows\\System32\\Tasks\\<nombre>. Así verá las acciones y el binario que se ejecuta.",
+        "Busque en el mismo host, entre 15 minutos antes y 15 después, la creación de la tarea (4698, TaskScheduler 106), la eliminación del valor SD y procesos lanzados por svchost -k netsvcs -s Schedule.",
+        "Revise alertas previas del mismo host y del mismo usuario. Busque el mismo nombre de tarea o la misma técnica en otros endpoints."
+      ],
+      "false_positives": [
+        "Origen desconocido, según la regla. Un uso legítimo es poco común.",
+        "El servicio Programador de tareas (svchost.exe) puede reescribir o eliminar valores al actualizar o borrar tareas.",
+        "Tareas o carpetas cuyo nombre contiene \"Index\" (por ejemplo, tareas de indexación) y que un instalador o desinstalador elimina."
+      ],
+      "response_steps": [
+        "Verifique la actividad. Antes de hacer cambios, exporte la clave Tree, TaskCache\\Tasks\\{Id} y el XML de la tarea para preservar evidencia.",
+        "Si se confirma la actividad maliciosa, aísle el endpoint y obtenga el hash del binario que ejecuta la tarea.",
+        "Para erradicar, deshabilite y elimine la tarea oculta (clave Tree, clave Tasks y archivo en System32\\Tasks) y el payload asociado.",
+        "Rote las credenciales que se usaron para obtener SYSTEM y busque en toda la flota el mismo IOC o tareas sin Index."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque es una técnica de ocultamiento rara en uso legítimo, aunque por sí sola no confirma la ejecución de un payload."
+    },
+    "en": {
+      "summary": "The \"Index\" value of a scheduled task was deleted under the registry key TaskCache\\Tree. The task no longer shows up in tools such as \"schtasks /query\", but it may still run.",
+      "what_it_detects": "Registry delete events (for example Sysmon Event ID 12 DeleteValue) where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\ and the string \"Index\".",
+      "why_it_matters": "An attacker with SYSTEM privileges can hide a persistence task by deleting its Index value. This evades defender inventory and review. The rule tags it as defense impairment (ATT&CK T1685).",
+      "triage_steps": [
+        "Get the task name from the TargetObject path. Confirm the Index value itself was deleted, and not a task or folder that just has \"index\" in its name.",
+        "Check Image and User. reg.exe, powershell.exe or an unknown binary running as SYSTEM is suspicious. Normally svchost.exe (the Schedule service) manages these keys.",
+        "Find the parent process of Image and its command line. Look for PsExec/PSEXESVC, SYSTEM escalation tools or remote shells.",
+        "Read the remaining Id value in the Tree key, then inspect TaskCache\\Tasks\\{Id} and C:\\Windows\\System32\\Tasks\\<name>. These show the actions and the binary the task runs.",
+        "On the same host, search from 15 minutes before to 15 minutes after for task creation (4698, TaskScheduler 106), SD value deletion and processes spawned by svchost -k netsvcs -s Schedule.",
+        "Review earlier alerts for the same host and the same user. Hunt for the same task name or the same technique on other endpoints."
+      ],
+      "false_positives": [
+        "Unknown, according to the rule. Legitimate use is uncommon.",
+        "The Task Scheduler service (svchost.exe) may rewrite or delete values when it updates or removes tasks.",
+        "Tasks or folders with \"Index\" in their name (for example indexing tasks) that an installer or uninstaller removes."
+      ],
+      "response_steps": [
+        "Verify the activity. Before you change anything, export the Tree key, TaskCache\\Tasks\\{Id} and the task XML as evidence.",
+        "If the activity is confirmed malicious, isolate the endpoint and collect the hash of the binary the task runs.",
+        "To eradicate, disable and remove the hidden task (Tree key, Tasks key and the file in System32\\Tasks) and its payload.",
+        "Rotate the credentials used to gain SYSTEM, and hunt across the fleet for the same IOC or for tasks that lack an Index value."
+      ],
+      "severity_rationale": "Medium fits because this hiding technique is rarely used legitimately, but on its own it does not confirm that a payload ran."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe running as SYSTEM deletes the Index value of a task named UpdaterSvc to hide it from schtasks.",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2024-10-25 14:03:12.418",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 4312,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\UpdaterSvc\\Index"
+        }
+      },
+      {
+        "description": "PowerShell running as SYSTEM deletes the Index value of a task inside a Microsoft folder.",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2024-10-25 14:05:40.102",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\Microsoft\\Windows\\SyncHelper\\Index"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The SD value is deleted instead of Index (the related rule covers this), so this rule does not match.",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2024-10-25 14:07:02.551",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 4388,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\UpdaterSvc\\SD"
+        }
+      },
+      {
+        "description": "The Index value is deleted outside the TaskCache\\Tree path (an application's own key), so this rule does not match.",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2024-10-25 14:10:15.009",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 5520,
+          "Image": "C:\\Program Files\\ExampleApp\\updater.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\SOFTWARE\\ExampleApp\\Cache\\Index"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

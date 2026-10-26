@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "944e8941-f6f6-4ee8-ac05-1c224e923c0e",
+    "title": "Add Port Monitor Persistence in Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_add_port_monitor.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_add_port_monitor.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.010"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió en el registro un valor bajo Control\\Print\\Monitors que apunta a una DLL. Puede ser la instalación de un monitor de puerto de impresión legítimo o un mecanismo de persistencia que spoolsv.exe cargará como SYSTEM al iniciar.",
+      "what_it_detects": "Eventos registry_set donde TargetObject contiene '\\Control\\Print\\Monitors\\' y Details termina en '.dll'. Se excluyen el monitor de CutePDF escrito por spoolsv.exe como SYSTEM, MONVNC y los controladores 'VNC Printer'.",
+      "why_it_matters": "Los monitores de puerto (T1547.010) se registran con la API AddMonitor o editando el registro directamente. El servicio de cola de impresión carga la DLL en cada arranque con privilegios SYSTEM, lo que da al atacante persistencia y escalamiento de privilegios.",
+      "triage_steps": [
+        "Revise Image: spoolsv.exe durante la instalación de una impresora es lo esperado; reg.exe, powershell.exe, rundll32.exe o binarios en rutas de usuario son sospechosos.",
+        "Examine TargetObject para ver el nombre del monitor y Details para la DLL. Los monitores legítimos suelen usar solo un nombre de archivo ubicado en System32.",
+        "Localice la DLL en disco: calcule el hash, verifique la firma digital, el editor y la fecha de creación, y consulte la reputación del hash.",
+        "Identifique el proceso padre de Image y la línea de comandos completa, y el usuario (User) que hizo el cambio.",
+        "Revise el mismo host +/- 15 minutos: creación de la DLL, reinicios del servicio Spooler, cargas de imagen en spoolsv.exe y conexiones de red salientes.",
+        "Confirme con TI o con el inventario de software si hubo una instalación de impresora o un controlador de impresión en esa ventana.",
+        "Busque el mismo nombre de monitor o hash de DLL en otros endpoints, y revise alertas previas del host y del usuario."
+      ],
+      "false_positives": [
+        "Instalación o actualización de impresoras virtuales (PDF, fax) o controladores de fabricantes que registran su propio monitor de puerto.",
+        "Software de acceso remoto que redirige impresoras y crea monitores no cubiertos por los filtros.",
+        "Pruebas autorizadas de Atomic Red Team u otros ejercicios de emulación de adversarios."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el dueño del equipo y el inventario de software antes de cualquier cambio.",
+        "Si es malicioso, aísle el endpoint y preserve la clave de registro, la DLL y la memoria de spoolsv.exe como evidencia.",
+        "Elimine la clave del monitor, ponga la DLL en cuarentena y reinicie el Spooler o el equipo; confirme que la DLL ya no se carga.",
+        "Restablezca las credenciales de las cuentas implicadas y busque el mismo indicador en toda la flota.",
+        "Documente los monitores legítimos para ajustar el filtrado de la regla."
+      ],
+      "severity_rationale": "Medium es adecuado porque la técnica da ejecución como SYSTEM al iniciar, pero las instalaciones legítimas de impresoras también escriben estas claves."
+    },
+    "en": {
+      "summary": "A registry value under Control\\Print\\Monitors was set to a DLL. This may be a legitimate print port monitor install or persistence that spoolsv.exe will load as SYSTEM at boot.",
+      "what_it_detects": "registry_set events where TargetObject contains '\\Control\\Print\\Monitors\\' and Details ends with '.dll', excluding the CutePDF monitor written by spoolsv.exe as SYSTEM, MONVNC and 'VNC Printer' drivers.",
+      "why_it_matters": "Port monitors (T1547.010) are registered through the AddMonitor API or direct registry edits. The Print Spooler loads the DLL at every boot with SYSTEM privileges, giving attackers persistence and privilege escalation.",
+      "triage_steps": [
+        "Check Image: spoolsv.exe during a printer install is expected; reg.exe, powershell.exe, rundll32.exe or binaries in user paths are suspicious.",
+        "Read the monitor name in TargetObject and the DLL in Details. Legitimate monitors usually reference a bare file name in System32.",
+        "Find the DLL on disk: hash it, check signature, publisher and creation time, and look up hash reputation.",
+        "Identify the parent of Image, its full command line, and the User who made the change.",
+        "Review the same host +/- 15 minutes: DLL file creation, Spooler service restarts, image loads into spoolsv.exe and outbound connections.",
+        "Confirm with IT or software inventory whether a printer or print driver was installed in that window.",
+        "Hunt for the same monitor name or DLL hash on other endpoints and review earlier alerts for the host and user."
+      ],
+      "false_positives": [
+        "Installing or updating virtual printers (PDF, fax) or vendor print drivers that register their own port monitor.",
+        "Remote access software that redirects printers and creates monitors not covered by the filters.",
+        "Authorized Atomic Red Team tests or other adversary emulation exercises."
+      ],
+      "response_steps": [
+        "Verify legitimacy with the system owner and software inventory before changing anything.",
+        "If malicious, isolate the endpoint and preserve the registry key, the DLL and spoolsv.exe memory as evidence.",
+        "Remove the monitor key, quarantine the DLL, restart the Spooler or reboot, and confirm the DLL no longer loads.",
+        "Reset credentials of involved accounts and hunt for the same indicators fleet-wide.",
+        "Document legitimate monitors to tune rule filtering."
+      ],
+      "severity_rationale": "Medium fits because the technique yields SYSTEM execution at boot, yet legitimate printer installs also write these keys."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers a port monitor pointing to a DLL in a user-writable path (Atomic Red Team style).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Print\\Monitors\\AtomicRedTeam\\Driver",
+          "Details": "C:\\Users\\Public\\monitor.dll",
+          "User": "ANDES\\jperez",
+          "ProcessId": 4120
+        }
+      },
+      {
+        "description": "PowerShell sets a new monitor Driver value to a DLL in ProgramData.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-PRN-02",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Print\\Monitors\\NetPortHelper\\Driver",
+          "Details": "C:\\ProgramData\\Cache\\nphelper.dll",
+          "User": "ANDES\\adm.rgomez",
+          "ProcessId": 7788
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate CutePDF monitor written by spoolsv.exe as SYSTEM, excluded by filter_optional_cutepdf.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207",
+          "Image": "C:\\Windows\\System32\\spoolsv.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Print\\Monitors\\CutePDF Writer Monitor v4.0\\Driver",
+          "Details": "cpwmon64_v40.dll",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2312
+        }
+      },
+      {
+        "description": "MONVNC monitor driver registration, excluded by filter_optional_monvnc.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0311",
+          "Image": "C:\\Windows\\System32\\spoolsv.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Print\\Monitors\\MONVNC\\Driver",
+          "Details": "monvnc.dll",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2290
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

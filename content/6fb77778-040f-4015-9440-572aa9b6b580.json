@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "6fb77778-040f-4015-9440-572aa9b6b580",
+    "title": "Ingress/Egress Security Group Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "jamesc-grafana",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_security_group_change_ingress_egress.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_security_group_change_ingress_egress.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS agregó o eliminó reglas de entrada (ingress) o salida (egress) en un security group de EC2. Puede ser un cambio legítimo o un intento de abrir acceso, exfiltrar datos o permitir tráfico hacia un servidor de C2.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ec2.amazonaws.com y eventName AuthorizeSecurityGroupIngress, AuthorizeSecurityGroupEgress, RevokeSecurityGroupIngress o RevokeSecurityGroupEgress.",
+      "why_it_matters": "Abrir puertos a Internet expone servicios a la explotación de aplicaciones públicas (T1190, acceso inicial). Ampliar el egress facilita exfiltración y C2; revocar reglas puede interrumpir controles o servicios.",
+      "triage_steps": [
+        "Identifique eventName, userIdentity.arn, sourceIPAddress, userAgent y awsRegion; determine si la identidad y el origen son habituales para cambios de red.",
+        "Revise requestParameters: groupId, protocolo, puertos y rangos CIDR. Priorice 0.0.0.0/0 o ::/0 en puertos de administración (22, 3389) o bases de datos.",
+        "Confirme si existe un ticket de cambio, despliegue de IaC (Terraform, CloudFormation) o pipeline de CI/CD asociado al cambio.",
+        "Identifique qué instancias, ENI o servicios usan el security group y qué tan críticos son.",
+        "Busque en ±15 minutos otras acciones de la misma identidad: CreateAccessKey, cambios IAM, RunInstances, DeleteTrail o StopLogging.",
+        "Revise alertas previas para la misma identidad, la misma IP de origen y el mismo groupId.",
+        "Para egress, consulte VPC Flow Logs por tráfico saliente nuevo hacia los destinos o puertos habilitados."
+      ],
+      "false_positives": [
+        "Creación de nuevas VPC o subnets que requieren un perfil de seguridad distinto.",
+        "Apertura de un puerto puntual para un servicio nuevo en despliegue conocido.",
+        "Administradores cerrando puertos no utilizados para reducir la superficie de ataque.",
+        "Herramientas de IaC o automatización que recrean reglas en cada despliegue."
+      ],
+      "response_steps": [
+        "Verifique con el responsable de la identidad o del recurso si el cambio fue autorizado.",
+        "Si no está autorizado, revoque la regla agregada o restaure la regla eliminada según la configuración aprobada.",
+        "Contenga la identidad: desactive access keys o revoque sesiones del rol mientras se investiga.",
+        "Revise los recursos expuestos por intentos de acceso o compromiso durante la ventana de exposición.",
+        "Refuerce controles: restrinja permisos ec2:*SecurityGroup* y aplique AWS Config o SCP para bloquear 0.0.0.0/0 en puertos sensibles."
+      ],
+      "severity_rationale": "Medium es adecuado porque estos cambios son frecuentes en operación normal, pero una regla abierta a Internet o un egress amplio no autorizado puede derivar en compromiso o exfiltración."
+    },
+    "en": {
+      "summary": "An AWS identity added or removed ingress or egress rules on an EC2 security group. This may be routine, or an attempt to open access, exfiltrate data or allow C2 traffic.",
+      "what_it_detects": "CloudTrail events with eventSource ec2.amazonaws.com and eventName AuthorizeSecurityGroupIngress, AuthorizeSecurityGroupEgress, RevokeSecurityGroupIngress or RevokeSecurityGroupEgress.",
+      "why_it_matters": "Opening ports to the Internet exposes services to exploitation of public-facing applications (T1190, initial access). Broader egress enables exfiltration and C2; revoking rules can break controls or services.",
+      "triage_steps": [
+        "Record eventName, userIdentity.arn, sourceIPAddress, userAgent and awsRegion; check whether this identity and origin normally make network changes.",
+        "Inspect requestParameters: groupId, protocol, ports and CIDR ranges. Prioritize 0.0.0.0/0 or ::/0 on admin ports (22, 3389) or database ports.",
+        "Look for a matching change ticket, IaC deployment (Terraform, CloudFormation) or CI/CD pipeline run.",
+        "Identify which instances, ENIs or services use the security group and how critical they are.",
+        "Search ±15 minutes for other actions by the same identity: CreateAccessKey, IAM changes, RunInstances, DeleteTrail or StopLogging.",
+        "Check earlier alerts for the same identity, source IP and groupId.",
+        "For egress changes, query VPC Flow Logs for new outbound traffic to the allowed destinations or ports."
+      ],
+      "false_positives": [
+        "New VPCs or subnets being set up with a different security profile.",
+        "A single port opened for a known new service being deployed.",
+        "Administrators closing unused ports to reduce attack surface.",
+        "IaC or automation tools recreating rules on every deployment."
+      ],
+      "response_steps": [
+        "Confirm with the identity or resource owner whether the change was authorized.",
+        "If unauthorized, revoke the added rule or restore the removed rule to the approved configuration.",
+        "Contain the identity: disable access keys or revoke role sessions during the investigation.",
+        "Review exposed resources for access attempts or compromise during the exposure window.",
+        "Harden: restrict ec2 security group permissions and use AWS Config or SCPs to block 0.0.0.0/0 on sensitive ports."
+      ],
+      "severity_rationale": "Medium fits because these changes are common in normal operations, yet an unauthorized Internet-open rule or broad egress can lead to compromise or exfiltration."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "IAM user opens SSH to the whole Internet on a security group",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "AuthorizeSecurityGroupIngress",
+          "eventTime": "2024-10-25T14:03:12Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.groupId": "sg-0a1b2c3d4e5f67890",
+          "requestParameters.ipPermissions.items.0.ipProtocol": "tcp",
+          "requestParameters.ipPermissions.items.0.fromPort": 22,
+          "requestParameters.ipPermissions.items.0.toPort": 22,
+          "requestParameters.ipPermissions.items.0.ipRanges.items.0.cidrIp": "0.0.0.0/0"
+        }
+      },
+      {
+        "description": "Assumed role adds an outbound rule allowing TCP 443 to an external range",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "AuthorizeSecurityGroupEgress",
+          "eventTime": "2024-10-25T14:09:40Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.50 Python/3.11.6",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ops-admin/mrojas",
+          "requestParameters.groupId": "sg-0f9e8d7c6b5a43210",
+          "requestParameters.ipPermissions.items.0.ipProtocol": "tcp",
+          "requestParameters.ipPermissions.items.0.fromPort": 443,
+          "requestParameters.ipPermissions.items.0.toPort": 443,
+          "requestParameters.ipPermissions.items.0.ipRanges.items.0.cidrIp": "192.0.2.0/24"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of security groups from the console",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DescribeSecurityGroups",
+          "eventTime": "2024-10-25T14:05:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "console.ec2.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "readOnly": true
+        }
+      },
+      {
+        "description": "Creation of a new empty security group, not an ingress/egress rule change",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "CreateSecurityGroup",
+          "eventTime": "2024-10-25T14:01:30Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Terraform/1.7.4",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/terraform-deployer/ci",
+          "requestParameters.groupName": "app-web-sg",
+          "requestParameters.vpcId": "vpc-0123456789abcdef0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

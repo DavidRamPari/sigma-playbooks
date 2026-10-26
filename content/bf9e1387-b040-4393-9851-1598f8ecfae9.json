@@ -1,0 +1,119 @@
+{
+  "rule": {
+    "id": "bf9e1387-b040-4393-9851-1598f8ecfae9",
+    "title": "Disable Exploit Guard Network Protection on Windows Defender",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "windows/registry/registry_set/registry_set_disabled_exploit_guard_net_protection_on_ms_defender.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_disabled_exploit_guard_net_protection_on_ms_defender.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor de política DisallowExploitProtectionOverride = 1 en la sección App and Browser protection de Windows Defender Security Center. Puede tratarse de una manipulación de las defensas de Exploit Guard en el endpoint.",
+      "what_it_detects": "Un evento registry_set cuyo TargetObject contiene SOFTWARE\\Policies\\Microsoft\\Windows Defender Security Center\\App and Browser protection\\DisallowExploitProtectionOverride y cuyo Details es DWORD (00000001). El título de la regla habla de Network Protection, pero este valor de política controla si los usuarios pueden modificar la configuración de Exploit Protection en la aplicación Seguridad de Windows.",
+      "why_it_matters": "Cambiar las políticas de Defender fuera de los canales de gestión habituales es una forma de debilitar las defensas (defense impairment, ATT&CK T1685). Un atacante puede bloquear o esconder la configuración de protección para mantener activos sus cambios y ocultárselos al usuario.",
+      "triage_steps": [
+        "Identifique el Image y el User que escribieron el valor. svchost.exe (Group Policy) o el agente MDM es lo esperado; reg.exe, powershell.exe o un binario desconocido es sospechoso.",
+        "Revise el CommandLine y el ParentImage del proceso escritor en la telemetría de procesos del mismo host.",
+        "Confirme con el equipo de endpoints si hay un GPO, una baseline o un perfil de Intune que establezca este valor de forma legítima.",
+        "Busque en el mismo host, +/- 15 minutos, otros cambios en claves de Defender: DisableAntiSpyware, exclusiones, Tamper Protection o EnableNetworkProtection.",
+        "Verifique el estado de Defender (Get-MpPreference, Get-MpComputerStatus) y compruebe si hay protecciones desactivadas.",
+        "Pivote por usuario y por hash del binario escritor para encontrar el mismo cambio en otros equipos y alertas previas de la entidad."
+      ],
+      "false_positives": [
+        "Un GPO corporativo o una baseline de seguridad que impide a los usuarios cambiar la configuración de Exploit Protection.",
+        "Perfiles de Intune o MDM que aplican políticas de Windows Security.",
+        "Scripts de hardening o de aprovisionamiento ejecutados por administradores durante el despliegue de imágenes."
+      ],
+      "response_steps": [
+        "Verifique con el administrador o el registro de cambios si la modificación estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint desde el EDR y conserve las evidencias: proceso escritor, línea de comandos y exportación de la clave.",
+        "Revierta el valor y el resto de cambios a Defender, y vuelva a aplicar la política corporativa con gpupdate o una sincronización MDM.",
+        "Lance un análisis completo con Defender, busque mecanismos de persistencia y restablezca las credenciales de la cuenta implicada."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque el cambio debilita las defensas, pero también se usa con frecuencia en políticas legítimas y necesita contexto para confirmarse."
+    },
+    "en": {
+      "summary": "The DisallowExploitProtectionOverride policy value was set to 1 under Windows Defender Security Center App and Browser protection. This may mean someone is tampering with Exploit Guard defenses on the endpoint.",
+      "what_it_detects": "A registry_set event where TargetObject contains SOFTWARE\\Policies\\Microsoft\\Windows Defender Security Center\\App and Browser protection\\DisallowExploitProtectionOverride and Details is DWORD (00000001). The rule title mentions Network Protection, but this policy value controls whether users can change Exploit Protection settings in the Windows Security app.",
+      "why_it_matters": "Changing Defender policy outside normal management channels is a form of defense impairment (ATT&CK T1685). An attacker can lock or hide protection settings so their changes stay in place and the user cannot see them.",
+      "triage_steps": [
+        "Identify the Image and User that wrote the value. svchost.exe (Group Policy) or an MDM agent is expected; reg.exe, powershell.exe or an unknown binary is suspicious.",
+        "Review the writer's CommandLine and ParentImage in process telemetry for the same host.",
+        "Confirm with the endpoint team whether a GPO, baseline or Intune profile legitimately sets this value.",
+        "Search the same host within +/- 15 minutes for other Defender key changes: DisableAntiSpyware, exclusions, Tamper Protection or EnableNetworkProtection.",
+        "Check Defender status (Get-MpPreference, Get-MpComputerStatus) to see whether any protections are disabled.",
+        "Pivot on the user and on the writer binary hash to find the same change on other hosts and earlier alerts for the entity."
+      ],
+      "false_positives": [
+        "A corporate GPO or security baseline that stops users from changing Exploit Protection settings.",
+        "Intune or MDM profiles that apply Windows Security policies.",
+        "Hardening or provisioning scripts run by administrators during image deployment."
+      ],
+      "response_steps": [
+        "Check with the administrator or the change records whether the change was authorized before you act.",
+        "If it was not authorized, isolate the endpoint through EDR and keep the evidence: writer process, command line and an export of the key.",
+        "Revert this value and any other Defender changes, then reapply corporate policy with gpupdate or an MDM sync.",
+        "Run a full Defender scan, hunt for persistence and reset credentials for the account involved."
+      ],
+      "severity_rationale": "Medium fits because the change weakens defenses but is also common in legitimate policy and needs context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe launched from a user PowerShell session sets DisallowExploitProtectionOverride to 1",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender Security Center\\App and Browser protection\\DisallowExploitProtectionOverride",
+          "Details": "DWORD (00000001)",
+          "ProcessId": 6120
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same policy value set to 0, which allows users to change the settings, so Details does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender Security Center\\App and Browser protection\\DisallowExploitProtectionOverride",
+          "Details": "DWORD (00000000)",
+          "ProcessId": 1312
+        }
+      },
+      {
+        "description": "Different value in the same App and Browser protection policy key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender Security Center\\App and Browser protection\\UILockdown",
+          "Details": "DWORD (00000001)",
+          "ProcessId": 1288
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "rule": {
+    "id": "7ed2c9f7-c59d-4c82-a7e2-f859aa676099",
+    "title": "Suspicious MacOS Firmware Activity",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "macos/process_creation/proc_creation_macos_susp_macos_firmware_activity.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_susp_macos_firmware_activity.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutó /usr/sbin/firmwarepasswd en un equipo macOS con un argumento que establece, elimina, cambia el modo o consulta la contraseña de firmware. Alguien podría estar modificando un control de seguridad previo al arranque, o preparándose para hacerlo.",
+      "what_it_detects": "Eventos de creación de procesos donde Image es exactamente /usr/sbin/firmwarepasswd y CommandLine contiene 'setpasswd', 'full', 'delete' o 'check'. Esto incluye -setpasswd, -setmode full, -delete y -check. La herramienta solo funciona en Mac Intel y requiere root.",
+      "why_it_matters": "La contraseña de firmware impide arrancar desde medios externos, Recovery o modo de usuario único. Eliminarla quita esa protección. Establecer una contraseña desconocida puede impedir que el propietario use el equipo. Sigma clasifica esta regla en la táctica Impact de ATT&CK.",
+      "triage_steps": [
+        "Lea CommandLine para ver la acción: -check solo consulta el estado, mientras que -setpasswd, -setmode full y -delete lo modifican. Dé mayor prioridad a una modificación.",
+        "Identifique al usuario que la ejecutó y revise ParentImage. ¿Fue sudo desde una Terminal interactiva, o un agente MDM o script de gestión?",
+        "Compare con los tickets de cambio y la línea base de gestión de equipos. ¿Hay una implementación o retiro planificado de la contraseña de firmware en este equipo?",
+        "Pivotee en el mismo equipo +/- 15 minutos para buscar uso de sudo, nuevos launch agents o daemons, descargas con curl, comandos csrutil, nvram o bless, e inicios de sesión SSH.",
+        "Verifique si el equipo es Apple silicon. En esos Mac el comando está deshabilitado, así que un intento sugiere un script o una persona ajena a la flota.",
+        "Busque alertas previas del mismo usuario y equipo, y busque la misma línea de comandos en otros Mac."
+      ],
+      "false_positives": [
+        "Actividades legítimas de administración, como personal de TI o flujos MDM que habilitan, rotan o eliminan contraseñas de firmware.",
+        "Scripts de cumplimiento o inventario que ejecutan firmwarepasswd -check para reportar el estado.",
+        "Baja o reinstalación de equipos, donde los técnicos eliminan la contraseña de firmware."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el usuario y con TI. Obtenga el ticket o el trabajo MDM que la justifica.",
+        "Si no está autorizada, aísle el equipo de la red y proteja la cuenta que usó sudo: restablezca credenciales y revise sudoers.",
+        "Si la contraseña se estableció o eliminó sin autorización, restaure el estado aprobado de la contraseña de firmware con TI, siguiendo el proceso de recuperación documentado.",
+        "Busque persistencia y otras manipulaciones en el equipo antes de devolverlo a producción. Documente los hallazgos."
+      ],
+      "severity_rationale": "Media es adecuada porque cambiar la contraseña de firmware debilita o abusa de un control previo al arranque y requiere root, pero es una tarea administrativa común y -check es inofensivo."
+    },
+    "en": {
+      "summary": "A process ran /usr/sbin/firmwarepasswd on a macOS host with an argument that sets, deletes, changes the mode of or checks the firmware password. Someone may be changing a pre-boot security control, or may be preparing to.",
+      "what_it_detects": "Process creation events where Image is exactly /usr/sbin/firmwarepasswd and CommandLine contains 'setpasswd', 'full', 'delete' or 'check'. This covers -setpasswd, -setmode full, -delete and -check. The tool only works on Intel Macs and needs root.",
+      "why_it_matters": "The firmware password stops booting from external media, Recovery or single-user mode. Deleting it removes that protection. Setting an unknown password can lock the owner out of the device. Sigma tags this rule under the ATT&CK Impact tactic.",
+      "triage_steps": [
+        "Read CommandLine to see the action: -check only reads status, while -setpasswd, -setmode full and -delete change it. Treat a change as the higher priority.",
+        "Find the user who ran it and check ParentImage. Was it sudo from an interactive Terminal, or an MDM agent or management script?",
+        "Compare against change tickets and the device-management baseline. Is this host scheduled for firmware password rollout or removal?",
+        "Pivot on the same host within +/- 15 minutes for sudo use, new launch agents or daemons, downloads from curl, csrutil, nvram or bless commands, and remote logins over SSH.",
+        "Check whether the host is Apple silicon. On those Macs the command is disabled, so an attempt there suggests a script or person unfamiliar with the fleet.",
+        "Look for earlier alerts for the same user and host, and look for the same command line on other Macs."
+      ],
+      "false_positives": [
+        "Legitimate administration activities, such as IT staff or MDM workflows enabling, rotating or removing firmware passwords.",
+        "Compliance or inventory scripts that run firmwarepasswd -check to report status.",
+        "Device decommissioning or reimaging, where technicians delete the firmware password."
+      ],
+      "response_steps": [
+        "Confirm the activity with the user and IT. Get the ticket or MDM job that explains it.",
+        "If it is unauthorized, isolate the host from the network and protect the account that used sudo by resetting credentials and reviewing sudoers.",
+        "If the password was set or deleted without authorization, restore the approved firmware password state through IT, using the documented recovery process.",
+        "Look for persistence and other tampering on the host before you return it to service. Document the findings."
+      ],
+      "severity_rationale": "Medium fits because changing the firmware password weakens or abuses a pre-boot control and needs root, but administrators commonly do it and -check is harmless."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive sudo session deletes the firmware password on an Intel Mac",
+        "event": {
+          "Image": "/usr/sbin/firmwarepasswd",
+          "CommandLine": "/usr/sbin/firmwarepasswd -delete",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 4182,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "Firmware password mode set to full by a shell script",
+        "event": {
+          "Image": "/usr/sbin/firmwarepasswd",
+          "CommandLine": "firmwarepasswd -setmode full",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "ProcessId": 5520,
+          "Computer": "MBP-0307.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator queries the current firmware password mode with -mode, which contains none of the listed strings",
+        "event": {
+          "Image": "/usr/sbin/firmwarepasswd",
+          "CommandLine": "/usr/sbin/firmwarepasswd -mode",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 3911,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "A different binary has 'check' in its command line, so the Image condition fails",
+        "event": {
+          "Image": "/usr/sbin/diskutil",
+          "CommandLine": "diskutil verifyVolume / -check",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 2290,
+          "Computer": "MBP-0142.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

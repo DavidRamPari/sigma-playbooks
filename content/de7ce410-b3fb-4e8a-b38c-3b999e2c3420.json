@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "de7ce410-b3fb-4e8a-b38c-3b999e2c3420",
+    "title": "PAExec Service Installation",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_service_install_paexec.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_service_install_paexec.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló en el host un servicio de Windows con el patrón de PAExec, lo que indica que alguien ejecutó comandos de forma remota con esta herramienta. Puede tratarse de administración legítima o de movimiento lateral.",
+      "what_it_detects": "Eventos 7045 del Service Control Manager (registro System) cuyo ServiceName empieza con 'PAExec-' o cuyo ImagePath empieza con 'C:\\WINDOWS\\PAExec-'. PAExec es una alternativa open source a PsExec que copia un ejecutable al recurso ADMIN$ del destino y lo registra como servicio.",
+      "why_it_matters": "Los atacantes usan PAExec para ejecutar comandos remotos, a menudo como SYSTEM, durante el movimiento lateral. Corresponde a ATT&CK T1569.002 (System Services: Service Execution): ejecutar código mediante un servicio creado temporalmente.",
+      "triage_steps": [
+        "Revise ServiceName e ImagePath: PAExec suele nombrarlos 'PAExec-<PID>-<equipo origen>', lo que identifica el equipo que lanzó la ejecución remota.",
+        "Revise AccountName y StartType del evento 7045 para saber con qué cuenta corre el servicio (normalmente LocalSystem).",
+        "Busque en el host destino eventos 4624 de tipo 3 y 5140/5145 sobre ADMIN$ o IPC$ en +/- 15 minutos para obtener el usuario y la IP de origen.",
+        "Revise los procesos hijos del binario PAExec-*.exe (ParentImage) en el destino: cmd.exe, powershell.exe, herramientas de volcado de credenciales o de descubrimiento.",
+        "En el equipo origen, busque la ejecución de paexec.exe y su CommandLine (opciones -s, -u, -c, lista de equipos destino).",
+        "Confirme si el usuario y el equipo origen pertenecen a TI o a una herramienta de despliegue autorizada, y si hubo un cambio o ticket aprobado.",
+        "Busque instalaciones de PAExec en otros hosts desde el mismo origen o con el mismo usuario, y alertas previas de esas entidades."
+      ],
+      "false_positives": [
+        "Administradores de sistemas que usan PAExec para tareas remotas o soporte.",
+        "Herramientas de despliegue de software, RMM o scripts de inventario que incluyen PAExec.",
+        "Productos de Power Admin u otras soluciones de monitoreo que lo usan internamente."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta y el equipo de TI si la ejecución estaba autorizada; si lo estaba, documente y ajuste exclusiones por origen.",
+        "Si no está autorizada, aísle el host destino y el equipo origen desde el EDR, preservando evidencia.",
+        "Restablezca las credenciales de la cuenta usada y revise sus sesiones activas en el dominio.",
+        "Elimine el servicio y el binario PAExec residuales solo después de recolectar el hash y la evidencia forense.",
+        "Busque persistencia, cuentas nuevas y otros hosts afectados por el mismo origen antes de restaurar la operación."
+      ],
+      "severity_rationale": "Es medium porque PAExec también tiene usos administrativos legítimos, pero la ejecución remota como servicio es una técnica común de movimiento lateral que requiere verificación."
+    },
+    "en": {
+      "summary": "A Windows service matching the PAExec naming pattern was installed on the host, meaning someone ran commands remotely with this tool. It may be legitimate administration or lateral movement.",
+      "what_it_detects": "Service Control Manager event 7045 (System log) where ServiceName starts with 'PAExec-' or ImagePath starts with 'C:\\WINDOWS\\PAExec-'. PAExec is an open-source PsExec alternative that copies an executable to the target's ADMIN$ share and registers it as a service.",
+      "why_it_matters": "Attackers use PAExec to run remote commands, often as SYSTEM, while moving laterally. This maps to ATT&CK T1569.002 (System Services: Service Execution): running code through a temporary service.",
+      "triage_steps": [
+        "Review ServiceName and ImagePath: PAExec usually names them 'PAExec-<PID>-<source computer>', which identifies the machine that launched the remote execution.",
+        "Check AccountName and StartType in the 7045 event to see which account runs the service (usually LocalSystem).",
+        "On the target, search for 4624 type 3 logons and 5140/5145 access to ADMIN$ or IPC$ within +/- 15 minutes to get the user and source IP.",
+        "Review child processes of the PAExec-*.exe binary (ParentImage) on the target: cmd.exe, powershell.exe, credential dumping or discovery tools.",
+        "On the source machine, find the paexec.exe execution and its CommandLine (-s, -u, -c options, target host list).",
+        "Confirm whether the user and source machine belong to IT or an approved deployment tool, and whether an approved change or ticket exists.",
+        "Hunt for PAExec installs on other hosts from the same source or user, and earlier alerts for these entities."
+      ],
+      "false_positives": [
+        "System administrators using PAExec for remote tasks or support.",
+        "Software deployment, RMM tools or inventory scripts that bundle PAExec.",
+        "Power Admin products or other monitoring solutions using it internally."
+      ],
+      "response_steps": [
+        "Confirm with the account owner and IT whether the execution was authorized; if so, document it and tune exclusions by source.",
+        "If unauthorized, isolate the target host and source machine via EDR while preserving evidence.",
+        "Reset the credentials of the account used and review its active sessions in the domain.",
+        "Remove the leftover PAExec service and binary only after collecting the hash and forensic evidence.",
+        "Look for persistence, new accounts and other hosts touched by the same source before restoring operations."
+      ],
+      "severity_rationale": "Medium fits because PAExec has legitimate admin uses, yet remote service execution is a common lateral movement technique that needs verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PAExec service installed on WS-0142 from remote host ADM-07, running as LocalSystem",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "PAExec-5124-ADM-07",
+          "ImagePath": "C:\\WINDOWS\\PAExec-5124-ADM-07.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service with a renamed ServiceName but ImagePath still using the PAExec binary in C:\\Windows",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FS01.andes.example.com",
+          "ServiceName": "UpdSvc",
+          "ImagePath": "C:\\Windows\\PAExec-880-WS-0311.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service whose name contains PAExec but lacks the 'PAExec-' prefix and is installed under Program Files",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "PAExecHelper",
+          "ImagePath": "\"C:\\Program Files\\PowerAdmin\\PAExecHelper.exe\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "PsExec service install (PSEXESVC), a similar tool that this rule does not cover",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "PSEXESVC",
+          "ImagePath": "%SystemRoot%\\PSEXESVC.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

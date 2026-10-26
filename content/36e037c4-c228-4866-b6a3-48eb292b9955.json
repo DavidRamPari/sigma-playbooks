@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "36e037c4-c228-4866-b6a3-48eb292b9955",
+    "title": "DNS Query Request By Regsvr32.EXE",
+    "level": "medium",
+    "status": "test",
+    "author": "Dmitriy Lifanov, oscd.community",
+    "path": "windows/dns_query/dns_query_win_regsvr32_dns_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/dns_query/dns_query_win_regsvr32_dns_query.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218.010",
+      "T1559.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Regsvr32.exe realizó una consulta DNS. Este binario registra DLL y controles COM, y en condiciones normales casi nunca necesita resolver nombres, así que la consulta puede indicar que descarga un scriptlet o payload remoto.",
+      "what_it_detects": "Eventos de consulta DNS (Sysmon Event ID 22) cuyo campo Image termina en \\regsvr32.exe, tanto en System32 como en SysWOW64. La regla no filtra por dominio ni por resultado.",
+      "why_it_matters": "Los atacantes usan regsvr32 como binario firmado de Windows para ejecutar código como proxy (T1218.010). La variante Squiblydoo (/i:http://... scrobj.dll) carga scriptlets COM remotos (T1559.001) y evade AppLocker.",
+      "triage_steps": [
+        "Revise QueryName y QueryResults: identifique el dominio, su antigüedad y su reputación, y confirme si las IP resueltas son conocidas o están en el inventario corporativo.",
+        "Relacione el ProcessGuid o ProcessId con el evento de creación de proceso (Sysmon 1 / 4688) y revise CommandLine en busca de /i:, http, scrobj.dll, /s, /u o rutas en Temp.",
+        "Examine ParentImage: si el padre es Office, wscript, mshta, powershell o el navegador, el caso es más sospechoso que si es msiexec o un instalador firmado.",
+        "Busque conexiones de red (Sysmon 3) y escritura de archivos del mismo proceso en el host dentro de +/- 15 minutos, sobre todo descargas .sct, .dll o .txt.",
+        "Busque el mismo QueryName en otros endpoints y revise si el usuario o el host tienen alertas previas.",
+        "Si hay un archivo descargado, obtenga su hash y compárelo con las fuentes de inteligencia internas."
+      ],
+      "false_positives": [
+        "Instaladores legítimos que registran DLL con regsvr32 y cuya DLL consulta un servidor de licencias o actualizaciones del fabricante.",
+        "Validación de firmas o certificados (CRL/OCSP) al cargar DLL firmadas, que genera consultas a dominios de Microsoft o de entidades certificadoras.",
+        "Software de despliegue (SCCM, Intune) que registra componentes COM durante la instalación de paquetes corporativos."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo o con TI si había una instalación legítima en curso antes de actuar.",
+        "Si se confirma actividad maliciosa, aísle el endpoint desde el EDR y bloquee el dominio y las IP en el proxy o el DNS corporativo.",
+        "Termine el proceso regsvr32, conserve los archivos descargados y la memoria, y elimine la persistencia asociada (tareas, claves Run o registros COM).",
+        "Restablezca las credenciales del usuario afectado, busque el mismo indicador en toda la flota y considere bloquear el acceso a red de regsvr32."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque regsvr32 casi nunca debería resolver nombres, pero algunos instaladores y las validaciones de certificados explican parte de los casos."
+    },
+    "en": {
+      "summary": "Regsvr32.exe made a DNS query. It registers DLLs and COM controls and rarely needs name resolution, so the query may mean it is fetching a remote scriptlet or payload.",
+      "what_it_detects": "DNS query events (Sysmon Event ID 22) where Image ends with \\regsvr32.exe, in either System32 or SysWOW64. No domain or result filtering is applied.",
+      "why_it_matters": "Attackers abuse the signed regsvr32 binary to proxy code execution (T1218.010). The Squiblydoo variant (/i:http://... scrobj.dll) loads remote COM scriptlets (T1559.001) and bypasses AppLocker.",
+      "triage_steps": [
+        "Review QueryName and QueryResults: look up the domain's age and reputation, and check whether the resolved IPs are known or in the corporate inventory.",
+        "Match ProcessGuid or ProcessId to the process creation event (Sysmon 1 / 4688) and check CommandLine for /i:, http, scrobj.dll, /s, /u or Temp paths.",
+        "Check ParentImage: Office, wscript, mshta, powershell or browser parents are more suspicious than msiexec or a signed installer.",
+        "Look for network connections (Sysmon 3) and file writes by the same process on the host within +/- 15 minutes, especially .sct, .dll or .txt downloads.",
+        "Search for the same QueryName on other endpoints and check the user and host for earlier alerts.",
+        "If a file was downloaded, hash it and compare it against internal threat intelligence."
+      ],
+      "false_positives": [
+        "Legitimate installers that register DLLs with regsvr32, where the DLL contacts a vendor license or update server.",
+        "Signature or certificate validation (CRL/OCSP) when loading signed DLLs, which queries Microsoft or certificate authority domains.",
+        "Deployment tools (SCCM, Intune) that register COM components while installing corporate packages."
+      ],
+      "response_steps": [
+        "Check with the host owner or IT whether a legitimate installation was in progress before taking action.",
+        "If confirmed malicious, isolate the endpoint through EDR and block the domain and IPs at the proxy or corporate DNS.",
+        "Kill the regsvr32 process, keep downloaded files and memory, and remove related persistence (scheduled tasks, Run keys or COM registrations).",
+        "Reset the affected user's credentials, search the whole fleet for the indicator, and consider blocking network access for regsvr32."
+      ],
+      "severity_rationale": "Medium fits because regsvr32 should rarely resolve names, but some installers and certificate checks account for part of the hits."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Regsvr32 in System32 resolves an external domain, consistent with a Squiblydoo scriptlet download.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "ProcessGuid": "{4a1b2c3d-1111-6720-2a01-000000000f00}",
+          "Image": "C:\\Windows\\System32\\regsvr32.exe",
+          "QueryName": "cdn-update.example.org",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.45;"
+        }
+      },
+      {
+        "description": "32-bit regsvr32 under SysWOW64 queries a domain; mixed case in the path still matches because matching is case-insensitive.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "ProcessId": 4388,
+          "Image": "C:\\Windows\\SysWOW64\\REGSVR32.EXE",
+          "QueryName": "files.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:198.51.100.23;"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal browser DNS query; Image is not regsvr32.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7744,
+          "Image": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+          "QueryName": "www.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:192.0.2.10;"
+        }
+      },
+      {
+        "description": "Similarly named helper binary whose Image does not end with \\regsvr32.exe.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0311.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "ProcessId": 5012,
+          "Image": "C:\\Program Files\\VendorApp\\regsvr32_helper.exe",
+          "QueryName": "license.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:192.0.2.55;"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "88c0f9d8-30a8-4120-bb6b-ebb54abcf2a0",
+    "title": "File Time Attribute Change",
+    "level": "medium",
+    "status": "test",
+    "author": "Igor Fits, Mikhail Larin, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_change_file_time_attr.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_change_file_time_attr.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en macOS ejecutó el binario touch con opciones que fijan las marcas de tiempo de un archivo (-t, -d, -r o -acmr). Puede tratarse de timestomping, es decir, alterar las fechas para ocultar archivos nuevos o modificados.",
+      "what_it_detects": "Eventos de creación de procesos donde Image termina en '/touch' y CommandLine contiene '-t', '-acmr', '-d' o '-r'. Estas opciones fijan una fecha concreta o copian las marcas de tiempo de un archivo de referencia. La coincidencia es por subcadena, así que también disparan nombres de archivo con guion como 'mis-docs.txt'.",
+      "why_it_matters": "El timestomping (ATT&CK T1070.006, Indicator Removal: Timestomp) hace que archivos maliciosos parezcan antiguos o se confundan con archivos del sistema. Esto entorpece el análisis de línea de tiempo y oculta persistencia como LaunchAgents, binarios descargados o scripts modificados.",
+      "triage_steps": [
+        "Revise CommandLine: identifique el archivo objetivo y si la fecha es fija en el pasado (-t/-d) o se copia de un binario del sistema (-r /bin/ls).",
+        "Evalúe la ruta objetivo. LaunchAgents, LaunchDaemons, /Library, /usr/local/bin, /tmp, archivos ocultos y la carpeta Library del usuario implican mayor riesgo.",
+        "Analice ParentImage y el árbol de procesos. Un shell lanzado por un binario desconocido, osascript, curl o python es más sospechoso que make, Xcode o un agente MDM.",
+        "Identifique al usuario y confirme si esa cuenta suele hacer tareas de desarrollo o administración en ese equipo.",
+        "Pivotee en el mismo host +/- 15 minutos: creación de archivos, descargas, launchctl, chmod +x, xattr -d com.apple.quarantine o conexiones de red.",
+        "Obtenga el hash del archivo objetivo, valide su firma con codesign -dv y spctl, y compárelo con inteligencia de amenazas.",
+        "Busque alertas previas para el mismo host, usuario y archivo, y ejecuciones similares de touch en otros equipos."
+      ],
+      "false_positives": [
+        "Sistemas de compilación, Makefiles y gestores de paquetes como Homebrew o pip que normalizan fechas para compilaciones reproducibles.",
+        "Instaladores y scripts de respaldo, restauración o sincronización que conservan las fechas originales.",
+        "Desarrolladores o administradores probando scripts, y tareas de MDM o gestión de configuración.",
+        "Nombres de archivo con guion (p. ej. 'touch informe-final.txt') que coinciden por subcadena sin usar ninguna opción de fecha."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del activo si la actividad era esperada, y documente el proceso padre y el archivo objetivo.",
+        "Si es maliciosa, aísle el endpoint desde el EDR y preserve el archivo, el historial del shell y los unified logs antes de modificar nada.",
+        "Elimine los archivos y la persistencia maliciosos ya confirmados (descargue LaunchAgents/Daemons) y restablezca las credenciales del usuario afectado.",
+        "Reconstruya la línea de tiempo con APFS, FSEvents y unified logs en lugar de confiar en el mtime. Agregue exclusiones para rutas de compilación verificadas como legítimas."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el timestomping es una señal clara de anti-forense, pero touch con estas opciones también es común en scripts y compilaciones legítimas, así que se requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A macOS process ran the touch binary with options that set file timestamps explicitly (-t, -d, -r or -acmr). This can be timestomping: an attacker changing file times to hide new or modified files.",
+      "what_it_detects": "Process creation events where Image ends with '/touch' and CommandLine contains '-t', '-acmr', '-d' or '-r'. These options set a specific date or copy timestamps from a reference file. Matching is by substring, so hyphenated file names such as 'my-docs.txt' also trigger it.",
+      "why_it_matters": "Timestomping (ATT&CK T1070.006, Indicator Removal: Timestomp) makes malicious files look old or blends them with system files. This defeats timeline analysis and hides persistence items such as LaunchAgents, dropped binaries or edited scripts.",
+      "triage_steps": [
+        "Read CommandLine: find the target file and check whether the timestamp is a fixed past date (-t/-d) or copied from a system binary (-r /bin/ls).",
+        "Check the target path. LaunchAgents, LaunchDaemons, /Library, /usr/local/bin, /tmp, hidden files and user Library folders are higher risk.",
+        "Review ParentImage and the process tree. A shell launched by an unknown binary, osascript, curl or python is more suspicious than make, Xcode or an MDM agent.",
+        "Identify the user and check whether that account normally does development or administration on this host.",
+        "Pivot to the same host within +/- 15 minutes for file creation, downloads, launchctl, chmod +x, xattr -d com.apple.quarantine or network connections.",
+        "Hash the target file and check its code signature with codesign -dv and spctl. Compare it against threat intelligence.",
+        "Search earlier alerts for the same host, user and target file, and look for repeated touch runs across the fleet."
+      ],
+      "false_positives": [
+        "Build systems, Makefiles and package managers such as Homebrew or pip that normalize timestamps for reproducible builds.",
+        "Installers, backup or restore and sync scripts that keep original modification times.",
+        "Developers or administrators testing scripts, and MDM or configuration management jobs.",
+        "Hyphenated file names (e.g. 'touch report-draft.txt') that match the substring logic without any timestamp option."
+      ],
+      "response_steps": [
+        "Verify with the user or asset owner whether the activity was expected, and document the parent process and target file.",
+        "If it is malicious, isolate the endpoint through EDR and preserve the file, shell history and unified logs before changing anything.",
+        "Remove confirmed malicious files and persistence (unload LaunchAgents/Daemons), then reset credentials for the affected user.",
+        "Rebuild the timeline from APFS, FSEvents and unified logs instead of trusting file mtime. Add tuning exclusions for verified benign build paths."
+      ],
+      "severity_rationale": "Medium fits because timestomping is a strong anti-forensics signal, but touch with these options is also common in legitimate scripts and builds, so context is needed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "touch sets a fixed past timestamp on a newly dropped LaunchAgent plist",
+        "event": {
+          "Image": "/usr/bin/touch",
+          "CommandLine": "touch -t 201901011200 /Users/jperez/Library/LaunchAgents/com.example.updater.plist",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "/bin/zsh -c /tmp/.stage/install.sh",
+          "User": "jperez",
+          "ProcessId": 4821,
+          "ParentProcessId": 4790,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "touch copies timestamps from /bin/ls onto a hidden binary in /usr/local/bin",
+        "event": {
+          "Image": "/usr/bin/touch",
+          "CommandLine": "touch -r /bin/ls /usr/local/bin/.helperd",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash",
+          "User": "root",
+          "ProcessId": 5133,
+          "ParentProcessId": 5102,
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Plain touch used to create a lock file, with no timestamp options or hyphens in the command line",
+        "event": {
+          "Image": "/usr/bin/touch",
+          "CommandLine": "touch /tmp/build.lock",
+          "ParentImage": "/usr/bin/make",
+          "ParentCommandLine": "make all",
+          "User": "mlopez",
+          "ProcessId": 6012,
+          "ParentProcessId": 6001,
+          "Computer": "MBP-0207"
+        }
+      },
+      {
+        "description": "SetFile changes a creation date; the date option appears but Image is not touch",
+        "event": {
+          "Image": "/usr/bin/SetFile",
+          "CommandLine": "SetFile -d 01/01/2019 /Users/mlopez/Documents/notes.txt",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "User": "mlopez",
+          "ProcessId": 6120,
+          "ParentProcessId": 6099,
+          "Computer": "MBP-0207"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

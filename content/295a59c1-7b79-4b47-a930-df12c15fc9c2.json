@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "295a59c1-7b79-4b47-a930-df12c15fc9c2",
+    "title": "Windows Registry Trust Record Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "Antonlovesdnb, Trent Liffick (@tliffick)",
+    "path": "windows/registry/registry_event/registry_event_office_trust_record_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_office_trust_record_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1566.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una aplicación de Office escribió un valor en la clave Trusted Documents\\TrustRecords. Esto suele ocurrir cuando un usuario habilita la edición o las macros de un documento, lo que podría indicar que se ejecutó un adjunto malicioso.",
+      "what_it_detects": "Eventos de registro (registry_event) cuyo TargetObject contiene '\\Security\\Trusted Documents\\TrustRecords'. Office crea en esa clave un valor por cada documento que el usuario marca como confiable. El nombre del valor es la ruta del documento.",
+      "why_it_matters": "Los documentos con macros enviados como adjuntos son una vía habitual de acceso inicial (ATT&CK T1566.001, Spearphishing Attachment). Un trust record confirma que el usuario interactuó con el documento y probablemente habilitó su contenido activo.",
+      "triage_steps": [
+        "Extraiga del TargetObject la ruta del documento (nombre del valor) y la aplicación (Word, Excel, PowerPoint) y anote el Image, el usuario y el host.",
+        "Revise Details o los datos binarios del valor. Según la investigación referenciada, si termina en FF FF FF 7F, las macros fueron habilitadas y no solo la edición.",
+        "Determine el origen del archivo: carpeta Downloads, caché de Outlook (INetCache\\Content.Outlook), Zone.Identifier/Mark of the Web y el correo o la URL de origen.",
+        "Busque procesos hijos del proceso de Office en el mismo host dentro de +/- 15 minutos: cmd, powershell, wscript, mshta, rundll32, regsvr32 o certutil.",
+        "Correlacione conexiones de red, archivos creados (EXE, DLL, scripts) y tareas programadas o claves Run creadas tras la escritura del registro.",
+        "Obtenga el hash del documento, búsquelo en inteligencia de amenazas y analícelo en sandbox.",
+        "Revise alertas previas del mismo usuario y host, e identifique a otros destinatarios del mismo correo."
+      ],
+      "false_positives": [
+        "Uso legítimo de libros o documentos con macros, por ejemplo en finanzas, contabilidad o reportes internos.",
+        "Usuarios que hacen clic en 'Habilitar edición' en documentos descargados que se abren en Vista protegida.",
+        "Plantillas o complementos corporativos que se distribuyen fuera de las ubicaciones de confianza.",
+        "Herramientas de migración de perfiles o scripts administrativos que copian claves HKCU de Office."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con el origen del archivo si el documento es legítimo antes de actuar.",
+        "Si es malicioso, aísle el endpoint, ponga el correo en cuarentena en todos los buzones y bloquee el hash, el remitente y los dominios relacionados.",
+        "Elimine los artefactos de persistencia y el payload identificados y, una vez preservada la evidencia, borre el valor de TrustRecords.",
+        "Restablezca las credenciales del usuario si hubo ejecución de código y vigile el host por actividad posterior.",
+        "Para reducir ruido, agregue exclusiones por rutas o documentos aprobados y valide la política de bloqueo de macros provenientes de Internet."
+      ],
+      "severity_rationale": "Medium es adecuado porque la habilitación de macros es frecuente en entornos legítimos, pero también es un paso clave del phishing con adjuntos y requiere revisión."
+    },
+    "en": {
+      "summary": "An Office application wrote a value under the Trusted Documents\\TrustRecords key. This usually happens when a user enables editing or macros in a document, and it may mean a malicious attachment was run.",
+      "what_it_detects": "Registry events whose TargetObject contains '\\Security\\Trusted Documents\\TrustRecords'. Office creates one value there for each document the user trusts, and the value name is the document path.",
+      "why_it_matters": "Macro documents sent as attachments are a common initial-access vector (ATT&CK T1566.001, Spearphishing Attachment). A trust record shows the user interacted with the document and probably enabled its active content.",
+      "triage_steps": [
+        "Take the document path (the value name) and the Office application from TargetObject, and note the Image, user and host.",
+        "Check Details or the binary data. The referenced research says data ending in FF FF FF 7F means macros were enabled, not only editing.",
+        "Find where the file came from: the Downloads folder, the Outlook cache (INetCache\\Content.Outlook), Zone.Identifier/Mark of the Web, and the source email or URL.",
+        "Look for child processes of the Office process on the same host within +/- 15 minutes: cmd, powershell, wscript, mshta, rundll32, regsvr32 or certutil.",
+        "Correlate network connections, dropped files (EXE, DLL, scripts), and scheduled tasks or Run keys created after the registry write.",
+        "Hash the document, look it up in threat intelligence and detonate it in a sandbox.",
+        "Review earlier alerts for the same user and host, and find other recipients of the same email."
+      ],
+      "false_positives": [
+        "Legitimate macro-enabled workbooks or documents, for example in finance, accounting or internal reporting.",
+        "Users clicking 'Enable Editing' on downloaded documents that open in Protected View.",
+        "Corporate templates or add-ins distributed outside trusted locations.",
+        "Profile migration tools or admin scripts that copy Office HKCU keys."
+      ],
+      "response_steps": [
+        "Check with the user and the file's source whether the document is legitimate before you act.",
+        "If it is malicious, isolate the endpoint, quarantine the email in all mailboxes, and block the hash, sender and related domains.",
+        "Remove the persistence artifacts and payloads you found. After you preserve evidence, delete the TrustRecords value.",
+        "If code ran, reset the user's credentials and watch the host for follow-on activity.",
+        "To cut noise, exclude approved paths or documents and check that the policy blocking macros from the Internet is in place."
+      ],
+      "severity_rationale": "Medium fits because enabling macros is common in legitimate work, but it is also a key step in attachment phishing and needs review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Word writes a trust record for a macro document from the user's Downloads folder, with data showing macros enabled.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Office\\16.0\\Word\\Security\\Trusted Documents\\TrustRecords\\%USERPROFILE%/Downloads/Factura_2024_0915.docm",
+          "Details": "Binary Data"
+        }
+      },
+      {
+        "description": "Excel trusts a workbook opened from the Outlook attachment cache.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0217.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1187\\Software\\Microsoft\\Office\\16.0\\Excel\\Security\\Trusted Documents\\TrustRecords\\%USERPROFILE%/AppData/Local/Microsoft/Windows/INetCache/Content.Outlook/7QX2LM4B/Pedido_Proveedor.xlsm",
+          "Details": "Binary Data"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Word updates the LastPurgeTime value under Trusted Documents. It is not a TrustRecords subkey, so it must not match.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Office\\16.0\\Word\\Security\\Trusted Documents\\LastPurgeTime",
+          "Details": "DWORD (0x01b3c2a1)"
+        }
+      },
+      {
+        "description": "Group Policy configures an Excel Trusted Location path. The key is under Security, but it is not Trusted Documents\\TrustRecords.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0217.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1187\\Software\\Policies\\Microsoft\\Office\\16.0\\Excel\\Security\\Trusted Locations\\Location1\\Path",
+          "Details": "\\\\fs01.andes.example.com\\plantillas\\"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

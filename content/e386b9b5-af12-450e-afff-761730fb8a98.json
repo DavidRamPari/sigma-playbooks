@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "e386b9b5-af12-450e-afff-761730fb8a98",
+    "title": "AWS VPC Flow Logs Deleted",
+    "level": "high",
+    "status": "experimental",
+    "author": "Ivan Saakov",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_vpc_flow_logs_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_vpc_flow_logs_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS ejecutó con éxito la llamada DeleteFlowLogs de EC2 y eliminó uno o más VPC Flow Logs. Puede ser limpieza autorizada o un intento de quitar la visibilidad de red antes de actividad maliciosa.",
+      "what_it_detects": "Eventos de CloudTrail con eventName DeleteFlowLogs cuyo errorCode es 'Success' o está vacío, es decir, la eliminación se completó y no fue rechazada.",
+      "why_it_matters": "Los Flow Logs registran el tráfico IP de VPC, subredes e interfaces. Al borrarlos, un atacante evade la detección y destruye evidencia de exfiltración o movimiento lateral (ATT&CK: deshabilitar o modificar logs de nube, T1562.008).",
+      "triage_steps": [
+        "Identifique quién hizo la llamada: userIdentity.arn, tipo de identidad, accessKeyId y si se usó un rol asumido (sessionContext.sessionIssuer).",
+        "Revise requestParameters para obtener los FlowLogIds eliminados y mapéelos a las VPC, subredes o ENI que monitoreaban.",
+        "Valide sourceIPAddress y userAgent: ¿coinciden con la red corporativa, la consola o la automatización IaC habitual (Terraform, CloudFormation)?",
+        "Busque un ticket de cambio o ventana de mantenimiento que justifique la eliminación en esa cuenta y región.",
+        "Pivotee sobre la misma identidad +/- 15 minutos: StopLogging, DeleteTrail, cambios en GuardDuty, Security Groups, AuthorizeSecurityGroupIngress o creación de access keys.",
+        "Revise eventos ConsoleLogin, AssumeRole o GetSessionToken previos de la misma identidad e IP, y alertas anteriores asociadas a ellas.",
+        "Compruebe si se crearon Flow Logs de reemplazo (CreateFlowLogs) poco después, lo que sugiere una migración legítima."
+      ],
+      "false_positives": [
+        "Administradores autorizados que eliminan Flow Logs durante mantenimiento, pruebas o limpieza de red.",
+        "Pipelines de IaC (Terraform destroy, eliminación de stacks de CloudFormation) que desmantelan VPC o entornos temporales.",
+        "Migración del destino de Flow Logs (de CloudWatch Logs a S3) que exige borrar y recrear la configuración."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la identidad o el equipo de redes si la eliminación fue autorizada antes de actuar.",
+        "Si no está autorizada, recree de inmediato los Flow Logs en las VPC, subredes o ENI afectadas para restaurar la visibilidad.",
+        "Contenga la identidad: desactive las access keys, revoque sesiones del rol y restrinja ec2:DeleteFlowLogs mediante SCP o política IAM.",
+        "Investigue la actividad de la identidad en CloudTrail y los logs de red restantes para detectar exfiltración o persistencia.",
+        "Preserve los Flow Logs ya entregados en S3 o CloudWatch y ajuste la retención para el análisis forense."
+      ],
+      "severity_rationale": "Es alta porque eliminar con éxito los registros de red es una técnica clara de evasión que ciega la investigación, aunque puede tener origen administrativo."
+    },
+    "en": {
+      "summary": "An AWS identity successfully called the EC2 DeleteFlowLogs API and removed one or more VPC Flow Logs. This may be authorized cleanup or an attempt to remove network visibility before malicious activity.",
+      "what_it_detects": "CloudTrail events with eventName DeleteFlowLogs where errorCode is 'Success' or empty, meaning the deletion completed and was not denied.",
+      "why_it_matters": "Flow Logs record IP traffic for VPCs, subnets and interfaces. Deleting them lets an attacker evade detection and erase evidence of exfiltration or lateral movement (ATT&CK: disable or modify cloud logs, T1562.008).",
+      "triage_steps": [
+        "Identify the caller: userIdentity.arn, identity type, accessKeyId and any assumed role (sessionContext.sessionIssuer).",
+        "Read requestParameters for the deleted FlowLogIds and map them to the VPCs, subnets or ENIs they covered.",
+        "Check sourceIPAddress and userAgent: do they match corporate networks, the console or the usual IaC automation (Terraform, CloudFormation)?",
+        "Look for a change ticket or maintenance window covering this account and region.",
+        "Pivot on the same identity +/- 15 minutes: StopLogging, DeleteTrail, GuardDuty changes, security group edits, AuthorizeSecurityGroupIngress or new access keys.",
+        "Review prior ConsoleLogin, AssumeRole or GetSessionToken events from the same identity and IP, and earlier alerts for them.",
+        "Check whether replacement Flow Logs were created (CreateFlowLogs) shortly after, suggesting a legitimate migration."
+      ],
+      "false_positives": [
+        "Authorized administrators deleting Flow Logs during maintenance, testing or network cleanup.",
+        "IaC pipelines (Terraform destroy, CloudFormation stack deletion) tearing down VPCs or temporary environments.",
+        "Changing the Flow Log destination (CloudWatch Logs to S3), which requires deleting and recreating the configuration."
+      ],
+      "response_steps": [
+        "Confirm with the identity owner or network team whether the deletion was authorized before acting.",
+        "If unauthorized, recreate Flow Logs on the affected VPCs, subnets or ENIs immediately to restore visibility.",
+        "Contain the identity: deactivate access keys, revoke role sessions and restrict ec2:DeleteFlowLogs with an SCP or IAM policy.",
+        "Hunt the identity's CloudTrail activity and remaining network logs for exfiltration or persistence.",
+        "Preserve already delivered Flow Logs in S3 or CloudWatch and extend retention for forensics."
+      ],
+      "severity_rationale": "High because successfully deleting network logs is a clear evasion technique that blinds investigations, even though administrators sometimes do it legitimately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful DeleteFlowLogs via AWS CLI from an unfamiliar IP; errorCode absent (null).",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DeleteFlowLogs",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.1 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE1234567",
+          "requestParameters": "{\"DeleteFlowLogsRequest\":{\"FlowLogId\":{\"content\":\"fl-0a1b2c3d4e5f67890\",\"tag\":1}}}",
+          "errorCode": null,
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "DeleteFlowLogs from the console with errorCode explicitly 'Success'.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DeleteFlowLogs",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/NetAdmin/jperez",
+          "requestParameters": "{\"DeleteFlowLogsRequest\":{\"FlowLogId\":{\"content\":\"fl-0123456789abcdef0\",\"tag\":1}}}",
+          "errorCode": "Success",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "DeleteFlowLogs attempt denied for lack of permissions; errorCode is not Success or null.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DeleteFlowLogs",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.1 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/dev-tester",
+          "errorCode": "Client.UnauthorizedOperation",
+          "errorMessage": "You are not authorized to perform this operation.",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Successful CreateFlowLogs call; a related but different eventName.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "CreateFlowLogs",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.7.5",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-pipeline",
+          "errorCode": null,
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

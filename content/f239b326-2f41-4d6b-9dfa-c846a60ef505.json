@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "f239b326-2f41-4d6b-9dfa-c846a60ef505",
+    "title": "Password Dumper Remote Thread in LSASS",
+    "level": "high",
+    "status": "stable",
+    "author": "Thomas Patzke",
+    "path": "windows/create_remote_thread/create_remote_thread_win_susp_password_dumper_lsass.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_remote_thread/create_remote_thread_win_susp_password_dumper_lsass.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un hilo dentro de lsass.exe cuya dirección de inicio no pertenece a ningún módulo cargado (StartModule vacío). Esto suele indicar código inyectado en LSASS para extraer credenciales.",
+      "what_it_detects": "Evento 8 de Sysmon (CreateRemoteThread) con TargetImage terminado en \\lsass.exe y StartModule vacío, es decir, un hilo que inicia en memoria sin respaldo de módulo. Windows Credential Editor (WCE, S0005) y herramientas similares lo hacen; una ejecución genera cientos de eventos.",
+      "why_it_matters": "LSASS guarda hashes de contraseñas, tickets Kerberos y a veces credenciales en texto claro. El código inyectado puede robarlas para movimiento lateral y escalamiento de privilegios (ATT&CK T1003.001, volcado de memoria de LSASS).",
+      "triage_steps": [
+        "Identifique el proceso origen con SourceImage, SourceProcessId y SourceProcessGuid; registre el host, el usuario y StartAddress.",
+        "Revise ruta, firma y hash de SourceImage. Binarios sin firma o en rutas escribibles por el usuario (Temp, Downloads, ProgramData) son muy sospechosos.",
+        "Obtenga la creación del proceso origen (Sysmon 1 / 4688): revise CommandLine, ParentImage y la cadena de procesos padre.",
+        "En el mismo host +/- 15 minutos, busque accesos a LSASS (Sysmon 10), servicios nuevos, archivos creados y volcados (*.dmp).",
+        "Verifique si SourceImage corresponde al antivirus o EDR instalado y si el fabricante documenta ese comportamiento.",
+        "Revise inicios de sesión del mismo usuario y otras cuentas en caché; busque logons de red posteriores desde este host con esas credenciales.",
+        "Busque alertas previas para el mismo host, usuario o hash de SourceImage en todo el entorno."
+      ],
+      "false_positives": [
+        "Antivirus o agentes EDR que inyectan en LSASS para monitoreo o protección.",
+        "Herramientas de seguridad o depuración usadas por administradores autorizados o ejercicios de red team con aprobación documentada."
+      ],
+      "response_steps": [
+        "Confirme que el origen no es un producto de seguridad conocido comparando ruta, firmante y hash con el inventario.",
+        "Si es malicioso, aísle el host de la red manteniéndolo encendido para adquirir memoria.",
+        "Recolecte evidencia volátil antes de limpiar: imagen de memoria, el binario origen y artefactos relacionados.",
+        "Restablezca contraseñas de todas las cuentas que iniciaron sesión en el host, priorizando las privilegiadas; si se expuso un administrador de dominio, restablezca krbtgt dos veces.",
+        "Elimine la herramienta y su persistencia, y busque el mismo hash o comportamiento en otros endpoints.",
+        "Habilite protección LSA (RunAsPPL) o Credential Guard donde sea compatible."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque los hilos sin módulo en LSASS rara vez son legítimos fuera de productos de seguridad, y una coincidencia implica posible compromiso de credenciales."
+    },
+    "en": {
+      "summary": "A process created a thread inside lsass.exe whose start address does not belong to any loaded module (empty StartModule). This usually means injected code is running in LSASS to dump credentials.",
+      "what_it_detects": "Sysmon Event ID 8 (CreateRemoteThread) where TargetImage ends with \\lsass.exe and StartModule is empty, meaning the thread starts in unbacked memory. Windows Credential Editor (WCE, S0005) and similar dumpers do this. One run can produce hundreds of events.",
+      "why_it_matters": "LSASS holds password hashes, Kerberos tickets and sometimes cleartext credentials. Code injected into it can steal them for lateral movement and privilege escalation (ATT&CK T1003.001, LSASS Memory credential dumping).",
+      "triage_steps": [
+        "Identify the source process from SourceImage, SourceProcessId and SourceProcessGuid; record the host, the user and StartAddress.",
+        "Check the SourceImage path, signature and hash. Binaries in user-writable paths (Temp, Downloads, ProgramData) or unsigned ones are highly suspicious.",
+        "Get the process creation event (Sysmon 1 / 4688) for the source: review CommandLine, ParentImage and the parent chain.",
+        "Pivot on the same host +/- 15 minutes for LSASS process access (Sysmon 10), new services, dropped files and dump files (*.dmp).",
+        "Check whether SourceImage belongs to the installed antivirus or EDR, and whether the vendor documents that behavior.",
+        "Review logons by the same user and other accounts cached on the host; look for later network logons from this host using those credentials.",
+        "Search for earlier alerts on the same host, user or SourceImage hash across the environment."
+      ],
+      "false_positives": [
+        "Antivirus or EDR agents that inject into LSASS for monitoring or protection.",
+        "Security or debugging tools used by authorized administrators or red team exercises with documented approval."
+      ],
+      "response_steps": [
+        "Confirm the source is not a known security product by checking path, signer and hash against the inventory.",
+        "If malicious, isolate the host from the network while keeping it powered on for memory acquisition.",
+        "Collect volatile evidence: memory image, the source binary and related artifacts, before cleanup.",
+        "Reset passwords for every account that logged on to the host, prioritizing privileged ones; reset krbtgt twice if domain admin credentials were exposed.",
+        "Remove the malicious tool and persistence, then hunt for the same hash or behavior on other endpoints.",
+        "Enable LSA protection (RunAsPPL) or Credential Guard where supported."
+      ],
+      "severity_rationale": "High fits because unbacked threads in LSASS rarely have a benign cause outside security products, and a hit means credentials may already be compromised."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned tool in a temp folder creates a remote thread in lsass.exe starting in unbacked memory (empty StartModule).",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:03:12.481",
+          "SourceProcessGuid": "{4a1c2e7b-6f10-671b-3a02-000000000a00}",
+          "SourceProcessId": 6312,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\wce.exe",
+          "TargetProcessGuid": "{4a1c2e7b-0001-671b-0c00-000000000a00}",
+          "TargetProcessId": 684,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "NewThreadId": 7420,
+          "StartAddress": "0x000001E4A3B20000",
+          "StartModule": "",
+          "StartFunction": "",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote thread into lsass.exe that starts inside a loaded module (StartModule populated), so the selection does not match.",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 09:12:40.105",
+          "SourceProcessId": 4,
+          "SourceImage": "C:\\Windows\\System32\\csrss.exe",
+          "TargetProcessId": 684,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "NewThreadId": 5120,
+          "StartAddress": "0x00007FFB1C2A1E40",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "CtrlRoutine",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Thread with empty StartModule but injected into explorer.exe, not lsass.exe.",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0187.andes.example.com",
+          "UtcTime": "2024-10-25 11:47:03.772",
+          "SourceProcessId": 5280,
+          "SourceImage": "C:\\Program Files\\ExampleTools\\helper.exe",
+          "TargetProcessId": 3904,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "NewThreadId": 8812,
+          "StartAddress": "0x0000020B11C40000",
+          "StartModule": "",
+          "StartFunction": "",
+          "User": "ANDES\\mrojas"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

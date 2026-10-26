@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "f01d1f70-cd41-42ec-9c0b-26dd9c22bf29",
+    "title": "Process Deletion of Its Own Executable",
+    "level": "medium",
+    "status": "test",
+    "author": "Max Altgelt (Nextron Systems)",
+    "path": "windows/file/file_delete/file_delete_win_delete_own_image.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_delete/file_delete_win_delete_own_image.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso eliminó su propio archivo ejecutable mientras se ejecutaba: el valor de TargetFilename coincide con el de Image. Es una técnica de autoborrado que usa el malware para no dejar el binario en disco.",
+      "what_it_detects": "Eventos de borrado de archivos en Windows (por ejemplo, Sysmon con ID 23 o 26) donde el archivo borrado (TargetFilename) es la misma ruta que la imagen del proceso que lo borra (Image). Windows no permite esto sin trucos, como renombrar el flujo de datos a un ADS y marcar el archivo para borrado.",
+      "why_it_matters": "El autoborrado elimina la evidencia forense y el hash del binario. Corresponde a la evasión de defensas mediante eliminación de indicadores (borrado de archivos, T1070.004). Suele aparecer al final de la ejecución de un loader, dropper o herramienta ofensiva.",
+      "triage_steps": [
+        "Revise Image/TargetFilename: priorice rutas en %TEMP%, AppData, Downloads, ProgramData o Public, y nombres aleatorios o que imitan binarios del sistema.",
+        "Busque el evento de creación de proceso (Sysmon 1 / 4688) con el mismo ProcessId y host para obtener CommandLine, ParentImage, usuario y hashes.",
+        "Verifique si Sysmon archivó el archivo borrado (campo Archived, carpeta de archivo) y obtenga el hash para consultarlo en fuentes de threat intelligence.",
+        "Revise la actividad del mismo host +/- 15 minutos: procesos hijos, conexiones de red, archivos creados, claves Run, tareas programadas y servicios nuevos.",
+        "Determine el origen del binario: descarga web, adjunto de correo, medio extraíble o copia por SMB desde otro equipo.",
+        "Busque el mismo nombre de archivo o hash en otros endpoints y alertas previas del mismo usuario y host.",
+        "Descarte un desinstalador: compruebe la firma digital, el editor, la entrada en Uninstall del registro y si el padre es msiexec o el Panel de control."
+      ],
+      "false_positives": [
+        "Desinstaladores legítimos (por ejemplo, uninstall.exe o unins000.exe) que se eliminan a sí mismos al terminar.",
+        "Actualizadores de software que reemplazan su propio ejecutable durante la actualización.",
+        "Herramientas portables o instaladores firmados de proveedores conocidos que limpian sus archivos temporales."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el hash, la firma y el contexto del usuario antes de actuar; documente si es un desinstalador conocido y considere una exclusión específica.",
+        "Si es sospechoso, aísle el endpoint mediante el EDR y conserve la memoria y los artefactos (Prefetch, Amcache, archivo de Sysmon).",
+        "Identifique y elimine la persistencia y los artefactos dejados por el proceso; bloquee el hash y los dominios o IP asociados.",
+        "Restablezca las credenciales del usuario afectado si hubo ejecución con privilegios o robo de credenciales, y restaure el equipo desde una imagen limpia si se confirma el compromiso."
+      ],
+      "severity_rationale": "Nivel medio: el autoborrado es una fuerte señal de evasión, pero los desinstaladores legítimos lo hacen con frecuencia, por lo que el contexto debe validarse."
+    },
+    "en": {
+      "summary": "A process deleted its own executable while running: TargetFilename equals Image. Malware uses this self-deletion trick to avoid leaving its binary on disk.",
+      "what_it_detects": "Windows file deletion events (for example Sysmon event ID 23 or 26) where the deleted file (TargetFilename) has the same path as the image of the deleting process (Image). Windows blocks this unless a workaround is used, such as renaming the data stream to an ADS and setting the delete disposition.",
+      "why_it_matters": "Self-deletion destroys forensic evidence and the binary's hash. It maps to defense evasion through indicator removal (File Deletion, T1070.004). It often appears at the end of a loader, dropper or offensive tool run.",
+      "triage_steps": [
+        "Review Image/TargetFilename: prioritize paths in %TEMP%, AppData, Downloads, ProgramData or Public, and random names or names imitating system binaries.",
+        "Find the process creation event (Sysmon 1 / 4688) with the same ProcessId and host to get CommandLine, ParentImage, user and hashes.",
+        "Check whether Sysmon archived the deleted file (Archived field, archive folder) and look up its hash in threat intelligence sources.",
+        "Review the same host within +/- 15 minutes: child processes, network connections, created files, Run keys, scheduled tasks and new services.",
+        "Determine where the binary came from: web download, email attachment, removable media or SMB copy from another host.",
+        "Search for the same filename or hash on other endpoints and earlier alerts for the same user and host.",
+        "Rule out an uninstaller: check digital signature, publisher, the Uninstall registry entry and whether the parent is msiexec or Control Panel."
+      ],
+      "false_positives": [
+        "Legitimate uninstallers (for example uninstall.exe or unins000.exe) that delete themselves when finished.",
+        "Software updaters replacing their own executable during an update.",
+        "Signed portable tools or installers from known vendors cleaning up their temporary files."
+      ],
+      "response_steps": [
+        "Verify legitimacy via hash, signature and user context before acting; document known uninstallers and consider a narrow exclusion.",
+        "If suspicious, isolate the endpoint through EDR and preserve memory and artifacts (Prefetch, Amcache, Sysmon archive).",
+        "Identify and remove persistence and artifacts left by the process; block the hash and related domains or IPs.",
+        "Reset the affected user's credentials if privileged execution or credential theft occurred, and reimage the host if compromise is confirmed."
+      ],
+      "severity_rationale": "Medium: self-deletion is a strong evasion signal, but legitimate uninstallers do it often, so context must be validated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder deletes its own executable (Sysmon FileDelete).",
+        "event": {
+          "EventID": 23,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6412,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svch0st.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svch0st.exe",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000000",
+          "IsExecutable": "true",
+          "Archived": "true"
+        }
+      },
+      {
+        "description": "Self-deletion logged as FileDeleteDetected with identical Image and TargetFilename in ProgramData.",
+        "event": {
+          "EventID": 26,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 3188,
+          "Image": "C:\\ProgramData\\Updater\\updsvc.exe",
+          "TargetFilename": "C:\\ProgramData\\Updater\\updsvc.exe",
+          "IsExecutable": "true"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Installer deletes a temporary DLL it extracted, not its own executable.",
+        "event": {
+          "EventID": 23,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 5120,
+          "Image": "C:\\Users\\jperez\\Downloads\\setup.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\is-AB12C.tmp\\helper.dll",
+          "IsExecutable": "true",
+          "Archived": "false"
+        }
+      },
+      {
+        "description": "Explorer deletes an executable from Downloads on user request; Image differs from TargetFilename.",
+        "event": {
+          "EventID": 23,
+          "Computer": "WS-0310.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "ProcessId": 4404,
+          "Image": "C:\\Windows\\explorer.exe",
+          "TargetFilename": "C:\\Users\\lgomez\\Downloads\\tool.exe",
+          "IsExecutable": "true",
+          "Archived": "true"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

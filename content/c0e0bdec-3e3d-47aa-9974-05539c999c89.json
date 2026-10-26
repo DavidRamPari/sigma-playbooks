@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "c0e0bdec-3e3d-47aa-9974-05539c999c89",
+    "title": "Registry Modification for OCI DLL Redirection",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_potential_oci_dll_redirection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_potential_oci_dll_redirection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor OracleOciLib u OracleOciLibPath bajo HKLM\\SOFTWARE\\Microsoft\\MSDTC\\MTxOCI y ya no tiene su valor predeterminado. Esto puede redirigir la carga de oci.dll por parte del servicio MSDTC hacia una DLL controlada por un atacante.",
+      "what_it_detects": "Eventos registry_set donde TargetObject termina en \\MTxOCI\\OracleOciLib y Details no contiene 'oci.dll', o donde termina en \\MTxOCI\\OracleOciLibPath y Details no contiene '%SystemRoot%\\System32\\'.",
+      "why_it_matters": "MSDTC (msdtc.exe) intenta cargar oci.dll, que normalmente no existe en el sistema (phantom DLL). Al cambiar el nombre o la ruta de la DLL, el atacante consigue ejecución persistente dentro de un servicio legítimo con su cuenta de servicio (T1574.001, T1112).",
+      "triage_steps": [
+        "Revise TargetObject y Details: anote el nombre de DLL o la ruta nueva configurada y el valor anterior, si está disponible.",
+        "Identifique el Image y el User que escribieron el valor; reg.exe, powershell.exe o binarios en rutas de usuario son más sospechosos que un instalador de Oracle.",
+        "Verifique si la DLL o la carpeta indicada existe en el host; obtenga hash, firma digital, fecha de creación y propietario.",
+        "Busque eventos de carga de imagen de msdtc.exe (ImageLoaded) que apunten a esa DLL, y reinicios del servicio MSDTC en +/- 15 minutos.",
+        "Revise la creación de archivos .dll en la ruta indicada y los procesos padre e hijo del Image en la misma ventana de tiempo.",
+        "Consulte alertas previas del mismo host y usuario, y busque el mismo valor de Details en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla indica que los falsos positivos son poco probables.",
+        "Instalación o configuración de un cliente Oracle con integración XA/MSDTC que use un nombre o una ruta de biblioteca no estándar, documentada por el equipo de base de datos."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del servidor si existe un cambio aprobado de Oracle/MSDTC; si no existe, trate el evento como incidente.",
+        "Aísle el host y preserve la DLL, el hive del registro y la memoria de msdtc.exe antes de modificar algo.",
+        "Restaure OracleOciLib a 'oci.dll' y OracleOciLibPath a '%SystemRoot%\\System32\\', elimine la DLL ya preservada y reinicie MSDTC.",
+        "Busque el hash y la ruta en toda la flota, investigue cómo se obtuvieron privilegios de administrador y rote las credenciales afectadas."
+      ],
+      "severity_rationale": "Es alta porque modificar estos valores requiere privilegios administrativos, rara vez tiene una causa legítima y otorga persistencia con ejecución de código dentro de un servicio del sistema."
+    },
+    "en": {
+      "summary": "OracleOciLib or OracleOciLibPath under HKLM\\SOFTWARE\\Microsoft\\MSDTC\\MTxOCI was changed away from its default value. This can redirect the MSDTC service's loading of oci.dll to an attacker-controlled DLL.",
+      "what_it_detects": "registry_set events where TargetObject ends with \\MTxOCI\\OracleOciLib and Details does not contain 'oci.dll', or ends with \\MTxOCI\\OracleOciLibPath and Details does not contain '%SystemRoot%\\System32\\'.",
+      "why_it_matters": "MSDTC (msdtc.exe) tries to load oci.dll, which is normally missing (a phantom DLL). If an attacker changes the DLL name or path, they get persistent code execution inside a legitimate service under its service account (T1574.001, T1112).",
+      "triage_steps": [
+        "Read TargetObject and Details: record the new DLL name or path, and the previous value if available.",
+        "Identify the Image and User that wrote the value. reg.exe, powershell.exe or binaries in user-writable paths are more suspicious than an Oracle installer.",
+        "Check whether the referenced DLL or folder exists on the host. Collect its hash, signature, creation time and owner.",
+        "Look for msdtc.exe image-load events (ImageLoaded) for that DLL and for MSDTC service restarts within +/- 15 minutes.",
+        "Review .dll file creation in the target path and the writing Image's parent and child processes in the same window.",
+        "Check earlier alerts for the same host and user, and hunt for the same Details value on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unlikely.",
+        "An Oracle client install or XA/MSDTC configuration that uses a non-standard library name or path, documented by the database team."
+      ],
+      "response_steps": [
+        "Ask the server owner whether an Oracle/MSDTC change was approved. If not, treat this as an incident.",
+        "Isolate the host. Preserve the DLL, the registry hive and msdtc.exe memory before you change anything.",
+        "Reset OracleOciLib to 'oci.dll' and OracleOciLibPath to '%SystemRoot%\\System32\\', remove the preserved DLL and restart MSDTC.",
+        "Hunt fleet-wide for the hash and path, find out how admin rights were obtained and rotate affected credentials."
+      ],
+      "severity_rationale": "High: changing these values needs admin rights, rarely has a legitimate reason and gives persistent code execution inside a system service."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "OracleOciLib set to a non-oci.dll library name via reg.exe",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\MSDTC\\MTxOCI\\OracleOciLib",
+          "Details": "dtcsvc64.dll"
+        }
+      },
+      {
+        "description": "OracleOciLibPath redirected to a user-writable folder via PowerShell",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "SRV-DB-02.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\MSDTC\\MTxOCI\\OracleOciLibPath",
+          "Details": "C:\\Users\\Public\\Libraries\\"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "OracleOciLib written with its default value oci.dll (excluded by the filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "SRV-DB-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\MSDTC\\MTxOCI\\OracleOciLib",
+          "Details": "oci.dll"
+        }
+      },
+      {
+        "description": "OracleOciLibPath written with the default System32 path (excluded by the filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\MSDTC\\MTxOCI\\OracleOciLibPath",
+          "Details": "%SystemRoot%\\System32\\"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

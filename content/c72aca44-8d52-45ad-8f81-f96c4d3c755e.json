@@ -1,0 +1,123 @@
+{
+  "rule": {
+    "id": "c72aca44-8d52-45ad-8f81-f96c4d3c755e",
+    "title": "Invoke-Obfuscation Via Stdin - PowerShell Module",
+    "level": "high",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/powershell/powershell_module/posh_pm_invoke_obfuscation_via_stdin.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_invoke_obfuscation_via_stdin.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell registró en el log de módulos (evento 4103) un payload con el patrón de lanzador STDIN de Invoke-Obfuscation: variables de cmd encadenadas con 'set ... && set ...' que ocultan el comando real y lo pasan a PowerShell por entrada estándar.",
+      "what_it_detects": "Una expresión regular sobre el campo Payload del evento 4103 (ps_module) que busca 'set' seguido de '&&set' o '&& set', una referencia a environment, invoke o $input/${input}, otro '&&' y una comilla doble. Este patrón coincide con la técnica de lanzador STDIN de Invoke-Obfuscation.",
+      "why_it_matters": "Invoke-Obfuscation es un framework público para ofuscar comandos de PowerShell. El lanzador STDIN guarda el script en variables de entorno de cmd y lo canaliza a powershell para evadir detecciones basadas en la línea de comandos (T1027, ofuscación; T1059.001, ejecución con PowerShell). Suele aparecer en descargadores y en la etapa inicial de un malware.",
+      "triage_steps": [
+        "Lea el Payload completo y reconstruya el comando: identifique cada variable definida con 'set' y cómo se concatenan o canalizan con $input, Invoke-Expression o iex.",
+        "Revise ContextInfo del evento 4103: usuario, Host Application, ruta del script y el ID del proceso que hospeda PowerShell.",
+        "Busque eventos 4104 (script block) en el mismo host dentro de +/- 15 minutos para recuperar el código ya desofuscado.",
+        "Identifique el proceso padre de powershell.exe y de cmd.exe con Sysmon 1 o 4688: Office, wscript, mshta o servicios web como padre son señales graves.",
+        "Pivote a conexiones de red, archivos creados y claves Run o tareas programadas creadas por el mismo proceso o usuario en esa ventana.",
+        "Revise alertas anteriores del mismo host y del mismo usuario, y busque el mismo patrón de Payload en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ejercicios de red team o pruebas de detección autorizadas que usan Invoke-Obfuscation.",
+        "Scripts de administración o de compilación antiguos que encadenan variables 'set' y luego las pasan a PowerShell; valide con el responsable del script."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa desofuscando el payload y correlacionándolo con 4104 y la telemetría de procesos antes de actuar.",
+        "Si se confirma, aísle el endpoint con el EDR y conserve la memoria, los logs de PowerShell y los artefactos relevantes.",
+        "Bloquee los dominios, IP y hashes que aparezcan en el comando y búsquelos en todo el entorno.",
+        "Elimine la persistencia identificada, restablezca las credenciales del usuario afectado y revise si hubo movimiento lateral.",
+        "Restaure el equipo desde una imagen limpia si hubo ejecución de código y documente los IOC."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque esta forma de ofuscación casi no aparece en administración legítima y casi siempre indica que alguien intenta evadir la detección."
+    },
+    "en": {
+      "summary": "PowerShell module logging (event 4103) recorded a payload matching the Invoke-Obfuscation STDIN launcher pattern. The pattern chains cmd 'set ... && set ...' variables to hide the real command and pipe it into PowerShell through standard input.",
+      "what_it_detects": "A regex on the Payload field of event 4103 (ps_module). It looks for 'set', then '&&set' or '&& set', then a reference to environment, invoke or $input/${input}, then another '&&' and a double quote. This matches Invoke-Obfuscation's STDIN launcher technique.",
+      "why_it_matters": "Invoke-Obfuscation is a public framework for obfuscating PowerShell. Its STDIN launcher stores the script in cmd environment variables and pipes it to powershell so that command-line detections miss it (T1027, obfuscation; T1059.001, PowerShell execution). It is common in downloaders and first-stage malware.",
+      "triage_steps": [
+        "Read the full Payload and rebuild the command. Note each variable set with 'set' and how it is joined or piped through $input, Invoke-Expression or iex.",
+        "Check ContextInfo in the 4103 event: user, Host Application, script path and the ID of the process hosting PowerShell.",
+        "Search for 4104 script block events on the same host within +/- 15 minutes to recover the deobfuscated code.",
+        "Find the parents of powershell.exe and cmd.exe in Sysmon 1 or 4688. Office, wscript, mshta or a web server as parent is a strong warning sign.",
+        "Pivot to network connections, file writes, Run keys and scheduled tasks from the same process or user in that window.",
+        "Review earlier alerts for the same host and user, and hunt for the same Payload pattern on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Authorized red team exercises or detection tests that use Invoke-Obfuscation.",
+        "Old admin or build scripts that chain 'set' variables and pipe them to PowerShell. Confirm with the script owner."
+      ],
+      "response_steps": [
+        "Before acting, confirm the activity is malicious: deobfuscate the payload and correlate it with 4104 and process telemetry.",
+        "If confirmed, isolate the endpoint through EDR and preserve memory, PowerShell logs and related artifacts.",
+        "Block the domains, IPs and hashes found in the command, and hunt for them across the environment.",
+        "Remove the persistence you found, reset the affected user's credentials and check for lateral movement.",
+        "If code ran, reimage the host from a clean baseline and document the IOCs."
+      ],
+      "severity_rationale": "High fits because this obfuscation pattern almost never appears in legitimate administration and nearly always means someone is trying to evade detection."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Invoke-Obfuscation STDIN launcher in event 4103. Two cmd set variables are chained with && and piped into powershell through $input.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe -NoProfile - User = ANDES\\jperez",
+          "Payload": "ParameterBinding(Out-Default): name=\"InputObject\"; value=\"cmd /c set XYZ=Write-Host hello&&set ABC=powershell -NoProfile -c $input|iex&&cmd /c echo %XYZ%|%ABC%\""
+        }
+      },
+      {
+        "description": "Variant of the launcher that uses '&& set' with a space and an Invoke reference.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe User = ANDES\\mrojas",
+          "Payload": "CommandInvocation(Invoke-Expression): \"Invoke-Expression\" ParameterBinding(Invoke-Expression): name=\"Command\"; value=\"set qa=Write-Output test&& set qb=$ExecutionContext.InvokeCommand&&echo %qa%\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A build script sets one environment variable and runs msbuild. There is only one 'set' and nothing chains a second set after &&.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "BUILD-01.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe User = ANDES\\svc_build",
+          "Payload": "ParameterBinding(Out-Default): name=\"InputObject\"; value=\"cmd /c set BUILD_ENV=release&&msbuild app.sln /p:Configuration=Release\""
+        }
+      },
+      {
+        "description": "Normal Set-Location module logging with no chained set or && pattern.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Set-Location): \"Set-Location\" ParameterBinding(Set-Location): name=\"Path\"; value=\"C:\\Users\\jperez\\Documents\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

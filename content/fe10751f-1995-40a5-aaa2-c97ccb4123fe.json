@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "fe10751f-1995-40a5-aaa2-c97ccb4123fe",
+    "title": "Linux Capabilities Discovery",
+    "level": "low",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/execve/lnx_auditd_capabilities_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_capabilities_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083",
+      "T1548"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó 'getcap -r /' en un host Linux: alguien recorrió todo el sistema de archivos buscando binarios con file capabilities. Es una técnica habitual de reconocimiento antes de escalar privilegios.",
+      "what_it_detects": "Un registro auditd de tipo EXECVE con a0=getcap, a1=-r y a2=/, es decir, la enumeración recursiva de capabilities (por ejemplo cap_setuid o cap_dac_read_search) desde la raíz. Si se invoca con ruta completa (/usr/sbin/getcap) en a0, la regla no coincide.",
+      "why_it_matters": "Un binario con cap_setuid u otra capability peligrosa (python, perl, openssl, tar) permite a un usuario sin privilegios obtener root. Corresponde a descubrimiento de archivos (T1083) previo al abuso de mecanismos de elevación (T1548).",
+      "triage_steps": [
+        "Busque el registro SYSCALL con el mismo ID de evento auditd (msg=audit(...:ID)) para obtener auid, uid, euid, exe, ppid, tty y ses.",
+        "Identifique al usuario real (auid) y confirme si es administrador o cuenta de servicio con motivo legítimo para auditar capabilities.",
+        "Revise el proceso padre (ppid): shell interactiva, sesión SSH, cron, servidor web o script descargado. Un padre como apache, nginx o java es muy sospechoso.",
+        "En el mismo host, +/- 15 minutos, busque otra enumeración: find -perm -4000, sudo -l, id, uname -a, linpeas o descargas con curl/wget en /tmp o /dev/shm.",
+        "Busque ejecución posterior de binarios con capabilities (python, perl, openssl, tar, vim) con argumentos como os.setuid(0) o cambios de euid a 0.",
+        "Revise comandos setcap recientes y ejecute 'getcap -r / 2>/dev/null' usted mismo para listar binarios con capabilities inusuales.",
+        "Consulte alertas previas del mismo usuario, host y dirección IP de origen de la sesión SSH."
+      ],
+      "false_positives": [
+        "Administradores o auditores de hardening que revisan capabilities manualmente.",
+        "Herramientas de cumplimiento o escaneo de configuración (benchmarks CIS, scripts de inventario) que ejecutan getcap recursivo.",
+        "Ejercicios de pentest o red team autorizados."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la cuenta o el equipo responsable si la ejecución fue planificada.",
+        "Si no está justificada, aísle el host o restrinja la sesión y preserve logs de auditd, historial de shell y la lista de procesos.",
+        "Elimine capabilities innecesarias con setcap -r solo tras confirmar que no rompe servicios, y revise binarios modificados.",
+        "Restablezca credenciales de la cuenta comprometida, investigue el vector de acceso inicial y monitoree nuevos intentos de escalada."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque getcap recursivo es solo reconocimiento y también lo usan administradores, aunque merece revisión si proviene de cuentas o procesos inesperados."
+    },
+    "en": {
+      "summary": "'getcap -r /' was run on a Linux host: someone walked the whole filesystem looking for binaries with file capabilities. This is common reconnaissance before privilege escalation.",
+      "what_it_detects": "An auditd EXECVE record with a0=getcap, a1=-r and a2=/, meaning recursive enumeration of capabilities (such as cap_setuid or cap_dac_read_search) from root. A full-path invocation (/usr/sbin/getcap in a0) does not match.",
+      "why_it_matters": "A binary carrying cap_setuid or another dangerous capability (python, perl, openssl, tar) lets an unprivileged user become root. This maps to file discovery (T1083) ahead of abusing elevation control mechanisms (T1548).",
+      "triage_steps": [
+        "Find the SYSCALL record sharing the auditd event ID (msg=audit(...:ID)) to get auid, uid, euid, exe, ppid, tty and ses.",
+        "Identify the real user (auid) and confirm whether they are an admin or service account with a legitimate reason to audit capabilities.",
+        "Check the parent process (ppid): interactive shell, SSH session, cron, web server or downloaded script. A parent like apache, nginx or java is highly suspicious.",
+        "On the same host within +/- 15 minutes, look for other enumeration: find -perm -4000, sudo -l, id, uname -a, linpeas, or curl/wget into /tmp or /dev/shm.",
+        "Look for later execution of capability-bearing binaries (python, perl, openssl, tar, vim) with arguments like os.setuid(0), or euid changes to 0.",
+        "Review recent setcap commands and run 'getcap -r / 2>/dev/null' yourself to list unusual capability-bearing binaries.",
+        "Check earlier alerts for the same user, host and SSH source IP."
+      ],
+      "false_positives": [
+        "Administrators or hardening auditors reviewing capabilities manually.",
+        "Compliance or configuration scanners (CIS benchmarks, inventory scripts) running recursive getcap.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or responsible team whether the run was planned.",
+        "If unjustified, isolate the host or restrict the session and preserve auditd logs, shell history and the process list.",
+        "Remove unneeded capabilities with setcap -r only after confirming services will not break, and review modified binaries.",
+        "Reset credentials of the compromised account, investigate the initial access vector and monitor for further escalation attempts."
+      ],
+      "severity_rationale": "Low fits because recursive getcap is only reconnaissance and admins also use it, but it deserves review when it comes from unexpected accounts or processes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unprivileged web user runs recursive getcap from the filesystem root",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698242592.114:48213)",
+          "argc": 3,
+          "a0": "getcap",
+          "a1": "-r",
+          "a2": "/",
+          "host": "web-03"
+        }
+      },
+      {
+        "description": "Interactive SSH user enumerates capabilities from root on bastion host",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698243011.402:51877)",
+          "argc": 3,
+          "a0": "getcap",
+          "a1": "-r",
+          "a2": "/",
+          "host": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin checks capabilities recursively only under /usr/bin, not from root",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698244100.010:52001)",
+          "argc": 3,
+          "a0": "getcap",
+          "a1": "-r",
+          "a2": "/usr/bin",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Single-file getcap check on ping binary without recursion",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698244200.551:52040)",
+          "argc": 2,
+          "a0": "getcap",
+          "a1": "/usr/bin/ping",
+          "host": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

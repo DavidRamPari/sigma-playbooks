@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "f9b3edc5-3322-4fc7-8aa3-245d646cc4b7",
+    "title": "Potential Linux Amazon SSM Agent Hijacking",
+    "level": "medium",
+    "status": "test",
+    "author": "Muhammad Faisal",
+    "path": "linux/process_creation/proc_creation_lnx_ssm_agent_abuse.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_ssm_agent_abuse.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1219.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El agente Amazon SSM de un host Linux se ejecutó con parámetros de registro (-register, -code, -id, -region). Esto vincula el agente a una activación híbrida de SSM y podría ceder el control remoto del host a otra cuenta de AWS.",
+      "what_it_detects": "Un evento process_creation en el que Image termina en /amazon-ssm-agent y CommandLine contiene a la vez '-register ', '-code ', '-id ' y '-region '. Es el comando de registro manual para activaciones híbridas.",
+      "why_it_matters": "La investigación de Mitiga mostró que un atacante con acceso root puede volver a registrar el agente SSM, legítimo y firmado, en una activación de su propia cuenta de AWS. Así el agente funciona como herramienta de acceso remoto (T1219.002, software de acceso remoto) y le da comando y control persistente con tráfico que parece tráfico normal de AWS.",
+      "triage_steps": [
+        "Extraiga de CommandLine el ID de activación (-id) y la región (-region). Compárelos con las activaciones híbridas conocidas de la organización, por ejemplo con 'aws ssm describe-activations' en cada cuenta aprobada.",
+        "Determine si el host es una instancia EC2. Las instancias EC2 normalmente se registran con un instance profile, así que un registro híbrido en EC2 es sospechoso.",
+        "Revise ParentImage, el usuario y la sesión. ¿El comando se ejecutó con sudo interactivo, desde un script de aprovisionamiento o desde gestión de configuración?",
+        "Identifique la IP de origen del inicio de sesión que lanzó esta sesión y la actividad de ese usuario en el host en +/- 15 minutos.",
+        "Revise /var/lib/amazon/ssm/registration y los logs del agente. Un ID de instancia administrada que cambió a un mi- desconocido, o una región nueva, indica secuestro.",
+        "Busque actividad relacionada: descargas del agente, 'systemctl restart amazon-ssm-agent', un segundo proceso del agente con otra configuración o conexiones a ssm.<region>.amazonaws.com en regiones inusuales.",
+        "Busque alertas previas de este host y haga hunting en toda la flota por el mismo ID de activación y la misma región."
+      ],
+      "false_positives": [
+        "Administradores que registran servidores on-premises o fuera de EC2 con una activación híbrida de SSM aprobada.",
+        "Herramientas de aprovisionamiento (cloud-init, Ansible, user data de Terraform) que registran servidores nuevos con activaciones corporativas.",
+        "Migración o nuevo registro de servidores entre cuentas o regiones de AWS de la empresa."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del servidor y el equipo de nube si la activación pertenece a una cuenta corporativa aprobada.",
+        "Si no está autorizada, preserve el archivo de registro, los logs del agente y los datos del proceso. Luego aísle el host con security groups o con la contención de red del EDR.",
+        "Detenga y deshabilite el agente secuestrado. Después vuelva a registrarlo con una activación legítima o restaure el instance profile.",
+        "Investigue cómo se obtuvo el acceso root, rote las credenciales y los secretos del host y busque otros mecanismos de persistencia.",
+        "Agregue los IDs de activación y las regiones aprobadas a una lista permitida para que las alertas futuras sean más limpias."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el mismo comando se usa en registros híbridos legítimos, pero con una activación desconocida implica control remoto total del host."
+    },
+    "en": {
+      "summary": "The Amazon SSM agent on a Linux host was run with registration flags (-register, -code, -id, -region). This links the agent to an SSM hybrid activation and could hand remote control of the host to another AWS account.",
+      "what_it_detects": "A process_creation event where Image ends with /amazon-ssm-agent and CommandLine contains all of '-register ', '-code ', '-id ' and '-region '. This is the manual hybrid-activation registration command.",
+      "why_it_matters": "Research by Mitiga showed that attackers with root access can re-register the trusted, signed SSM agent to an activation in their own AWS account. The agent then becomes a remote access tool (T1219.002, remote desktop/remote access software) that gives persistent command-and-control through traffic that looks like normal AWS traffic.",
+      "triage_steps": [
+        "Pull the activation ID (-id), code owner and -region from CommandLine. Check them against your organization's known hybrid activations, for example with 'aws ssm describe-activations' in each approved account.",
+        "Find out whether the host is an EC2 instance. EC2 instances normally register through an instance profile, so a hybrid registration on EC2 is suspicious.",
+        "Look at ParentImage, the user and the session. Was the command run from interactive sudo, from a provisioning script or from configuration management?",
+        "Check the source IP of the login that started this session, and that user's other activity on the host within +/- 15 minutes.",
+        "Look at /var/lib/amazon/ssm/registration and the agent logs. A managed instance ID that changed to an unknown mi- ID, or a new region, points to hijacking.",
+        "Look for related activity: agent downloads, 'systemctl restart amazon-ssm-agent', a second agent process with a different config, or connections to ssm.<region>.amazonaws.com in unusual regions.",
+        "Search for earlier alerts on this host, and hunt the fleet for the same activation ID and region."
+      ],
+      "false_positives": [
+        "Administrators registering on-premises or non-EC2 servers through an approved SSM hybrid activation.",
+        "Provisioning tools (cloud-init, Ansible, Terraform user data) that register new servers with company activations.",
+        "Migration or re-registration of servers between company AWS accounts or regions."
+      ],
+      "response_steps": [
+        "Confirm with the server owner and the cloud team whether the activation belongs to an approved company account.",
+        "If it is unauthorized, save the registration file, agent logs and process details, then isolate the host through security groups or EDR network containment.",
+        "Stop and disable the hijacked agent, then re-register it with a legitimate activation or restore the instance profile.",
+        "Investigate how root access was gained, rotate the host's credentials and secrets, and hunt for other persistence.",
+        "Add approved activation IDs and regions to an allowlist so that future alerts are cleaner."
+      ],
+      "severity_rationale": "Medium fits because the same command is used for legitimate hybrid registrations, but on an unknown activation it means full remote control of the host."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive sudo session registers the SSM agent with an unknown hybrid activation in an unusual region",
+        "event": {
+          "Image": "/usr/bin/amazon-ssm-agent",
+          "CommandLine": "/usr/bin/amazon-ssm-agent -register -code Xk3pQ9vT2mLwR8sYbN4z -id 7c1e2f9a-4b3d-4e8a-9f21-0d5c6b7a8e90 -region ap-southeast-3",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo /usr/bin/amazon-ssm-agent -register -code Xk3pQ9vT2mLwR8sYbN4z -id 7c1e2f9a-4b3d-4e8a-9f21-0d5c6b7a8e90 -region ap-southeast-3",
+          "User": "root",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Registration with the -y flag, run from a shell script",
+        "event": {
+          "Image": "/snap/amazon-ssm-agent/current/amazon-ssm-agent",
+          "CommandLine": "/snap/amazon-ssm-agent/current/amazon-ssm-agent -register -y -code Qw7eRt5yUi3oPa1sDf9g -id 2b4d6f8a-1c3e-4a5b-8d7f-9e0a1b2c3d4e -region us-east-2",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash /tmp/.cache/setup.sh",
+          "User": "root",
+          "CurrentDirectory": "/tmp/.cache",
+          "ProcessId": 5120,
+          "Computer": "app-srv-07"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal start of the SSM agent service by systemd, with no registration parameters",
+        "event": {
+          "Image": "/usr/bin/amazon-ssm-agent",
+          "CommandLine": "/usr/bin/amazon-ssm-agent",
+          "ParentImage": "/usr/lib/systemd/systemd",
+          "ParentCommandLine": "/sbin/init",
+          "User": "root",
+          "CurrentDirectory": "/",
+          "ProcessId": 912,
+          "Computer": "app-srv-07"
+        }
+      },
+      {
+        "description": "SSM worker process launched by the agent; the image is not amazon-ssm-agent and there are no registration flags",
+        "event": {
+          "Image": "/usr/bin/ssm-agent-worker",
+          "CommandLine": "/usr/bin/ssm-agent-worker",
+          "ParentImage": "/usr/bin/amazon-ssm-agent",
+          "ParentCommandLine": "/usr/bin/amazon-ssm-agent",
+          "User": "root",
+          "CurrentDirectory": "/",
+          "ProcessId": 934,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

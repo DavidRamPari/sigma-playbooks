@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "8f0b1fb1-9bd4-4e74-8cdf-a8de4d2adfd0",
+    "title": "Unusual File Deletion by Dns.exe",
+    "level": "high",
+    "status": "test",
+    "author": "Tim Rauch (Nextron Systems), Elastic (idea)",
+    "path": "windows/file/file_delete/file_delete_win_unusual_deletion_by_dns_exe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_delete/file_delete_win_unusual_deletion_by_dns_exe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1133"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El servicio DNS de Windows (dns.exe) eliminó un archivo distinto de su log de depuración dns.log. Ese comportamiento no es habitual y puede indicar explotación del servicio DNS, como CVE-2020-1350 (SigRed).",
+      "what_it_detects": "Eventos file_delete donde Image termina en \\dns.exe y TargetFilename no termina en \\dns.log. En condiciones normales, el servidor DNS casi no elimina archivos fuera de su log de depuración.",
+      "why_it_matters": "dns.exe corre como SYSTEM y suele estar en controladores de dominio. Si se explota de forma remota, el atacante logra ejecución privilegiada y puede borrar artefactos o preparar persistencia. ATT&CK T1133: abuso de un servicio expuesto para obtener acceso inicial y persistencia.",
+      "triage_steps": [
+        "Revise TargetFilename. Ruta, extensión (.dll, .exe, .ps1, .dns) y carpeta (Temp, System32\\dns, recursos compartidos) indican si es un archivo de zona o algo ajeno.",
+        "Confirme que Image sea C:\\Windows\\System32\\dns.exe y valide su hash y firma. Si la ruta no es estándar, es un binario suplantado.",
+        "Busque en el mismo host, en ±15 minutos, procesos hijos de dns.exe como cmd.exe, powershell.exe o rundll32.exe. Normalmente no tiene ninguno.",
+        "Revise la creación y modificación de archivos por dns.exe en esa ventana (regla FileChange relacionada) y la carga de DLL no firmadas.",
+        "Revise el Event Log del servidor DNS y del sistema: caídas o reinicios del servicio DNS, que son un síntoma típico de intentos de explotación.",
+        "Consulte en firewall o NDR si hubo respuestas DNS anómalas por TCP/53 o consultas a dominios externos poco comunes hacia este servidor.",
+        "Verifique si el servidor tiene instalado el parche de CVE-2020-1350 y busque alertas previas para el mismo host."
+      ],
+      "false_positives": [
+        "Operaciones de zona, como transferencias, recarga o eliminación de zonas, que reemplazan o borran archivos .dns en System32\\dns.",
+        "Log de depuración con otro nombre o ruta, que dns.exe rota o elimina.",
+        "Mantenimiento o migración del rol DNS hecho por administradores."
+      ],
+      "response_steps": [
+        "Valide con el equipo de infraestructura si hubo cambios de zona o mantenimiento planificados a esa hora.",
+        "Si no se justifica, preserve evidencia: memoria, MFT, logs de Sysmon y del servicio DNS, antes de cualquier cambio.",
+        "Contenga el host de forma coordinada. Si es controlador de dominio, aíslelo sin dejar sin DNS a la red y prepare un servidor de respaldo.",
+        "Aplique la actualización de seguridad de CVE-2020-1350 y busque persistencia: servicios, tareas, cuentas nuevas y DLL.",
+        "Rote las credenciales privilegiadas que estuvieron expuestas en el servidor y monitoree los demás servidores DNS."
+      ],
+      "severity_rationale": "Es alta porque dns.exe corre como SYSTEM en servidores críticos, y cualquier eliminación fuera de dns.log tiene pocas explicaciones legítimas."
+    },
+    "en": {
+      "summary": "The Windows DNS Server service (dns.exe) deleted a file other than its dns.log debug log. This is unusual and may indicate exploitation of the DNS service, such as CVE-2020-1350 (SigRed).",
+      "what_it_detects": "file_delete events where Image ends with \\dns.exe and TargetFilename does not end with \\dns.log. Normally the DNS server rarely deletes anything except its debug log.",
+      "why_it_matters": "dns.exe runs as SYSTEM, often on domain controllers. If it is exploited remotely, the attacker gets privileged execution and can wipe artifacts or set up persistence. ATT&CK T1133: abusing an exposed service for initial access and persistence.",
+      "triage_steps": [
+        "Inspect TargetFilename. The path, extension (.dll, .exe, .ps1, .dns) and folder (Temp, System32\\dns, shares) show whether it is a zone file or something foreign.",
+        "Confirm Image is C:\\Windows\\System32\\dns.exe and validate its hash and signature. A non-standard path means a masquerading binary.",
+        "On the same host within +/- 15 minutes, look for child processes of dns.exe such as cmd.exe, powershell.exe or rundll32.exe. Normally it has none.",
+        "Review file creations and changes by dns.exe in that window (related FileChange rule) and any unsigned DLL loads.",
+        "Check the DNS Server and System event logs for DNS service crashes or restarts, a typical symptom of exploitation attempts.",
+        "Check firewall or NDR data for anomalous TCP/53 DNS responses or queries to unusual external domains that reached this server.",
+        "Verify the server has the CVE-2020-1350 patch and look for earlier alerts on the same host."
+      ],
+      "false_positives": [
+        "Zone operations such as transfers, reloads or zone removal that replace or delete .dns files in System32\\dns.",
+        "A debug log configured with a different name or path, which dns.exe rotates or deletes.",
+        "Administrator maintenance or migration of the DNS role."
+      ],
+      "response_steps": [
+        "Ask the infrastructure team whether zone changes or maintenance were planned at that time.",
+        "If the deletion is unexplained, preserve evidence first: memory, MFT, Sysmon and DNS service logs.",
+        "Contain the host in coordination with infrastructure. If it is a DC, isolate it without cutting DNS for the network and prepare a fallback server.",
+        "Apply the CVE-2020-1350 security update and hunt for persistence: services, tasks, new accounts and DLLs.",
+        "Rotate privileged credentials that were exposed on the server and monitor the other DNS servers."
+      ],
+      "severity_rationale": "High is right because dns.exe runs as SYSTEM on critical servers, and deletions other than dns.log have few legitimate explanations."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dns.exe deletes a DLL dropped in the Windows Temp folder on a domain controller",
+        "event": {
+          "EventID": 26,
+          "Computer": "DC-01.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2148,
+          "Image": "C:\\Windows\\System32\\dns.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\svc_update.dll",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000000",
+          "IsExecutable": true
+        }
+      },
+      {
+        "description": "dns.exe deletes a script file in ProgramData",
+        "event": {
+          "EventID": 23,
+          "Computer": "DNS-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 1876,
+          "Image": "C:\\Windows\\System32\\dns.exe",
+          "TargetFilename": "C:\\ProgramData\\Microsoft\\stage.ps1",
+          "IsExecutable": false
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "dns.exe rotates its own debug log, which the filter excludes",
+        "event": {
+          "EventID": 26,
+          "Computer": "DC-01.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2148,
+          "Image": "C:\\Windows\\System32\\dns.exe",
+          "TargetFilename": "C:\\Windows\\System32\\dns\\dns.log",
+          "IsExecutable": false
+        }
+      },
+      {
+        "description": "A different process (dnscmd.exe) deletes a temp file, so the Image selection does not match",
+        "event": {
+          "EventID": 26,
+          "Computer": "DC-01.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 5520,
+          "Image": "C:\\Windows\\System32\\dnscmd.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\export.tmp",
+          "IsExecutable": false
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

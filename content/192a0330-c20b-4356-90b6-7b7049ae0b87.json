@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "192a0330-c20b-4356-90b6-7b7049ae0b87",
+    "title": "Successful Overpass the Hash Attempt",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (source), Dominik Schaudel (rule)",
+    "path": "windows/builtin/security/account_management/win_security_overpass_the_hash.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/account_management/win_security_overpass_the_hash.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1550.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un inicio de sesión exitoso de tipo 9 (NewCredentials) mediante el servicio Secondary Logon (seclogo) con el paquete Negotiate. Este patrón coincide con Overpass the Hash, por ejemplo con sekurlsa::pth de Mimikatz.",
+      "what_it_detects": "Eventos 4624 de Security con LogonType 9, LogonProcessName seclogo y AuthenticationPackageName Negotiate. En este tipo de sesión, el proceso usa la identidad local actual y otras credenciales para el acceso a la red.",
+      "why_it_matters": "Con el hash NTLM de una cuenta, un atacante puede pedir tickets Kerberos y moverse lateralmente sin conocer la contraseña (T1550.002, Pass the Hash). Si la cuenta tiene privilegios, el dominio entero puede quedar comprometido.",
+      "triage_steps": [
+        "Revise SubjectUserName, TargetOutboundUserName y TargetOutboundDomainName del 4624. Si la cuenta de red difiere del usuario local y es privilegiada, el caso se vuelve más grave.",
+        "Identifique ProcessName y ProcessId. Use TargetLogonId para correlacionarlo con eventos 4688 o Sysmon 1 y encontrar el proceso creado y su proceso padre.",
+        "Busque herramientas como mimikatz, Rubeus o binarios renombrados en el mismo host, entre 15 minutos antes y 15 después. Revise línea de comandos, hash y ruta.",
+        "En los controladores de dominio, busque eventos 4768/4769 de la cuenta de red con cifrado RC4 (0x17) que vengan de la IP del host.",
+        "Revise las conexiones salientes y los eventos 4624 tipo 3 en otros hosts con esa cuenta después de la alerta para detectar movimiento lateral.",
+        "Pregunte al usuario si ejecutó runas /netonly y confirme que el propósito y el horario son legítimos.",
+        "Revise alertas anteriores del host y del usuario, en especial si hubo acceso a LSASS (Sysmon 10) o volcado de credenciales."
+      ],
+      "false_positives": [
+        "Administradores que ejecutan runas /netonly para usar herramientas con credenciales de otro dominio, como RSAT o SQL Management Studio.",
+        "Scripts o herramientas de soporte que llaman a CreateProcessWithLogonW con LOGON_NETCREDENTIALS_ONLY para acceder a recursos remotos."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con la telemetría de procesos si el uso fue legítimo antes de tomar medidas.",
+        "Si se confirma el abuso, aísle el endpoint y conserve la memoria y los registros relevantes.",
+        "Restablezca la contraseña de la cuenta usada en la red y de las demás cuentas expuestas en el host. Si se comprometió una cuenta privilegiada, evalúe rotar krbtgt dos veces.",
+        "Busque movimiento lateral con la misma cuenta en otros hosts y elimine las herramientas y la persistencia encontradas.",
+        "Para reducir el riesgo, active Credential Guard, la protección de LSA y el grupo Protected Users para las cuentas privilegiadas."
+      ],
+      "severity_rationale": "El nivel high se justifica porque el patrón es poco habitual en estaciones de trabajo y suele indicar uso de credenciales robadas para moverse lateralmente, aunque runas /netonly puede producir el mismo evento."
+    },
+    "en": {
+      "summary": "A successful type 9 (NewCredentials) logon was recorded through the Secondary Logon service (seclogo) with the Negotiate package. This pattern matches Overpass the Hash, for example Mimikatz sekurlsa::pth.",
+      "what_it_detects": "Security event 4624 with LogonType 9, LogonProcessName seclogo and AuthenticationPackageName Negotiate. In this session type, the process keeps the current local identity but uses other credentials for network access.",
+      "why_it_matters": "With an account's NTLM hash, an attacker can request Kerberos tickets and move laterally without knowing the password (T1550.002, Pass the Hash). If the account is privileged, the whole domain may be compromised.",
+      "triage_steps": [
+        "Check SubjectUserName, TargetOutboundUserName and TargetOutboundDomainName in the 4624. A privileged network account that differs from the local user makes the case more serious.",
+        "Identify ProcessName and ProcessId. Use TargetLogonId to correlate with 4688 or Sysmon 1 events and find the spawned process and its parent.",
+        "Look for mimikatz, Rubeus or renamed binaries on the same host, from 15 minutes before to 15 minutes after. Review command line, hash and path.",
+        "On domain controllers, look for 4768/4769 events for the network account with RC4 encryption (0x17) coming from the host's IP.",
+        "Check outbound connections and type 3 4624 logons on other hosts with that account after the alert to detect lateral movement.",
+        "Ask the user whether they ran runas /netonly and confirm the purpose and timing are legitimate.",
+        "Review earlier alerts for the host and user, especially LSASS access (Sysmon 10) or credential dumping."
+      ],
+      "false_positives": [
+        "Administrators running runas /netonly to use tools such as RSAT or SQL Management Studio with credentials from another domain.",
+        "Support tools or scripts that call CreateProcessWithLogonW with LOGON_NETCREDENTIALS_ONLY to access remote resources."
+      ],
+      "response_steps": [
+        "Confirm with the user and with process telemetry whether the use was legitimate before acting.",
+        "If abuse is confirmed, isolate the endpoint and preserve memory and relevant logs.",
+        "Reset the password of the account used on the network and of other accounts exposed on the host. If a privileged account was compromised, consider rotating krbtgt twice.",
+        "Hunt for lateral movement with the same account on other hosts and remove the tools and persistence you find.",
+        "To reduce risk, enable Credential Guard, LSA protection and the Protected Users group for privileged accounts."
+      ],
+      "severity_rationale": "High fits because this pattern is uncommon on workstations and usually points to stolen credentials used for lateral movement, although runas /netonly can produce the same event."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "NewCredentials logon via seclogo/Negotiate where a local user's process uses a domain admin's credentials on the network, consistent with sekurlsa::pth.",
+        "event": {
+          "EventID": 4624,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "TargetLogonId": "0x8a3f21",
+          "LogonType": 9,
+          "LogonProcessName": "seclogo",
+          "AuthenticationPackageName": "Negotiate",
+          "TargetOutboundUserName": "adm-mrojas",
+          "TargetOutboundDomainName": "ANDES",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "IpAddress": "::1",
+          "IpPort": "0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal interactive logon (type 2) via User32; logon type and process do not match.",
+        "event": {
+          "EventID": 4624,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "LogonType": 2,
+          "LogonProcessName": "User32",
+          "AuthenticationPackageName": "Negotiate",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "IpAddress": "127.0.0.1"
+        }
+      },
+      {
+        "description": "Type 9 logon made by an application calling LogonUser through Advapi, not seclogo, so the LogonProcessName condition fails.",
+        "event": {
+          "EventID": 4624,
+          "Channel": "Security",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "SubjectUserName": "svc-backup",
+          "TargetUserName": "svc-backup",
+          "TargetDomainName": "ANDES",
+          "LogonType": 9,
+          "LogonProcessName": "Advapi",
+          "AuthenticationPackageName": "Negotiate",
+          "TargetOutboundUserName": "svc-nas",
+          "TargetOutboundDomainName": "ANDES",
+          "ProcessName": "C:\\Program Files\\ExampleBackup\\agent.exe",
+          "IpAddress": "::1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

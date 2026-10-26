@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "6a7ba45c-63d8-473e-9736-2eaabff79964",
+    "title": "AWS EFS Fileshare Mount Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_efs_fileshare_mount_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_efs_fileshare_mount_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en CloudTrail una llamada DeleteMountTarget de Amazon EFS, que elimina un mount target de un sistema de archivos. Las instancias o aplicaciones que dependen de ese montaje pueden perder acceso al almacenamiento compartido.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource elasticfilesystem.amazonaws.com y eventName DeleteMountTarget, es decir, una identidad eliminó un mount target de EFS en una subred o zona de disponibilidad.",
+      "why_it_matters": "Eliminar un mount target corta el acceso NFS de los clientes de esa subred. Un adversario puede hacerlo para interrumpir cargas de trabajo o como paso previo a destruir datos (ATT&CK T1485, Data Destruction, táctica Impact).",
+      "triage_steps": [
+        "Identifique al autor en userIdentity (ARN, tipo, accessKeyId), junto con sourceIPAddress, userAgent y awsRegion. Determine si usó consola, CLI, SDK o herramientas IaC.",
+        "Revise requestParameters.mountTargetId y ubique el sistema de archivos y la subred asociados. Determine qué instancias y cargas de trabajo lo montaban.",
+        "Revise errorCode: un fallo (AccessDenied) sugiere sondeo. Una llamada exitosa implica impacto real.",
+        "Busque un ticket de cambio, ejecución de Terraform o CloudFormation, o ventana de mantenimiento que justifique la eliminación.",
+        "Pivote por la misma identidad e IP de origen en +/- 15 minutos para buscar DeleteFileSystem, DeleteAccessPoint, PutFileSystemPolicy, borrado de backups o cambios en IAM.",
+        "Revise alertas previas del mismo principal, como geolocalización inusual, access keys nuevas o inicios de sesión sin MFA."
+      ],
+      "false_positives": [
+        "Desmantelamiento planificado de infraestructura o rediseño de subredes o zonas de disponibilidad que elimina mount targets.",
+        "Actualizaciones o eliminaciones de stacks de Terraform, CloudFormation o CDK que reemplazan mount targets.",
+        "Limpieza automatizada de entornos de desarrollo o pruebas."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del recurso si la eliminación estaba autorizada. Si no lo estaba, trate como comprometidas las credenciales del autor.",
+        "Contenga: deshabilite o rote las access keys, revoque las sesiones activas del rol y restrinja los permisos de borrado de EFS mediante SCP o políticas IAM.",
+        "Recree el mount target en la subred afectada con los security groups correctos y verifique que los clientes vuelvan a montar.",
+        "Verifique la integridad del sistema de archivos y los puntos de recuperación de AWS Backup. Restaure los datos si hubo actividad destructiva posterior."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la acción afecta la disponibilidad sin destruir datos directamente, y con frecuencia proviene de cambios legítimos de infraestructura."
+    },
+    "en": {
+      "summary": "A CloudTrail DeleteMountTarget call was made against Amazon EFS, removing a mount target from a file system. Instances or applications that depend on that mount may lose access to their shared storage.",
+      "what_it_detects": "CloudTrail events where eventSource is elasticfilesystem.amazonaws.com and eventName is DeleteMountTarget, meaning an identity deleted an EFS mount target in a VPC subnet/Availability Zone.",
+      "why_it_matters": "Deleting a mount target breaks NFS access for clients in that subnet. Adversaries can do this to disrupt workloads or as a step before destroying data (ATT&CK T1485, Data Destruction, Impact tactic).",
+      "triage_steps": [
+        "Identify the caller from userIdentity (ARN, type, accessKeyId), plus sourceIPAddress, userAgent and awsRegion. Check whether the call was made through console, CLI, SDK or IaC tooling.",
+        "Review requestParameters.mountTargetId and look up the file system and subnet it belonged to. Find which workloads and instances mounted it.",
+        "Check errorCode: a failed call (AccessDenied) points to probing. A successful call means real impact.",
+        "Look for a matching change ticket, Terraform/CloudFormation run or maintenance window that covers this deletion.",
+        "Pivot on the same identity and source IP within +/- 15 minutes for DeleteFileSystem, DeleteAccessPoint, PutFileSystemPolicy, backup deletions or IAM changes.",
+        "Check for earlier alerts on this principal, such as unusual geolocation, new access keys or console logins without MFA."
+      ],
+      "false_positives": [
+        "Planned infrastructure teardown or subnet/AZ redesign that removes mount targets.",
+        "Terraform, CloudFormation or CDK stack updates or deletions that replace mount targets.",
+        "Cleanup of dev or test environments by automation roles."
+      ],
+      "response_steps": [
+        "Confirm with the resource owner whether the deletion was authorized. If it was not, treat the caller's credentials as compromised.",
+        "Contain: disable or rotate the access keys, revoke active role sessions and restrict EFS delete permissions with SCPs or IAM policies.",
+        "Recreate the mount target in the affected subnet with the correct security groups, and confirm clients can mount again.",
+        "Verify file system integrity and AWS Backup recovery points. Restore data if any destructive activity followed."
+      ],
+      "severity_rationale": "Medium fits because the action disrupts availability without directly destroying data, and it often comes from legitimate infrastructure changes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "IAM user deletes an EFS mount target via AWS CLI",
+        "event": {
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DeleteMountTarget",
+          "eventTime": "2024-05-14T02:17:43Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/5.15.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.mountTargetId": "fsmt-0a1b2c3d4e5f67890",
+          "errorCode": null
+        }
+      },
+      {
+        "description": "Assumed role deletes a mount target from the console",
+        "event": {
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DeleteMountTarget",
+          "eventTime": "2024-05-14T02:19:05Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAdmin/mrodriguez",
+          "requestParameters.mountTargetId": "fsmt-0f9e8d7c6b5a43210"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Mount target creation on the same service, not a deletion",
+        "event": {
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "CreateMountTarget",
+          "eventTime": "2024-05-14T03:02:11Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/5.15.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.fileSystemId": "fs-0123456789abcdef0",
+          "requestParameters.subnetId": "subnet-0abc1234def567890"
+        }
+      },
+      {
+        "description": "Read-only listing of EFS mount targets",
+        "event": {
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DescribeMountTargets",
+          "eventTime": "2024-05-14T03:05:40Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ReadOnly/acastro"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

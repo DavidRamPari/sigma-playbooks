@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "e7a21b5f-d8c4-4ae5-b8d9-93c5d3f28e1c",
+    "title": "Suspicious DNS Query Indicating Kerberos Coercion via DNS Object SPN Spoofing",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/dns_query/dns_query_win_kerberos_coercion_via_dns_object_spoofing.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/dns_query/dns_query_win_kerberos_coercion_via_dns_object_spoofing.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1187",
+      "T1557.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un equipo Windows resolvió un nombre DNS que contiene una estructura CREDENTIAL_TARGET_INFORMATION serializada y codificada en base64. Es un fuerte indicio de que alguien registró un registro DNS falso para forzar la autenticación Kerberos o NTLM y retransmitirla.",
+      "what_it_detects": "Eventos de consulta DNS (por ejemplo, Sysmon Event ID 22) cuyo QueryName contiene a la vez 'UWhRCA' y 'BAAAA'. Es la firma del sufijo serializado que se agrega a un hostname, como 'host1UWhRCAAAAA...BAAAA'.",
+      "why_it_matters": "El atacante crea un registro DNS con este nombre manipulado y fuerza a una víctima a autenticarse contra él. La víctima emite tickets o credenciales para un SPN falsificado y el atacante los retransmite (T1557.001, T1187). La regla cita CVE-2025-33073, que permitía la reflexión con privilegios SYSTEM.",
+      "triage_steps": [
+        "Registre QueryName, Image, ProcessId, User y Computer. Las consultas forzadas suelen originarse en System, svchost o lsass del equipo víctima.",
+        "Revise QueryResults para ver a qué IP resolvió el nombre manipulado e identifique el equipo que tiene esa IP.",
+        "En los controladores de dominio, busque los eventos 5136/5137 de objetos dnsNode con el nombre manipulado. Anote quién creó cada registro y cuándo.",
+        "En una ventana de +/- 15 minutos, busque llamadas RPC de coerción (MS-EFSR, MS-RPRN, MS-DFSNM) contra la víctima desde la misma IP de origen.",
+        "Revise el evento 4769 en busca de tickets solicitados para SPN que contengan el nombre manipulado y el evento 4624 en busca de inicios de sesión desde la IP resuelta.",
+        "Busque actividad de relay desde la IP resuelta: sesiones SMB, cambios por LDAP, solicitudes de certificados a ADCS o nuevas sesiones privilegiadas.",
+        "Consulte alertas previas del equipo víctima, del usuario que creó el registro y de la IP resuelta."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. La causa benigna más probable son ejercicios autorizados de red team o pentest con técnicas de reflexión Kerberos o NTLM.",
+        "Investigadores que reproducen las técnicas de coerción publicadas en dominios de laboratorio."
+      ],
+      "response_steps": [
+        "Confirme si existía una prueba autorizada. Si no, preserve los atributos del registro DNS, los logs de los DC y la telemetría del endpoint antes de modificar algo.",
+        "Aísle el equipo que tiene la IP resuelta y deshabilite la cuenta que creó el registro DNS.",
+        "Con la evidencia ya guardada, elimine el registro DNS malicioso. Luego revoque los certificados, las sesiones o los cambios que haya producido el relay.",
+        "Aplique los parches correspondientes, incluido el de CVE-2025-33073. Exija la firma SMB, la firma LDAP con channel binding y EPA en ADCS. Restrinja quién puede crear registros DNS."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque esta estructura serializada no tiene un uso legítimo conocido en nombres DNS y señala un intento activo de relay de credenciales o de escalamiento de privilegios."
+    },
+    "en": {
+      "summary": "A Windows host resolved a DNS name that contains a base64-encoded marshaled CREDENTIAL_TARGET_INFORMATION structure. This is a strong sign that someone registered a spoofed DNS record to coerce Kerberos or NTLM authentication and relay it.",
+      "what_it_detects": "DNS query events (for example Sysmon Event ID 22) where QueryName contains both 'UWhRCA' and 'BAAAA', the signature of a marshaled target-info suffix appended to a hostname, such as 'host1UWhRCAAAAA...BAAAA'.",
+      "why_it_matters": "Attackers add a DNS record with this crafted name, then coerce a victim into authenticating to it. The victim issues tickets or credentials for a spoofed SPN, and the attacker relays them (T1557.001, T1187). The rule cites CVE-2025-33073, which allowed SYSTEM-level reflection.",
+      "triage_steps": [
+        "Record the QueryName, Image, ProcessId, User and Computer. Coerced queries usually come from System, svchost or lsass on the victim host.",
+        "Check QueryResults for the IP the crafted name resolved to, and identify the host that owns that IP.",
+        "On domain controllers, search Event 5136/5137 for dnsNode objects matching the crafted name. Note who created each record and when.",
+        "Within +/- 15 minutes, look for coercion RPC calls such as MS-EFSR, MS-RPRN or MS-DFSNM against the victim, coming from the same source IP.",
+        "Check Event 4769 for service tickets requested for SPNs containing the crafted name, and Event 4624 logons from the resolved IP.",
+        "Look for follow-on relay activity from the resolved IP: SMB sessions, LDAP changes, ADCS certificate requests or new privileged sessions.",
+        "Look up earlier alerts for the victim host, the record creator and the resolved IP."
+      ],
+      "false_positives": [
+        "None are known, per the rule. Authorized red team or penetration tests that use Kerberos or NTLM reflection techniques are the likely benign cause.",
+        "Security researchers in lab domains who reproduce the published coercion techniques."
+      ],
+      "response_steps": [
+        "Confirm whether a test was authorized. If not, preserve the DNS record attributes, DC logs and endpoint telemetry before you change anything.",
+        "Isolate the host that owns the resolved IP. Disable the account that created the DNS record.",
+        "After the evidence is saved, delete the malicious DNS record. Then revoke any certificates, sessions or changes the relay produced.",
+        "Patch affected systems, including the fix for CVE-2025-33073. Enforce SMB signing, LDAP signing with channel binding, and EPA on ADCS. Restrict who can create DNS records."
+      ],
+      "severity_rationale": "High fits because this marshaled structure has no known legitimate use in DNS names and it points to an active attempt at credential relay or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Sysmon DNS query from System on the victim host for a crafted name that carries the marshaled CREDENTIAL_TARGET_INFORMATION suffix.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.ad.example.com",
+          "Image": "System",
+          "ProcessId": 4,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "QueryName": "fileserver1UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAwbEAYBAAAA.ad.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:192.0.2.66;"
+        }
+      },
+      {
+        "description": "lsass resolving a spoofed localhost-based name in lowercase. The match is case-insensitive.",
+        "event": {
+          "EventID": 22,
+          "Computer": "SRV-FS01.ad.example.com",
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "ProcessId": 712,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "QueryName": "localhost1uwhrcaaaaaaaaaaaaaaaaaaaaaaaaaaaaaawbeaybaaaa",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:198.51.100.23;"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "CDN hostname whose random label contains 'BAAAA' but not 'UWhRCA'.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.ad.example.com",
+          "Image": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "ProcessId": 5120,
+          "User": "ANDES\\jperez",
+          "QueryName": "img-x7BAAAAq9.cdn.example.net",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.10;"
+        }
+      },
+      {
+        "description": "Normal file server lookup with no marshaled suffix.",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.ad.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1288,
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "QueryName": "fileserver.ad.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:192.0.2.15;"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "6daac7fc-77d1-449a-a71a-e6b4d59a0e54",
+    "title": "User Couldn't Call a Privileged Service 'LsaRegisterLogonProcess'",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (source), Ilyas Ochkov (rule), oscd.community",
+    "path": "windows/builtin/security/win_security_user_couldnt_call_priv_service_lsaregisterlogonprocess.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_user_couldnt_call_priv_service_lsaregisterlogonprocess.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso intentó llamar a LsaRegisterLogonProcess() sin tener SeTcbPrivilege y Windows registró el intento como fallido (evento 4673, Audit Failure). Puede tratarse de una herramienta como Rubeus que intenta obtener un handle a LSA para manipular tickets Kerberos.",
+      "what_it_detects": "Eventos de Seguridad 4673 (se llamó a un servicio privilegiado) con Service igual a 'LsaRegisterLogonProcess()' y Keywords 0x8010000000000000, que indica un fallo de auditoría porque el proceso no tenía el privilegio requerido.",
+      "why_it_matters": "LsaRegisterLogonProcess solo debe usarlo un proceso de logon real. Herramientas ofensivas lo invocan para enumerar, extraer o inyectar tickets Kerberos (T1558.003, Kerberoasting y robo de tickets), lo que permite el acceso a credenciales y el movimiento lateral.",
+      "triage_steps": [
+        "Identifique en el evento a SubjectUserName, SubjectDomainName, SubjectLogonId, ProcessName y ProcessId; determine si la cuenta es de un usuario interactivo o de un servicio.",
+        "Revise la ruta de ProcessName: binarios en carpetas de usuario, Temp, ProgramData o con nombres genéricos son muy sospechosos.",
+        "Busque el evento 4688 o Sysmon 1 del mismo ProcessId para obtener CommandLine, hash y proceso padre; busque argumentos como kerberoast, asktgs, dump, triage o monitor.",
+        "Pivote en el mismo host +/- 15 minutos: solicitudes 4769 con cifrado RC4 (0x17) en el DC, 4648 o accesos a lsass.exe.",
+        "Correlacione el SubjectLogonId con el evento 4624 para conocer el origen del inicio de sesión (tipo de logon y IP).",
+        "Revise alertas previas del mismo usuario y host, y si hay ejecución de .NET en memoria o PowerShell sospechoso."
+      ],
+      "false_positives": [
+        "El campo falsepositives de la regla indica Unknown; los casos legítimos son raros.",
+        "Software de seguridad, autenticación o SSO que intenta registrarse como proceso de logon sin ejecutarse como SYSTEM.",
+        "Ejercicios autorizados de red team o pruebas de penetración con Rubeus u otras herramientas Kerberos."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host o del ejercicio si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint con el EDR y preserve el binario, su hash y la memoria del proceso.",
+        "Restablezca las contraseñas de la cuenta afectada y de las cuentas de servicio con SPN que pudieron ser objeto de Kerberoasting.",
+        "Revoque tickets Kerberos activos (klist purge, reinicio de sesiones) y busque el mismo hash o línea de comandos en otros equipos.",
+        "Elimine la herramienta y mecanismos de persistencia tras la verificación, y supervise el uso posterior de las credenciales."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque los procesos legítimos casi nunca fallan esta llamada y el patrón coincide con herramientas de robo de tickets Kerberos."
+    },
+    "en": {
+      "summary": "A process tried to call LsaRegisterLogonProcess() without SeTcbPrivilege and Windows logged the attempt as an audit failure (event 4673). This may be a tool such as Rubeus trying to get a handle to LSA to handle Kerberos tickets.",
+      "what_it_detects": "Security event 4673 (a privileged service was called) where Service is 'LsaRegisterLogonProcess()' and Keywords is 0x8010000000000000, meaning the call failed because the caller lacked the required privilege.",
+      "why_it_matters": "Only genuine logon processes should use LsaRegisterLogonProcess. Offensive tools call it to list, dump or inject Kerberos tickets (T1558.003, Kerberoasting and ticket theft), enabling credential access and lateral movement.",
+      "triage_steps": [
+        "Note SubjectUserName, SubjectDomainName, SubjectLogonId, ProcessName and ProcessId; decide whether the account is an interactive user or a service.",
+        "Check the ProcessName path: binaries in user profiles, Temp, ProgramData or with generic names are highly suspicious.",
+        "Find the 4688 or Sysmon 1 event for the same ProcessId to get CommandLine, hash and parent; look for arguments like kerberoast, asktgs, dump, triage or monitor.",
+        "Pivot on the same host +/- 15 minutes: 4769 requests with RC4 encryption (0x17) on DCs, 4648 events or access to lsass.exe.",
+        "Match SubjectLogonId to the 4624 event to learn the logon type and source IP.",
+        "Review earlier alerts for the same user and host, including in-memory .NET execution or suspicious PowerShell."
+      ],
+      "false_positives": [
+        "The rule's falsepositives field says Unknown; legitimate cases are rare.",
+        "Security, authentication or SSO software trying to register as a logon process without running as SYSTEM.",
+        "Authorized red team exercises or penetration tests using Rubeus or other Kerberos tools."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or exercise lead whether the activity was authorized before acting.",
+        "If unauthorized, isolate the endpoint via EDR and preserve the binary, its hash and process memory.",
+        "Reset the affected account's password and those of SPN service accounts that may have been Kerberoasted.",
+        "Purge active Kerberos tickets and hunt for the same hash or command line on other hosts.",
+        "Remove the tool and any persistence after verification, and monitor later use of the credentials."
+      ],
+      "severity_rationale": "High fits because legitimate processes almost never fail this call and the pattern matches Kerberos ticket theft tooling."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Non-elevated user runs an unknown binary from Temp that fails to call LsaRegisterLogonProcess()",
+        "event": {
+          "EventID": 4673,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "Keywords": "0x8010000000000000",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7a2f1",
+          "ObjectServer": "NT Local Security Authority / Authentication Service",
+          "Service": "LsaRegisterLogonProcess()",
+          "PrivilegeList": "SeTcbPrivilege",
+          "ProcessId": "0x1a2c",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupd.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Successful call to LsaRegisterLogonProcess() by a legitimate SYSTEM logon process (audit success keyword)",
+        "event": {
+          "EventID": 4673,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "Keywords": "0x8020000000000000",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "ObjectServer": "NT Local Security Authority / Authentication Service",
+          "Service": "LsaRegisterLogonProcess()",
+          "PrivilegeList": "SeTcbPrivilege",
+          "ProcessId": "0x2b4",
+          "ProcessName": "C:\\Windows\\System32\\winlogon.exe"
+        }
+      },
+      {
+        "description": "Failed privileged service call for a different service, not LsaRegisterLogonProcess()",
+        "event": {
+          "EventID": 4673,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "Keywords": "0x8010000000000000",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7a2f1",
+          "ObjectServer": "Security",
+          "Service": "-",
+          "PrivilegeList": "SeProfileSingleProcessPrivilege",
+          "ProcessId": "0x1f40",
+          "ProcessName": "C:\\Program Files\\Example\\Monitor\\monitor.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

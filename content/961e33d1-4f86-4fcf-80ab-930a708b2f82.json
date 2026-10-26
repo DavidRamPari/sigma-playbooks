@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "961e33d1-4f86-4fcf-80ab-930a708b2f82",
+    "title": "Potential Persistence Via Excel Add-in - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_persistence_xll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_xll.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1137.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió en la clave Excel\\Options de Office un valor que empieza con '/R ' y termina en '.xll'. Así se registra un add-in XLL que Excel carga automáticamente cada vez que se inicia.",
+      "what_it_detects": "Eventos registry_set (Sysmon EventID 13) en los que TargetObject contiene 'Software\\Microsoft\\Office\\' y termina en '\\Excel\\Options', y Details empieza con '/R ' y termina en '.xll'. Es el formato de los valores OPEN/OPENn con los que Excel carga add-ins al arrancar.",
+      "why_it_matters": "Un XLL es una DLL nativa que corre dentro de EXCEL.EXE. Registrarlo en Options le da al atacante persistencia (ATT&CK T1137.006, Office Add-ins): su código se ejecuta con los privilegios del usuario cada vez que este abre Excel.",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique la versión de Office, el SID o el usuario del hive y la ruta completa del archivo .xll registrado.",
+        "Identifique el proceso que escribió el valor (Image, ProcessId). Si fue reg.exe, powershell.exe, cmd.exe o un binario desconocido en lugar de EXCEL.EXE, sospeche de inmediato.",
+        "Revise el árbol de procesos (proceso padre y procesos hijos) y la CommandLine en el mismo host en una ventana de +/- 15 minutos.",
+        "Ubique el .xll en disco: obtenga el hash, la firma digital, la fecha de creación y el proceso que lo creó (eventos de creación de archivos). Desconfíe de rutas en AppData, Temp o Downloads.",
+        "Busque cargas del .xll por EXCEL.EXE (image load) y conexiones de red o procesos hijos lanzados por Excel después de la carga.",
+        "Pregunte al usuario y a TI si se instaló hace poco un add-in legítimo y si coincide con software corporativo aprobado.",
+        "Revise alertas anteriores del mismo usuario y host, y busque el mismo hash o nombre de archivo en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Instalación de add-ins XLL corporativos o de proveedores (financieros, de datos de mercado, de análisis) por medio de instaladores firmados o herramientas de despliegue.",
+        "Desarrolladores que registran sus propios XLL para hacer pruebas."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad con el dueño del equipo y valide la firma y el hash del .xll antes de actuar.",
+        "Si es malicioso, aísle el endpoint y ponga el .xll en cuarentena, conservando una copia para análisis.",
+        "Elimine el valor OPEN/OPENn de Excel\\Options después de documentarlo, y busque otros mecanismos de persistencia en el host.",
+        "Restablezca las credenciales del usuario si Excel ejecutó el add-in, y busque el mismo indicador en toda la flota.",
+        "Considere bloquear los add-ins no firmados por medio de las políticas de confianza de Office."
+      ],
+      "severity_rationale": "Es alta porque un XLL registrado para cargarse automáticamente da ejecución persistente de código nativo y casi no hay usos legítimos con este patrón fuera de un despliegue controlado."
+    },
+    "en": {
+      "summary": "A value starting with '/R ' and ending in '.xll' was written to an Office Excel\\Options registry key. This registers an XLL add-in that Excel loads automatically every time it starts.",
+      "what_it_detects": "registry_set events (Sysmon EventID 13) where TargetObject contains 'Software\\Microsoft\\Office\\' and ends with '\\Excel\\Options', and Details starts with '/R ' and ends with '.xll'. This is the format of the OPEN/OPENn values Excel uses to load add-ins at startup.",
+      "why_it_matters": "An XLL is a native DLL that runs inside EXCEL.EXE. Registering it under Options gives an attacker persistence (ATT&CK T1137.006, Office Add-ins): their code runs with the user's privileges each time the user opens Excel.",
+      "triage_steps": [
+        "Review TargetObject and Details: identify the Office version, the hive's SID or user, and the full path of the registered .xll file.",
+        "Identify the process that wrote the value (Image, ProcessId). If it was reg.exe, powershell.exe, cmd.exe or an unknown binary rather than EXCEL.EXE, treat it as suspicious right away.",
+        "Check the process tree (parent and child processes) and the CommandLine on the same host within +/- 15 minutes.",
+        "Find the .xll on disk: get its hash, signature, creation time and the process that created it (file creation events). Distrust paths in AppData, Temp or Downloads.",
+        "Look for EXCEL.EXE loading the .xll (image load), and for network connections or child processes that Excel started after the load.",
+        "Ask the user and IT whether a legitimate add-in was installed recently and whether it matches approved corporate software.",
+        "Review earlier alerts for the same user and host, and search other endpoints for the same hash or filename."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Corporate or vendor XLL add-ins (finance, market data, analytics tools) installed by signed installers or deployment tools.",
+        "Developers registering their own XLLs for testing."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the asset owner, and validate the .xll's signature and hash before acting.",
+        "If it is malicious, isolate the endpoint and quarantine the .xll, keeping a copy for analysis.",
+        "Document and then remove the OPEN/OPENn value under Excel\\Options. Hunt the host for other persistence mechanisms.",
+        "Reset the user's credentials if Excel executed the add-in, and search the whole fleet for the same indicator.",
+        "Consider blocking unsigned add-ins through Office Trust Center policies."
+      ],
+      "severity_rationale": "High fits because an auto-loading XLL gives persistent native code execution, and outside controlled deployments almost nothing legitimate uses this pattern."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers an XLL from AppData so that Excel loads it at startup (Atomic Red Team T1137.006 style).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Office\\16.0\\Excel\\Options",
+          "Details": "/R C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\AddIns\\update.xll"
+        }
+      },
+      {
+        "description": "PowerShell writes the Excel Options key for Office 15.0, pointing to an XLL in Temp.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKCU\\Software\\Microsoft\\Office\\15.0\\Excel\\Options",
+          "Details": "/R C:\\Users\\mrojas\\AppData\\Local\\Temp\\invoice_tool.XLL"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Excel registers a legitimate .xlam add-in. Details does not end with '.xll'.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+          "ProcessId": 7344,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Office\\16.0\\Excel\\Options",
+          "Details": "/R \"C:\\Program Files\\Microsoft Office\\root\\Office16\\Library\\SOLVER\\SOLVER.XLAM\""
+        }
+      },
+      {
+        "description": "An XLL path written under Word options. TargetObject does not end with '\\Excel\\Options', and Details lacks the '/R ' prefix.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0311.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "ProcessId": 5012,
+          "TargetObject": "HKCU\\Software\\Microsoft\\Office\\16.0\\Word\\Options",
+          "Details": "C:\\Users\\lgomez\\Documents\\tools\\report.xll"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "f4d3748a-65d1-4806-bd23-e25728081d01",
+    "title": "Network Sniffing - Linux",
+    "level": "low",
+    "status": "test",
+    "author": "Timur Zinniatullin, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_network_sniffing.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_network_sniffing.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1040"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró la ejecución de tcpdump o tshark con un límite de paquetes (-c) y una interfaz de captura (-i). Puede tratarse de diagnóstico legítimo o de un adversario capturando tráfico para obtener credenciales o mapear la red.",
+      "what_it_detects": "Registros EXECVE de auditd donde a0 es 'tcpdump' o 'tshark', a1 es '-c' y a3 contiene o es '-i'. Es decir, comandos como 'tcpdump -c 100 -i eth0'. Solo detecta ese orden de argumentos y a0 escrito sin ruta completa.",
+      "why_it_matters": "Corresponde a ATT&CK T1040 (Network Sniffing). Capturar tráfico permite obtener credenciales en texto claro, tokens de sesión y datos sobre hosts y servicios de la red, útiles para movimiento lateral.",
+      "triage_steps": [
+        "Revise a0 a aN del registro EXECVE: interfaz capturada (eth0, any), cantidad de paquetes, filtros BPF y si escribe a archivo con -w.",
+        "Correlacione con el registro SYSCALL del mismo ID de evento (msg audit) para obtener auid, uid, exe, ppid, tty y ses.",
+        "Identifique al usuario real (auid) y confirme si es administrador de red o sistemas con motivo documentado o ticket de cambio.",
+        "Revise el proceso padre y la sesión: login SSH, IP de origen, cron, script o shell web; un padre inesperado eleva la sospecha.",
+        "Busque en el log del kernel 'entered promiscuous mode' en el mismo host dentro de +/- 15 minutos.",
+        "Si hubo -w, ubique el archivo pcap, su tamaño y si fue copiado o transferido (scp, curl, nc) después de la captura.",
+        "Consulte alertas previas del mismo host y usuario: escalamiento de privilegios, descubrimiento o accesos inusuales."
+      ],
+      "false_positives": [
+        "Administrador o usuario autorizado que usa tcpdump o tshark para diagnosticar problemas de red.",
+        "Scripts de monitoreo o soporte que toman muestras breves de tráfico de forma periódica.",
+        "Ejercicios de red team o pruebas tipo Atomic Red Team aprobados."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o su responsable si la captura fue autorizada antes de actuar.",
+        "Si no está autorizada, detenga el proceso de captura y preserve los archivos pcap y los registros auditd como evidencia.",
+        "Restrinja la cuenta implicada o la sesión SSH e investigue cómo obtuvo privilegios para capturar.",
+        "Si se capturó tráfico con credenciales, rote contraseñas, tokens y claves de los servicios expuestos.",
+        "Limite la capacidad CAP_NET_RAW y el uso de herramientas de captura a grupos autorizados."
+      ],
+      "severity_rationale": "Nivel bajo porque las herramientas de captura son de uso administrativo habitual; gana relevancia con un usuario no autorizado, un padre inusual o exfiltración del pcap."
+    },
+    "en": {
+      "summary": "Auditd recorded tcpdump or tshark running with a packet count (-c) and a capture interface (-i). This may be legitimate troubleshooting or an adversary capturing traffic for credentials or network mapping.",
+      "what_it_detects": "Auditd EXECVE records where a0 is 'tcpdump' or 'tshark', a1 is '-c' and a3 contains or equals '-i', such as 'tcpdump -c 100 -i eth0'. It only catches this argument order and a bare a0 without a path.",
+      "why_it_matters": "Maps to ATT&CK T1040 (Network Sniffing). Captured traffic can expose cleartext credentials, session tokens and details of hosts and services that help with lateral movement.",
+      "triage_steps": [
+        "Read a0 through aN in the EXECVE record: interface (eth0, any), packet count, BPF filters and whether -w writes to a file.",
+        "Correlate with the SYSCALL record sharing the same audit event ID to get auid, uid, exe, ppid, tty and ses.",
+        "Identify the real user (auid) and confirm they are a network or system admin with a documented reason or change ticket.",
+        "Check the parent process and session: SSH login and source IP, cron, script or web shell; an unexpected parent raises suspicion.",
+        "Search the kernel log for 'entered promiscuous mode' on the same host within +/- 15 minutes.",
+        "If -w was used, locate the pcap, its size, and whether it was copied or transferred (scp, curl, nc) afterwards.",
+        "Review earlier alerts for the same host and user: privilege escalation, discovery or unusual access."
+      ],
+      "false_positives": [
+        "Authorized administrator or user running tcpdump or tshark to troubleshoot network issues.",
+        "Monitoring or support scripts that take short periodic traffic samples.",
+        "Approved red team exercises or Atomic Red Team tests."
+      ],
+      "response_steps": [
+        "Confirm with the user or their manager whether the capture was authorized before acting.",
+        "If unauthorized, stop the capture process and preserve pcap files and auditd logs as evidence.",
+        "Restrict the involved account or SSH session and investigate how it gained capture privileges.",
+        "If traffic with credentials was captured, rotate passwords, tokens and keys for the exposed services.",
+        "Limit CAP_NET_RAW and capture tools to authorized groups."
+      ],
+      "severity_rationale": "Low because capture tools are routine admin utilities; it becomes significant with an unauthorized user, unusual parent or pcap exfiltration."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "tcpdump capturing 100 packets on eth0 and writing to a file in /tmp",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865000.123:4521)",
+          "node": "bastion-01",
+          "argc": 7,
+          "a0": "tcpdump",
+          "a1": "-c",
+          "a2": "100",
+          "a3": "-i",
+          "a4": "eth0",
+          "a5": "-w",
+          "a6": "/tmp/.cap.pcap"
+        }
+      },
+      {
+        "description": "tshark capturing 50 packets on all interfaces",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865412.887:4630)",
+          "node": "web-02",
+          "argc": 5,
+          "a0": "tshark",
+          "a1": "-c",
+          "a2": "50",
+          "a3": "-i",
+          "a4": "any"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "tcpdump started without -c as first argument, so a1 is '-i' and selection_1 does not match",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729866001.004:4701)",
+          "node": "bastion-01",
+          "argc": 5,
+          "a0": "tcpdump",
+          "a1": "-i",
+          "a2": "eth0",
+          "a3": "-w",
+          "a4": "/var/tmp/diag.pcap"
+        }
+      },
+      {
+        "description": "tshark reading an existing pcap file with -r instead of capturing on an interface",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729866200.310:4755)",
+          "node": "web-02",
+          "argc": 5,
+          "a0": "tshark",
+          "a1": "-c",
+          "a2": "10",
+          "a3": "-r",
+          "a4": "/home/jperez/sample.pcap"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

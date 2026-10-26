@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "4cad6c64-d6df-42d6-8dae-eb78defdc415",
+    "title": "Potential Linux Process Code Injection Via DD Utility",
+    "level": "medium",
+    "status": "test",
+    "author": "Joseph Kamau",
+    "path": "linux/process_creation/proc_creation_lnx_dd_process_injection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_dd_process_injection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055.009"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó dd con un destino de escritura (of=) apuntando a /proc/<PID>/mem, lo que puede indicar que se está sobrescribiendo la memoria de otro proceso para inyectarle código.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /dd y CommandLine contiene a la vez 'of=', '/proc/' y '/mem'. Corresponde al patrón de inyección sin ptrace descrito por Aon (Cexigua): leer /proc/<PID>/maps y escribir un payload con dd en la memoria del proceso víctima.",
+      "why_it_matters": "Es la técnica ATT&CK T1055.009 (Proc Memory). El atacante ejecuta su código dentro de un proceso legítimo y evade controles basados en el nombre del proceso. Si el proceso víctima tiene más privilegios, también sirve para escalar privilegios.",
+      "triage_steps": [
+        "Revise CommandLine: el PID objetivo en /proc/<PID>/mem, el archivo de entrada (if=), el offset de seek= y conv=notrunc. Anote si el objetivo es /proc/self/mem.",
+        "Identifique el proceso objetivo por su PID: binario, usuario, hora de inicio y si sigue en ejecución. Compare sus privilegios con los del usuario que ejecutó dd.",
+        "Revise ParentImage y la cadena de procesos padre. Un script de shell, un servidor web o una tarea cron como padre es especialmente sospechoso.",
+        "Obtenga el archivo del parámetro if=: ruta (/tmp, /dev/shm), hash, propietario, fecha de creación y origen de la descarga.",
+        "En el mismo host, dentro de +/- 15 minutos, busque lecturas de /proc/<PID>/maps o /proc/<PID>/syscall, otros dd y shells o conexiones de red nuevas del proceso objetivo.",
+        "Valide la cuenta de usuario: inicios de sesión recientes, uso de sudo y si la actividad corresponde a su función habitual.",
+        "Busque alertas anteriores para el mismo host, el mismo usuario y el mismo hash del payload."
+      ],
+      "false_positives": [
+        "Depuración o investigación de bajo nivel hecha por desarrolladores que modifican la memoria de un proceso de prueba.",
+        "Ejercicios autorizados de red team o pentesting que reproducen la técnica de Cexigua.",
+        "Herramientas internas de pruebas de seguridad o de laboratorio que escriben en /proc/<PID>/mem."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o del usuario si la actividad estaba autorizada antes de tomar acciones disruptivas.",
+        "Preserve la evidencia: capture la memoria del proceso objetivo y copie el archivo de entrada y los scripts relacionados con sus hashes.",
+        "Si es malicioso, aísle el endpoint y, una vez capturada la evidencia, termine el proceso inyectado y los procesos hijos.",
+        "Elimine el payload y cualquier persistencia (cron, systemd, perfiles de shell). Rote las credenciales de la cuenta comprometida.",
+        "Restrinja kernel.yama.ptrace_scope donde sea viable y monitoree el host para detectar recurrencia antes de devolverlo a producción."
+      ],
+      "severity_rationale": "Medium es adecuado: el uso legítimo de dd para escribir en /proc/<PID>/mem es muy raro, pero requiere ejecución local previa y se debe confirmar el contexto antes de escalar."
+    },
+    "en": {
+      "summary": "dd ran with its output (of=) pointing at /proc/<PID>/mem, which may mean another process's memory is being overwritten to inject code.",
+      "what_it_detects": "Linux process creation events where Image ends with /dd and CommandLine contains 'of=', '/proc/' and '/mem'. This matches the ptrace-less injection pattern published by Aon (Cexigua): read /proc/<PID>/maps, then use dd to write a payload into the victim process's memory.",
+      "why_it_matters": "This is ATT&CK T1055.009 (Proc Memory). The attacker runs code inside a legitimate process and evades controls based on process names. If the victim process has higher privileges, the technique also gives privilege escalation.",
+      "triage_steps": [
+        "Review CommandLine: the target PID in /proc/<PID>/mem, the input file (if=), the seek= offset and conv=notrunc. Note whether the target is /proc/self/mem.",
+        "Identify the target process by PID: binary, user, start time and whether it is still running. Compare its privileges with those of the user who ran dd.",
+        "Review ParentImage and the parent chain. A shell script, web server or cron job as the parent is especially suspicious.",
+        "Collect the if= file: path (/tmp, /dev/shm), hash, owner, creation time and where it was downloaded from.",
+        "On the same host within +/- 15 minutes, look for reads of /proc/<PID>/maps or /proc/<PID>/syscall, other dd runs, and new shells or network connections from the target process.",
+        "Validate the user account: recent logins, sudo use, and whether the activity fits the user's normal role.",
+        "Check earlier alerts for the same host, user and payload hash."
+      ],
+      "false_positives": [
+        "Low-level debugging or research by developers who patch the memory of a test process.",
+        "Authorized red team or penetration tests that reproduce the Cexigua technique.",
+        "Internal security-testing or lab tools that write to /proc/<PID>/mem."
+      ],
+      "response_steps": [
+        "Confirm with the system or account owner whether the activity was authorized before taking disruptive action.",
+        "Preserve evidence: capture the target process's memory and copy the input file and related scripts, with hashes.",
+        "If malicious, isolate the endpoint. After capturing evidence, kill the injected process and its children.",
+        "Remove the payload and any persistence (cron, systemd, shell profiles). Rotate credentials for the compromised account.",
+        "Tighten kernel.yama.ptrace_scope where feasible. Monitor the host for recurrence before returning it to production."
+      ],
+      "severity_rationale": "Medium fits because legitimate dd writes to /proc/<PID>/mem are very rare, but the technique requires prior local execution and the context should be confirmed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dd writes a payload from /dev/shm into the memory of PID 4821 at a specific offset, as in the Cexigua overwrite.sh technique.",
+        "event": {
+          "Image": "/usr/bin/dd",
+          "CommandLine": "dd if=/dev/shm/.p.bin of=/proc/4821/mem bs=1 seek=140737351884800 conv=notrunc status=none",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash /tmp/.cache/overwrite.sh",
+          "User": "www-data",
+          "ProcessId": 5133,
+          "ParentProcessId": 5120,
+          "CurrentDirectory": "/tmp/.cache",
+          "Computer": "web-07"
+        }
+      },
+      {
+        "description": "dd overwrites its own process memory through /proc/self/mem, launched from a script run by cron.",
+        "event": {
+          "Image": "/bin/dd",
+          "CommandLine": "dd of=/proc/self/mem bs=1 seek=4196512 conv=notrunc",
+          "ParentImage": "/usr/bin/sh",
+          "ParentCommandLine": "sh -c /var/tmp/upd.sh",
+          "User": "svc_backup",
+          "ProcessId": 7710,
+          "ParentProcessId": 7702,
+          "CurrentDirectory": "/var/tmp",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An analyst uses dd to read process memory to stdout for forensics. There is no of= parameter, so the rule does not match.",
+        "event": {
+          "Image": "/usr/bin/dd",
+          "CommandLine": "dd if=/proc/4821/mem bs=1 skip=140737351884800 count=64 status=none",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 9021,
+          "ParentProcessId": 9001,
+          "CurrentDirectory": "/root",
+          "Computer": "web-07"
+        }
+      },
+      {
+        "description": "An admin creates a swap file with dd. It has of= but no /proc/ or /mem path.",
+        "event": {
+          "Image": "/usr/bin/dd",
+          "CommandLine": "dd if=/dev/zero of=/swapfile bs=1M count=2048 status=progress",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 3340,
+          "ParentProcessId": 3338,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "387df17d-3b04-448f-8669-9e7fd5e5fd8c",
+    "title": "Suspicious Process Access of MsMpEng by WerFaultSecure - EDR-Freeze",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_werfaultsecure_msmpeng_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_werfaultsecure_msmpeng_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "WerFaultSecure.exe abrió un handle sobre MsMpEng.exe (Microsoft Defender) y las funciones de volcado de memoria de dbgcore.dll o dbghelp.dll aparecen en el CallTrace. Este es el patrón de la técnica EDR-Freeze, que suspende el antivirus o EDR.",
+      "what_it_detects": "Eventos Sysmon 10 (ProcessAccess) cuyo SourceImage termina en \\WerFaultSecure.exe, cuyo TargetImage termina en \\MsMpEng.exe y cuyo CallTrace contiene \\dbgcore.dll o \\dbghelp.dll.",
+      "why_it_matters": "WerFaultSecure.exe corre como PPL con nivel WinTCB y puede llamar a MiniDumpWriteDump sobre procesos protegidos. Ese volcado suspende el proceso. Si el atacante congela WerFaultSecure en ese momento, Defender queda suspendido y deja de detectar. Corresponde a ATT&CK T1685 (deterioro de defensas).",
+      "triage_steps": [
+        "Revise SourceProcessId, GrantedAccess y CallTrace del evento. Confirme que las rutas de SourceImage y TargetImage sean legítimas: System32 y la carpeta Platform de Windows Defender.",
+        "Busque la creación del proceso WerFaultSecure.exe (Sysmon 1 o 4688). Revise ParentImage y CommandLine; un padre que no es WerFault.exe ni el servicio WerSvc es sospechoso.",
+        "Busque en CommandLine argumentos como /pid con el PID de MsMpEng, /encfile o /cancel lanzados por un binario desconocido o desde rutas de usuario.",
+        "Verifique si MsMpEng.exe siguió respondiendo: huecos en la telemetría de Defender, el estado de Get-MpComputerStatus o alertas de sensor sin conexión.",
+        "En el mismo host, en +/- 15 minutos, revise ejecuciones nuevas, descargas, acceso a LSASS, cambios de servicios y conexiones de red mientras Defender pudo estar congelado.",
+        "Compruebe si hubo un fallo real de MsMpEng (eventos 1000/1001 de Application Error o WER) que justifique un volcado legítimo.",
+        "Busque alertas anteriores del mismo host o usuario y el hash del binario padre en otros endpoints."
+      ],
+      "false_positives": [
+        "Windows Error Reporting legítimo que genera un volcado protegido tras un fallo o cuelgue real de MsMpEng.exe, normalmente acompañado de eventos de fallo de la aplicación.",
+        "Diagnóstico autorizado por soporte de Microsoft o del equipo interno que fuerza un volcado de Defender."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo y con los eventos de fallo si hubo un volcado legítimo antes de escalar.",
+        "Si no se justifica, aísle el endpoint desde la consola de EDR o desde la red y preserve memoria y registros.",
+        "Termine el proceso padre malicioso y el WerFaultSecure.exe suspendido. Después confirme que MsMpEng.exe vuelve a estar activo y actualizado.",
+        "Recolecte el binario lanzador, obtenga su hash y búsquelo en toda la flota. Revise la actividad ocurrida durante la suspensión.",
+        "Reinicie el equipo si Defender no se recupera y haga un escaneo completo antes de devolverlo a producción."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque congelar el motor de Defender deja al equipo sin protección, y este acceso con funciones de volcado rara vez es legítimo fuera de un fallo real."
+    },
+    "en": {
+      "summary": "WerFaultSecure.exe opened a handle to MsMpEng.exe (Microsoft Defender), and dump functions from dbgcore.dll or dbghelp.dll appear in the call trace. This matches the EDR-Freeze technique, which suspends AV or EDR.",
+      "what_it_detects": "Sysmon Event ID 10 (ProcessAccess) events where SourceImage ends with \\WerFaultSecure.exe, TargetImage ends with \\MsMpEng.exe, and CallTrace contains \\dbgcore.dll or \\dbghelp.dll.",
+      "why_it_matters": "WerFaultSecure.exe runs as a WinTCB Protected Process Light and can call MiniDumpWriteDump on protected processes, which suspends the target. If an attacker freezes WerFaultSecure mid-dump, Defender stays suspended and blind. This maps to ATT&CK T1685 (defense impairment).",
+      "triage_steps": [
+        "Review SourceProcessId, GrantedAccess and CallTrace. Confirm SourceImage is in System32 and TargetImage is in the Windows Defender Platform folder.",
+        "Find the WerFaultSecure.exe process creation (Sysmon 1 or 4688). Check ParentImage and CommandLine. A parent other than WerFault.exe or the WerSvc service is suspicious.",
+        "Look for CommandLine arguments such as /pid with MsMpEng's PID, /encfile or /cancel, launched by an unknown binary or from user-writable paths.",
+        "Check whether MsMpEng.exe stayed responsive. Look for Defender telemetry gaps, Get-MpComputerStatus output, or sensor-offline alerts.",
+        "On the same host within +/- 15 minutes, review new executions, downloads, LSASS access, service changes and network connections from the window when Defender may have been frozen.",
+        "Check for a genuine MsMpEng crash (Application Error/WER events 1000/1001) that would explain a legitimate dump.",
+        "Pivot on prior alerts for the host or user, and on the parent binary's hash on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate Windows Error Reporting that creates a protected dump after a real MsMpEng.exe crash or hang, usually with matching application fault events.",
+        "Authorized diagnostics by Microsoft support or internal IT that force a Defender dump."
+      ],
+      "response_steps": [
+        "Before escalating, check with the host owner and the crash events to see whether the dump was legitimate.",
+        "If it is unexplained, isolate the endpoint and preserve memory and logs.",
+        "Terminate the malicious parent and the suspended WerFaultSecure.exe. Then confirm MsMpEng.exe is running and up to date.",
+        "Collect the launcher binary, hash it and hunt for it fleet-wide. Review all activity during the suspension window.",
+        "Reboot if Defender does not recover, and run a full scan before returning the host to service."
+      ],
+      "severity_rationale": "High fits because freezing the Defender engine leaves the host unprotected, and this access pattern with dump functions is rarely benign outside a real crash."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "WerFaultSecure.exe accesses MsMpEng.exe with dbgcore.dll in the call trace (EDR-Freeze pattern)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFaultSecure.exe",
+          "SourceProcessId": 7312,
+          "TargetImage": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.25010.11-0\\MsMpEng.exe",
+          "TargetProcessId": 3248,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9f6a4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\dbgcore.dll+a2f1|C:\\Windows\\System32\\dbgcore.dll+8c45|C:\\Windows\\System32\\WerFaultSecure.exe+1b2d0",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "WerFaultSecure.exe accesses MsMpEng.exe with dbghelp.dll in the call trace",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFaultSecure.exe",
+          "SourceProcessId": 9120,
+          "TargetImage": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MsMpEng.exe",
+          "TargetProcessId": 2964,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9f6a4|C:\\Windows\\System32\\dbghelp.dll+5e3a|C:\\Windows\\System32\\WerFaultSecure.exe+1a880",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WerFaultSecure.exe accesses MsMpEng.exe, but no dbgcore.dll or dbghelp.dll frame appears in the call trace",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFaultSecure.exe",
+          "SourceProcessId": 6604,
+          "TargetImage": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.25010.11-0\\MsMpEng.exe",
+          "TargetProcessId": 3248,
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9f6a4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\WerFaultSecure.exe+12f40",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Regular WerFault.exe (not WerFaultSecure.exe) dumps a crashed user application with dbghelp.dll",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0311.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFault.exe",
+          "SourceProcessId": 5540,
+          "TargetImage": "C:\\Program Files\\ExampleApp\\exampleapp.exe",
+          "TargetProcessId": 4410,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9f6a4|C:\\Windows\\System32\\dbghelp.dll+5e3a|C:\\Windows\\System32\\WerFault.exe+3c1d0",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

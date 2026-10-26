@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "779c8c12-0eb1-11eb-adc1-0242ac120002",
+    "title": "Invoke-Obfuscation STDIN+ Launcher - Powershell",
+    "level": "high",
+    "status": "test",
+    "author": "Jonathan Cheong, oscd.community",
+    "path": "windows/powershell/powershell_script/posh_ps_invoke_obfuscation_stdin.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_invoke_obfuscation_stdin.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell registrado (Event ID 4104) contiene un lanzador al estilo Invoke-Obfuscation STDIN+: cmd /c o /r que canaliza código hacia powershell mediante $input o -noexit. Esto suele indicar ejecución ofuscada de código para evadir la detección por línea de comandos.",
+      "what_it_detects": "Texto de ScriptBlockText que coincide con la expresión regular sensible a mayúsculas 'cmd.{0,5}(?:/c|/r).+powershell.+(?:$input|noexit).+\"', es decir, cmd invoca a powershell y le pasa el código por la entrada estándar o mantiene la sesión abierta con noexit.",
+      "why_it_matters": "Invoke-Obfuscation STDIN+ oculta el payload real: el código llega a PowerShell por la entrada estándar y no por argumentos visibles, lo que dificulta la detección. Corresponde a ATT&CK T1027 (archivos o información ofuscados) y T1059.001 (PowerShell).",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y reconstruya el comando que se envía por echo, set o type hacia powershell; identifique el payload real.",
+        "Use ScriptBlockId para reunir todos los fragmentos 4104 relacionados y revise el Path del script, si existe.",
+        "Identifique el usuario y el host; confirme si la cuenta suele ejecutar scripts administrativos.",
+        "Revise la creación de procesos (4688 o Sysmon 1) en el mismo host +/- 15 minutos: proceso padre de cmd.exe y procesos hijos de powershell.exe.",
+        "Busque en el payload descargas, conexiones de red, codificación Base64 o IEX; correlacione con eventos de red y DNS del endpoint.",
+        "Consulte alertas anteriores del mismo host y usuario, y busque el mismo patrón en otros equipos."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; es poco común en uso legítimo.",
+        "Pruebas de red team, ejercicios de detección o laboratorios que ejecutan Invoke-Obfuscation de forma autorizada.",
+        "Scripts heredados de administración que canalizan comandos de cmd hacia powershell; verifique con el responsable."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del equipo si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint de la red y preserve los registros de PowerShell y la memoria si es posible.",
+        "Termine los procesos maliciosos verificados y elimine la persistencia encontrada (tareas programadas, claves Run, servicios).",
+        "Restablezca las credenciales de la cuenta afectada y bloquee los dominios o IP identificados en el payload.",
+        "Restaure el equipo a un estado conocido y mantenga Script Block Logging habilitado para vigilancia continua."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque este lanzador ofuscado casi no tiene usos legítimos y suele preceder la ejecución de payloads maliciosos."
+    },
+    "en": {
+      "summary": "A logged PowerShell script block (Event ID 4104) contains an Invoke-Obfuscation STDIN+ style launcher: cmd /c or /r piping code into powershell via $input or -noexit. This usually means obfuscated code execution meant to evade command-line detection.",
+      "what_it_detects": "ScriptBlockText matching the case-sensitive regex 'cmd.{0,5}(?:/c|/r).+powershell.+(?:$input|noexit).+\"', where cmd launches powershell and feeds it code through standard input or keeps the session open with noexit.",
+      "why_it_matters": "Invoke-Obfuscation STDIN+ hides the real payload: code reaches PowerShell through stdin rather than visible arguments, defeating simple command-line monitoring. Maps to ATT&CK T1027 (Obfuscated Files or Information) and T1059.001 (PowerShell).",
+      "triage_steps": [
+        "Read the full ScriptBlockText and reconstruct the command piped via echo, set or type into powershell; identify the real payload.",
+        "Use ScriptBlockId to collect all related 4104 fragments and review the script Path, if any.",
+        "Identify the user and host; check whether the account normally runs administrative scripts.",
+        "Review process creation (4688 or Sysmon 1) on the same host +/- 15 minutes: parent of cmd.exe and children of powershell.exe.",
+        "Look in the payload for downloads, network connections, Base64 or IEX; correlate with endpoint network and DNS events.",
+        "Check earlier alerts for the same host and user, and hunt for the same pattern on other machines."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; legitimate use is rare.",
+        "Authorized red team tests, detection exercises or labs running Invoke-Obfuscation.",
+        "Legacy admin scripts that pipe cmd output into powershell; confirm with the owner."
+      ],
+      "response_steps": [
+        "Confirm with the user or system owner whether the activity was authorized before acting.",
+        "If unauthorized, isolate the endpoint and preserve PowerShell logs and memory where possible.",
+        "Kill verified malicious processes and remove discovered persistence (scheduled tasks, Run keys, services).",
+        "Reset the affected account's credentials and block domains or IPs found in the payload.",
+        "Restore the host to a known-good state and keep Script Block Logging enabled for monitoring."
+      ],
+      "severity_rationale": "High fits because this obfuscated launcher has almost no legitimate use and typically precedes malicious payload execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "STDIN+ launcher: cmd.exe /c echoes a command and pipes it into powershell reading ${input}",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f1c2a7e-8b4d-4e21-9a6f-0c5d7e9b1a24",
+          "Path": "",
+          "ScriptBlockText": "& cmd.exe /c \"echo Write-Output 'stdin-test' | powershell -NoProfile ${input} | Invoke-Expression \""
+        }
+      },
+      {
+        "description": "cmd /c types a file into powershell kept open with -noexit and reading stdin",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "9a7b6c5d-1e2f-4a3b-8c9d-0e1f2a3b4c5d",
+          "Path": "C:\\Users\\Public\\run.ps1",
+          "ScriptBlockText": "cmd /c \"type C:\\Users\\Public\\a.txt | powershell -noexit -command - \""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate scheduled job: cmd /c runs a PowerShell file with no stdin ($input) or noexit usage",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-BACKUP-01.andes.example.com",
+          "ScriptBlockId": "c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f",
+          "Path": "C:\\Scripts\\launcher.ps1",
+          "ScriptBlockText": "Start-Process cmd.exe -ArgumentList '/c \"powershell -File C:\\Scripts\\backup.ps1 -Verbose\"' -Wait"
+        }
+      },
+      {
+        "description": "Admin script calling ipconfig through cmd; no powershell invocation follows the switch",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+          "Path": "",
+          "ScriptBlockText": "cmd /c \"ipconfig /all > C:\\Temp\\net.txt\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

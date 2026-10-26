@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "4368354e-1797-463c-bc39-a309effbe8d7",
+    "title": "Powershell Add Name Resolution Policy Table Rule",
+    "level": "high",
+    "status": "test",
+    "author": "Borna Talebi",
+    "path": "windows/powershell/powershell_script/posh_ps_add_dnsclient_rule.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_add_dnsclient_rule.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1565"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell ejecutó Add-DnsClientNrptRule con -Namespace y -NameServers, lo que crea una regla NRPT. Desde ese momento, las consultas DNS de ese espacio de nombres se envían a un servidor distinto del predeterminado.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) en los que ScriptBlockText contiene a la vez 'Add-DnsClientNrptRule', '-Namesp' y '-NameSe'. Es decir, la creación de una regla de la Name Resolution Policy Table que apunta un namespace hacia servidores DNS concretos.",
+      "why_it_matters": "Un atacante que controla la resolución de ciertos dominios puede redirigir tráfico hacia infraestructura propia para interceptar credenciales, hacer phishing o saltarse los controles DNS corporativos. Corresponde a ATT&CK T1565 (Data Manipulation, táctica Impact).",
+      "triage_steps": [
+        "Lea ScriptBlockText y anote el valor de -Namespace (dominios afectados) y de -NameServers (IP de los servidores DNS). Si el script se dividió en varios bloques, reconstrúyalo con ScriptBlockId.",
+        "Revise si las IP de -NameServers son servidores DNS corporativos conocidos o direcciones externas o desconocidas. Consulte inteligencia de amenazas y el inventario de red.",
+        "Confirme si el namespace es interno (split DNS, VPN) o si es un dominio sensible: proveedores de identidad, correo, actualizaciones, banca.",
+        "Identifique al usuario y el proceso padre del powershell.exe en el mismo host, +/- 15 minutos, con el evento 4688 o Sysmon 1. Valide si hubo cambio aprobado.",
+        "En el endpoint, ejecute Get-DnsClientNrptRule y revise HKLM\\SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters\\DnsPolicyConfig para confirmar que la regla sigue activa.",
+        "Busque en los logs de red o firewall consultas DNS del host hacia esa IP y conexiones posteriores a los dominios afectados.",
+        "Busque el mismo comando o la misma IP de servidor en otros hosts, además de alertas previas para este usuario o equipo."
+      ],
+      "false_positives": [
+        "Administradores que configuran split DNS o resolución condicional para dominios internos.",
+        "Clientes de Always On VPN o DirectAccess y sus scripts de despliegue, que crean reglas NRPT de forma legítima.",
+        "Scripts de Intune, SCCM o GPO que aplican la configuración DNS corporativa a muchos equipos."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del cambio o con el equipo de red si la regla está autorizada antes de modificar nada.",
+        "Si no está autorizada, exporte la regla como evidencia y elimínela con Remove-DnsClientNrptRule. Después ejecute Clear-DnsClientCache.",
+        "Bloquee en el perímetro la IP del servidor DNS malicioso y aísle el host si hay más indicios de compromiso.",
+        "Restablezca las credenciales que pudieron usarse en los dominios redirigidos e investigue cómo se obtuvo la ejecución de PowerShell."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque la regla tiene pocos falsos positivos fuera de la gestión de VPN o DNS, y una regla NRPT maliciosa redirige el tráfico de forma silenciosa."
+    },
+    "en": {
+      "summary": "A PowerShell script ran Add-DnsClientNrptRule with -Namespace and -NameServers, which creates an NRPT rule. From then on, DNS queries for that namespace go to a server other than the default one.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains 'Add-DnsClientNrptRule', '-Namesp' and '-NameSe' together. This is the creation of a Name Resolution Policy Table rule that points a namespace at specific DNS servers.",
+      "why_it_matters": "An attacker who controls how certain domains resolve can send traffic to their own infrastructure to steal credentials, run phishing or get around corporate DNS controls. This maps to ATT&CK T1565 (Data Manipulation, Impact tactic).",
+      "triage_steps": [
+        "Read ScriptBlockText and note the -Namespace value (affected domains) and the -NameServers value (DNS server IPs). If the script was split into several blocks, rebuild it using ScriptBlockId.",
+        "Check whether the -NameServers IPs are known corporate DNS servers or external or unknown addresses. Use threat intel and the network inventory.",
+        "Decide whether the namespace is internal (split DNS, VPN) or a sensitive domain: identity providers, mail, updates, banking.",
+        "Identify the user and the parent process of powershell.exe on the same host, +/- 15 minutes, using 4688 or Sysmon 1. Check for an approved change.",
+        "On the endpoint, run Get-DnsClientNrptRule and check HKLM\\SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters\\DnsPolicyConfig to confirm the rule is still active.",
+        "Search network or firewall logs for DNS queries from the host to that IP and for later connections to the affected domains.",
+        "Look for the same command or server IP on other hosts, and for earlier alerts on this user or host."
+      ],
+      "false_positives": [
+        "Administrators setting up split DNS or conditional resolution for internal domains.",
+        "Always On VPN or DirectAccess clients and their deployment scripts, which create NRPT rules legitimately.",
+        "Intune, SCCM or GPO scripts that push the corporate DNS configuration to many machines."
+      ],
+      "response_steps": [
+        "Before changing anything, check with the change owner or the network team whether the rule is authorized.",
+        "If it is not authorized, export the rule as evidence and remove it with Remove-DnsClientNrptRule. Then run Clear-DnsClientCache.",
+        "Block the malicious DNS server IP at the perimeter. Isolate the host if there are other signs of compromise.",
+        "Reset credentials that may have been used on the redirected domains, and find out how the attacker got PowerShell execution."
+      ],
+      "severity_rationale": "High fits because the rule has few false positives outside VPN or DNS management, and a malicious NRPT rule redirects traffic silently."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "NRPT rule that sends a sensitive domain to an external DNS server",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "6f1c2a9e-3b4d-4e8f-9a21-0c5d7e8f1b23",
+          "Path": "",
+          "ScriptBlockText": "Add-DnsClientNrptRule -Namespace \".login.example.com\" -NameServers \"203.0.113.53\"",
+          "UserID": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Abbreviated parameters inside a dropped script",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "a2b3c4d5-1111-4222-8333-944455556666",
+          "Path": "C:\\Users\\Public\\upd.ps1",
+          "ScriptBlockText": "$ns='198.51.100.10'; Add-DnsClientNrptRule -Namesp '.example.org' -NameSe $ns -Comment 'update'",
+          "UserID": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator only listing existing NRPT rules",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "0b9e8d7c-2222-4333-8444-a55566667777",
+          "Path": "",
+          "ScriptBlockText": "Get-DnsClientNrptRule | Format-Table Namespace, NameServers",
+          "UserID": "ANDES\\admin.redes"
+        }
+      },
+      {
+        "description": "NRPT rule with a namespace but no -NameServers parameter (DNSSEC only)",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-DNS-01.andes.example.com",
+          "ScriptBlockId": "c1d2e3f4-3333-4444-8555-b66677778888",
+          "Path": "C:\\Scripts\\dnssec.ps1",
+          "ScriptBlockText": "Add-DnsClientNrptRule -Namespace 'corp.example.com' -DnsSecEnable",
+          "UserID": "ANDES\\admin.redes"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

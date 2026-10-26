@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "5588576c-5898-4fac-bcdd-7475a60e8f43",
+    "title": "Suspicious DNS Query Indicating Kerberos Coercion via DNS Object SPN Spoofing - Network",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "network/zeek/zeek_dns_kerberos_coercion_via_dns_object_spn_spoofing.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_dns_kerberos_coercion_via_dns_object_spn_spoofing.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1187",
+      "T1557.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró una consulta DNS cuyo nombre contiene una estructura CREDENTIAL_TARGET_INFORMATION serializada en base64 ('UWhRCA…BAAAA'). Es un indicador fuerte de coerción Kerberos o NTLM mediante suplantación de registros DNS y SPN.",
+      "what_it_detects": "Consultas DNS en el dns.log de Zeek cuyo campo query contiene a la vez 'UWhRCA' y 'BAAAA'. Este patrón aparece cuando a un hostname se le agrega un sufijo serializado de información de destino, por ejemplo fileserver1UWhRCAAAAA…BAAAA.",
+      "why_it_matters": "El atacante registra un registro DNS con ese nombre manipulado y luego coacciona a una víctima (a menudo un servidor o controlador de dominio) para que se autentique contra él. La víctima genera un ticket Kerberos o un intercambio NTLM para un SPN legítimo, pero lo envía al equipo del atacante, que puede hacer relay o reflexión (T1187, T1557.001; CVE-2025-33073 según la descripción de la regla).",
+      "triage_steps": [
+        "Registre id.orig_h (el equipo que resuelve el nombre, probablemente la víctima coaccionada), el query completo, qtype_name, rcode_name y answers.",
+        "Revise la IP de answers. Confirme si pertenece a un servidor conocido o a una estación o host externo inesperado. Ese equipo es el probable listener del atacante.",
+        "Identifique el prefijo del hostname antes de 'UWhRCA'. Indica qué servidor se suplanta, por ejemplo un DC o un servidor de archivos.",
+        "Busque tráfico RPC de coerción hacia id.orig_h en un rango de +/- 15 minutos, como MS-EFSR, MS-RPRN o MS-DFSNM sobre SMB o el endpoint mapper, desde la IP de answers u otro origen.",
+        "Busque conexiones SMB 445, HTTP o LDAP de id.orig_h hacia la IP de answers justo después de la consulta, en conn.log, smb_mapping.log y kerberos.log de Zeek.",
+        "En los DC, revise la creación de registros en zonas DNS integradas en AD (evento 5136, objetos dnsNode) e identifique la cuenta que creó el registro.",
+        "Busque el mismo patrón en dns.log desde otros equipos y revise alertas previas sobre la IP de answers."
+      ],
+      "false_positives": [
+        "Ninguno conocido según la regla. Es muy improbable que un nombre DNS legítimo tenga este patrón.",
+        "Pruebas de penetración o ejercicios de red team autorizados sobre reflexión Kerberos o NTLM. Confírmelo con el alcance acordado."
+      ],
+      "response_steps": [
+        "Verifique el registro y la IP de respuesta. Preserve dns.log, conn.log y los logs de los DC antes de hacer cambios.",
+        "Aísle el equipo controlado por el atacante. Deshabilite la cuenta que creó el registro DNS malicioso.",
+        "Elimine el registro dnsNode suplantado una vez recolectada la evidencia. Restrinja quién puede crear registros en las zonas integradas en AD.",
+        "Si el relay pudo funcionar, revise las acciones hechas con la cuenta de máquina coaccionada y restablezca sus credenciales. Investigue cualquier privilegio nuevo.",
+        "Aplique las actualizaciones de Windows de junio de 2025 que corrigen CVE-2025-33073. Exija firma SMB, firma LDAP y channel binding."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque este patrón serializado casi nunca aparece en tráfico DNS legítimo y señala un intento activo de robar o retransmitir autenticación privilegiada."
+    },
+    "en": {
+      "summary": "Zeek logged a DNS query whose name contains a base64 marshaled CREDENTIAL_TARGET_INFORMATION blob ('UWhRCA…BAAAA'). This is a strong sign of Kerberos or NTLM coercion that uses spoofed DNS records and SPNs.",
+      "what_it_detects": "DNS queries in Zeek dns.log where the query field contains both 'UWhRCA' and 'BAAAA'. This pattern shows up when a hostname has a marshaled target-information suffix appended, such as fileserver1UWhRCAAAAA…BAAAA.",
+      "why_it_matters": "Attackers register a DNS record with this crafted name, then coerce a victim (often a server or domain controller) into authenticating to it. The victim builds a Kerberos ticket or NTLM exchange for a legitimate SPN but sends it to an attacker host, which allows relay or reflection (T1187, T1557.001; see CVE-2025-33073 in the rule description).",
+      "triage_steps": [
+        "Record id.orig_h (the host resolving the name, likely the coerced victim), the full query, qtype_name, rcode_name and answers.",
+        "Check the IP in answers. Confirm whether it belongs to a known server or to an unexpected workstation or external host. That host is the likely attacker listener.",
+        "Decode the hostname prefix before 'UWhRCA'. It names the server being impersonated, for example a DC or file server.",
+        "Look for coercion RPC traffic to id.orig_h within +/- 15 minutes, such as MS-EFSR, MS-RPRN or MS-DFSNM over SMB or the RPC endpoint mapper, from the answers IP or another source.",
+        "Look for SMB 445, HTTP or LDAP connections from id.orig_h to the answers IP right after the query in Zeek conn.log, smb_mapping.log and kerberos.log.",
+        "On DCs, review DNS record creation in AD-integrated zones (event 5136, dnsNode objects) and identify the account that created the record.",
+        "Search dns.log for the same pattern from other hosts and check for earlier alerts on the answers IP."
+      ],
+      "false_positives": [
+        "None known, according to the rule. This pattern is very unlikely in legitimate DNS names.",
+        "Authorized penetration tests or red-team exercises of Kerberos or NTLM reflection. Confirm with the engagement scope."
+      ],
+      "response_steps": [
+        "Verify the record and the answering IP. Preserve the dns.log, conn.log and DC logs before you make changes.",
+        "Isolate the attacker-controlled host. Disable the account that created the malicious DNS record.",
+        "Delete the spoofed dnsNode record once evidence is collected. Restrict who can create records in AD-integrated zones.",
+        "If relay may have worked, review actions taken with the coerced machine account and reset its credentials. Investigate any new privileges.",
+        "Install the June 2025 Windows updates that address CVE-2025-33073. Enforce SMB signing and LDAP signing and channel binding."
+      ],
+      "severity_rationale": "High fits because this marshaled pattern almost never shows up in legitimate DNS traffic and signals an active attempt to steal or relay privileged authentication."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A domain controller resolves a spoofed file-server name with a marshaled CREDENTIAL_TARGET_INFORMATION suffix that points to an attacker workstation.",
+        "event": {
+          "ts": 1750412592.418,
+          "uid": "CqX3a91Lm2Pz8Rt4Wd",
+          "id.orig_h": "192.0.2.10",
+          "id.orig_p": 52114,
+          "id.resp_h": "192.0.2.11",
+          "id.resp_p": 53,
+          "proto": "udp",
+          "query": "fileserver11UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAwbEAYBAAAA.andes.example.com",
+          "qtype_name": "A",
+          "rcode_name": "NOERROR",
+          "answers": "198.51.100.77"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A normal internal DNS lookup for the real file server, with no marshaled blob.",
+        "event": {
+          "ts": 1750412601.102,
+          "uid": "Cb7Hk20Qw9Lr1Ys5Nf",
+          "id.orig_h": "192.0.2.10",
+          "id.orig_p": 52130,
+          "id.resp_h": "192.0.2.11",
+          "id.resp_p": 53,
+          "proto": "udp",
+          "query": "fileserver1.andes.example.com",
+          "qtype_name": "A",
+          "rcode_name": "NOERROR",
+          "answers": "192.0.2.50"
+        }
+      },
+      {
+        "description": "A CDN-style hashed label that contains 'BAAAA' but not 'UWhRCA', so the |all condition fails.",
+        "event": {
+          "ts": 1750412655.733,
+          "uid": "Cz4Pm81Vt6Ke3Jw2Qa",
+          "id.orig_h": "192.0.2.42",
+          "id.orig_p": 61022,
+          "id.resp_h": "192.0.2.11",
+          "id.resp_p": 53,
+          "proto": "udp",
+          "query": "a9f3BAAAAk2x7.cdn.example.net",
+          "qtype_name": "AAAA",
+          "rcode_name": "NOERROR",
+          "answers": "2001:db8::25"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

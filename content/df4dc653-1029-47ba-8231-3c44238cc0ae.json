@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "df4dc653-1029-47ba-8231-3c44238cc0ae",
+    "title": "Potential Persistence Using DebugPath",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_persistence_appx_debugger.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_appx_debugger.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.015"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió un valor de registro que define un depurador para un paquete Appx/UWP de Microsoft. El comando de ese valor se ejecuta cada vez que se abre la aplicación, lo que puede servir como mecanismo de persistencia.",
+      "what_it_detects": "Escrituras de registro (registry_set) donde TargetObject termina en \\DebugPath bajo Classes\\ActivatableClasses\\Package\\Microsoft.*, o en \\(Default) bajo Software\\Microsoft\\Windows\\CurrentVersion\\PackagedAppXDebug\\Microsoft.*.",
+      "why_it_matters": "Windows ejecuta el programa indicado en la configuración de depurador de un paquete Appx cada vez que esa aplicación arranca. Un atacante puede aprovecharlo para ejecutar su código cuando el usuario abre una app integrada, como Calculadora o Edge. Corresponde a ATT&CK T1546.015, ejecución activada por eventos mediante secuestro de apps empaquetadas.",
+      "triage_steps": [
+        "Revise TargetObject para identificar el paquete (por ejemplo, Microsoft.WindowsCalculator) y el hive o SID de usuario donde se escribió.",
+        "Analice Details: ruta del ejecutable, argumentos y si apunta a carpetas con permisos de escritura del usuario, como AppData, Temp o Public.",
+        "Verifique Image, el proceso que escribió el valor. Herramientas de desarrollo conocidas (plmdebug.exe, devenv.exe) son menos sospechosas que reg.exe, powershell.exe o binarios desconocidos.",
+        "Pivotee a la creación de procesos en el mismo host +/- 15 minutos: proceso padre del escritor, CommandLine y si el depurador se ejecutó luego como hijo de la app.",
+        "Obtenga el hash del binario depurador y revise su firma, fecha de creación y reputación.",
+        "Confirme con el usuario o el responsable del equipo si se espera depuración de apps UWP en ese endpoint.",
+        "Busque alertas previas del mismo usuario o host y otras claves de persistencia, como Run, IFEO o servicios."
+      ],
+      "false_positives": [
+        "Desarrolladores que depuran apps UWP con Visual Studio o PLMDebug, que configuran valores en PackagedAppXDebug.",
+        "Herramientas de compatibilidad o de pruebas que adjuntan depuradores a apps empaquetadas en laboratorios."
+      ],
+      "response_steps": [
+        "Si el valor no es esperado, preserve la clave de registro, el binario depurador y la telemetría de procesos relacionada antes de modificar nada.",
+        "Aísle el endpoint si el binario depurador es malicioso o no está firmado y ya se ejecutó.",
+        "Una vez confirmado que es malicioso, elimine el valor DebugPath o PackagedAppXDebug y ponga en cuarentena el binario referenciado.",
+        "Busque en toda la flota el mismo patrón de TargetObject o el mismo hash, restablezca credenciales afectadas si es necesario y documente las excepciones de desarrollo aprobadas."
+      ],
+      "severity_rationale": "La severidad media es adecuada: esta configuración, que rara vez cambia, permite ejecutar código al abrir una app, pero la depuración legítima de UWP en equipos de desarrollo puede generar la misma escritura."
+    },
+    "en": {
+      "summary": "A registry value was written that sets a debugger for a Microsoft-signed Appx/UWP package. The command in that value runs every time the app launches, which can be used for persistence.",
+      "what_it_detects": "Registry writes (registry_set) where TargetObject ends in \\DebugPath under Classes\\ActivatableClasses\\Package\\Microsoft.*, or ends in \\(Default) under Software\\Microsoft\\Windows\\CurrentVersion\\PackagedAppXDebug\\Microsoft.*.",
+      "why_it_matters": "Windows launches the program in an Appx package's debugger setting whenever that app starts. Attackers can use this to run their code when a user opens a built-in app such as Calculator or Edge. ATT&CK T1546.015 covers this kind of event-triggered execution through packaged app hijacking.",
+      "triage_steps": [
+        "Read TargetObject to identify the package (for example Microsoft.WindowsCalculator) and the hive or user SID it was written under.",
+        "Inspect Details: note the executable path, arguments, and whether it points to user-writable folders like AppData, Temp or Public.",
+        "Check Image, the process that wrote the value. Known developer tools such as plmdebug.exe or devenv.exe are less suspicious than reg.exe, powershell.exe or unknown binaries.",
+        "Pivot to process creation on the same host +/- 15 minutes: parent of the writer, CommandLine, and whether the debugger binary later ran as a child of the app.",
+        "Hash the debugger binary and check its signature, creation time and reputation.",
+        "Confirm with the user or asset owner whether UWP app debugging is expected on this endpoint.",
+        "Search for earlier alerts for the same user or host, and for other persistence keys like Run, IFEO or services."
+      ],
+      "false_positives": [
+        "Developers debugging UWP apps with Visual Studio or PLMDebug, which set PackagedAppXDebug values.",
+        "Application compatibility or testing tools that attach debuggers to packaged apps in lab environments."
+      ],
+      "response_steps": [
+        "If the value is unexpected, preserve the registry key, the debugger binary and related process telemetry before you change anything.",
+        "Isolate the endpoint if the debugger binary is malicious or unsigned and has run.",
+        "Once you confirm the value is malicious, remove the DebugPath or PackagedAppXDebug value and quarantine the referenced binary.",
+        "Hunt across the fleet for the same TargetObject pattern or binary hash, reset affected credentials if needed, and document approved developer exceptions."
+      ],
+      "severity_rationale": "Medium fits because this rarely changed setting gives code execution when an app launches, but legitimate UWP debugging on developer machines can trigger the same write."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets a DebugPath for the Calculator Appx package that points to a binary in AppData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\ActivatableClasses\\Package\\Microsoft.WindowsCalculator_10.2103.8.0_x64__8wekyb3d8bbwe\\DebugInformation\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App\\DebugPath",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Temp\\updater.exe"
+        }
+      },
+      {
+        "description": "PowerShell writes the default value under PackagedAppXDebug for a Microsoft package",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\PackagedAppXDebug\\Microsoft.WindowsCalculator_10.2103.8.0_x64__8wekyb3d8bbwe\\(Default)",
+          "Details": "C:\\Users\\Public\\svc.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Developer enables debugging for a non-Microsoft (Contoso) package under PackagedAppXDebug, so the Microsoft. prefix does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\plmdebug.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1207\\Software\\Microsoft\\Windows\\CurrentVersion\\PackagedAppXDebug\\Contoso.InventoryApp_1.0.0.0_x64__abcd1234efgh\\(Default)",
+          "Details": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Common7\\IDE\\devenv.exe"
+        }
+      },
+      {
+        "description": "Normal Appx registration writes the Server value under ActivatableClasses for a Microsoft package, not DebugPath",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\ActivatableClasses\\Package\\Microsoft.WindowsCalculator_10.2103.8.0_x64__8wekyb3d8bbwe\\ActivatableClassId\\App\\Server",
+          "Details": "App.AppX1a2b3c4d5e6f.mca"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "7ee0b4aa-d8d4-4088-b661-20efdf41a04c",
+    "title": "Azure Kubernetes Secret or Config Object Access",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_secret_or_config_object_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_secret_or_config_object_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485",
+      "T1489",
+      "T1496"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó o eliminó un ConfigMap o un Secret en un clúster Kubernetes conectado a Azure Arc, según el Activity Log de Azure. Revise si el cambio fue autorizado y si lo hizo una identidad conocida.",
+      "what_it_detects": "Eventos del Azure Activity Log cuyo operationName es MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/CONFIGMAPS/WRITE o DELETE, o SECRETS/WRITE o DELETE, en clústeres connectedClusters (Azure Arc). Aunque el título dice acceso, la regla solo detecta escrituras y eliminaciones, no lecturas.",
+      "why_it_matters": "Los Secrets guardan credenciales y tokens, y los ConfigMaps definen el comportamiento de las cargas de trabajo. Si un atacante los modifica o elimina, puede destruir datos (T1485), detener servicios (T1489) o redirigir recursos a minería u otro uso indebido (T1496).",
+      "triage_steps": [
+        "Identifique el operationName exacto, el resourceId (clúster, namespace y nombre del objeto), el status y la hora del evento.",
+        "Revise caller, callerIpAddress y claims (appid, upn). Determine si es un administrador, un service principal de CI/CD o una identidad desconocida.",
+        "Compare la IP de origen y el user agent con la actividad habitual de esa identidad. Desconfíe de ubicaciones nuevas o de IP no corporativas.",
+        "Busque otros eventos del mismo caller entre 15 minutos antes y 15 minutos después: asignaciones de roles, listCredentials, cambios en deployments o eliminaciones masivas.",
+        "Confirme si había un cambio aprobado o un despliegue en curso (ticket, pipeline, GitOps/Flux) que explique la operación.",
+        "Si la operación fue DELETE o afectó a varios objetos, verifique el estado de los pods y servicios que dependen de esos ConfigMaps o Secrets.",
+        "Busque alertas anteriores sobre el mismo clúster, caller o IP de origen."
+      ],
+      "false_positives": [
+        "Administradores del clúster que rotan secretos o actualizan configuraciones como parte de un cambio planificado.",
+        "Pipelines de CI/CD, Flux/GitOps o extensiones de Azure Arc que sincronizan ConfigMaps y Secrets automáticamente.",
+        "Herramientas como cert-manager o un operador de secretos externos que renuevan certificados y tokens."
+      ],
+      "response_steps": [
+        "Valide el cambio con el dueño del clúster o con el responsable de la identidad antes de actuar.",
+        "Si no fue autorizado, revoque las sesiones y credenciales del caller y quítele temporalmente los roles de Azure RBAC sobre el clúster.",
+        "Rote todos los secretos modificados o expuestos y restaure los ConfigMaps y Secrets desde el control de versiones o un respaldo.",
+        "Revise si hay persistencia (nuevos role bindings, service accounts o workloads) y elimínela después de documentarla.",
+        "Si es un falso positivo recurrente, cree una exclusión acotada a la identidad y al clúster concretos."
+      ],
+      "severity_rationale": "Se asigna severidad media porque modificar o eliminar secretos puede tener mucho impacto, pero los administradores y la automatización también realizan estas operaciones con frecuencia."
+    },
+    "en": {
+      "summary": "Azure Activity Log shows an identity created, updated or deleted a ConfigMap or Secret on an Azure Arc connected Kubernetes cluster. Check whether the change was authorized and whether the identity is known.",
+      "what_it_detects": "Azure Activity Log events with operationName MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/CONFIGMAPS/WRITE or DELETE, or SECRETS/WRITE or DELETE, on Arc connectedClusters. The title says access, but the rule only fires on writes and deletes, not reads.",
+      "why_it_matters": "Secrets hold credentials and tokens, and ConfigMaps control how workloads behave. An attacker who tampers with or deletes them can destroy data (T1485), stop services (T1489) or hijack resources, for example for mining (T1496).",
+      "triage_steps": [
+        "Record the exact operationName, the resourceId (cluster, namespace, object name), the status and the timestamp.",
+        "Review caller, callerIpAddress and the claims (appid, upn). Decide whether it is an admin, a CI/CD service principal or an unknown identity.",
+        "Compare the source IP and user agent with the identity's usual activity. Treat new locations or non-corporate IPs as suspicious.",
+        "Pivot on the same caller within +/- 15 minutes: role assignments, listCredentials, deployment changes or bulk deletions.",
+        "Check for an approved change or active deployment that explains the operation, such as a ticket, a pipeline run or a GitOps/Flux sync.",
+        "For DELETE operations or changes to many objects, check the health of the pods and services that rely on those ConfigMaps or Secrets.",
+        "Look for earlier alerts on the same cluster, caller or source IP."
+      ],
+      "false_positives": [
+        "Cluster admins rotating secrets or updating configuration during a planned change.",
+        "CI/CD pipelines, Flux/GitOps or Azure Arc extensions that sync ConfigMaps and Secrets automatically.",
+        "Tools like cert-manager or external secret operators that renew certificates and tokens."
+      ],
+      "response_steps": [
+        "Confirm the change with the cluster owner or the owner of the identity before acting.",
+        "If it was unauthorized, revoke the caller's sessions and credentials and temporarily remove its Azure RBAC roles on the cluster.",
+        "Rotate every modified or exposed secret, then restore ConfigMaps and Secrets from version control or backup.",
+        "Look for persistence such as new role bindings, service accounts or workloads, and remove it after documenting it.",
+        "If a false positive keeps recurring, add an exclusion scoped to that specific identity and cluster."
+      ],
+      "severity_rationale": "Medium fits because tampering with secrets can have high impact, but admins and automation also perform these operations often."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user deletes a Secret on an Arc-connected cluster from an external IP",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/SECRETS/DELETE",
+          "category": "Administrative",
+          "caller": "mrojas@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/secrets/payments/db-credentials",
+          "resourceGroupName": "rg-arc-prod",
+          "status": "Succeeded",
+          "level": "Informational",
+          "time": "2024-05-14T02:17:43Z"
+        }
+      },
+      {
+        "description": "Service principal writes a ConfigMap on an Arc-connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/CONFIGMAPS/WRITE",
+          "category": "Administrative",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/configmaps/kube-system/coredns",
+          "resourceGroupName": "rg-arc-prod",
+          "status": "Succeeded",
+          "level": "Informational",
+          "time": "2024-05-14T02:19:05Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read of a Secret, which the rule does not cover",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/SECRETS/READ",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.15",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/secrets/payments/db-credentials",
+          "status": "Succeeded",
+          "time": "2024-05-14T09:02:11Z"
+        }
+      },
+      {
+        "description": "Update of the connected cluster resource itself, not a ConfigMap or Secret",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/WRITE",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.15",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "status": "Succeeded",
+          "time": "2024-05-14T09:05:30Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

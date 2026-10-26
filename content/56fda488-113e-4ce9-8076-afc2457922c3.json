@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "56fda488-113e-4ce9-8076-afc2457922c3",
+    "title": "Possible DCSync Attack",
+    "level": "high",
+    "status": "test",
+    "author": "Sagie Dulce, Dekel Paz",
+    "path": "application/rpc_firewall/rpc_firewall_dcsync_attack.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/rpc_firewall/rpc_firewall_dcsync_attack.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1033"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El RPC Firewall registró una llamada remota a la interfaz de replicación de directorio MS-DRSR con un opnum distinto de Bind, Unbind o CrackNames. Si el origen no es un controlador de dominio, podría tratarse de un ataque DCSync o DCShadow.",
+      "what_it_detects": "Eventos RPCFW con EventID 3 y InterfaceUuid e3514235-4b06-11d1-ab04-00c04fc2dcd2 (MS-DRSR) cuyo OpNum no es 0, 1 ni 12; por ejemplo, OpNum 3 (IDL_DRSGetNCChanges), que se usa para replicar secretos.",
+      "why_it_matters": "Con DCSync un atacante se hace pasar por un DC y obtiene hashes de cuentas como krbtgt o administradores de dominio. Con DCShadow registra un DC falso. La regla usa la etiqueta T1033, aunque DCSync suele mapearse a T1003.006.",
+      "triage_steps": [
+        "Identifique la IP de origen de la llamada (ClientNetworkAddress o su equivalente) y confirme si pertenece a un controlador de dominio legítimo.",
+        "Revise el OpNum: 3 (GetNCChanges) indica una replicación de datos; otros opnums como ReplicaAdd pueden indicar DCShadow.",
+        "Identifique la cuenta o el SID que se autenticó y verifique si tiene permisos de replicación (Replicating Directory Changes All).",
+        "En el DC, busque el evento 4662 con los GUID de replicación y eventos 4624 de esa cuenta desde la misma IP en una ventana de +/- 15 minutos.",
+        "En el host de origen, busque herramientas como mimikatz (lsadump::dcsync), secretsdump o procesos inusuales con conexiones a puertos RPC del DC.",
+        "Busque alertas previas para el mismo host, usuario o IP, como volcado de credenciales o movimiento lateral."
+      ],
+      "false_positives": [
+        "Servidores de Microsoft Entra Connect (Azure AD Connect) que sincronizan hashes de contraseñas mediante replicación.",
+        "Un DC nuevo o recién promovido que aún no figura en la lista de IP confiables del RPC Firewall.",
+        "Herramientas legítimas de respaldo, auditoría o migración de Active Directory que usan MS-DRSR.",
+        "Una política del RPC Firewall mal configurada que no excluye a todos los DC."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de identidades si el origen y la cuenta están autorizados; si lo están, actualice la lista de IP confiables.",
+        "Si la actividad no está autorizada, aísle el host de origen y deshabilite o restrinja la cuenta utilizada.",
+        "Elimine los permisos de replicación concedidos indebidamente y revise las ACL del objeto de dominio.",
+        "Suponga que hubo exposición de credenciales: restablezca krbtgt dos veces, de forma controlada, y las cuentas privilegiadas afectadas.",
+        "Preserve la evidencia del host de origen y busque persistencia antes de devolverlo a producción."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque una replicación de directorio desde un host que no es DC puede exponer todas las credenciales del dominio."
+    },
+    "en": {
+      "summary": "RPC Firewall logged a remote call to the MS-DRSR directory replication interface using an opnum other than Bind, Unbind or CrackNames. From a non-DC host, this may be a DCSync or DCShadow attack.",
+      "what_it_detects": "RPCFW events with EventID 3 and InterfaceUuid e3514235-4b06-11d1-ab04-00c04fc2dcd2 (MS-DRSR) where OpNum is not 0, 1 or 12, such as OpNum 3 (IDL_DRSGetNCChanges), which is used to replicate secrets.",
+      "why_it_matters": "DCSync lets an attacker pose as a DC and pull password hashes, including krbtgt and domain admins. DCShadow registers a rogue DC. The rule is tagged T1033, but DCSync is usually mapped to T1003.006.",
+      "triage_steps": [
+        "Identify the calling source IP (ClientNetworkAddress or equivalent) and confirm whether it belongs to a legitimate domain controller.",
+        "Check OpNum: 3 (GetNCChanges) means data replication; other opnums such as ReplicaAdd may indicate DCShadow.",
+        "Identify the authenticating account or SID and check whether it holds replication rights (Replicating Directory Changes All).",
+        "On the DC, look for event 4662 with the replication GUIDs and 4624 logons for that account from the same IP within +/- 15 minutes.",
+        "On the source host, hunt for mimikatz (lsadump::dcsync), secretsdump or unusual processes connecting to DC RPC ports.",
+        "Search for earlier alerts on the same host, user or IP, such as credential dumping or lateral movement."
+      ],
+      "false_positives": [
+        "Microsoft Entra Connect (Azure AD Connect) servers syncing password hashes through replication.",
+        "A new or freshly promoted DC that is not yet on the RPC Firewall trusted IP list.",
+        "Legitimate AD backup, auditing or migration tools that use MS-DRSR.",
+        "A misconfigured RPC Firewall policy that does not exclude every DC."
+      ],
+      "response_steps": [
+        "Confirm with the identity team whether the source and account are authorized; if so, update the trusted IP list.",
+        "If unauthorized, isolate the source host and disable or restrict the account used.",
+        "Remove improperly granted replication rights and review the domain object ACLs.",
+        "Assume credentials were exposed: reset krbtgt twice in a controlled way, along with the affected privileged accounts.",
+        "Preserve evidence from the source host and hunt for persistence before returning it to service."
+      ],
+      "severity_rationale": "High fits because directory replication from a non-DC host can expose every credential in the domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DCSync: workstation calls IDL_DRSGetNCChanges (OpNum 3) on MS-DRSR",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "e3514235-4b06-11d1-ab04-00c04fc2dcd2",
+          "OpNum": 3,
+          "Computer": "DC-01.andes.example.com",
+          "ClientNetworkAddress": "192.0.2.45",
+          "Protocol": "ncacn_ip_tcp",
+          "ImagePath": "C:\\Windows\\System32\\lsass.exe",
+          "SID": "S-1-5-21-1111111111-2222222222-3333333333-1142",
+          "Function": "RpcServerCall"
+        }
+      },
+      {
+        "description": "DCShadow-like activity: non-DC host calls a replication opnum (OpNum 5) on MS-DRSR",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "e3514235-4b06-11d1-ab04-00c04fc2dcd2",
+          "OpNum": 5,
+          "Computer": "DC-02.andes.example.com",
+          "ClientNetworkAddress": "198.51.100.23",
+          "Protocol": "ncacn_ip_tcp",
+          "ImagePath": "C:\\Windows\\System32\\lsass.exe",
+          "Function": "RpcServerCall"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MS-DRSR call with OpNum 12 (IDL_DRSCrackNames), excluded by the filter",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "e3514235-4b06-11d1-ab04-00c04fc2dcd2",
+          "OpNum": 12,
+          "Computer": "DC-01.andes.example.com",
+          "ClientNetworkAddress": "192.0.2.80",
+          "Protocol": "ncacn_ip_tcp",
+          "ImagePath": "C:\\Windows\\System32\\lsass.exe",
+          "Function": "RpcServerCall"
+        }
+      },
+      {
+        "description": "RPC call with OpNum 3 to a different interface (MS-SAMR), not MS-DRSR",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "12345778-1234-abcd-ef00-0123456789ac",
+          "OpNum": 3,
+          "Computer": "DC-01.andes.example.com",
+          "ClientNetworkAddress": "192.0.2.45",
+          "Protocol": "ncacn_np",
+          "ImagePath": "C:\\Windows\\System32\\lsass.exe",
+          "Function": "RpcServerCall"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

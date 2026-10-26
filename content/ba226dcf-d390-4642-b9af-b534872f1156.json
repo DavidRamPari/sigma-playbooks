@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "ba226dcf-d390-4642-b9af-b534872f1156",
+    "title": "Windows Event Log Access Tampering Via Registry",
+    "level": "high",
+    "status": "experimental",
+    "author": "X__Junior",
+    "path": "windows/registry/registry_set/registry_set_disable_windows_event_log_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_disable_windows_event_log_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1547.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso modificó el descriptor de seguridad (SDDL) de un canal del Registro de eventos de Windows y agregó una entrada de denegación (D;). Esto puede impedir que usuarios, analistas o herramientas lean o administren ese canal.",
+      "what_it_detects": "Escrituras de registro en ...\\Services\\EventLog\\<canal>\\CustomSD o en valores ChannelAccess (directiva o WINEVT\\Channels) cuyo Details contiene un SDDL con ACE de denegación, excluyendo TrustedInstaller y TiWorker.",
+      "why_it_matters": "Restringir el acceso a un canal como Security o Windows PowerShell permite ocultar actividad maliciosa y dificultar la investigación. Es una técnica de evasión mediante modificación del registro (T1112) que deteriora el registro de eventos (T1562.002).",
+      "triage_steps": [
+        "Revise TargetObject para identificar el canal afectado (Security, System, PowerShell, Sysmon) y si la ruta es de directiva (Policies) o de servicio.",
+        "Decodifique el SDDL en Details: identifique qué ACE D; se agregó, a qué SID aplica (WD = Everyone, BA = Administrators) y qué permisos niega.",
+        "Analice Image, CommandLine del proceso y ParentImage: powershell.exe, reg.exe o binarios en rutas de usuario son sospechosos frente a gpsvc o herramientas de administración conocidas.",
+        "Identifique el User y confirme si existe un cambio aprobado o una GPO que configure ChannelAccess para ese canal.",
+        "Pivote en el mismo host +/- 15 minutos: borrado de logs (wevtutil cl, evento 1102), detención de servicios, creación de cuentas o ejecución remota.",
+        "Verifique si el canal sigue siendo accesible (wevtutil gl <canal>) y si el reenvío al SIEM se interrumpió desde la hora del cambio.",
+        "Busque el mismo valor de Details o el mismo proceso en otros hosts y alertas previas para la misma cuenta."
+      ],
+      "false_positives": [
+        "Actividad administrativa legítima, aunque poco probable, que endurece permisos de canales mediante scripts o GPO.",
+        "Herramientas de hardening o líneas base de seguridad que ajustan CustomSD o ChannelAccess durante su despliegue.",
+        "Pruebas de Atomic Red Team o ejercicios de red team autorizados (T1562.002)."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del cambio si la modificación fue autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint y preserve una copia de la clave de registro y del canal afectado.",
+        "Restaure el SDDL original del canal (valor por defecto o el de la GPO corporativa) y reinicie el servicio EventLog si es necesario.",
+        "Investigue y erradique el proceso y la cuenta responsables; restablezca credenciales comprometidas.",
+        "Revise los eventos faltantes del periodo afectado usando fuentes alternativas (EDR, reenvío previo) y documente la brecha de visibilidad."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque negar acceso a canales de eventos es raro en administración normal y degrada directamente la detección y la investigación forense."
+    },
+    "en": {
+      "summary": "A process changed the security descriptor (SDDL) of a Windows Event Log channel and added a deny entry (D;). This can stop users, analysts or tools from reading or managing that channel.",
+      "what_it_detects": "Registry writes to ...\\Services\\EventLog\\<channel>\\CustomSD or to ChannelAccess values (policy or WINEVT\\Channels) whose Details holds an SDDL with a deny ACE, excluding TrustedInstaller and TiWorker.",
+      "why_it_matters": "Locking access to channels such as Security or Windows PowerShell hides malicious activity and hampers investigation. It is defense evasion through registry modification (T1112) that impairs event logging (T1562.002).",
+      "triage_steps": [
+        "Check TargetObject to identify the affected channel (Security, System, PowerShell, Sysmon) and whether the path is a policy key or the service key.",
+        "Decode the SDDL in Details: which D; ACE was added, which SID it targets (WD = Everyone, BA = Administrators) and which rights it denies.",
+        "Review Image, the process command line and ParentImage: powershell.exe, reg.exe or binaries in user paths are suspicious versus gpsvc or known admin tooling.",
+        "Identify the User and confirm whether an approved change or GPO sets ChannelAccess for that channel.",
+        "Pivot on the same host +/- 15 minutes: log clearing (wevtutil cl, event 1102), stopped services, new accounts or remote execution.",
+        "Verify whether the channel is still readable (wevtutil gl <channel>) and whether SIEM forwarding stopped after the change.",
+        "Search for the same Details value or process on other hosts and earlier alerts for the same account."
+      ],
+      "false_positives": [
+        "Legitimate, though unlikely, administrative activity hardening channel permissions via scripts or GPO.",
+        "Hardening tools or security baselines that set CustomSD or ChannelAccess during rollout.",
+        "Atomic Red Team tests or authorized red team exercises (T1562.002)."
+      ],
+      "response_steps": [
+        "Confirm with the host or change owner whether the modification was authorized before acting.",
+        "If unauthorized, isolate the endpoint and preserve a copy of the registry key and the affected channel.",
+        "Restore the channel's original SDDL (default or corporate GPO value) and restart the EventLog service if needed.",
+        "Investigate and remove the responsible process and account; reset compromised credentials.",
+        "Recover missing events for the affected window from alternative sources (EDR, earlier forwarding) and document the visibility gap."
+      ],
+      "severity_rationale": "High fits because denying access to event channels is rare in normal administration and directly degrades detection and forensics."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell sets CustomSD on the Security channel with a deny ACE for Everyone",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 5824,
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Security\\CustomSD",
+          "Details": "O:SYG:SYD:(D;;0x1;;;WD)"
+        }
+      },
+      {
+        "description": "reg.exe writes a policy ChannelAccess value with an allow ACE followed by a deny ACE",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FS01.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 3312,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\EventLog\\Application\\ChannelAccess",
+          "Details": "O:BAG:SYD:(A;;0x2;;;S-1-15-2-1)(D;;0x1;;;WD)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ChannelAccess set with allow-only ACEs (no deny entry)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4410,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-PowerShell/Operational\\ChannelAccess",
+          "Details": "O:BAG:SYD:(A;;0xf0007;;;SY)(A;;0x7;;;BA)(A;;0x3;;;BO)"
+        }
+      },
+      {
+        "description": "TrustedInstaller servicing writes a CustomSD containing a deny ACE (excluded by filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 2204,
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\System\\CustomSD",
+          "Details": "O:BAG:SYD:(D;;0xf0007;;;AN)(D;;0xf0007;;;BG)(A;;0xf0007;;;SY)(A;;0x7;;;BA)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

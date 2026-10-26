@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "84c174ab-d3ef-481f-9c86-a50d0b8e3edb",
+    "title": "PowerShell Get-Process LSASS in ScriptBlock",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_getprocess_lsass.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_getprocess_lsass.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un bloque de script de PowerShell que contiene 'Get-Process lsass'. Normalmente significa que alguien obtiene el ID o el handle del proceso LSASS como paso previo para volcar credenciales de memoria.",
+      "what_it_detects": "Eventos de Script Block Logging de PowerShell (Event ID 4104) cuyo ScriptBlockText contiene la cadena literal 'Get-Process lsass'. No coincide con variantes como 'Get-Process -Name lsass' o 'gps lsass'.",
+      "why_it_matters": "LSASS guarda material de credenciales de los usuarios con sesión iniciada. Los atacantes leen su ID de proceso y vuelcan su memoria con herramientas como comsvcs.dll MiniDump o procdump para extraer hashes y tickets (ATT&CK T1003.001, memoria de LSASS). Con esas credenciales robadas pueden moverse lateralmente.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Use ScriptBlockId, MessageNumber y MessageTotal para reconstruir scripts divididos. Busque MiniDump, rundll32, comsvcs, procdump, Out-Minidump o llamadas a OpenProcess.",
+        "Identifique el usuario y el host del evento. Verifique si la cuenta es un administrador esperado y si el host es un servidor, una estación de trabajo o un controlador de dominio.",
+        "Ubique el proceso de PowerShell que lo ejecutó (4688 o Sysmon 1 en el mismo host, +/- 15 minutos) y revise su CommandLine, su ParentImage y la cadena de procesos padre.",
+        "Busque en Sysmon 10 accesos a lsass.exe en la misma ventana. Anote SourceImage y GrantedAccess, por ejemplo 0x1010 o 0x1FFFFF.",
+        "Busque archivos .dmp o comprimidos nuevos (Sysmon 11) y transferencias salientes desde el host poco después del evento.",
+        "Pivote por el usuario: revise inicios de sesión desde hosts nuevos, el uso de credenciales explícitas y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Scripts de administradores o usuarios que exportan certificados y hacen referencia al proceso LSASS, como indica la propia regla.",
+        "Scripts de monitoreo o hardening que revisan el estado de LSASS, su uso de memoria o la protección RunAsPPL.",
+        "Actividad autorizada de red team, pruebas de penetración o validación de detecciones."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del script o con los registros de cambios si la actividad estaba autorizada. Documente la evidencia.",
+        "Si encuentra un volcado o confirma acceso a LSASS, aísle el host desde el EDR y preserve la memoria y los archivos de volcado para el análisis forense.",
+        "Restablezca las contraseñas de todas las cuentas con sesión en el host, empezando por las privilegiadas, y revoque sus sesiones y tickets activos.",
+        "Elimine los volcados y las herramientas del atacante solo después de recolectar la evidencia. Habilite la protección LSA o Credential Guard donde sea posible."
+      ],
+      "severity_rationale": "Nivel alto porque los scripts legítimos rara vez buscan LSASS por nombre, y esta consulta es un paso habitual antes de volcar credenciales."
+    },
+    "en": {
+      "summary": "A PowerShell script block containing 'Get-Process lsass' was logged. This usually means someone is getting the LSASS process ID or handle as the first step of dumping credentials from memory.",
+      "what_it_detects": "PowerShell Script Block Logging (Event ID 4104) records where ScriptBlockText contains the literal string 'Get-Process lsass'. The rule does not match variants such as 'Get-Process -Name lsass' or 'gps lsass'.",
+      "why_it_matters": "LSASS holds credential material for logged-on users. Attackers read its process ID, then dump its memory with tools such as comsvcs.dll MiniDump or procdump to extract hashes and tickets (ATT&CK T1003.001, LSASS Memory). The stolen credentials allow lateral movement.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Use ScriptBlockId, MessageNumber and MessageTotal to rebuild multi-part scripts. Look for MiniDump, rundll32, comsvcs, procdump, Out-Minidump or OpenProcess calls.",
+        "Identify the user and host from the event. Check whether the account is an expected administrator and whether the host is a server, workstation or domain controller.",
+        "Find the PowerShell process that ran it (4688 or Sysmon 1 on the same host, +/- 15 minutes) and review its CommandLine, ParentImage and parent chain.",
+        "Search Sysmon 10 for access to lsass.exe in the same window. Note SourceImage and GrantedAccess, for example 0x1010 or 0x1FFFFF.",
+        "Look for new .dmp files or archives (Sysmon 11) and for outbound transfers from the host soon after the event.",
+        "Pivot on the user: check logons from new hosts, use of explicit credentials, and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Administrator or user scripts that export certificates and reference the LSASS process, as the rule itself notes.",
+        "Monitoring or hardening scripts that check LSASS status, memory use or RunAsPPL protection.",
+        "Authorized red team, penetration test or detection validation activity."
+      ],
+      "response_steps": [
+        "Confirm with the script owner or change records whether the activity was authorized. Document the evidence.",
+        "If you find a dump or confirm LSASS access, isolate the host through EDR and preserve memory and the dump files for forensics.",
+        "Reset passwords for every account with a session on the host, starting with privileged accounts, and revoke their active sessions and tickets.",
+        "Remove the dump files and attacker tools only after collecting evidence. Enable LSA protection or Credential Guard where you can."
+      ],
+      "severity_rationale": "High fits because legitimate scripts rarely look up LSASS by name, and this lookup is a common first step before dumping credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block retrieves the LSASS process ID into a variable, typical precursor to a memory dump.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f2a9c1e-7b44-4d2e-9a10-5c6e8f0b1d21",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$id = (Get-Process lsass).Id; Write-Output $id"
+        }
+      },
+      {
+        "description": "Interactive command piping the LSASS process object to Select-Object.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "UserID": "ANDES\\adm-mrojas",
+          "ScriptBlockId": "a81d0e44-2c6b-4f3a-b7d9-0e1f2a3b4c5d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "get-process LSASS | Select-Object Id, Handles, Path"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Named-parameter form does not contain the contiguous string 'Get-Process lsass'.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "5b7c9d1e-0f2a-4b3c-8d4e-6f7a8b9c0d1e",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\healthcheck.ps1",
+          "ScriptBlockText": "Get-Process -Name lsass | Select-Object WorkingSet64"
+        }
+      },
+      {
+        "description": "Routine Get-Process on a different process.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "UserID": "ANDES\\svc-monitor",
+          "ScriptBlockId": "c2d3e4f5-a6b7-4c8d-9e0f-1a2b3c4d5e6f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\monitor.ps1",
+          "ScriptBlockText": "Get-Process svchost | Measure-Object -Property WorkingSet64 -Sum"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

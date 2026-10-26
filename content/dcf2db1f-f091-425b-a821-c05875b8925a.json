@@ -1,0 +1,147 @@
+{
+  "rule": {
+    "id": "dcf2db1f-f091-425b-a821-c05875b8925a",
+    "title": "Invoke-Obfuscation VAR+ Launcher - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Jonathan Cheong, oscd.community",
+    "path": "windows/builtin/security/win_security_invoke_obfuscation_var_services_security.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_invoke_obfuscation_var_services_security.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (EID 4697) cuyo ServiceFileName ejecuta cmd con /c o /r, define una variable de entorno con \"set y usa el operador -f de PowerShell. Este patrón coincide con el launcher VAR+ de Invoke-Obfuscation.",
+      "what_it_detects": "Eventos 4697 del log Security donde ServiceFileName contiene 'cmd', '\"set', '-f' y además '/c' o '/r'. Es la forma típica de un comando PowerShell ofuscado que se guarda en una variable de entorno y se reconstruye con cadenas de formato.",
+      "why_it_matters": "Crear un servicio da ejecución como SYSTEM y suele usarse para persistencia o movimiento lateral, por ejemplo con herramientas tipo PsExec o Cobalt Strike. La ofuscación (T1027) oculta la ejecución de PowerShell (T1059.001) a los controles basados en firmas.",
+      "triage_steps": [
+        "Lea ServiceFileName completo, reconstruya las cadenas formateadas con -f y obtenga el comando PowerShell real, por ejemplo IEX o DownloadString.",
+        "Revise ServiceName, ServiceAccount y ServiceStartType. Los nombres aleatorios o los servicios de demanda que corren como LocalSystem son sospechosos.",
+        "Identifique SubjectUserName y SubjectLogonId y luego busque el evento 4624 con el mismo LogonId para conocer el tipo de logon y la IP de origen.",
+        "Si el logon es de tipo 3 desde otro equipo, investigue ese host de origen: puede ser movimiento lateral con creación remota de servicios.",
+        "Revise el host en una ventana de +/- 15 minutos: eventos 7045 y 7036 del log System, procesos 4688 o Sysmon 1 hijos de services.exe, cmd.exe y powershell.exe.",
+        "Busque conexiones de red salientes, archivos descargados y scripts de PowerShell (EID 4104) generados por esa ejecución.",
+        "Compruebe si hubo alertas anteriores para el mismo usuario, host o IP de origen y si el mismo servicio aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos. Esta combinación de cmd, \"set y -f es muy rara en software legítimo.",
+        "Ejercicios de red team o pruebas de detección autorizadas que usan Invoke-Obfuscation. Confírmelos con el equipo responsable."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema que la instalación no estaba autorizada y preserve el evento, el comando decodificado y la configuración del servicio.",
+        "Aísle el endpoint si el payload descarga o ejecuta código, y bloquee los dominios o IP que aparezcan en el comando.",
+        "Deshabilite la cuenta usada o restablezca su contraseña. Si hubo origen remoto, revise también credenciales de administrador reutilizadas.",
+        "Después de recolectar la evidencia, detenga y elimine el servicio, y busque otros mecanismos de persistencia.",
+        "Antes de devolver el equipo a producción, aplique en toda la flota una búsqueda del mismo ServiceFileName o ServiceName."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque instalar un servicio con PowerShell ofuscado implica ejecución privilegiada y casi nunca tiene una causa legítima."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EID 4697) whose ServiceFileName runs cmd with /c or /r, sets an environment variable with \"set, and uses the PowerShell -f operator. This pattern matches the Invoke-Obfuscation VAR+ launcher.",
+      "what_it_detects": "Security log 4697 events where ServiceFileName contains 'cmd', '\"set' and '-f', plus either '/c' or '/r'. This is the usual shape of an obfuscated PowerShell command that is stored in an environment variable and rebuilt with format strings.",
+      "why_it_matters": "Creating a service gives SYSTEM-level execution and is common for persistence or lateral movement, for example with PsExec-style tooling. Obfuscation (T1027) hides the PowerShell execution (T1059.001) from signature-based controls.",
+      "triage_steps": [
+        "Read the full ServiceFileName, rebuild the -f format strings and recover the real PowerShell command, for example IEX or DownloadString.",
+        "Review ServiceName, ServiceAccount and ServiceStartType. Random names and demand-start services running as LocalSystem are suspicious.",
+        "Identify SubjectUserName and SubjectLogonId, then find the 4624 event with the same LogonId to learn the logon type and source IP.",
+        "If the logon is type 3 from another machine, investigate that source host: this may be lateral movement through remote service creation.",
+        "Review the host within +/- 15 minutes: System 7045 and 7036 events, plus 4688 or Sysmon 1 child processes of services.exe, cmd.exe and powershell.exe.",
+        "Look for outbound network connections, downloaded files and PowerShell script block logs (EID 4104) produced by the execution.",
+        "Check for earlier alerts on the same user, host or source IP, and whether the same service appears on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. This mix of cmd, \"set and -f is very rare in legitimate software.",
+        "Authorized red team exercises or detection tests that use Invoke-Obfuscation. Confirm them with the owning team."
+      ],
+      "response_steps": [
+        "Confirm with the system owner that the installation was unauthorized, and preserve the event, the decoded command and the service configuration.",
+        "Isolate the endpoint if the payload downloads or runs code, and block any domains or IPs found in the command.",
+        "Disable the account used or reset its password. If the activity came from a remote host, also review reused admin credentials.",
+        "After collecting evidence, stop and delete the service, then hunt for other persistence mechanisms.",
+        "Before returning the host to production, sweep the whole fleet for the same ServiceFileName or ServiceName."
+      ],
+      "severity_rationale": "High fits because installing a service that runs obfuscated PowerShell means privileged execution and almost never has a legitimate cause."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with an Invoke-Obfuscation VAR+ launcher: cmd /C\"SET var=... && powershell using -f format strings",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ServiceName": "xKqPzL",
+          "ServiceFileName": "C:\\winDoWs\\SySTeM32\\cmd.Exe /C\"SET NOtI=Write-Output placeholder&& PowERshElL -NOl SET-iteM ( 'VAR' + 'iAblE:Ao6I0') ( [TYpe](\\\"{2}{3}{0}{1}\\\"-F 'iRoN','mENT','e','nv') ) ; ( GEt-VAriAble ( 'a' + 'o6I0') -vaLU )::(\\\"{1}{0}\\\" -f'nvironmentVariable','GetE' ).Invoke(( \\\"{0}{1}\\\"-f'n','oti' ),'Process')\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Variant using /r and a lowercase \"set inside quotes",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5B10C4",
+          "ServiceName": "WinUpdHelper",
+          "ServiceFileName": "cMD.exe /r \"seT SlDb=Write-Output placeholder&& pOWErShell .(( &(\\\"{1}{0}\\\" -f 'et-Variable','G') (\\\"{0}{1}\\\" -f '*m','DR*') ).\\\"na`ME\\\"[3,11,2]-JOIN'') ( ( &(\\\"{0}{1}\\\" -f'g','CI') (\\\"{0}{1}\\\" -f 'ENV',':SlDb') ).\\\"VA`luE\\\" )\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate agent service launched via cmd /c with a -f option but no \"set environment variable",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ServiceName": "ExampleAgent",
+          "ServiceFileName": "C:\\Windows\\System32\\cmd.exe /c \"C:\\Program Files\\Example\\agent.cmd\" -f C:\\ProgramData\\Example\\agent.conf",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Normal service binary installation without cmd",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "admin.ti",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x6A2201",
+          "ServiceName": "ExampleBackupSvc",
+          "ServiceFileName": "\"C:\\Program Files\\ExampleBackup\\backupsvc.exe\" -service",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

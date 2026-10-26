@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "43e26eb5-cd58-48d1-8ce9-a273f5d298d8",
+    "title": "Potential Container Discovery Via Inodes Listing",
+    "level": "low",
+    "status": "test",
+    "author": "Seth Hanford",
+    "path": "linux/process_creation/proc_creation_lnx_susp_inod_listing.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_inod_listing.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1082"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó ls con opciones para mostrar el número de inode del directorio raíz \"/\" (por ejemplo ls -id /). Es una técnica conocida para saber si el proceso corre dentro de un contenedor.",
+      "what_it_detects": "Creación de un proceso cuyo Image termina en /ls y cuyo CommandLine apunta a \"/\" e incluye las opciones -i/--inode y -d/--directory, aunque estén combinadas con otras opciones (por ejemplo -lid).",
+      "why_it_matters": "Fuera de un contenedor, el inode de \"/\" suele ser bajo; dentro de un overlay de contenedor suele ser alto. Un atacante usa esta comprobación para orientar sus siguientes pasos, como un intento de escape o la persistencia (Discovery, T1082 System Information Discovery).",
+      "triage_steps": [
+        "Revise CommandLine, User y ParentImage: identifique quién ejecutó ls y desde qué proceso padre (shell interactiva, script, servidor web, runtime de contenedor).",
+        "Determine si el host es un nodo de contenedores o si el evento proviene de dentro de un contenedor (hostname, ID de contenedor, namespace o pod).",
+        "Reconstruya el árbol de procesos: padre, abuelo y procesos hijos del mismo shell. Una shell lanzada por un servicio web o una base de datos es sospechosa.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, otros comandos de descubrimiento: cat /proc/1/cgroup, ls /.dockerenv, mount, capsh, id, uname -a.",
+        "Busque indicios de actividad posterior: descargas con curl/wget, acceso a docker.sock, uso de nsenter, mount o chroot, o conexiones salientes nuevas.",
+        "Compruebe si el usuario o la cuenta de servicio tiene alertas previas o inicios de sesión inusuales (origen SSH, horario, IP de origen).",
+        "Confirme con el equipo responsable si hay mantenimiento, depuración o herramientas de diagnóstico programadas que expliquen el comando."
+      ],
+      "false_positives": [
+        "Un administrador de sistemas que verifica a mano el entorno con ls -id / durante soporte o depuración.",
+        "Scripts de entrypoint, agentes o herramientas de contenedores que detectan si corren contenerizados para ajustar su comportamiento.",
+        "Scripts de inventario, hardening o auditoría que recopilan datos del sistema de archivos raíz."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el dueño del host o del contenedor antes de actuar; si es legítimo, documente y cree una exclusión acotada por ParentImage o por usuario.",
+        "Si no es legítimo, aísle el contenedor o el host y conserve la evidencia: lista de procesos, conexiones, historial de shell e imagen del contenedor.",
+        "Identifique el vector de acceso inicial (aplicación vulnerable, credenciales robadas) y revise los intentos de escape hacia el nodo.",
+        "Rote las credenciales o tokens expuestos, elimine los artefactos maliciosos y reconstruya el contenedor desde una imagen confiable."
+      ],
+      "severity_rationale": "Es nivel bajo porque el comando es inofensivo por sí solo y frecuente en la administración, pero merece revisión cuando aparece con otra actividad de descubrimiento o desde procesos padre inesperados."
+    },
+    "en": {
+      "summary": "ls was run with options that print the inode number of the root directory \"/\" (for example ls -id /). This is a known way to check whether a process is running inside a container.",
+      "what_it_detects": "A process whose Image ends in /ls and whose CommandLine targets \"/\" with both -i/--inode and -d/--directory, including combined flags such as -lid.",
+      "why_it_matters": "The root inode is usually low on a host and high inside a container overlay. Attackers use this check to plan next steps such as container escape or persistence (Discovery, T1082 System Information Discovery).",
+      "triage_steps": [
+        "Review CommandLine, User and ParentImage: who ran ls and from which parent (interactive shell, script, web server, container runtime)?",
+        "Determine whether the host is a container node or whether the event came from inside a container (hostname, container ID, namespace, pod).",
+        "Rebuild the process tree: parent, grandparent and sibling commands from the same shell. A shell spawned by a web service or database is suspicious.",
+        "On the same host within +/- 15 minutes, look for other discovery: cat /proc/1/cgroup, ls /.dockerenv, mount, capsh, id, uname -a.",
+        "Look for follow-on activity: curl/wget downloads, docker.sock access, nsenter, mount or chroot use, new outbound connections.",
+        "Check the user or service account for earlier alerts and unusual logins (SSH source IP, time of day).",
+        "Confirm with the owning team whether maintenance, debugging or diagnostic tooling explains the command."
+      ],
+      "false_positives": [
+        "An administrator manually checking the environment with ls -id / during support or debugging.",
+        "Container entrypoint scripts, agents or tooling that detect containerization to adjust their behavior.",
+        "Inventory, hardening or audit scripts collecting root filesystem details."
+      ],
+      "response_steps": [
+        "Verify with the host or container owner before acting; if legitimate, document it and add a narrow exclusion by ParentImage or user.",
+        "If not legitimate, isolate the container or host and preserve evidence: process list, connections, shell history, container image.",
+        "Identify the initial access vector (vulnerable app, stolen credentials) and review escape attempts toward the node.",
+        "Rotate exposed credentials or tokens, remove malicious artifacts and rebuild the container from a trusted image."
+      ],
+      "severity_rationale": "Low fits because the command is harmless alone and common in administration, but it deserves review alongside other discovery activity or unexpected parent processes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Shell spawned by a web application runs ls -id / to check for a container",
+        "event": {
+          "Image": "/usr/bin/ls",
+          "CommandLine": "ls -id /",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "/bin/sh -c ls -id /",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-app-03"
+        }
+      },
+      {
+        "description": "Long-form options --inode --directory against the root directory",
+        "event": {
+          "Image": "/bin/ls",
+          "CommandLine": "/bin/ls --inode --directory /",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 9921,
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Listing the inode of a non-root directory; CommandLine does not end with ' /' nor contain ' / '",
+        "event": {
+          "Image": "/usr/bin/ls",
+          "CommandLine": "ls -lid /etc",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 10234,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Regular long listing of / without the -i and -d options",
+        "event": {
+          "Image": "/usr/bin/ls",
+          "CommandLine": "ls -la /",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 10577,
+          "CurrentDirectory": "/root",
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

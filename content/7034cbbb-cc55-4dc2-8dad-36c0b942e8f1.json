@@ -1,0 +1,121 @@
+{
+  "rule": {
+    "id": "7034cbbb-cc55-4dc2-8dad-36c0b942e8f1",
+    "title": "Invoke-Obfuscation COMPRESS OBFUSCATION - PowerShell Module",
+    "level": "medium",
+    "status": "test",
+    "author": "Timur Zinniatullin, oscd.community",
+    "path": "windows/powershell/powershell_module/posh_pm_invoke_obfuscation_via_compress.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_invoke_obfuscation_via_compress.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell Module Logging (evento 4103) registró un Payload que descomprime y lee un bloque oculto con New-Object, DeflateStream o StreamReader, [Text.Encoding]::ASCII y ReadToEnd. Así se ve la técnica COMPRESS de Invoke-Obfuscation.",
+      "what_it_detects": "Eventos ps_module cuyo campo Payload contiene 'new-object' y 'text.encoding]::ascii', además de 'system.io.compression.deflatestream' o 'system.io.streamreader', y termina exactamente en 'readtoend'. Ese patrón aparece cuando un script comprimido en Base64 se descomprime en memoria para después ejecutarse.",
+      "why_it_matters": "Comprimir el código oculta el script real a los controles basados en firmas y a la revisión humana (T1027, Obfuscated Files or Information). Suele preceder a la ejecución con Invoke-Expression (T1059.001, PowerShell), sin escribir el script a disco.",
+      "triage_steps": [
+        "Revise el Payload completo y extraiga la cadena Base64 que se pasa a FromBase64String.",
+        "Decodifique y descomprima esa cadena con Deflate en un entorno aislado. Identifique el script real: descargas, URLs, IPs o comandos.",
+        "Identifique el proceso PowerShell (HostApplication y ContextInfo), su usuario y el equipo (Computer).",
+        "Revise el proceso padre en Sysmon 1 o en 4688. Si es Office, wscript, mshta o un servicio, el caso es más sospechoso.",
+        "En el mismo host, busque eventos 4104 (Script Block) y conexiones de red y archivos creados dentro de +/- 15 minutos.",
+        "Busque alertas previas del mismo usuario o equipo y el mismo patrón en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Puede haber scripts internos o de proveedores que empaquetan código comprimido en Base64 para distribuirlo.",
+        "Ejercicios de red team o pruebas autorizadas con Invoke-Obfuscation."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o con el área de TI si el script es legítimo antes de actuar.",
+        "Si es malicioso, aísle el endpoint con el EDR y conserve los logs de PowerShell y la memoria del proceso.",
+        "Bloquee los dominios, IPs y hashes que obtuvo del script decodificado, y búsquelos en toda la organización.",
+        "Elimine la persistencia que encuentre (tareas programadas, claves Run, WMI) y restablezca las credenciales del usuario afectado.",
+        "Restaure el equipo a un estado conocido y vigile que no reaparezca."
+      ],
+      "severity_rationale": "Media: el patrón es poco común en uso legítimo y oculta el código, pero por sí solo no confirma un daño hasta que se decodifique el contenido."
+    },
+    "en": {
+      "summary": "PowerShell Module Logging (event 4103) recorded a Payload that decompresses and reads a hidden blob using New-Object, DeflateStream or StreamReader, [Text.Encoding]::ASCII and ReadToEnd. This matches the Invoke-Obfuscation COMPRESS technique.",
+      "what_it_detects": "ps_module events where Payload contains 'new-object' and 'text.encoding]::ascii', plus either 'system.io.compression.deflatestream' or 'system.io.streamreader', and ends with 'readtoend'. This pattern shows a Base64, deflate-compressed script being unpacked in memory before it runs.",
+      "why_it_matters": "Compressing code hides the real script from signature checks and from analysts (T1027, Obfuscated Files or Information). It usually comes right before execution through Invoke-Expression (T1059.001, PowerShell), and the script never touches disk.",
+      "triage_steps": [
+        "Read the full Payload and extract the Base64 string passed to FromBase64String.",
+        "Decode and inflate that string in a sandbox. Look in the real script for downloads, URLs, IPs or commands.",
+        "Identify the PowerShell host (HostApplication, ContextInfo), the user and the Computer.",
+        "Check the parent process in Sysmon 1 or 4688. An Office app, wscript, mshta or a service as parent raises suspicion.",
+        "On the same host within +/- 15 minutes, look for 4104 script block events, network connections and new files.",
+        "Search for earlier alerts on the same user or host, and for the same pattern on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Internal or vendor scripts that ship compressed Base64 code for deployment could still match.",
+        "Authorized red team exercises or Invoke-Obfuscation testing."
+      ],
+      "response_steps": [
+        "Before you act, check with the host owner or IT that the script is legitimate.",
+        "If it is malicious, isolate the endpoint with EDR and keep the PowerShell logs and the process memory.",
+        "Block the domains, IPs and hashes found in the decoded script, and hunt for them across the organization.",
+        "Remove any persistence you find (scheduled tasks, Run keys, WMI) and reset the affected user's credentials.",
+        "Reimage or restore the host to a known-good state, then watch for the activity coming back."
+      ],
+      "severity_rationale": "Medium: legitimate scripts rarely use this pattern and it hides code, but it does not prove harm until the content is decoded."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Invoke-Obfuscation COMPRESS output: deflated Base64 read with StreamReader and ASCII encoding, ends with ReadToEnd",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Host Application = powershell.exe -NoP -W Hidden; User = ANDES\\jperez",
+          "Payload": ".(\"{1}{0}\"-f'X','IE')( New-Object System.IO.StreamReader((New-Object System.IO.Compression.DeflateStream([IO.MemoryStream][Convert]::FromBase64String('S0lNTFBMUw=='),[IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::ASCII)).ReadToEnd"
+        }
+      },
+      {
+        "description": "Lower-case variant using only DeflateStream and ASCII, ending with readtoend",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ContextInfo": "Host Application = C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe; User = ANDES\\mlopez",
+          "Payload": "iex (new-object io.streamreader((new-object system.io.compression.deflatestream([io.memorystream][convert]::frombase64string('U0FNUExF'),[io.compression.compressionmode]::decompress)),[text.encoding]::ascii)).readtoend"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate log reader using StreamReader with UTF8 encoding instead of ASCII",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ContextInfo": "Host Application = powershell.exe -File C:\\Scripts\\ReadLog.ps1; User = ANDES\\svc_backup",
+          "Payload": "$r = New-Object System.IO.StreamReader('C:\\Logs\\app.log',[Text.Encoding]::UTF8); $r.ReadToEnd"
+        }
+      },
+      {
+        "description": "Decompression with ASCII, but the Payload ends with ReadToEnd() followed by another statement, so endswith does not match",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Host Application = powershell_ise.exe; User = ANDES\\jperez",
+          "Payload": "$s = New-Object System.IO.StreamReader((New-Object System.IO.Compression.DeflateStream($ms,[IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::ASCII); $t = $s.ReadToEnd(); $s.Close()"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

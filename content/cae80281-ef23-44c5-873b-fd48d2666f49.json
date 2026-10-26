@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "cae80281-ef23-44c5-873b-fd48d2666f49",
+    "title": "PowerShell Script Change Permission Via Set-Acl - PsScript",
+    "level": "low",
+    "status": "test",
+    "author": "frack113, Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_set_acl.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_set_acl.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado mediante Script Block Logging (evento 4104) usó Set-Acl con los parámetros -Path y -AclObject para cambiar la ACL de un archivo o carpeta. Puede ser administración legítima o un intento de tomar control de archivos protegidos.",
+      "what_it_detects": "Eventos 4104 cuyo ScriptBlockText contiene a la vez 'Set-Acl ', '-AclObject ' y '-Path ', es decir, la aplicación explícita de un objeto de seguridad a una ruta.",
+      "why_it_matters": "Modificar permisos (ATT&CK T1222, File and Directory Permissions Modification) permite a un atacante sobrescribir binarios del sistema, como termsrv.dll en el escenario de Atomic Red Team para T1505.005, debilitar protecciones o asegurar persistencia.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo: identifique la ruta en -Path y cómo se construyó el objeto de -AclObject (Get-Acl, SetOwner, AddAccessRule, FullControl, Everyone).",
+        "Determine si la ruta es sensible: System32, archivos DLL o EXE del sistema, directorios de servicios, carpetas de inicio, ejecutables de herramientas de seguridad.",
+        "Reconstruya el script completo uniendo los fragmentos con el mismo ScriptBlockId y revise el campo Path para saber qué archivo .ps1 se ejecutó.",
+        "Identifique el usuario y el proceso padre de powershell.exe (evento 4688 o Sysmon 1) en el mismo host dentro de +/- 15 minutos.",
+        "Busque actividad relacionada: takeown, icacls, cambio de propietario, reemplazo del archivo afectado o modificaciones de servicios y del registro poco después.",
+        "Revise alertas previas del mismo host y usuario, y si el mismo script aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts de administración o despliegue que ajustan permisos de carpetas compartidas, perfiles o directorios de aplicaciones.",
+        "Herramientas de gestión de configuración (DSC, SCCM, Intune) que aplican ACL de forma programada.",
+        "Instaladores o tareas de mantenimiento de TI que corrigen permisos tras una migración."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o el equipo de TI si el cambio de permisos estaba autorizado.",
+        "Si no lo estaba, compare la ACL actual con la de un equipo de referencia y verifique el hash del archivo afectado.",
+        "Aísle el endpoint si se cambió el propietario o se reemplazó un binario del sistema, y restablezca credenciales del usuario implicado.",
+        "Restaure la ACL y los archivos originales (por ejemplo con sfc o desde respaldo) tras preservar evidencia, y elimine el script malicioso."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque Set-Acl es un cmdlet de administración común; la severidad aumenta solo si la ruta es crítica o el contexto es sospechoso."
+    },
+    "en": {
+      "summary": "A PowerShell script captured by Script Block Logging (event 4104) used Set-Acl with -Path and -AclObject to change a file or folder ACL. This can be routine administration or an attempt to take over protected files.",
+      "what_it_detects": "Event 4104 records whose ScriptBlockText contains all of 'Set-Acl ', '-AclObject ' and '-Path ', meaning a security descriptor was explicitly applied to a path.",
+      "why_it_matters": "Permission changes (ATT&CK T1222, File and Directory Permissions Modification) let attackers overwrite system binaries, such as termsrv.dll in the Atomic Red Team T1505.005 test, weaken defenses or persist.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: note the -Path target and how the -AclObject was built (Get-Acl, SetOwner, AddAccessRule, FullControl, Everyone).",
+        "Decide whether the target is sensitive: System32, system DLLs or EXEs, service directories, startup folders, security tool binaries.",
+        "Rebuild the whole script by joining fragments with the same ScriptBlockId; check the Path field for the .ps1 file that ran.",
+        "Identify the user and the parent of powershell.exe (4688 or Sysmon 1) on the same host within +/- 15 minutes.",
+        "Look for related activity: takeown, icacls, ownership changes, replacement of the target file, service or registry changes shortly after.",
+        "Review earlier alerts for the same host and user, and whether the same script ran on other endpoints."
+      ],
+      "false_positives": [
+        "Admin or deployment scripts that set permissions on shares, profiles or application folders.",
+        "Configuration management tools (DSC, SCCM, Intune) applying ACLs on a schedule.",
+        "Installers or IT maintenance tasks fixing permissions after a migration."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or IT whether the permission change was authorized.",
+        "If not, compare the current ACL with a reference host and verify the hash of the affected file.",
+        "Isolate the endpoint if ownership changed or a system binary was replaced; reset the involved user's credentials.",
+        "After preserving evidence, restore the original ACL and files (sfc or backup) and remove the malicious script."
+      ],
+      "severity_rationale": "Low fits because Set-Acl is a common admin cmdlet; severity rises only when the target path is critical or the context is suspicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script takes ownership-style ACL on termsrv.dll and applies it with Set-Acl -Path ... -AclObject",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5b1c2e7a-3f4d-4a8e-9c21-7d0e6f1a2b33",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\perm.ps1",
+          "ScriptBlockText": "$acl = Get-Acl -Path C:\\Windows\\System32\\termsrv.dll; $rule = New-Object System.Security.AccessControl.FileSystemAccessRule('ANDES\\jperez','FullControl','Allow'); $acl.SetAccessRule($rule); Set-Acl -Path C:\\Windows\\System32\\termsrv.dll -AclObject $acl"
+        }
+      },
+      {
+        "description": "Administrative script granting a group modify rights on a share folder",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "FS-01.andes.example.com",
+          "ScriptBlockId": "a9d4f0b2-1e6c-4c3a-8f55-2b7e9d0c4a11",
+          "Path": "",
+          "ScriptBlockText": "$a = Get-Acl -Path 'D:\\Shares\\Finanzas'; $a.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('ANDES\\Finanzas','Modify','ContainerInherit,ObjectInherit','None','Allow'))); Set-Acl -AclObject $a -Path 'D:\\Shares\\Finanzas'"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only ACL audit with Get-Acl, no Set-Acl",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "c3e8a1f9-6b2d-4e7f-a0c4-9d1b5e2f8a77",
+          "Path": "C:\\Scripts\\audit_acl.ps1",
+          "ScriptBlockText": "Get-Acl -Path C:\\Windows\\System32\\termsrv.dll | Format-List Owner,AccessToString"
+        }
+      },
+      {
+        "description": "Set-Acl used via pipeline without the -AclObject parameter",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "FS-01.andes.example.com",
+          "ScriptBlockId": "e7f2b4c6-8a1d-4f3e-b9c0-1a2d3e4f5a66",
+          "Path": "",
+          "ScriptBlockText": "Get-Acl -Path D:\\Shares\\Plantilla | Set-Acl D:\\Shares\\Nueva"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

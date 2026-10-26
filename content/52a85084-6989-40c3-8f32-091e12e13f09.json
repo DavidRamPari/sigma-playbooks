@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "52a85084-6989-40c3-8f32-091e12e13f09",
+    "title": "smbexec.py Service Installation",
+    "level": "high",
+    "status": "test",
+    "author": "Omer Faruk Celik",
+    "path": "windows/builtin/system/service_control_manager/win_system_hack_smbexec.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_hack_smbexec.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002",
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló en el host un servicio de Windows con el nombre o el ImagePath característicos de smbexec.py de Impacket. Esto suele indicar ejecución remota de comandos por SMB con credenciales válidas.",
+      "what_it_detects": "Eventos 7045 del Service Control Manager (registro System) cuyo ServiceName es 'BTOBTO' (nombre usado por versiones antiguas) o cuyo ImagePath contiene '.bat & del ' o '__output 2^>^&1 >'. Esos fragmentos corresponden al patrón de smbexec, que escribe un .bat temporal, lo ejecuta, redirige la salida a __output y luego borra el archivo.",
+      "why_it_matters": "smbexec permite a un atacante con credenciales ejecutar comandos como SYSTEM en hosts remotos. Crea un servicio por cada comando, para movimiento lateral por recursos compartidos administrativos SMB (T1021.002) y ejecución vía servicios (T1569.002).",
+      "triage_steps": [
+        "Revise ImagePath completo: identifique el comando después de 'echo' y antes de '^>'. Ese es el comando que ejecutó el operador.",
+        "Anote el ServiceName. Los nombres aleatorios de 8 letras o 'BTOBTO' refuerzan la sospecha. Busque otros 7045 en el mismo host dentro de +/- 15 minutos: smbexec genera uno por comando.",
+        "Correlacione en el registro Security del host eventos 4624 tipo 3 (NTLM) y 4672 justo antes del 7045 para obtener la cuenta y la IP de origen.",
+        "Busque 5140/5145 de acceso a C$ o ADMIN$ y al archivo __output desde esa IP de origen.",
+        "Investigue el host de origen: procesos Python o herramientas Impacket, y alertas previas para esa IP o cuenta.",
+        "Busque en toda la flota eventos 7045 con el mismo patrón o desde la misma IP de origen para medir el alcance del movimiento lateral.",
+        "Revise los 7036/7009 relacionados y cualquier actividad posterior: nuevas cuentas, tareas programadas, volcado de LSASS."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ejercicios autorizados de pentesting o red team que usan Impacket. Confirme el alcance y la ventana con el equipo responsable.",
+        "Scripts internos de administración que imitan este patrón de .bat con borrado. Son poco comunes y conviene validarlos con el propietario."
+      ],
+      "response_steps": [
+        "Confirme que la actividad no está autorizada consultando al equipo de seguridad ofensiva y al dueño del host.",
+        "Aísle el host afectado y, si es interno, también el de origen. Bloquee la IP de origen para SMB (445).",
+        "Deshabilite o restablezca la cuenta usada y revise si tiene privilegios de administrador en otros sistemas.",
+        "Elimine los servicios residuales tras documentarlos y busque mecanismos de persistencia creados por los comandos ejecutados.",
+        "Recupere el host desde una línea base confiable si hubo ejecución confirmada. Revise la segmentación de SMB y el uso de LAPS."
+      ],
+      "severity_rationale": "El nivel high se justifica porque el patrón es muy específico de una herramienta ofensiva y supone ejecución remota como SYSTEM con credenciales válidas."
+    },
+    "en": {
+      "summary": "A Windows service was installed with the name or ImagePath typical of Impacket's smbexec.py. This usually means remote command execution over SMB with valid credentials.",
+      "what_it_detects": "Service Control Manager event 7045 (System log) where ServiceName is 'BTOBTO' (the name used by older versions) or ImagePath contains '.bat & del ' or '__output 2^>^&1 >'. These strings match smbexec's pattern: it writes a temporary .bat file, runs it, redirects the output to __output, then deletes the file.",
+      "why_it_matters": "smbexec lets an attacker with credentials run commands as SYSTEM on remote hosts. It creates one service per command, for lateral movement over SMB admin shares (T1021.002) and execution through services (T1569.002).",
+      "triage_steps": [
+        "Read the full ImagePath: the command between 'echo' and '^>' is what the operator ran.",
+        "Note the ServiceName. A random 8-letter name or 'BTOBTO' adds suspicion. Look for other 7045 events on the host within +/- 15 minutes, because smbexec creates one per command.",
+        "Correlate Security log 4624 type 3 (NTLM) and 4672 events just before the 7045 to get the account and source IP.",
+        "Look for 5140/5145 access to C$ or ADMIN$ and to the __output file from that source IP.",
+        "Investigate the source host for Python or Impacket tooling, and check earlier alerts for that IP or account.",
+        "Search all hosts for 7045 events with the same pattern or from the same source IP to scope lateral movement.",
+        "Review related 7036/7009 events and any follow-on activity: new accounts, scheduled tasks, LSASS access."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Authorized penetration tests or red team exercises that use Impacket. Confirm the scope and time window with the team running them.",
+        "Internal admin scripts that copy this .bat-and-delete pattern. These are rare, so check them with the script owner."
+      ],
+      "response_steps": [
+        "Confirm the activity is unauthorized with the offensive security team and the host owner.",
+        "Isolate the affected host, and the source host too if it is internal. Block SMB (445) from the source IP.",
+        "Disable the account or reset its credentials, and check where else it has admin rights.",
+        "Document and then remove any leftover services. Hunt for persistence created by the executed commands.",
+        "If execution is confirmed, restore the host from a trusted baseline. Review SMB segmentation and LAPS coverage."
+      ],
+      "severity_rationale": "High fits because the pattern is specific to an offensive tool and means remote SYSTEM-level execution with valid credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Modern smbexec.py service with a random name. The ImagePath contains both the '__output 2^>^&1 >' and '.bat & del ' patterns.",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "qWxRtPza",
+          "ImagePath": "%COMSPEC% /Q /c echo whoami ^> \\\\127.0.0.1\\C$\\__output 2^>^&1 > %TEMP%\\execute.bat & %COMSPEC% /Q /c %TEMP%\\execute.bat & del %TEMP%\\execute.bat",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Older smbexec.py version that uses the fixed service name BTOBTO.",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ServiceName": "BTOBTO",
+          "ImagePath": "%COMSPEC% /Q /c echo ipconfig ^> \\\\127.0.0.1\\C$\\__output > %SYSTEMROOT%\\execute.bat",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate installation of a monitoring agent service with a normal executable path.",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ExampleMonitorAgent",
+          "ImagePath": "\"C:\\Program Files\\Example\\Monitor\\agent.exe\" --service",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Admin service that runs a batch script but does not delete it or redirect output to __output.",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "ServiceName": "NightlyMaint",
+          "ImagePath": "C:\\Windows\\System32\\cmd.exe /c C:\\Scripts\\maint.bat > C:\\Logs\\maint.log",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

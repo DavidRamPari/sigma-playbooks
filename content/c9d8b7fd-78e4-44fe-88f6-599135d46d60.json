@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "c9d8b7fd-78e4-44fe-88f6-599135d46d60",
+    "title": "Security Software Discovery - Linux",
+    "level": "low",
+    "status": "test",
+    "author": "Daniil Yugoslavskiy, oscd.community",
+    "path": "linux/process_creation/proc_creation_lnx_security_software_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_security_software_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1518.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó grep o egrep en un host Linux buscando nombres de agentes de seguridad o monitoreo (Nessus, Fluentd, Beats de Elastic, osquery, Carbon Black, CrowdStrike Falcon). Puede ser administración legítima o reconocimiento previo a evadir defensas.",
+      "what_it_detects": "Creación de procesos cuyo Image termina en /grep o /egrep y cuyo CommandLine contiene nessusd, td-agent, packetbeat, filebeat, auditbeat, osqueryd, cbagentd o falcond, típicamente en cadenas como 'ps aux | grep falcond'.",
+      "why_it_matters": "Corresponde a ATT&CK T1518.001 (Security Software Discovery): un atacante identifica qué agentes de seguridad y registro corren en el host para detenerlos, evadirlos o ajustar su actividad antes de continuar.",
+      "triage_steps": [
+        "Revise CommandLine completo y el usuario: ¿qué agente se buscó y quién ejecutó el comando (root, cuenta de servicio, usuario interactivo)?",
+        "Identifique ParentImage y la cadena de procesos padre: shell interactivo vía SSH, cron, script de configuración o herramienta de gestión (Ansible, Puppet, Chef).",
+        "Si hubo sesión SSH, obtenga la IP de origen y valide si es una estación de administración conocida.",
+        "Pivotee en el mismo host +/- 15 minutos: ps, systemctl, kill, pkill, systemctl stop, cambios en archivos de configuración de agentes, descargas con curl o wget.",
+        "Verifique que los agentes buscados sigan activos y enviando telemetría después del evento; un hueco de logs es señal fuerte.",
+        "Busque alertas previas para el mismo usuario y host, y la misma búsqueda en otros hosts que sugiera movimiento lateral."
+      ],
+      "false_positives": [
+        "Administradores o SRE comprobando que filebeat, auditbeat, osqueryd o falcond estén en ejecución.",
+        "Scripts de monitoreo, health checks o herramientas de gestión de configuración que validan el estado de los agentes.",
+        "Instaladores o scripts de actualización de los propios agentes de seguridad."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o el equipo de operaciones si la actividad fue planificada; documente y ajuste exclusiones para scripts conocidos.",
+        "Si no es legítimo, preserve evidencia (historial de shell, lista de procesos, conexiones de red) antes de cualquier cambio.",
+        "Aísle el host si se detuvieron agentes o hay otra actividad sospechosa, y deshabilite o rote credenciales de la cuenta implicada.",
+        "Restaure y verifique los agentes de seguridad, revise persistencia y realice búsqueda de amenazas en hosts relacionados."
+      ],
+      "severity_rationale": "Nivel bajo porque buscar procesos de agentes es una tarea administrativa común; cobra relevancia solo combinado con otras señales de intrusión o evasión."
+    },
+    "en": {
+      "summary": "grep or egrep was run on a Linux host to look for security or monitoring agents (Nessus, Fluentd, Elastic Beats, osquery, Carbon Black, CrowdStrike Falcon). This may be routine administration or reconnaissance before defense evasion.",
+      "what_it_detects": "Process creation where Image ends with /grep or /egrep and CommandLine contains nessusd, td-agent, packetbeat, filebeat, auditbeat, osqueryd, cbagentd or falcond, typically from pipelines like 'ps aux | grep falcond'.",
+      "why_it_matters": "Maps to ATT&CK T1518.001 (Security Software Discovery): attackers enumerate security and logging agents on a host so they can stop, evade or work around them before acting further.",
+      "triage_steps": [
+        "Review the full CommandLine and user: which agent was searched for, and who ran it (root, service account, interactive user)?",
+        "Identify ParentImage and the process ancestry: interactive shell over SSH, cron, provisioning script or config management (Ansible, Puppet, Chef).",
+        "For SSH sessions, get the source IP and check it against known admin workstations or jump hosts.",
+        "Pivot on the same host +/- 15 minutes: ps, kill, pkill, systemctl stop, edits to agent configs, curl or wget downloads.",
+        "Confirm the searched agents are still running and sending telemetry after the event; a logging gap is a strong signal.",
+        "Look for earlier alerts for the same user and host, and the same search on other hosts suggesting lateral movement."
+      ],
+      "false_positives": [
+        "Administrators or SREs checking that filebeat, auditbeat, osqueryd or falcond are running.",
+        "Monitoring scripts, health checks or configuration management validating agent status.",
+        "Installers or upgrade scripts for the security agents themselves."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or operations whether the activity was planned; document it and tune exclusions for known scripts.",
+        "If not legitimate, preserve evidence (shell history, process list, network connections) before making changes.",
+        "Isolate the host if agents were stopped or other suspicious activity exists, and disable or rotate the involved account's credentials.",
+        "Restore and verify security agents, check for persistence, and hunt across related hosts."
+      ],
+      "severity_rationale": "Low because checking for agent processes is common admin work; it matters mainly when combined with other intrusion or evasion signals."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user pipes ps output into grep looking for the CrowdStrike Falcon daemon",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -i falcond",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "ParentProcessId": 48101,
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "egrep searching for several Elastic Beats and osquery processes at once",
+        "event": {
+          "Image": "/bin/egrep",
+          "CommandLine": "egrep filebeat|auditbeat|osqueryd",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c ps -ef | egrep 'filebeat|auditbeat|osqueryd'",
+          "User": "www-data",
+          "ProcessId": 9120,
+          "ParentProcessId": 9118,
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "grep used for an unrelated process (nginx), no security agent name in CommandLine",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep nginx",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 48300,
+          "ParentProcessId": 48101,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "systemctl querying filebeat status: agent name present but Image is not grep or egrep",
+        "event": {
+          "Image": "/usr/bin/systemctl",
+          "CommandLine": "systemctl status filebeat",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "root",
+          "ProcessId": 5531,
+          "ParentProcessId": 5520,
+          "Computer": "log-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

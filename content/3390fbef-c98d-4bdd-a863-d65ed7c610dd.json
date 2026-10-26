@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "3390fbef-c98d-4bdd-a863-d65ed7c610dd",
+    "title": "New ODBC Driver Registered",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_odbc_driver_registered.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_odbc_driver_registered.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor Driver de una clave bajo HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI, es decir, se registró un driver ODBC nuevo o modificado. Suele deberse a instalaciones legítimas, pero también puede servir para persistencia mediante una DLL.",
+      "what_it_detects": "Eventos registry_set donde TargetObject contiene \\SOFTWARE\\ODBC\\ODBCINST.INI\\ y termina en \\Driver. Se excluyen el driver SQL Server con SQLSRV32.dll y los drivers de Access y Excel que apuntan a ACEODBC.DLL en Program Files.",
+      "why_it_matters": "El valor Driver indica la DLL que carga cualquier aplicación que use ese driver ODBC. Un atacante puede registrar una DLL maliciosa, por ejemplo con odbcconf.exe, para ejecutar código y mantener persistencia (táctica Persistence de ATT&CK).",
+      "triage_steps": [
+        "Revise Details: ruta y nombre de la DLL. Las rutas en Users, Temp, ProgramData o Public, o los nombres genéricos, son sospechosos.",
+        "Identifique el Image que escribió el valor y su proceso padre; odbcconf.exe, rundll32.exe, powershell.exe o cmd.exe exigen más atención que msiexec.exe o un instalador conocido.",
+        "Obtenga la línea de comandos del proceso, buscando odbcconf con INSTALLDRIVER, REGSVR o archivos .rsp.",
+        "Verifique la firma digital, el hash y la reputación de la DLL de Details; confirme la fecha de creación del archivo.",
+        "Revise los demás valores de la misma clave (Setup, APILevel) y la lista ODBC Drivers para ver si el nombre imita un driver legítimo.",
+        "Busque en el mismo host, en un rango de +/- 15 minutes, creación de archivos, cargas de esa DLL y conexiones de red.",
+        "Confirme con TI si existe un despliegue de software o un ticket de cambio que explique el driver."
+      ],
+      "false_positives": [
+        "Instalación o actualización de drivers ODBC legítimos (PostgreSQL, MySQL, Oracle, SAP, conectores de BI) por msiexec o instaladores firmados.",
+        "Instalaciones de Microsoft Office o Access Database Engine con rutas fuera de los filtros.",
+        "Herramientas de despliegue como SCCM o Intune que registran drivers de bases de datos."
+      ],
+      "response_steps": [
+        "Si el driver es legítimo y documentado, cierre la alerta y considere un filtro específico por ruta e Image firmado.",
+        "Si la DLL no está firmada o reside en una ruta escribible por usuarios, aísle el endpoint y preserve la DLL y la clave de registro.",
+        "Tras confirmar la actividad maliciosa, elimine la clave del driver y la DLL, y revise otros mecanismos de persistencia en el host.",
+        "Busque el mismo hash o la misma ruta en otros equipos y restablezca las credenciales del usuario implicado si hubo compromiso."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque registrar drivers ODBC es habitual en instalaciones legítimas y la regla espera falsos positivos frecuentes."
+    },
+    "en": {
+      "summary": "The Driver value of a key under HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI was written, meaning an ODBC driver was registered or changed. This is usually a legitimate install but can be DLL-based persistence.",
+      "what_it_detects": "registry_set events where TargetObject contains \\SOFTWARE\\ODBC\\ODBCINST.INI\\ and ends with \\Driver. The rule excludes the SQL Server driver pointing to SQLSRV32.dll and the Access and Excel drivers pointing to ACEODBC.DLL under Program Files.",
+      "why_it_matters": "The Driver value names the DLL loaded by any application using that ODBC driver. An attacker can register a malicious DLL, for example with odbcconf.exe, to run code and persist (ATT&CK Persistence tactic).",
+      "triage_steps": [
+        "Review Details: DLL path and name. Paths in Users, Temp, ProgramData or Public, or generic names, are suspicious.",
+        "Identify the Image that wrote the value and its parent; odbcconf.exe, rundll32.exe, powershell.exe or cmd.exe deserve more scrutiny than msiexec.exe or a known installer.",
+        "Get the process command line and look for odbcconf with INSTALLDRIVER, REGSVR or .rsp response files.",
+        "Check the signature, hash and reputation of the DLL in Details, and the file creation time.",
+        "Inspect the other values in the same key (Setup, APILevel) and the ODBC Drivers list for names imitating legitimate drivers.",
+        "Pivot on the same host within +/- 15 minutes for file creation, loads of that DLL and network connections.",
+        "Confirm with IT whether a software deployment or change ticket explains the driver."
+      ],
+      "false_positives": [
+        "Installing or updating legitimate ODBC drivers (PostgreSQL, MySQL, Oracle, SAP, BI connectors) via msiexec or signed installers.",
+        "Microsoft Office or Access Database Engine installs using paths outside the filters.",
+        "Deployment tools such as SCCM or Intune registering database drivers."
+      ],
+      "response_steps": [
+        "If the driver is legitimate and documented, close the alert and consider a narrow filter on path and signed Image.",
+        "If the DLL is unsigned or in a user-writable path, isolate the endpoint and preserve the DLL and registry key.",
+        "Once malicious activity is confirmed, remove the driver key and DLL, and hunt for other persistence on the host.",
+        "Search for the same hash or path on other hosts and reset credentials of the involved user if compromise is confirmed."
+      ],
+      "severity_rationale": "Low fits because ODBC driver registration is common during legitimate installs and the rule expects frequent false positives."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "odbcconf.exe registers a driver whose DLL lives in a user-writable folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\odbcconf.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\Data Sync Driver\\Driver",
+          "Details": "C:\\Users\\Public\\Libraries\\datasync.dll"
+        }
+      },
+      {
+        "description": "msiexec registers a third-party PostgreSQL ODBC driver (expected benign match for this low rule)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 4312,
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\PostgreSQL Unicode(x64)\\Driver",
+          "Details": "C:\\Program Files\\psqlODBC\\bin\\psqlodbc35w.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Built-in SQL Server driver pointing to SQLSRV32.dll, excluded by filter_main_sqlserver",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 3980,
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\SQL Server\\Driver",
+          "Details": "%WINDIR%\\System32\\SQLSRV32.dll"
+        }
+      },
+      {
+        "description": "Office Excel driver pointing to ACEODBC.DLL in Program Files, excluded by filter_optional_office_excel",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0310.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Program Files\\Common Files\\microsoft shared\\ClickToRun\\OfficeClickToRun.exe",
+          "ProcessId": 5544,
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\Microsoft Excel Driver (*.xls, *.xlsx, *.xlsm, *.xlsb)\\Driver",
+          "Details": "C:\\Program Files\\Microsoft Office\\root\\VFS\\ProgramFilesCommonX64\\Microsoft Shared\\OFFICE16\\ACEODBC.DLL"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

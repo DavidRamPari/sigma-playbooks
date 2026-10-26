@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "55695bc0-c8cf-461f-a379-2535f563c854",
+    "title": "Applications That Are Using ROPC Authentication Flow",
+    "level": "medium",
+    "status": "test",
+    "author": "Mark Morowczynski '@markmorow', Bailey Bercik '@baileybercik'",
+    "path": "cloud/azure/signin_logs/azure_app_ropc_authentication.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/signin_logs/azure_app_ropc_authentication.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un inicio de sesión en Entra ID usó el flujo Resource Owner Password Credentials (ROPC): la aplicación recibió la contraseña del usuario y se autenticó con ella directamente.",
+      "what_it_detects": "Eventos de SignInLogs de Azure cuyo campo properties.message es exactamente \"ROPC\", es decir, autenticaciones donde una aplicación envió el usuario y la contraseña al proveedor de identidad en nombre del usuario.",
+      "why_it_matters": "ROPC expone la contraseña a la aplicación y no admite MFA interactiva. Un atacante con credenciales robadas puede usarlo para entrar con cuentas válidas (T1078), persistir o escalar privilegios sin pasar por MFA.",
+      "triage_steps": [
+        "Identifica properties.userPrincipalName, properties.appDisplayName/appId, properties.ipAddress y properties.resultType del evento.",
+        "Revisa si el inicio fue exitoso o fallido, y si properties.conditionalAccessStatus muestra que se aplicó alguna política.",
+        "Valida con el inventario o el dueño de la aplicación si la app tiene un uso de ROPC conocido y aprobado (legado o pruebas automatizadas).",
+        "Pivotea por la misma IP de origen: muchos usuarios distintos vía ROPC en poco tiempo sugiere password spraying.",
+        "Pivotea por el mismo usuario +/- 15 minutos: fallos previos, ubicaciones inusuales, user agent nuevo o viaje imposible.",
+        "Busca alertas anteriores para el usuario, la IP o la aplicación, y revisa la reputación y geolocalización de la IP.",
+        "Si fue exitoso, revisa la actividad posterior del usuario: acceso a buzones, cambios de MFA, consentimientos de apps o roles asignados."
+      ],
+      "false_positives": [
+        "Aplicaciones legadas que no admiten flujos modernos de autenticación y usan ROPC con cuentas conocidas.",
+        "Pruebas automatizadas o pipelines de CI/CD que se autentican con cuentas de prueba mediante ROPC.",
+        "Scripts administrativos antiguos o herramientas de migración que piden usuario y contraseña."
+      ],
+      "response_steps": [
+        "Confirma con el usuario y el dueño de la aplicación si el acceso fue legítimo antes de actuar.",
+        "Si no es legítimo: restablece la contraseña, revoca las sesiones y los refresh tokens del usuario y revisa sus métodos de MFA.",
+        "Bloquea la IP de origen con una ubicación con nombre o Acceso Condicional, y restringe la aplicación tras verificar su impacto.",
+        "Revierte cambios hechos por el atacante (reglas de buzón, consentimientos, roles) y documenta el incidente.",
+        "Para usos legítimos, planifica migrar la app a un flujo moderno y limita ROPC con Acceso Condicional o exclusiones documentadas."
+      ],
+      "severity_rationale": "Medium es adecuado porque ROPC tiene usos legítimos de legado o pruebas, pero omite MFA y expone contraseñas, por lo que requiere validación oportuna."
+    },
+    "en": {
+      "summary": "An Entra ID sign-in used the Resource Owner Password Credentials (ROPC) flow: the application received the user's password and authenticated with it directly.",
+      "what_it_detects": "Azure SignInLogs events where properties.message is exactly \"ROPC\", meaning an application submitted the username and password to the identity provider on the user's behalf.",
+      "why_it_matters": "ROPC exposes the password to the application and does not support interactive MFA. An attacker with stolen credentials can use it to sign in with valid accounts (T1078), persist or escalate without facing MFA.",
+      "triage_steps": [
+        "Note properties.userPrincipalName, properties.appDisplayName/appId, properties.ipAddress and properties.resultType from the event.",
+        "Check whether the sign-in succeeded or failed and whether properties.conditionalAccessStatus shows any policy applied.",
+        "Confirm with the app inventory or owner whether this application has a known, approved ROPC use (legacy or automated testing).",
+        "Pivot on the same source IP: many different users via ROPC in a short window suggests password spraying.",
+        "Pivot on the same user +/- 15 minutes: prior failures, unusual locations, new user agent or impossible travel.",
+        "Look for earlier alerts on the user, IP or application, and check the IP's reputation and geolocation.",
+        "If successful, review the user's follow-on activity: mailbox access, MFA changes, app consents or role assignments."
+      ],
+      "false_positives": [
+        "Legacy applications that cannot use modern authentication flows and use ROPC with known accounts.",
+        "Automated tests or CI/CD pipelines authenticating test accounts via ROPC.",
+        "Old admin scripts or migration tools that prompt for username and password."
+      ],
+      "response_steps": [
+        "Confirm with the user and the application owner whether the access was legitimate before acting.",
+        "If not legitimate: reset the password, revoke the user's sessions and refresh tokens, and review MFA methods.",
+        "Block the source IP with a named location or Conditional Access, and restrict the application after checking impact.",
+        "Revert attacker changes (mailbox rules, consents, roles) and document the incident.",
+        "For legitimate use, plan migration to a modern flow and limit ROPC with Conditional Access or documented exceptions."
+      ],
+      "severity_rationale": "Medium fits because ROPC has legitimate legacy and testing uses, but it bypasses MFA and exposes passwords, so it warrants timely validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful sign-in to a legacy app using the ROPC flow from an external IP.",
+        "event": {
+          "category": "SignInLogs",
+          "operationName": "Sign-in activity",
+          "properties.message": "ROPC",
+          "properties.userPrincipalName": "jperez@example.com",
+          "properties.appDisplayName": "Legacy Payroll Connector",
+          "properties.appId": "00000000-0000-0000-0000-000000000abc",
+          "properties.ipAddress": "203.0.113.45",
+          "properties.authenticationProtocol": "ropc",
+          "properties.resultType": "0",
+          "properties.conditionalAccessStatus": "notApplied",
+          "properties.clientAppUsed": "Mobile Apps and Desktop clients"
+        }
+      },
+      {
+        "description": "Failed ROPC sign-in for another user from the same IP, typical of spraying.",
+        "event": {
+          "category": "SignInLogs",
+          "operationName": "Sign-in activity",
+          "properties.message": "ROPC",
+          "properties.userPrincipalName": "mgomez@example.com",
+          "properties.appDisplayName": "Legacy Payroll Connector",
+          "properties.ipAddress": "203.0.113.45",
+          "properties.authenticationProtocol": "ropc",
+          "properties.resultType": "50126",
+          "properties.conditionalAccessStatus": "notApplied"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal interactive browser sign-in with MFA; message is not ROPC.",
+        "event": {
+          "category": "SignInLogs",
+          "operationName": "Sign-in activity",
+          "properties.message": "",
+          "properties.userPrincipalName": "jperez@example.com",
+          "properties.appDisplayName": "Office 365 Exchange Online",
+          "properties.ipAddress": "198.51.100.20",
+          "properties.authenticationProtocol": "none",
+          "properties.resultType": "0",
+          "properties.conditionalAccessStatus": "success",
+          "properties.clientAppUsed": "Browser"
+        }
+      },
+      {
+        "description": "Message mentions ROPC inside longer text; the rule requires the exact value ROPC.",
+        "event": {
+          "category": "SignInLogs",
+          "operationName": "Sign-in activity",
+          "properties.message": "ROPC sign-in blocked by Conditional Access",
+          "properties.userPrincipalName": "svc-test@example.com",
+          "properties.appDisplayName": "QA Automation",
+          "properties.ipAddress": "192.0.2.10",
+          "properties.resultType": "53003",
+          "properties.conditionalAccessStatus": "failure"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

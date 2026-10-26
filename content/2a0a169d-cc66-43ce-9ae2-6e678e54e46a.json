@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "2a0a169d-cc66-43ce-9ae2-6e678e54e46a",
+    "title": "Registry Modification Attempt Via VBScript - PowerShell",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_vbscript_registry_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_vbscript_registry_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.005",
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado por Script Block Logging (evento 4104) contiene código VBScript que crea el objeto Wscript.Shell con CreateObject y escribe en el registro con RegWrite. Puede tratarse de persistencia o evasión de defensas que evita reg.exe y los cmdlets nativos.",
+      "what_it_detects": "Eventos ps_script cuyo ScriptBlockText contiene a la vez 'CreateObject', 'Wscript.shell' y '.RegWrite'. Esto suele indicar VBScript incrustado en PowerShell, por ejemplo mediante MSScriptControl o un archivo .vbs generado desde el script.",
+      "why_it_matters": "Si se modifica el registro (T1112) con VBScript (T1059.005), un atacante puede crear claves Run, cambiar políticas de seguridad o UAC y secuestrar ejecuciones sin usar las herramientas que suelen monitorearse.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo e identifique la clave, el nombre del valor, los datos y el tipo que se pasan a RegWrite (Run/RunOnce, Winlogon, Image File Execution Options, Policies, Defender).",
+        "Si el script viene fragmentado, reconstrúyalo uniendo los eventos 4104 que tengan el mismo ScriptBlockId. Revise también el campo Path para saber qué archivo .ps1 se ejecutó.",
+        "Identifique el usuario y el proceso padre de powershell.exe con el evento 4688 o Sysmon 1 en el mismo host, en una ventana de +/- 15 minutos. Considere sospechosos a Office, wscript, mshta o un navegador.",
+        "Confirme la escritura real en el registro con eventos Sysmon 13 o con una consulta en vivo de la clave en el endpoint.",
+        "Si los datos escritos apuntan a un ejecutable o script, obtenga su hash, su firma y su ruta. Las rutas en Public, AppData o Temp aumentan la sospecha.",
+        "Busque el mismo texto de script o el mismo valor de registro en otros hosts y revise si hubo alertas previas para ese usuario o equipo."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administración o instalación que configuran el registro con VBScript heredado envuelto en PowerShell.",
+        "Herramientas de despliegue como SCCM o GPO con scripts de inicio de sesión antiguos que se migraron a PowerShell sin reescribirse.",
+        "Pruebas autorizadas de red team o de validación de detecciones."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o con el equipo de TI si el script y la clave modificada corresponden a un cambio autorizado.",
+        "Si es malicioso, aísle el endpoint y conserve el script, los eventos 4104 y una exportación de la clave afectada antes de hacer cambios.",
+        "Elimine el valor de registro malicioso y el payload referenciado una vez confirmado, y restaure la configuración de seguridad que se haya alterado.",
+        "Restablezca las credenciales del usuario involucrado si hay indicios de compromiso y busque persistencia adicional en el host."
+      ],
+      "severity_rationale": "Se asigna nivel medio porque la combinación es poco común y permite persistencia o evasión, aunque algunos scripts legítimos de administración también la usan."
+    },
+    "en": {
+      "summary": "A PowerShell script block (event 4104) contains VBScript code that creates a Wscript.Shell object with CreateObject and writes to the registry with RegWrite. This may be persistence or defense evasion that avoids reg.exe and the native cmdlets.",
+      "what_it_detects": "ps_script events whose ScriptBlockText contains all of 'CreateObject', 'Wscript.shell' and '.RegWrite'. This usually means VBScript embedded in PowerShell, for example via MSScriptControl or a .vbs file the script writes out.",
+      "why_it_matters": "Changing the registry (T1112) through VBScript (T1059.005) lets an attacker add Run keys, change security or UAC policies and hijack execution while avoiding commonly monitored tools.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and note the key, value name, data and type passed to RegWrite (Run/RunOnce, Winlogon, Image File Execution Options, Policies, Defender).",
+        "If the script is split across several 4104 events, rebuild it by joining the events that share a ScriptBlockId. Check the Path field for the source .ps1 file.",
+        "Find the user and the parent of powershell.exe from event 4688 or Sysmon 1 on the same host, +/- 15 minutes. Treat Office, wscript, mshta or a browser parent as suspicious.",
+        "Confirm the write actually happened using Sysmon 13 events or a live query of the key on the endpoint.",
+        "If the written data points to a binary or script, collect its hash, signature and path. Paths under Public, AppData or Temp raise suspicion.",
+        "Search other hosts for the same script text or registry value, and review earlier alerts for this user and host."
+      ],
+      "false_positives": [
+        "Legitimate admin or install scripts that set registry values using legacy VBScript wrapped in PowerShell.",
+        "Deployment tooling such as SCCM or GPO logon scripts that were ported to PowerShell without being rewritten.",
+        "Authorized red team or detection validation exercises."
+      ],
+      "response_steps": [
+        "Ask the system owner or IT whether the script and the modified key match an authorized change.",
+        "If it is malicious, isolate the endpoint and preserve the script, the 4104 events and an export of the affected key before making changes.",
+        "Once confirmed, remove the malicious registry value and the referenced payload, and restore any security settings that were changed.",
+        "Reset the involved user's credentials if compromise is likely, and hunt the host for additional persistence."
+      ],
+      "severity_rationale": "Medium fits because this combination is uncommon and enables persistence or evasion, but some legitimate admin scripts also use it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell uses MSScriptControl to run embedded VBScript that writes an HKCU Run key",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5d3c1a2e-7b44-4f0e-9a61-2c8e0f9b1a77",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup.ps1",
+          "ScriptBlockText": "$sc = New-Object -ComObject MSScriptControl.ScriptControl; $sc.Language = 'VBScript'; $sc.AddCode('Set s = CreateObject(\"Wscript.Shell\") : s.RegWrite \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater\", \"C:\\Users\\Public\\upd.exe\", \"REG_SZ\"')"
+        }
+      },
+      {
+        "description": "PowerShell writes and launches a .vbs file that modifies a Policies registry value",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "a8f2c6d1-3e90-4b5a-8c27-91d4e6f0b352",
+          "Path": "",
+          "ScriptBlockText": "$v = 'Set o = CreateObject(\"WScript.Shell\")' + \"`r`n\" + 'o.RegWrite \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\DisableTaskMgr\", 1, \"REG_DWORD\"'; Set-Content -Path $env:TEMP\\cfg.vbs -Value $v; cscript.exe //nologo $env:TEMP\\cfg.vbs"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Inventory script that only reads the registry through Wscript.Shell with RegRead (no RegWrite)",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "0c7e4b19-2d58-4a3f-b6e1-7f9a2c5d8e40",
+          "Path": "C:\\Scripts\\inventory.ps1",
+          "ScriptBlockText": "$sc = New-Object -ComObject MSScriptControl.ScriptControl; $sc.Language = 'VBScript'; $sc.AddCode('Set s = CreateObject(\"Wscript.Shell\") : v = s.RegRead(\"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProductName\")')"
+        }
+      },
+      {
+        "description": "Native PowerShell COM usage with New-Object -ComObject and RegWrite, without the CreateObject string",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ScriptBlockId": "e41b9d72-6c03-4f8a-a5d0-3b2f7e1c9a64",
+          "Path": "C:\\Program Files\\Contoso\\config.ps1",
+          "ScriptBlockText": "$sh = New-Object -ComObject WScript.Shell; $sh.RegWrite('HKCU\\Software\\Contoso\\App\\Theme', 'Dark', 'REG_SZ')"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T03:07:27+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

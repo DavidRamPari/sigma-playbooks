@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "c4568f5d-131f-4e78-83d4-45b2da0ec4f1",
+    "title": "Communication To LocaltoNet Tunneling Service Initiated - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Andreas Braathen (mnemonic.io)",
+    "path": "linux/network_connection/net_connection_lnx_domain_localtonet_tunnel.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/network_connection/net_connection_lnx_domain_localtonet_tunnel.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1090",
+      "T1102",
+      "T1572"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en un host Linux inició una conexión saliente a un subdominio de LocaltoNet (*.localto.net o *.localtonet.com). Puede indicar que un túnel inverso expone servicios internos a Internet o funciona como canal de comando y control.",
+      "what_it_detects": "Eventos de conexión de red en Linux (por ejemplo, Sysmon for Linux, evento 3) con Initiated igual a 'true' y un DestinationHostname que termina en '.localto.net' o '.localtonet.com', que son los subdominios de túnel del servicio LocaltoNet.",
+      "why_it_matters": "LocaltoNet es un reverse proxy que publica servicios de localhost en Internet. Un atacante puede usarlo para mantener acceso remoto, sacar tráfico por un túnel y evadir controles perimetrales y MFA (T1572 Protocol Tunneling, T1090 Proxy, T1102 Web Service).",
+      "triage_steps": [
+        "Revise Image, User y ProcessId del evento: ¿es un binario de LocaltoNet, un script o un proceso inesperado ubicado en /tmp, /dev/shm o un directorio oculto?",
+        "Anote DestinationHostname, DestinationIp y DestinationPort; el subdominio identifica el túnel específico y sirve para buscarlo en el proxy, el DNS y otros hosts.",
+        "Reconstruya el árbol de procesos: proceso padre, línea de comandos, token o puertos locales expuestos y la sesión (SSH, cron, systemd) desde la que se lanzó.",
+        "Busque persistencia: unidades systemd, crontab, ~/.bashrc o servicios nuevos que ejecuten el cliente del túnel; calcule el hash del binario y compárelo con su inventario.",
+        "Revise el mismo host +/- 15 minutos: inicios de sesión, descargas con curl o wget, nuevos usuarios, cambios de sudoers y otras conexiones salientes.",
+        "Determine qué servicio local quedó expuesto (SSH, RDP, web, base de datos) y revise si hubo accesos entrantes a ese puerto a través del túnel.",
+        "Consulte alertas previas del mismo host y usuario, y si otros endpoints contactan subdominios de LocaltoNet."
+      ],
+      "false_positives": [
+        "Uso legítimo y aprobado de LocaltoNet por desarrolladores para mostrar o probar servicios locales.",
+        "Equipos de soporte o laboratorio que usan túneles temporales para demos o integraciones con webhooks, documentados en un ticket de cambio."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host y del usuario si el uso está autorizado; si lo está, documente la excepción por host e Image.",
+        "Si no está autorizado, aísle el endpoint o bloquee *.localto.net y *.localtonet.com en DNS y proxy, preservando antes la evidencia.",
+        "Detenga el proceso del túnel tras capturar memoria, el binario y su configuración; elimine la persistencia identificada.",
+        "Rote las credenciales del usuario y de los servicios expuestos por el túnel, y revise accesos realizados a través de él.",
+        "Busque el mismo hash, Image o subdominio en toda la flota y restaure el host desde una imagen confiable si hubo compromiso."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque un túnel inverso no autorizado ofrece acceso remoto directo que evade controles perimetrales, aunque existe uso legítimo ocasional."
+    },
+    "en": {
+      "summary": "A process on a Linux host initiated an outbound connection to a LocaltoNet tunnel subdomain (*.localto.net or *.localtonet.com). This may mean a reverse tunnel is exposing internal services or acting as a command-and-control channel.",
+      "what_it_detects": "Linux network connection events (for example Sysmon for Linux event 3) where Initiated is 'true' and DestinationHostname ends with '.localto.net' or '.localtonet.com', the tunnel subdomains of the LocaltoNet service.",
+      "why_it_matters": "LocaltoNet is a reverse proxy that publishes localhost services to the Internet. Attackers can use it for remote access, tunneled traffic and to bypass perimeter controls and MFA (T1572 Protocol Tunneling, T1090 Proxy, T1102 Web Service).",
+      "triage_steps": [
+        "Check Image, User and ProcessId: is it a LocaltoNet client, a script, or an unexpected binary in /tmp, /dev/shm or a hidden directory?",
+        "Record DestinationHostname, DestinationIp and DestinationPort; the subdomain identifies the specific tunnel and can be searched in proxy, DNS and other hosts.",
+        "Rebuild the process tree: parent process, command line, auth token or local ports exposed, and the session (SSH, cron, systemd) that launched it.",
+        "Look for persistence: new systemd units, crontab entries, ~/.bashrc changes running the client; hash the binary and compare with your software inventory.",
+        "Review the same host +/- 15 minutes: logins, curl or wget downloads, new users, sudoers changes and other outbound connections.",
+        "Identify which local service was exposed (SSH, web, database) and check for inbound access to that port through the tunnel.",
+        "Check earlier alerts for the same host and user, and whether other endpoints contact LocaltoNet subdomains."
+      ],
+      "false_positives": [
+        "Approved LocaltoNet use by developers to share or test local services.",
+        "Support or lab teams using temporary tunnels for demos or webhook integrations, documented in a change ticket."
+      ],
+      "response_steps": [
+        "Confirm with the host and user owners whether the use is authorized; if so, document an exception scoped by host and Image.",
+        "If unauthorized, isolate the endpoint or block *.localto.net and *.localtonet.com at DNS and proxy, preserving evidence first.",
+        "Stop the tunnel process after capturing memory, the binary and its configuration; remove identified persistence.",
+        "Rotate credentials of the user and of services exposed through the tunnel, and review access made through it.",
+        "Hunt for the same hash, Image or subdomain fleet-wide and rebuild the host from a trusted image if compromise is confirmed."
+      ],
+      "severity_rationale": "High fits because an unauthorized reverse tunnel gives direct remote access that bypasses perimeter controls, even though occasional legitimate use exists."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "LocaltoNet client dropped in a hidden /tmp directory opens an outbound tunnel to a localto.net subdomain.",
+        "event": {
+          "EventID": 3,
+          "Computer": "bastion-01",
+          "Image": "/tmp/.cache/localtonet",
+          "ProcessId": 48213,
+          "User": "jperez",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.0.15",
+          "SourcePort": 51544,
+          "DestinationHostname": "k7f2q9.localto.net",
+          "DestinationIp": "203.0.113.45",
+          "DestinationPort": 443
+        }
+      },
+      {
+        "description": "curl run by a service account connects to a localtonet.com tunnel subdomain.",
+        "event": {
+          "EventID": 3,
+          "Computer": "web-srv-03",
+          "Image": "/usr/bin/curl",
+          "ProcessId": 9921,
+          "User": "www-data",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.1.30",
+          "SourcePort": 40218,
+          "DestinationHostname": "x91ab.localtonet.com",
+          "DestinationIp": "198.51.100.77",
+          "DestinationPort": 443
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Browser visits the LocaltoNet main website (no tunnel subdomain), so the '.localtonet.com' suffix does not match.",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142",
+          "Image": "/usr/lib/firefox/firefox",
+          "ProcessId": 3310,
+          "User": "mlopez",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.2.42",
+          "SourcePort": 55012,
+          "DestinationHostname": "localtonet.com",
+          "DestinationIp": "198.51.100.10",
+          "DestinationPort": 443
+        }
+      },
+      {
+        "description": "Outbound connection to an unrelated domain that merely contains 'localtonet' but does not end with a LocaltoNet suffix.",
+        "event": {
+          "EventID": 3,
+          "Computer": "bastion-01",
+          "Image": "/usr/bin/wget",
+          "ProcessId": 50110,
+          "User": "jperez",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.0.15",
+          "SourcePort": 51802,
+          "DestinationHostname": "docs.localtonet.example.org",
+          "DestinationIp": "192.0.2.25",
+          "DestinationPort": 443
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

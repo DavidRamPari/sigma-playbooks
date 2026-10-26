@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "b831353c-1971-477b-abb6-2828edc3bca1",
+    "title": "Azure Keyvault Secrets Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_keyvault_secrets_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_keyvault_secrets_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552",
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó, respaldó, eliminó, purgó, recuperó o restauró un secreto de Azure Key Vault. Puede ser un cambio administrativo normal, o un intento de robar credenciales o de interrumpir servicios.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es una operación sobre secretos de Key Vault: WRITE, DELETE, BACKUP, PURGE, UPDATE, RECOVER, RESTORE o SETSECRET.",
+      "why_it_matters": "Los secretos de Key Vault guardan contraseñas, cadenas de conexión y claves de API. Un atacante puede respaldarlos o sobrescribirlos para obtener acceso (T1552, credenciales no protegidas), o eliminarlos y purgarlos para provocar una interrupción (impacto).",
+      "triage_steps": [
+        "Revise operationName, caller, callerIpAddress, resourceId y resultType. Identifique el vault y el secreto afectados y confirme si la operación tuvo éxito.",
+        "Determine si caller es un usuario, un service principal o una managed identity, y si normalmente administra ese vault.",
+        "Compruebe callerIpAddress y el user agent: ¿corresponden a rangos corporativos, pipelines de CI/CD o a una ubicación inusual?",
+        "Busque un ticket de cambio, un despliegue o una rotación programada que justifique la operación.",
+        "Revise la actividad del mismo caller en +/- 15 minutos: asignaciones de roles, cambios en access policies, listado de secretos u otras operaciones en otros vaults.",
+        "Revise los inicios de sesión del caller en Entra ID: MFA, riesgo del inicio de sesión, país y dispositivo.",
+        "Considere más sospechosas las secuencias BACKUP seguidas de DELETE/PURGE o las operaciones masivas sobre muchos secretos.",
+        "Busque alertas anteriores sobre el mismo caller, la misma IP o el mismo vault."
+      ],
+      "false_positives": [
+        "Administradores que crean, actualizan o eliminan secretos como parte de su trabajo documentado.",
+        "Rotación automática de secretos mediante Azure Functions, Automation o herramientas de terceros.",
+        "Pipelines de Terraform, Bicep o ARM que despliegan o actualizan secretos.",
+        "Respaldos o restauraciones planificados durante migraciones o pruebas de recuperación ante desastres."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del vault o el dueño de la identidad si el cambio era esperado.",
+        "Si no está autorizado, revoque las sesiones y restablezca las credenciales del caller o deshabilite el service principal.",
+        "Restrinja temporalmente el acceso al vault (RBAC o access policies, firewall de red) y conserve los logs de diagnóstico.",
+        "Rote todos los secretos expuestos o modificados y actualice las aplicaciones que dependen de ellos.",
+        "Recupere los secretos eliminados con soft-delete, si aún no se purgaron, y verifique que purge protection esté habilitado.",
+        "Documente lo ocurrido y, si la actividad es legítima y recurrente, cree una exclusión acotada para esa identidad."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque estas operaciones son habituales en la administración, pero si no están autorizadas pueden exponer credenciales críticas o interrumpir servicios."
+    },
+    "en": {
+      "summary": "An identity created, changed, backed up, deleted, purged, recovered or restored an Azure Key Vault secret. This may be routine administration, or an attempt to steal credentials or disrupt services.",
+      "what_it_detects": "Azure Activity Log events whose operationName is a Key Vault secret operation: WRITE, DELETE, BACKUP, PURGE, UPDATE, RECOVER, RESTORE or SETSECRET.",
+      "why_it_matters": "Key Vault secrets hold passwords, connection strings and API keys. Attackers may back up or overwrite them to gain access (T1552, unsecured credentials), or delete and purge them to cause outages (impact).",
+      "triage_steps": [
+        "Review operationName, caller, callerIpAddress, resourceId and resultType. Identify the vault and secret and confirm whether the operation succeeded.",
+        "Determine whether caller is a user, service principal or managed identity, and whether it normally manages this vault.",
+        "Check callerIpAddress and user agent: do they match corporate ranges, CI/CD agents, or an unusual location?",
+        "Look for a change ticket, deployment or scheduled rotation that explains the operation.",
+        "Pivot on the same caller within +/- 15 minutes: role assignments, access policy changes, secret listing, or activity on other vaults.",
+        "Review the caller's Entra ID sign-ins: MFA, sign-in risk, country and device.",
+        "Treat BACKUP followed by DELETE/PURGE, or bulk operations across many secrets, as more suspicious.",
+        "Search for earlier alerts on the same caller, IP or vault."
+      ],
+      "false_positives": [
+        "Administrators creating, updating or deleting secrets as documented work.",
+        "Automated secret rotation through Azure Functions, Automation or third-party tools.",
+        "Terraform, Bicep or ARM pipelines deploying or updating secrets.",
+        "Planned backups or restores during migrations or disaster recovery tests."
+      ],
+      "response_steps": [
+        "Confirm with the vault or identity owner whether the change was expected.",
+        "If unauthorized, revoke sessions and reset the caller's credentials, or disable the service principal.",
+        "Temporarily restrict vault access (RBAC or access policies, network firewall) and preserve diagnostic logs.",
+        "Rotate every exposed or modified secret and update the applications that depend on it.",
+        "Recover deleted secrets via soft-delete if not yet purged, and verify that purge protection is enabled.",
+        "Document the findings. If the activity is legitimate and recurring, add a narrow exclusion for that identity."
+      ],
+      "severity_rationale": "Medium fits because these operations are common in administration, but unauthorized ones can expose critical credentials or disrupt services."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user from an external IP backs up a production database secret",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/SECRETS/BACKUP/ACTION",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01/secrets/sql-admin-password",
+          "time": "2024-05-14T02:17:09Z"
+        }
+      },
+      {
+        "description": "Secret write recorded in mixed case (matching is case-insensitive)",
+        "event": {
+          "operationName": "Microsoft.KeyVault/vaults/secrets/write",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "svc-deploy@example.com",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-app/providers/Microsoft.KeyVault/vaults/kv-app-02/secrets/api-key",
+          "time": "2024-05-14T10:42:31Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of secret metadata is not one of the monitored operations",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/SECRETS/READ",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01/secrets/sql-admin-password",
+          "time": "2024-05-14T09:05:00Z"
+        }
+      },
+      {
+        "description": "Vault-level configuration write, not a secret operation",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/WRITE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "admin@example.com",
+          "callerIpAddress": "192.0.2.15",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01",
+          "time": "2024-05-14T11:20:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

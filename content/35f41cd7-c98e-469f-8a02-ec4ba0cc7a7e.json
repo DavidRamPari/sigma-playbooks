@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "35f41cd7-c98e-469f-8a02-ec4ba0cc7a7e",
+    "title": "PowerShell Write-EventLog Usage",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_write_eventlog.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_write_eventlog.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell usó el cmdlet Write-EventLog con el parámetro -RawData, que escribe datos binarios arbitrarios dentro de un evento del registro de Windows. Puede ser un intento de ocultar un payload en el EventLog para recuperarlo más tarde.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) cuyo ScriptBlockText contiene a la vez 'Write-EventLog' y '-RawData ' (con espacio final). Por eso la regla solo alerta cuando se adjuntan bytes crudos al evento, no ante cualquier uso del cmdlet.",
+      "why_it_matters": "Un atacante puede guardar shellcode, scripts o configuración en el campo de datos binarios de un evento. Así evita dejar archivos en disco y burla los controles basados en archivos. Luego lee el contenido con Get-WinEvent o Get-EventLog y lo ejecuta. La regla está etiquetada como debilitamiento de defensas (defense impairment).",
+      "triage_steps": [
+        "Revise ScriptBlockText: anote LogName, Source, EventId y el origen de los bytes de -RawData (arreglos de bytes, cadenas Base64, archivos descargados).",
+        "Reconstruya el script completo agrupando por ScriptBlockId y MessageNumber/MessageTotal; revise Path para saber si vino de un archivo .ps1 o fue interactivo.",
+        "Busque en el log de destino el evento escrito con ese EventId y Source, y examine sus datos binarios: ¿contienen un encabezado MZ, código o texto codificado?",
+        "En el mismo host, dentro de +/- 15 minutos, busque lecturas del evento (Get-WinEvent, Get-EventLog, .Data, ReplacementStrings) seguidas de Invoke-Expression, Reflection o carga en memoria.",
+        "Identifique el proceso padre de powershell.exe (4688 o Sysmon 1) y su línea de comandos; marque como sospechosos los orígenes Office, wscript, mshta o las tareas programadas.",
+        "Valide el usuario: ¿es administrador, de servicio o uno que normalmente no usa PowerShell? Revise su actividad de inicio de sesión reciente.",
+        "Verifique si antes se usó New-EventLog para crear un Source nuevo y busque alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Aplicaciones o scripts internos que registran eventos con datos binarios de diagnóstico mediante Write-EventLog -RawData.",
+        "Herramientas de monitoreo o instaladores que generan eventos de prueba con datos adjuntos.",
+        "Ejercicios de red team o pruebas de detección autorizadas."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del script o de la aplicación si el uso es legítimo; si es así, documente una excepción acotada por Path y Source.",
+        "Si es malicioso, exporte primero el log afectado (.evtx) y el script como evidencia; no borre el log antes de preservarlo.",
+        "Aísle el endpoint de la red y elimine el mecanismo que lee y ejecuta el payload (tarea programada, servicio, clave Run o WMI).",
+        "Restablezca las credenciales del usuario involucrado, busque el mismo Source y los mismos bytes en otros hosts y restaure el equipo a un estado limpio."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque -RawData casi nunca se usa en operaciones normales y sirve para ocultar payloads, aunque algunas aplicaciones legítimas lo emplean."
+    },
+    "en": {
+      "summary": "A PowerShell script used Write-EventLog with the -RawData parameter, which stores arbitrary binary data inside a Windows event log entry. This may be an attempt to hide a payload in the EventLog and retrieve it later.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains both 'Write-EventLog' and '-RawData ' (with a trailing space). The rule fires only when raw bytes are attached to the event, not on every use of the cmdlet.",
+      "why_it_matters": "Attackers can store shellcode, scripts or configuration in an event's binary data field. This avoids writing files to disk and gets around file-based controls. They later read it back with Get-WinEvent or Get-EventLog and run it. The rule is tagged as defense impairment.",
+      "triage_steps": [
+        "Read ScriptBlockText: note LogName, Source, EventId and where the -RawData bytes come from (byte arrays, Base64 strings, downloaded content).",
+        "Rebuild the full script by grouping on ScriptBlockId and MessageNumber/MessageTotal; check Path to see whether it ran from a .ps1 file or interactively.",
+        "Find the written event in the target log by EventId and Source and inspect its binary data: does it contain an MZ header, code or encoded text?",
+        "On the same host within +/- 15 minutes, look for reads of the event (Get-WinEvent, Get-EventLog, .Data) followed by Invoke-Expression, Reflection or in-memory loading.",
+        "Identify the parent of powershell.exe (4688 or Sysmon 1) and its command line; treat Office, wscript, mshta or scheduled task parents as suspicious.",
+        "Check the user: admin, service account, or someone who rarely runs PowerShell? Review their recent logon activity.",
+        "Check for an earlier New-EventLog call that registered a new Source, and look for prior alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Internal applications or scripts that log events with binary diagnostic data using Write-EventLog -RawData.",
+        "Monitoring tools or installers generating test events with attached data.",
+        "Authorized red team exercises or detection testing."
+      ],
+      "response_steps": [
+        "Confirm with the script or application owner whether the use is legitimate; if it is, document a narrow exclusion scoped by Path and Source.",
+        "If malicious, export the affected log (.evtx) and the script as evidence first; do not clear the log before preserving it.",
+        "Isolate the endpoint and remove whatever reads and runs the payload (scheduled task, service, Run key or WMI subscription).",
+        "Reset the involved user's credentials, hunt for the same Source and bytes on other hosts, and restore the machine to a clean state."
+      ],
+      "severity_rationale": "Medium fits because -RawData is rare in normal operations and can hide payloads, but some legitimate applications do use it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script writes a Base64-decoded byte array into the Application log through -RawData",
+        "event": {
+          "EventID": 4104,
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5b7e2c1a-3f4d-4a8e-9c21-7d0e6f1a2b3c",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$b = [Convert]::FromBase64String($data); Write-EventLog -LogName Application -Source 'Application Error' -EventId 1001 -EntryType Information -Message 'Update check' -RawData $b"
+        }
+      },
+      {
+        "description": "Interactive one-liner storing raw bytes under a custom source",
+        "event": {
+          "EventID": 4104,
+          "Computer": "SRV-FS02.andes.example.com",
+          "ScriptBlockId": "a1d4e8f0-2b6c-4c3d-8e7f-90ab12cd34ef",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "write-eventlog -logname 'Windows PowerShell' -source PowerShell -eventid 400 -message 'ok' -rawdata 77,90,144,0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Write-EventLog call that logs only a text message, without -RawData",
+        "event": {
+          "EventID": 4104,
+          "Computer": "SRV-APP01.andes.example.com",
+          "ScriptBlockId": "c3e5f7a9-1b2d-4e6f-8a0b-1c2d3e4f5a6b",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\backup_report.ps1",
+          "ScriptBlockText": "Write-EventLog -LogName Application -Source 'BackupJob' -EventId 5000 -EntryType Information -Message 'Nightly backup completed successfully'"
+        }
+      },
+      {
+        "description": "Script reads event binary data but never calls Write-EventLog",
+        "event": {
+          "EventID": 4104,
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "d4f6a8b0-2c3e-4f5a-9b1c-2d3e4f5a6b7c",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\audit_events.ps1",
+          "ScriptBlockText": "Get-WinEvent -LogName Application -MaxEvents 50 | Select-Object Id, ProviderName, TimeCreated"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

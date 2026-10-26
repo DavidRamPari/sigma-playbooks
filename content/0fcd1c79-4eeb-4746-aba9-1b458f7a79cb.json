@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "0fcd1c79-4eeb-4746-aba9-1b458f7a79cb",
+    "title": "Remote Schedule Task Lateral Movement via ATSvc",
+    "level": "high",
+    "status": "test",
+    "author": "Sagie Dulce, Dekel Paz",
+    "path": "application/rpc_firewall/rpc_firewall_atsvc_lateral_movement.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/rpc_firewall/rpc_firewall_atsvc_lateral_movement.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053",
+      "T1053.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "RPC Firewall registró una llamada RPC remota a la interfaz ATSvc (MS-TSCH) para operar trabajos programados con el comando at en este host. Suele indicar movimiento lateral o ejecución remota mediante tareas programadas.",
+      "what_it_detects": "Eventos RPCFW con EventID 3 cuyo InterfaceUuid es 1ff70682-0a51-30e8-076d-740be8cee98b (ATSvc) y OpNum 0 (NetrJobAdd, crear un trabajo) u OpNum 1 (NetrJobDel, eliminar un trabajo, a menudo como limpieza tras ejecutarlo).",
+      "why_it_matters": "Un atacante con credenciales válidas puede crear un trabajo 'at' remoto que se ejecuta como SYSTEM y obtener ejecución, persistencia o escalamiento en otro equipo (ATT&CK T1053.002, At). ATSvc es una interfaz heredada que la administración moderna casi nunca usa.",
+      "triage_steps": [
+        "Identifique el origen (ClientNetworkAddress) y la cuenta (SubjectUserName, SubjectDomain) de la llamada; confirme si el equipo de origen es un servidor de administración autorizado.",
+        "Revise OpNum: 0 indica creación de trabajo; 1 indica eliminación. Busque ambos desde el mismo origen en minutos, patrón típico de ejecución y limpieza.",
+        "En el host destino, busque eventos 4698/4699 y del log TaskScheduler/Operational en +/- 15 minutos, incluidas tareas con nombres At1, At2, etc.",
+        "Revise procesos creados por el servicio Schedule (svchost.exe) como SYSTEM en esa ventana: cmd.exe, powershell.exe, rundll32.exe o binarios en rutas temporales.",
+        "Correlacione inicios de sesión 4624 tipo 3 desde el mismo IP de origen y con la misma cuenta, y verifique el método de autenticación.",
+        "Pivote por el IP de origen y la cuenta: ¿hay llamadas ATSvc, SMB o servicios remotos hacia otros hosts? Revise alertas previas de ambas entidades."
+      ],
+      "false_positives": [
+        "Scripts o herramientas de administración heredadas que todavía usan el comando at remoto para tareas programadas.",
+        "Software de inventario, despliegue o respaldo antiguo que agenda trabajos por ATSvc.",
+        "Pruebas autorizadas de red team o de validación de controles."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta y del equipo de origen si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el host destino y, si es posible, el de origen; deshabilite o restablezca la cuenta utilizada.",
+        "Documente y luego elimine los trabajos programados maliciosos, y preserve los artefactos (comandos, binarios, hashes) para análisis forense.",
+        "Busque la misma actividad en el resto del entorno y aplique en RPC Firewall el bloqueo de la UUID de ATSvc para orígenes no autorizados."
+      ],
+      "severity_rationale": "Es alta porque la creación remota de trabajos ATSvc permite ejecución como SYSTEM y casi no tiene uso legítimo en entornos modernos."
+    },
+    "en": {
+      "summary": "RPC Firewall logged a remote RPC call to the ATSvc (MS-TSCH) interface to manage 'at' scheduled jobs on this host. This usually means lateral movement or remote execution through scheduled tasks.",
+      "what_it_detects": "RPCFW events with EventID 3 where InterfaceUuid is 1ff70682-0a51-30e8-076d-740be8cee98b (ATSvc) and OpNum is 0 (NetrJobAdd, create a job) or 1 (NetrJobDel, delete a job, often post-execution cleanup).",
+      "why_it_matters": "An attacker with valid credentials can create a remote 'at' job that runs as SYSTEM, gaining execution, persistence or privilege escalation on another machine (ATT&CK T1053.002, At). ATSvc is legacy and rarely used by modern administration.",
+      "triage_steps": [
+        "Identify the caller (ClientNetworkAddress) and account (SubjectUserName, SubjectDomain); confirm whether the source is an authorized admin server.",
+        "Check OpNum: 0 means job creation, 1 means deletion. Look for both from the same source within minutes, a typical execute-and-clean pattern.",
+        "On the target host, look for events 4698/4699 and TaskScheduler/Operational entries within +/- 15 minutes, including jobs named At1, At2, etc.",
+        "Review processes spawned by the Schedule service (svchost.exe) as SYSTEM in that window: cmd.exe, powershell.exe, rundll32.exe or binaries in temp paths.",
+        "Correlate 4624 logon type 3 events from the same source IP and account, and check the authentication package.",
+        "Pivot on source IP and account: any ATSvc, SMB or remote service activity toward other hosts? Review earlier alerts for both entities."
+      ],
+      "false_positives": [
+        "Legacy admin scripts or tools still using remote 'at' for scheduled jobs.",
+        "Old inventory, deployment or backup software that schedules jobs over ATSvc.",
+        "Authorized red team or control validation exercises."
+      ],
+      "response_steps": [
+        "Confirm with the account owner and source host owner whether the activity was authorized before acting.",
+        "If unauthorized, isolate the target host and, where possible, the source; disable or reset the account used.",
+        "Document, then remove malicious scheduled jobs, preserving artifacts (commands, binaries, hashes) for forensics.",
+        "Hunt for the same activity elsewhere and enforce an RPC Firewall block on the ATSvc UUID for unauthorized sources."
+      ],
+      "severity_rationale": "High because remote ATSvc job creation yields SYSTEM-level execution and has almost no legitimate use in modern environments."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote NetrJobAdd (OpNum 0) call to ATSvc from a workstation, audited by RPC Firewall",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "1ff70682-0a51-30e8-076d-740be8cee98b",
+          "OpNum": 0,
+          "Function": "RpcServerInterfaceCall",
+          "ProcessID": 1208,
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\atsvc",
+          "ClientNetworkAddress": "192.0.2.45",
+          "SubjectUserName": "jperez",
+          "SubjectDomain": "ANDES",
+          "AuthenticationLevel": 6,
+          "Computer": "SRV-FILE-02.andes.example.com"
+        }
+      },
+      {
+        "description": "Remote NetrJobDel (OpNum 1) call to ATSvc shortly after job creation",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "1ff70682-0a51-30e8-076d-740be8cee98b",
+          "OpNum": 1,
+          "Function": "RpcServerInterfaceCall",
+          "ProcessID": 1208,
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\atsvc",
+          "ClientNetworkAddress": "192.0.2.45",
+          "SubjectUserName": "jperez",
+          "SubjectDomain": "ANDES",
+          "AuthenticationLevel": 6,
+          "Computer": "SRV-FILE-02.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ATSvc NetrJobEnum (OpNum 2) call that only lists jobs",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "1ff70682-0a51-30e8-076d-740be8cee98b",
+          "OpNum": 2,
+          "Function": "RpcServerInterfaceCall",
+          "ProcessID": 1208,
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\atsvc",
+          "ClientNetworkAddress": "198.51.100.10",
+          "SubjectUserName": "svc_inventory",
+          "SubjectDomain": "ANDES",
+          "Computer": "SRV-FILE-02.andes.example.com"
+        }
+      },
+      {
+        "description": "OpNum 0 call on a different interface (ITaskSchedulerService), not ATSvc",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "86d35949-83c9-4044-b424-db363231fd0c",
+          "OpNum": 0,
+          "Function": "RpcServerInterfaceCall",
+          "ProcessID": 1208,
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Protocol": "ncacn_ip_tcp",
+          "ClientNetworkAddress": "198.51.100.10",
+          "SubjectUserName": "admin_ops",
+          "SubjectDomain": "ANDES",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

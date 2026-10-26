@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "b69888d4-380c-45ce-9cf9-d9ce46e67821",
+    "title": "Hidden Executable In NTFS Alternate Data Stream",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), @0xrawsec",
+    "path": "windows/create_stream_hash/create_stream_hash_ads_executable.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_stream_hash/create_stream_hash_ads_executable.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1564.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un Alternate Data Stream (ADS) de NTFS cuyo contenido tiene un import hash distinto de cero, es decir, el stream contiene un ejecutable o DLL PE. Los atacantes usan esto para ocultar payloads detrás de archivos de apariencia normal.",
+      "what_it_detects": "Evento 15 de Sysmon (FileCreateStreamHash) donde el campo Hash contiene IMPHASH= con un valor distinto de solo ceros. Un imphash distinto de cero solo aparece cuando los datos escritos se interpretan como un PE con tabla de importaciones.",
+      "why_it_matters": "Ocultar un ejecutable en un ADS (MITRE ATT&CK T1564.004, Hide Artifacts: NTFS File Attributes) lo saca de los listados normales de directorio y de algunos escáneres. Después el payload puede ejecutarse directamente desde el stream, a menudo con fines de persistencia o evasión.",
+      "triage_steps": [
+        "Revise TargetFilename: identifique el archivo anfitrión y el nombre del stream después de los dos puntos (por ejemplo reporte.txt:svc.exe). Un nombre de ejecutable sobre documentos o carpetas es muy sospechoso.",
+        "Revise Image y User: qué proceso escribió el stream y si es esperable para esa cuenta (instalador, navegador, o cmd.exe, powershell.exe, certutil.exe, binarios desconocidos).",
+        "Pivotee por ProcessGuid al evento 1 de Sysmon para obtener CommandLine y ParentImage del proceso escritor; busque uso de type, expand, makecab, esentutl o PowerShell -Stream.",
+        "Consulte en threat intel y en las listas internas de hashes permitidos los valores SHA256 e IMPHASH del campo Hash.",
+        "Recolecte el stream para analizarlo (Get-Item -Stream * y Get-Content -Stream <nombre> -Raw, o una copia forense) sin ejecutarlo.",
+        "En el mismo host, ±15 minutos, busque ejecución desde un stream: Image o CommandLine que contengan 'archivo:stream' vía wmic, rundll32, regsvr32, mshta o forfiles.",
+        "Busque persistencia que apunte a la ruta del ADS (claves Run, tareas programadas, servicios) y conexiones de red de los procesos relacionados.",
+        "Revise alertas previas del mismo host, usuario e imphash."
+      ],
+      "false_positives": [
+        "Instaladores y actualizadores legítimos que incrustan binarios auxiliares en un ADS, como indica la regla.",
+        "Procesos de navegador o gestores de descargas que escriben streams con contenido PE.",
+        "Herramientas de seguridad, respaldo o sincronización que copian archivos junto con sus streams alternos.",
+        "Pruebas autorizadas y documentadas de desarrollo o de red team."
+      ],
+      "response_steps": [
+        "Verificar: confirme que el stream es un PE y determine si es malicioso con el hash, un sandbox y el árbol de procesos del escritor.",
+        "Contener: si es malicioso o desconocido y se ejecutó, aísle el endpoint y suspenda las sesiones o credenciales del usuario afectado.",
+        "Erradicar: después de preservar una copia como evidencia, elimine el stream y la persistencia que lo referencia, y finalice los procesos relacionados.",
+        "Recuperar y ajustar: busque el mismo hash o imphash en toda la flota y agregue exclusiones acotadas solo para escritores legítimos verificados (Image más nombre del stream)."
+      ],
+      "severity_rationale": "Medium es adecuado porque un ejecutable oculto en un ADS es un fuerte indicio de evasión, pero también lo hace software legítimo, así que requiere confirmación del analista antes de escalar."
+    },
+    "en": {
+      "summary": "A process wrote an NTFS Alternate Data Stream (ADS) whose content has a non-zero import hash, so the stream holds a PE executable or DLL. Attackers use this to hide payloads behind ordinary-looking files.",
+      "what_it_detects": "Sysmon Event ID 15 (FileCreateStreamHash) where the Hash field contains IMPHASH= with a value other than all zeros. A non-zero imphash only appears when the written data parses as a PE file with an import table.",
+      "why_it_matters": "Hiding an executable in an ADS (MITRE ATT&CK T1564.004, Hide Artifacts: NTFS File Attributes) keeps it out of normal directory listings and some scanners. Later the payload can run directly from the stream, often for persistence or defense evasion.",
+      "triage_steps": [
+        "Read TargetFilename: identify the host file and the stream name after the colon (for example report.txt:svc.exe). Executable-looking stream names on documents or folders are highly suspicious.",
+        "Check Image and User: which process wrote the stream, and whether that is expected for that account (installer, browser, or cmd.exe, powershell.exe, certutil.exe, unknown binaries).",
+        "Pivot on ProcessGuid to Sysmon Event ID 1 to get the writer's CommandLine and ParentImage; look for type, expand, makecab, esentutl or PowerShell -Stream usage.",
+        "Look up the SHA256 and IMPHASH values from the Hash field in threat intel and internal hash allowlists.",
+        "Collect the stream for analysis (Get-Item -Stream * and Get-Content -Stream <name> -Raw, or a forensic copy) without running it.",
+        "Search the same host +/- 15 minutes for execution from a stream: process Image or CommandLine containing 'file:stream' via wmic, rundll32, regsvr32, mshta or forfiles.",
+        "Check persistence pointing to the ADS path (Run keys, scheduled tasks, services), plus network connections from related processes.",
+        "Review earlier alerts for the same host, user and imphash."
+      ],
+      "false_positives": [
+        "Legitimate installers and updaters that embed helper binaries in an ADS, as the rule notes.",
+        "Browser processes or download managers writing streams that contain PE data.",
+        "Security, backup or file-sync tools that copy files together with their alternate streams.",
+        "Developer or red team test activity that is authorized and documented."
+      ],
+      "response_steps": [
+        "Verify: confirm the stream is a PE file and decide whether it is malicious using the hash, a sandbox and the writer's process tree.",
+        "Contain: if it is malicious or unknown and was executed, isolate the endpoint and suspend the affected user's sessions or credentials.",
+        "Eradicate: after you preserve a copy as evidence, remove the stream and the persistence that references it, and terminate the related processes.",
+        "Recover and tune: hunt for the same hash or imphash across the fleet, and add narrow exclusions only for verified legitimate writers (Image plus stream name)."
+      ],
+      "severity_rationale": "Medium fits because an executable hidden in an ADS is a strong evasion indicator, but some legitimate software does it too, so the alert needs analyst confirmation before escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "cmd.exe writes a PE executable into an ADS named svc.exe on a text file in C:\\Users\\Public; the imphash is non-zero.",
+        "event": {
+          "EventID": 15,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:03:12.481",
+          "ProcessGuid": "{5a1c2b3d-9f10-671b-2a03-000000001a00}",
+          "ProcessId": 6412,
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "TargetFilename": "C:\\Users\\Public\\notes.txt:svc.exe",
+          "CreationUtcTime": "2024-10-25 14:03:12.402",
+          "Hash": "SHA1=3B1F0E7A9C2D4E5F6A7B8C9D0E1F2A3B4C5D6E7F,MD5=9A8B7C6D5E4F3A2B1C0D9E8F7A6B5C4D,SHA256=1F2E3D4C5B6A79880716253443526170F1E2D3C4B5A69788796A5B4C3D2E1F00,IMPHASH=F34D5F2D4577ED6D9CEEC516C1F5A744",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "powershell.exe stores a DLL in an ADS of a folder in AppData; lowercase hash values still match because matching is case-insensitive.",
+        "event": {
+          "EventID": 15,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2024-10-26 09:41:55.117",
+          "ProcessGuid": "{5a1c2b3d-0a22-671c-8c04-000000001b00}",
+          "ProcessId": 3388,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetFilename": "C:\\Users\\mrojas\\AppData\\Roaming\\Microsoft:helper.dll",
+          "CreationUtcTime": "2024-10-26 09:41:55.090",
+          "Hash": "MD5=0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f,SHA256=aa11bb22cc33dd44ee55ff6600778899aabbccddeeff00112233445566778899,IMPHASH=dae02f32a21e03ce65412f6e56942daa",
+          "User": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Chrome writes the usual Zone.Identifier stream for a download; the content is not a PE, so the imphash is all zeros and the filter excludes it.",
+        "event": {
+          "EventID": 15,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 13:58:40.006",
+          "ProcessGuid": "{5a1c2b3d-8e01-671b-1f02-000000001a00}",
+          "ProcessId": 5120,
+          "Image": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "TargetFilename": "C:\\Users\\jperez\\Downloads\\invoice_2024.pdf:Zone.Identifier",
+          "CreationUtcTime": "2024-10-25 13:58:39.950",
+          "Hash": "SHA1=5C2B8E1A0F4D3C6B9A8E7D1F2C3B4A5E6D7C8B9A,MD5=FBCCF14D504B7B2DBCB5A5BDA75BD93B,SHA256=EACD09517CE90D34BA562E4E8A2A3D1F0B7C1A8E9D6F5C4B3A29180716253443,IMPHASH=00000000000000000000000000000000",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Edge writes an ADS on a host where Sysmon does not log imphash; the Hash field has no IMPHASH= entry, so the selection does not match.",
+        "event": {
+          "EventID": 15,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0311.andes.example.com",
+          "UtcTime": "2024-10-27 11:12:03.300",
+          "ProcessGuid": "{5a1c2b3d-7c11-671d-4d05-000000001c00}",
+          "ProcessId": 7024,
+          "Image": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+          "TargetFilename": "C:\\Users\\lgomez\\Downloads\\setup_tool.exe:Zone.Identifier",
+          "CreationUtcTime": "2024-10-27 11:12:03.250",
+          "Hash": "SHA1=7D6C5B4A3F2E1D0C9B8A7F6E5D4C3B2A1F0E9D8C,SHA256=2B3C4D5E6F708192A3B4C5D6E7F8091A2B3C4D5E6F708192A3B4C5D6E7F80910",
+          "User": "ANDES\\lgomez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

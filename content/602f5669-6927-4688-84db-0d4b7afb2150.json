@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "602f5669-6927-4688-84db-0d4b7afb2150",
+    "title": "Disable Powershell Command History",
+    "level": "high",
+    "status": "test",
+    "author": "Ali Alwashali",
+    "path": "windows/powershell/powershell_script/posh_ps_disable_psreadline_command_history.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_disable_psreadline_command_history.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script o comando de PowerShell descargó el módulo PSReadLine con Remove-Module. Así deja de registrarse el historial de comandos de la sesión, lo que suele indicar que alguien intenta ocultar actividad.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) en los que ScriptBlockText contiene a la vez 'Remove-Module' y 'psreadline'. Sin PSReadLine, los comandos de la sesión no se guardan en ConsoleHost_history.txt.",
+      "why_it_matters": "Corresponde a ATT&CK T1070.003 (Clear Command History). Un atacante desactiva el historial para no dejar rastro en disco de los comandos que ejecuta después. Script Block Logging sigue registrando esa actividad, así que los eventos 4104 posteriores son clave.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo, el ScriptBlockId y el Path. Confirme si fue un comando interactivo o parte de un script, y reconstruya los bloques divididos en varias partes.",
+        "Identifique al usuario (UserID) y el host (Computer). Valide si se trata de una cuenta administrativa conocida o de una cuenta inusual en ese equipo.",
+        "Revise todos los eventos 4104 del mismo host entre 15 minutos antes y 15 minutos después, sobre todo los comandos ejecutados después de quitar el módulo.",
+        "Busque el proceso powershell.exe en Sysmon 1 o en el evento 4688. Revise ParentImage, CommandLine, si usa -EncodedCommand y si el padre es wsmprovhost.exe (sesión remota).",
+        "Busque otras técnicas antiforense en la misma sesión: Clear-History, Set-PSReadLineOption -HistorySaveStyle SaveNothing o el borrado de ConsoleHost_history.txt.",
+        "Correlacione los inicios de sesión del usuario (4624 de tipo 3 o 10, WinRM, RDP) y las IP de origen. Revise alertas anteriores del mismo usuario y del mismo host."
+      ],
+      "false_positives": [
+        "Scripts legítimos que desactivan el historial a propósito, por ejemplo para que no se guarden secretos que se escriben en la consola.",
+        "Procedimientos de actualización que ejecutan Remove-Module PSReadLine antes de Install-Module o Update-Module PSReadLine.",
+        "Administradores que resuelven conflictos de PSReadLine con lectores de pantalla, terminales o hosts de PowerShell no estándar."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el dueño del script si la acción estaba autorizada, y documente la justificación.",
+        "Si no hay justificación, aísle el endpoint y conserve los eventos 4104, los registros de procesos y los perfiles de PowerShell del usuario.",
+        "Analice los comandos ejecutados después de quitar el módulo. Si hubo actividad maliciosa, restablezca las credenciales afectadas.",
+        "Elimine la persistencia que encuentre, por ejemplo en los perfiles $PROFILE o en tareas programadas. Verifique que Script Block Logging siga activo y busque el mismo patrón en otros hosts."
+      ],
+      "severity_rationale": "Es alta porque desactivar el historial a propósito es una técnica de evasión que rara vez aparece en el uso normal y suele acompañar otra actividad maliciosa."
+    },
+    "en": {
+      "summary": "A PowerShell script or command unloaded the PSReadLine module with Remove-Module. This stops command history from being recorded for the session and often means someone is hiding activity.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains both 'Remove-Module' and 'psreadline'. Without PSReadLine, session commands are no longer saved to ConsoleHost_history.txt.",
+      "why_it_matters": "This maps to ATT&CK T1070.003 (Clear Command History). Attackers turn off history so the commands they run next leave no trace on disk. Script Block Logging still records that activity, so later 4104 events are key.",
+      "triage_steps": [
+        "Read the full ScriptBlockText, ScriptBlockId and Path. Confirm whether this was an interactive command or part of a script, and rebuild any multi-part blocks.",
+        "Identify the user (UserID) and host (Computer). Check whether the account is a known admin or unusual for this machine.",
+        "Review all 4104 events on the same host from 15 minutes before to 15 minutes after, especially commands run after the module was removed.",
+        "Find the powershell.exe process in Sysmon 1 or event 4688. Check ParentImage, CommandLine, -EncodedCommand use and whether the parent is wsmprovhost.exe (remote session).",
+        "Look for other anti-forensics in the same session: Clear-History, Set-PSReadLineOption -HistorySaveStyle SaveNothing, or deletion of ConsoleHost_history.txt.",
+        "Correlate the user's logons (4624 type 3 or 10, WinRM, RDP) and source IPs. Check earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate scripts that turn off history on purpose, for example so secrets typed in the console are not saved.",
+        "Update procedures that run Remove-Module PSReadLine before Install-Module or Update-Module PSReadLine.",
+        "Admins fixing PSReadLine conflicts with screen readers, terminals or non-standard PowerShell hosts."
+      ],
+      "response_steps": [
+        "Ask the user or script owner whether the action was authorized, and document the reason.",
+        "If there is no reason, isolate the endpoint and keep the 4104 events, process logs and the user's PowerShell profiles.",
+        "Review the commands run after the module was removed. If there was malicious activity, reset the affected credentials.",
+        "Remove any persistence you find, for example in $PROFILE files or scheduled tasks. Make sure Script Block Logging is still on and hunt for the same pattern on other hosts."
+      ],
+      "severity_rationale": "High, because deliberately turning off history is an evasion technique that rarely appears in normal use and usually comes with other malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive session removes PSReadLine to stop history recording",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c11-2d5e6f7a8b90",
+          "Path": "",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "Remove-Module -Name PSReadLine -Force"
+        }
+      },
+      {
+        "description": "Script that removes PSReadLine and then runs discovery commands",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "UserID": "ANDES\\svc-backup",
+          "ScriptBlockId": "a1b2c3d4-e5f6-4711-8899-aabbccddeeff",
+          "Path": "C:\\Users\\Public\\upd.ps1",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "remove-module psreadline; whoami /all; Get-ADComputer -Filter * | Select-Object Name"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Profile that imports PSReadLine and changes options without removing the module",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "5c6d7e8f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+          "Path": "C:\\Users\\jperez\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "Import-Module PSReadLine; Set-PSReadLineOption -EditMode Windows"
+        }
+      },
+      {
+        "description": "Admin unloads a different module (Az.Accounts) with Remove-Module",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-WS-07.andes.example.com",
+          "UserID": "ANDES\\mrodriguez",
+          "ScriptBlockId": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+          "Path": "",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "Remove-Module -Name Az.Accounts -Force; Import-Module Az.Accounts -RequiredVersion 2.12.1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

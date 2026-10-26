@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "b743623c-2776-40e0-87b1-682b975d0ca5",
+    "title": "User Added To Admin Group Via Dscl",
+    "level": "medium",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r)",
+    "path": "macos/process_creation/proc_creation_macos_dscl_add_user_to_admin_group.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_dscl_add_user_to_admin_group.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó dscl en un equipo macOS para agregar una cuenta al grupo local admin. La cuenta agregada obtiene privilegios de administrador, por lo que hay que confirmar si el cambio estaba autorizado.",
+      "what_it_detects": "Procesos cuyo Image termina en /dscl y cuyo CommandLine contiene ' -append ', ' /Groups/admin ' y ' GroupMembership '. Es decir, el comando que agrega un usuario a la membresía del grupo admin en el directorio local.",
+      "why_it_matters": "Un atacante con acceso root puede crear una cuenta local o elevar una existente al grupo admin para mantener persistencia y privilegios (T1078.003, cuentas locales válidas). Así sobrevive a cambios de contraseña de la cuenta comprometida y pasa inadvertido.",
+      "triage_steps": [
+        "Lea el CommandLine completo e identifique la cuenta agregada (el argumento después de GroupMembership) y el nodo de directorio usado (por ejemplo '.' o /Local/Default).",
+        "Revise el ParentImage y el árbol de procesos: ¿lo lanzó una herramienta MDM, un script de aprovisionamiento o una shell interactiva, osascript, curl o un binario sin firma?",
+        "Identifique el usuario que ejecutó dscl y si usó sudo; revise el historial de sudo y de la shell del equipo en +/- 15 minutos.",
+        "Busque en el mismo host, +/- 15 minutos, otros comandos dscl (-create /Users, UniqueID, NFSHomeDirectory, -passwd) que indiquen la creación de una cuenta nueva.",
+        "Verifique si la cuenta es oculta (UniqueID menor a 500, IsHidden) o tiene un nombre que imita cuentas del sistema.",
+        "Valide con el equipo de TI o con el ticket de cambio si la elevación estaba planificada.",
+        "Busque alertas previas del mismo host o usuario y conexiones de red salientes sospechosas antes del evento."
+      ],
+      "false_positives": [
+        "Administradores de TI que otorgan derechos de administrador locales de forma manual y documentada.",
+        "Scripts de aprovisionamiento o de MDM (Jamf, Kandji, Workspace ONE) que configuran cuentas de administración al inscribir equipos.",
+        "Herramientas de elevación temporal de privilegios que agregan y quitan usuarios del grupo admin bajo demanda."
+      ],
+      "response_steps": [
+        "Si no hay autorización, confirme la membresía actual con 'dscl . -read /Groups/admin GroupMembership' y documente la evidencia.",
+        "Quite la cuenta del grupo admin y deshabilite o bloquee la cuenta si fue creada por el atacante, previa coordinación con el responsable del equipo.",
+        "Aísle el endpoint mediante el EDR si hay otros indicadores de compromiso y recolecte artefactos (logs unificados, LaunchAgents, LaunchDaemons, historial de shell).",
+        "Rote las credenciales de las cuentas usadas para ejecutar dscl y revise otros equipos en busca de la misma cuenta o comando.",
+        "Restablezca la configuración autorizada de cuentas y documente el incidente."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque otorgar derechos de administrador es un cambio de alto impacto, aunque también es una tarea administrativa habitual que requiere contexto para distinguirla de un abuso."
+    },
+    "en": {
+      "summary": "dscl was run on a macOS host to append an account to the local admin group. That account now has administrator rights, so confirm the change was authorized.",
+      "what_it_detects": "Processes whose Image ends with /dscl and whose CommandLine contains ' -append ', ' /Groups/admin ' and ' GroupMembership ', which is the command that adds a user to the admin group membership in the local directory.",
+      "why_it_matters": "An attacker with root access can create a local account, or promote an existing one, into the admin group to keep persistence and privileges (T1078.003, valid local accounts). The access survives password resets of the originally compromised account.",
+      "triage_steps": [
+        "Read the full CommandLine. Identify the account being added (the argument after GroupMembership) and the directory node used ('.' or /Local/Default).",
+        "Check ParentImage and the process tree. Was it an MDM agent or provisioning script, or an interactive shell, osascript, curl or an unsigned binary?",
+        "Identify the user who ran dscl and whether sudo was used. Review the host's sudo and shell history within +/- 15 minutes.",
+        "On the same host within +/- 15 minutes, look for other dscl commands (-create /Users, UniqueID, NFSHomeDirectory, -passwd) that show a new account being created.",
+        "Check whether the account is hidden (UniqueID below 500, IsHidden) or named to look like a system account.",
+        "Confirm with IT or the change ticket that the elevation was planned.",
+        "Look for earlier alerts on the same host or user, and for suspicious outbound connections before the event."
+      ],
+      "false_positives": [
+        "IT administrators granting local admin rights manually as a documented task.",
+        "MDM or provisioning scripts (Jamf, Kandji, Workspace ONE) that set up management admin accounts during enrollment.",
+        "Temporary privilege-elevation tools that add users to the admin group on demand and remove them later."
+      ],
+      "response_steps": [
+        "If it is not authorized, confirm current membership with 'dscl . -read /Groups/admin GroupMembership' and preserve the evidence.",
+        "After coordinating with the device owner, remove the account from admin. Disable or lock it if the attacker created it.",
+        "If other indicators exist, isolate the endpoint through EDR and collect unified logs, LaunchAgents, LaunchDaemons and shell history.",
+        "Rotate credentials for the accounts used to run dscl. Hunt other hosts for the same account or command.",
+        "Restore the authorized account configuration and document the incident."
+      ],
+      "severity_rationale": "Medium fits because granting admin rights has high impact, but it is also a routine admin task, so context is needed to tell it apart from abuse."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dscl run via sudo from an interactive shell to add a newly created account to the admin group",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -append /Groups/admin GroupMembership svc_update",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo dscl . -append /Groups/admin GroupMembership svc_update",
+          "User": "root",
+          "ProcessId": 4821,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "dscl using the explicit /Local/Default node to promote an existing user to admin",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "/usr/bin/dscl /Local/Default -append /Groups/admin GroupMembership jperez",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "ProcessId": 5190,
+          "Computer": "MBP-0207.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "dscl only reading admin group membership, no -append",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -read /Groups/admin GroupMembership",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 6012,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "dscl appending a user to the non-privileged staff group",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -append /Groups/staff GroupMembership mlopez",
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "User": "root",
+          "ProcessId": 6230,
+          "Computer": "MBP-0310.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

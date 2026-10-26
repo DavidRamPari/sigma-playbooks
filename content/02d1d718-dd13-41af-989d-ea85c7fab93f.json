@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "02d1d718-dd13-41af-989d-ea85c7fab93f",
+    "title": "Rare Remote Thread Creation By Uncommon Source Image",
+    "level": "high",
+    "status": "test",
+    "author": "Perez Diego (@darkquassar), oscd.community",
+    "path": "windows/create_remote_thread/create_remote_thread_win_susp_relevant_source_image.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_remote_thread/create_remote_thread_win_susp_relevant_source_image.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que normalmente no crea hilos remotos, como mshta.exe, msbuild.exe, wscript.exe, Office o w3wp.exe, creó un hilo en otro proceso. Esto puede indicar inyección de código.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon Event ID 8) cuyo SourceImage termina en uno de unos 40 binarios poco comunes: LOLBins, intérpretes de scripts, Office, w3wp.exe, spoolsv.exe, entre otros. Se excluyen pares SourceImage/TargetImage benignos conocidos, como userinit.exe→explorer.exe, makecab/defrag→conhost.exe, provtool→svchost/System y Office→System o Program Files.",
+      "why_it_matters": "La creación de hilos remotos es una técnica clásica de inyección en procesos (ATT&CK T1055). Permite ejecutar código dentro de un proceso legítimo para evadir defensas o escalar privilegios. Que lo haga un LOLBin o un proceso de Office sugiere un payload en memoria.",
+      "triage_steps": [
+        "Revise SourceImage, TargetImage, SourceProcessId y TargetProcessId; confirme la ruta real del binario origen y si el destino es sensible (lsass.exe, explorer.exe, svchost.exe, un navegador).",
+        "Examine StartAddress, StartModule y StartFunction: una dirección sin módulo asociado o fuera de una DLL conocida sugiere shellcode.",
+        "Obtenga la línea de comandos y el proceso padre del SourceImage (Sysmon Event ID 1) para identificar quién lo lanzó, por ejemplo Office lanzando mshta o wscript.",
+        "Revise el mismo host en un rango de +/- 15 minutos: archivos creados, DLL cargadas, conexiones de red del proceso destino y acceso a lsass (Event ID 10).",
+        "Calcule el hash del SourceImage y verifique su firma; un binario renombrado o fuera de System32 aumenta la sospecha.",
+        "Identifique al usuario (SourceUser/TargetUser) y busque alertas previas para el mismo host o usuario.",
+        "Compare con la línea base: ¿este par origen/destino aparece en otros equipos de forma habitual?"
+      ],
+      "false_positives": [
+        "Software legítimo o complementos de Office, por ejemplo add-ins de Outlook o Excel, que inyectan hilos en procesos auxiliares.",
+        "Herramientas de monitoreo o agentes (monitoringhost.exe) y aplicaciones de accesibilidad o virtualización.",
+        "Scripts de Python o herramientas de depuración usadas por desarrolladores.",
+        "Pares benignos propios del entorno que aún no están en los filtros; documente una línea base antes de afinar la regla."
+      ],
+      "response_steps": [
+        "Valide la actividad con el dueño del equipo o del aplicativo antes de actuar.",
+        "Si se confirma como sospechosa, aísle el endpoint desde el EDR y preserve un volcado de memoria de ambos procesos.",
+        "Termine los procesos origen y destino comprometidos, y elimine el payload y los mecanismos de persistencia identificados.",
+        "Si el destino fue lsass.exe o hubo acceso a credenciales, restablezca las contraseñas afectadas.",
+        "Busque el mismo hash, la misma línea de comandos o el mismo par origen/destino en toda la flota y agregue exclusiones solo para casos benignos verificados."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque la inyección desde estos binarios rara vez es legítima y suele indicar ejecución de código malicioso en memoria, aunque conviene crear una línea base primero."
+    },
+    "en": {
+      "summary": "A process that rarely creates remote threads, such as mshta.exe, msbuild.exe, wscript.exe, Office or w3wp.exe, started a thread in another process. This may indicate code injection.",
+      "what_it_detects": "Remote thread creation events (Sysmon Event ID 8) where SourceImage ends with one of about 40 uncommon binaries: LOLBins, script hosts, Office apps, w3wp.exe, spoolsv.exe and others. Known benign SourceImage/TargetImage pairs are excluded, such as userinit.exe→explorer.exe, makecab/defrag→conhost.exe, provtool→svchost/System and Office→System or Program Files.",
+      "why_it_matters": "Remote thread creation is a classic process injection method (ATT&CK T1055). It runs code inside a legitimate process to evade defenses or escalate privileges. When a LOLBin or Office process does it, an in-memory payload is likely.",
+      "triage_steps": [
+        "Review SourceImage, TargetImage, SourceProcessId and TargetProcessId; confirm the source binary path and whether the target is sensitive (lsass.exe, explorer.exe, svchost.exe, browsers).",
+        "Check StartAddress, StartModule and StartFunction; an address with no backing module or outside a known DLL suggests shellcode.",
+        "Get the source process command line and parent (Sysmon Event ID 1) to see what launched it, e.g. Office spawning mshta or wscript.",
+        "Pivot on the same host within +/- 15 minutes: file creation, image loads, target process network connections and lsass access (Event ID 10).",
+        "Hash the SourceImage and verify its signature; a renamed binary or one outside System32 raises suspicion.",
+        "Identify the user (SourceUser/TargetUser) and look for earlier alerts on the same host or user.",
+        "Compare with baseline: does this source/target pair occur routinely on other hosts?"
+      ],
+      "false_positives": [
+        "Legitimate software or Office add-ins, for example Outlook or Excel plugins, injecting into helper processes.",
+        "Monitoring agents (monitoringhost.exe), accessibility or virtualization tooling.",
+        "Python scripts or debugging tools used by developers.",
+        "Environment-specific benign pairs not yet filtered; build a baseline before tuning."
+      ],
+      "response_steps": [
+        "Validate the activity with the host or application owner before acting.",
+        "If suspicious, isolate the endpoint via EDR and capture memory of both source and target processes.",
+        "Terminate the compromised processes, and remove the payload and any persistence found.",
+        "If the target was lsass.exe or credential access occurred, reset affected credentials.",
+        "Hunt for the same hash, command line or source/target pair fleet-wide; add exclusions only for verified benign cases."
+      ],
+      "severity_rationale": "High fits because injection from these binaries is rarely legitimate and usually means malicious in-memory code execution, though a baseline should be built first."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "mshta.exe creates a remote thread in explorer.exe with an unbacked start address",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\mshta.exe",
+          "SourceProcessId": 6120,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetProcessId": 4388,
+          "NewThreadId": 9012,
+          "StartAddress": "0x0000021A4F3B0000",
+          "StartModule": "-",
+          "StartFunction": "-",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "msbuild.exe injects a thread into notepad.exe",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\MSBuild.exe",
+          "SourceProcessId": 7744,
+          "TargetImage": "C:\\Windows\\System32\\notepad.exe",
+          "TargetProcessId": 8120,
+          "NewThreadId": 3320,
+          "StartAddress": "0x000001F2C0A10000",
+          "StartModule": "-",
+          "StartFunction": "-",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "userinit.exe creating a thread in explorer.exe at logon (excluded by filter_main_userinit)",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\userinit.exe",
+          "SourceProcessId": 5012,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetProcessId": 5100,
+          "NewThreadId": 5120,
+          "StartAddress": "0x00007FFB1C2A1230",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "CtrlRoutine",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "WINWORD.EXE creating a thread in an Office helper under Program Files (excluded by filter_main_winword)",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "SourceProcessId": 3804,
+          "TargetImage": "C:\\Program Files\\Microsoft Office\\root\\vfs\\ProgramFilesCommonX64\\Microsoft Shared\\Office16\\AI\\ai.exe",
+          "TargetProcessId": 9220,
+          "NewThreadId": 9300,
+          "StartAddress": "0x00007FFB2D4B5000",
+          "StartModule": "C:\\Windows\\System32\\ntdll.dll",
+          "StartFunction": "RtlUserThreadStart",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

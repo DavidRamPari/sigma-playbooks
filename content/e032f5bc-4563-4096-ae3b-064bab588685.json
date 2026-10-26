@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "e032f5bc-4563-4096-ae3b-064bab588685",
+    "title": "Potential Local File Read Vulnerability In JVM Based Application",
+    "level": "high",
+    "status": "test",
+    "author": "Moti Harmats",
+    "path": "application/jvm/java_local_file_read.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/jvm/java_local_file_read.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una aplicación basada en JVM registró un error FileNotFoundException cuya ruta contiene una secuencia de path traversal (/../../..). Esto puede indicar que alguien intenta leer archivos locales fuera del directorio previsto.",
+      "what_it_detects": "Líneas de log de error de una aplicación JVM que incluyen las dos cadenas 'FileNotFoundException' y '/../../..'. Suele ocurrir cuando un parámetro controlado por el usuario se concatena en una ruta de archivo sin validarla.",
+      "why_it_matters": "Explotar una aplicación expuesta (ATT&CK T1190, Initial Access) mediante lectura local de archivos puede exponer credenciales, archivos de configuración, llaves o código fuente. Las excepciones indican que el atacante está probando rutas y que la lectura podría funcionar con la ruta correcta.",
+      "triage_steps": [
+        "Revise el campo message completo: identifique la ruta intentada, la clase o el controlador que lanzó la excepción y el hilo de la petición.",
+        "Determine si el destino apunta a archivos sensibles (/etc/passwd, /etc/shadow, WEB-INF/web.xml, application.properties, llaves SSH).",
+        "Correlacione la marca de tiempo con los access logs del proxy, el WAF o el servidor para obtener la IP de origen, la URL, el parámetro y el user agent.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, otras excepciones con traversal, en especial rutas que no generaron error, porque podrían ser lecturas exitosas.",
+        "Pivotee por la IP de origen en otras aplicaciones y en alertas previas: escaneo, fuzzing o intentos de inyección.",
+        "Revise si alguna respuesta HTTP 200 con un tamaño inusual coincide con las peticiones sospechosas.",
+        "Confirme con el equipo dueño de la aplicación si el endpoint procesa rutas de archivo que vienen del usuario."
+      ],
+      "false_positives": [
+        "Bugs de la aplicación que construyen rutas relativas incorrectas y terminan en un FileNotFoundException.",
+        "Escaneos de vulnerabilidades autorizados o pruebas de penetración contra la aplicación.",
+        "Pruebas automatizadas de QA que validan el rechazo de path traversal."
+      ],
+      "response_steps": [
+        "Verifique si hubo lecturas exitosas con access logs y tamaños de respuesta antes de escalar como incidente.",
+        "Bloquee temporalmente la IP de origen en el WAF o el balanceador si la actividad no está autorizada.",
+        "Si se leyeron archivos sensibles, rote las credenciales, llaves y secretos expuestos.",
+        "Corrija el código: normalice las rutas canónicamente, use una lista de archivos permitidos y restrinja el acceso al directorio base.",
+        "Despliegue una regla WAF para bloquear secuencias de traversal y mantenga el monitoreo de la aplicación."
+      ],
+      "severity_rationale": "Es alta porque el traversal dentro de una excepción de archivo indica una explotación activa de una aplicación expuesta, con riesgo directo de filtrar secretos."
+    },
+    "en": {
+      "summary": "A JVM-based application logged a FileNotFoundException whose path contains a path traversal sequence (/../../..). This may mean someone is trying to read local files outside the intended directory.",
+      "what_it_detects": "JVM application error log lines that contain both 'FileNotFoundException' and '/../../..'. This usually happens when user-controlled input is concatenated into a file path without validation.",
+      "why_it_matters": "Local file read through a public-facing application (ATT&CK T1190, Initial Access) can expose credentials, configuration files, keys or source code. The exceptions show an attacker probing paths, and a correct path may already succeed.",
+      "triage_steps": [
+        "Read the full message field: identify the attempted path, the class or controller that threw the exception and the request thread.",
+        "Check whether the target points to sensitive files (/etc/passwd, /etc/shadow, WEB-INF/web.xml, application.properties, SSH keys).",
+        "Match the timestamp against proxy, WAF or server access logs to get the source IP, URL, parameter and user agent.",
+        "On the same host within +/- 15 minutes, look for other traversal attempts, especially paths that raised no error, since those may be successful reads.",
+        "Pivot on the source IP across other applications and earlier alerts for scanning, fuzzing or injection attempts.",
+        "Look for HTTP 200 responses with unusual sizes that line up with the suspicious requests.",
+        "Ask the application owners whether the endpoint processes file paths supplied by users."
+      ],
+      "false_positives": [
+        "Application bugs that build bad relative paths and end in a FileNotFoundException.",
+        "Authorized vulnerability scans or penetration tests against the application.",
+        "Automated QA tests that check that path traversal is rejected."
+      ],
+      "response_steps": [
+        "Before escalating as an incident, check access logs and response sizes to confirm whether any read succeeded.",
+        "If the activity is not authorized, temporarily block the source IP at the WAF or load balancer.",
+        "If sensitive files were read, rotate the exposed credentials, keys and secrets.",
+        "Fix the code: canonicalize paths, use an allowlist of files and restrict access to the base directory.",
+        "Deploy a WAF rule that blocks traversal sequences and keep monitoring the application."
+      ],
+      "severity_rationale": "High, because traversal inside a file exception points to active exploitation of an exposed application, with a direct risk of leaking secrets."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Spring Boot error log: a download endpoint threw FileNotFoundException for a user-supplied path that traverses to /etc/passwd.",
+        "event": {
+          "message": "2024-03-14 10:22:31.517 ERROR 4120 --- [nio-8080-exec-7] c.e.portal.web.DownloadController : Failed to serve file java.io.FileNotFoundException: /opt/portal/static/files/../../../../etc/passwd (No such file or directory)",
+          "host": "app-web-03",
+          "service": "portal",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "Tomcat/log4j error with a deep traversal sequence against WEB-INF.",
+        "event": {
+          "message": "2024-03-14 10:23:02,114 ERROR [http-nio-8443-exec-12] com.example.reports.ReportService - Unable to open template java.io.FileNotFoundException: /var/lib/tomcat9/webapps/reports/templates/../../../../../WEB-INF/web.xml.bak (No such file or directory)",
+          "host": "app-web-03",
+          "service": "reports",
+          "level": "ERROR"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A legitimate FileNotFoundException for a missing configuration file, with no traversal sequence.",
+        "event": {
+          "message": "2024-03-14 09:15:44.002 ERROR 4120 --- [main] c.e.portal.config.Loader : Could not load overrides java.io.FileNotFoundException: /opt/portal/config/overrides.yml (No such file or directory)",
+          "host": "app-web-03",
+          "service": "portal",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "A path validator rejected a request with only two traversal levels and no FileNotFoundException, so neither keyword matches.",
+        "event": {
+          "message": "2024-03-14 10:21:10.880 ERROR 4120 --- [nio-8080-exec-3] c.e.portal.security.PathValidator : Rejected path parameter /files/../../etc from 203.0.113.45",
+          "host": "app-web-03",
+          "service": "portal",
+          "level": "ERROR"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

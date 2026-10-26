@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "f6c68d5f-e101-4b86-8c84-7d96851fd65c",
+    "title": "T1047 Wmiprvse Wbemcomn DLL Hijack",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g, Open Threat Research (OTR)",
+    "path": "windows/builtin/security/win_security_wmiprvse_wbemcomn_dll_hijack.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_wmiprvse_wbemcomn_dll_hijack.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002",
+      "T1047"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una cuenta que no es de equipo accedió por un recurso compartido de red a un archivo llamado wbemcomn.dll en la carpeta System32\\wbem. Esto coincide con la preparación de un DLL hijack remoto de WMI, donde se planta una DLL maliciosa para que WmiPrvSE.exe la cargue.",
+      "what_it_detects": "Evento de seguridad 5145 (comprobación detallada de acceso a recurso compartido) donde RelativeTargetName termina en \\wbem\\wbemcomn.dll y SubjectUserName no termina en '$'. Normalmente es una escritura por ADMIN$ o C$ desde otro host.",
+      "why_it_matters": "El wbemcomn.dll legítimo está en System32, no en System32\\wbem. WmiPrvSE.exe se ejecuta desde la carpeta wbem y carga primero una DLL con ese nombre desde ahí. Un atacante que planta una puede activar WMI de forma remota y ejecutar código como SYSTEM. Cubre ejecución vía WMI (T1047) y movimiento lateral por recursos administrativos SMB (T1021.002).",
+      "triage_steps": [
+        "Revise SubjectUserName, SubjectDomainName, IpAddress e IpPort para identificar la cuenta y el host de origen que accedieron al recurso compartido.",
+        "Verifique ShareName (ADMIN$, C$) y AccessMask/AccessList: WriteData, AppendData o WRITE_DAC indican un intento de escritura, mientras que solo ReadData es menos urgente.",
+        "En el host destino, compruebe si existe C:\\Windows\\System32\\wbem\\wbemcomn.dll. Obtenga su hash, firmante, tamaño y fecha de creación.",
+        "Pivotee por la misma IpAddress y el mismo usuario en +/- 15 minutos: busque 4624 con logon tipo 3, 4672 y otros eventos 5145.",
+        "Busque actividad WMI remota después de la copia: RPC/DCOM entrante al puerto 135 y WmiPrvSE.exe cargando la DLL desde la ruta wbem (Sysmon EID 7).",
+        "Revise los procesos que inició WmiPrvSE.exe y las conexiones de red salientes de WmiPrvSE.exe en el host destino.",
+        "Busque la misma ruta o el mismo hash de la DLL en otros endpoints, y revise alertas previas de este usuario o host de origen."
+      ],
+      "false_positives": [
+        "La regla indica Unknown; ningún software legítimo coloca wbemcomn.dll en la carpeta wbem.",
+        "Ejercicios autorizados de red team o pruebas de penetración que replican esta técnica.",
+        "Un administrador que explora o copia System32 por ADMIN$ durante una reparación. Revise AccessMask, porque las lecturas también generan 5145."
+      ],
+      "response_steps": [
+        "Confirme que el archivo existe, que no tiene firma de Microsoft y que no había actividad autorizada programada.",
+        "Aísle el host destino. Preserve la DLL, la memoria y los registros de eventos relevantes.",
+        "Deshabilite o restablezca la cuenta SubjectUserName e investigue si el host de origen está comprometido.",
+        "Tras verificar, elimine la DLL plantada, reinicie el servicio WMI y confirme que WmiPrvSE.exe carga la copia de System32.",
+        "Busque el mismo hash y la misma ruta en todo el entorno, y limite el acceso a los recursos administrativos a las cuentas necesarias."
+      ],
+      "severity_rationale": "Alta es adecuada porque ningún proceso legítimo coloca esta DLL en la carpeta wbem por red, y si el ataque funciona permite ejecutar código remoto con privilegios SYSTEM."
+    },
+    "en": {
+      "summary": "A non-machine account accessed a file named wbemcomn.dll inside the System32\\wbem folder through a network share. This matches a remote WMI DLL hijack setup, where a malicious DLL is planted so WmiPrvSE.exe loads it.",
+      "what_it_detects": "Security event 5145 (detailed file share access check) where RelativeTargetName ends with \\wbem\\wbemcomn.dll and SubjectUserName does not end with '$'. Typically this is a write over ADMIN$ or C$ from another host.",
+      "why_it_matters": "The real wbemcomn.dll lives in System32, not System32\\wbem. WmiPrvSE.exe runs from the wbem folder and loads a DLL with that name from there first. An attacker who plants one can then trigger WMI remotely and run code as SYSTEM. This covers WMI execution (T1047) and lateral movement over SMB admin shares (T1021.002).",
+      "triage_steps": [
+        "Read SubjectUserName, SubjectDomainName, IpAddress and IpPort to find the account and source host that touched the share.",
+        "Check ShareName (ADMIN$, C$) and AccessMask/AccessList: WriteData, AppendData or WRITE_DAC means a write attempt, while ReadData alone is less urgent.",
+        "On the target, check whether C:\\Windows\\System32\\wbem\\wbemcomn.dll exists. Collect its hash, signer, size and creation time.",
+        "Pivot on the same IpAddress and user within +/- 15 minutes: look for 4624 logon type 3, 4672 special privileges and other 5145 events.",
+        "Look for remote WMI activity after the copy: inbound RPC/DCOM on port 135 and WmiPrvSE.exe loading the DLL from the wbem path (Sysmon EID 7).",
+        "Review processes started by WmiPrvSE.exe and outbound network connections from WmiPrvSE.exe on the target host.",
+        "Search for the same DLL path or hash on other endpoints, and check for earlier alerts on this user or source host."
+      ],
+      "false_positives": [
+        "Rule lists Unknown; legitimate software never places wbemcomn.dll in the wbem folder.",
+        "Authorized red team or penetration tests that replicate this technique.",
+        "An administrator browsing or copying System32 over ADMIN$ during repair work. Check AccessMask, because reads also log 5145."
+      ],
+      "response_steps": [
+        "Confirm the file is present, unsigned or not Microsoft-signed, and that no authorized activity was scheduled.",
+        "Isolate the target host. Preserve the DLL, memory and the relevant event logs.",
+        "Disable or reset the SubjectUserName account and investigate the source host for compromise.",
+        "After verification, remove the planted DLL, restart the WMI service and check that WmiPrvSE.exe loads the System32 copy.",
+        "Hunt for the same hash and path across the environment, and limit admin share access to required accounts."
+      ],
+      "severity_rationale": "High fits because no legitimate process puts this DLL in the wbem folder over the network, and success gives remote SYSTEM-level code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A domain user writes wbemcomn.dll into System32\\wbem through the ADMIN$ share from a remote IP",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-07.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50122",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ShareLocalPath": "\\??\\C:\\Windows",
+          "RelativeTargetName": "system32\\wbem\\wbemcomn.dll",
+          "AccessMask": "0x2",
+          "AccessList": "%%4417"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same access performed by a machine account, which the filter excludes",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-07.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7B55",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.60",
+          "IpPort": "50210",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ShareLocalPath": "\\??\\C:\\Windows",
+          "RelativeTargetName": "system32\\wbem\\wbemcomn.dll",
+          "AccessMask": "0x1",
+          "AccessList": "%%4416"
+        }
+      },
+      {
+        "description": "User reads a different, legitimate DLL in the wbem folder over ADMIN$",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-07.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50130",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ShareLocalPath": "\\??\\C:\\Windows",
+          "RelativeTargetName": "system32\\wbem\\wbemcore.dll",
+          "AccessMask": "0x1",
+          "AccessList": "%%4416"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

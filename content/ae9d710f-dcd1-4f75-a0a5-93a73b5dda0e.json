@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "ae9d710f-dcd1-4f75-a0a5-93a73b5dda0e",
+    "title": "Launch Agent/Daemon Execution Via Launchctl",
+    "level": "medium",
+    "status": "test",
+    "author": "Pratinav Chandra",
+    "path": "macos/process_creation/proc_creation_macos_launchctl_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_launchctl_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.001",
+      "T1543.004",
+      "T1569.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó launchctl en un endpoint macOS con un argumento que contiene submit, load o start, lo que puede registrar o iniciar un Launch Agent o Launch Daemon. Puede ser administración legítima o persistencia y ejecución maliciosa.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde Image termina en /launchctl y CommandLine contiene 'submit', 'load' o 'start'. Esto incluye también subcomandos como unload, bootstrap con rutas que contengan esas cadenas y kickstart.",
+      "why_it_matters": "Los atacantes usan launchctl para ejecutar binarios como servicios (T1569.001) y para cargar Launch Agents o Daemons que sobreviven al reinicio (T1543.001, T1543.004). Si el plist se carga como Launch Daemon, el programa se ejecuta como root.",
+      "triage_steps": [
+        "Revise CommandLine: identifique el subcomando (load, submit, start, kickstart) y la ruta del plist o del programa indicado después de '--'.",
+        "Ubique el plist referenciado y revise ProgramArguments, RunAtLoad y KeepAlive; anote el binario que ejecuta y su ruta (/tmp, /Users/Shared y directorios ocultos son sospechosos).",
+        "Obtenga el hash y la firma de código del binario objetivo (codesign -dv, spctl) y verifique su reputación.",
+        "Revise ParentImage y la cadena de procesos: Terminal o un MDM es habitual; curl, osascript, python o un instalador desconocido es sospechoso.",
+        "Identifique el usuario que lo ejecutó y si se usó sudo; un plist en /Library/LaunchDaemons implica privilegios de root.",
+        "Busque en el mismo host, +/- 15 minutos, descargas, creación de archivos en LaunchAgents/LaunchDaemons y conexiones de red del binario.",
+        "Consulte alertas anteriores para el mismo host y usuario, y busque el mismo nombre de plist en otros endpoints."
+      ],
+      "false_positives": [
+        "Tareas de administración legítimas: personal de TI cargando o reiniciando servicios manualmente.",
+        "Agentes de MDM, EDR o herramientas de gestión (por ejemplo, actualizadores de software) que cargan sus propios plist firmados.",
+        "Instaladores de aplicaciones legítimas que registran helpers durante su instalación o actualización.",
+        "Desarrolladores probando servicios locales con launchctl submit o load."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo de TI si el cambio era esperado y si el binario está firmado por un desarrollador conocido.",
+        "Si es malicioso, aísle el endpoint desde el EDR y preserve el plist, el binario y los logs antes de modificar algo.",
+        "Descargue el servicio (launchctl bootout o unload), elimine el plist y el binario tras recolectar la evidencia.",
+        "Revise otras ubicaciones de persistencia (LaunchAgents de cada usuario, LoginItems, perfiles) y rote credenciales si se ejecutó como root.",
+        "Busque los mismos indicadores en toda la flota y restaure el equipo desde una imagen confiable si hay dudas sobre su integridad."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque launchctl con estos subcomandos es común en administración legítima, pero también es un mecanismo directo de ejecución y persistencia en macOS."
+    },
+    "en": {
+      "summary": "launchctl ran on a macOS endpoint with an argument containing submit, load or start, which can register or start a Launch Agent or Launch Daemon. This may be legitimate administration or malicious persistence and execution.",
+      "what_it_detects": "macOS process creation events where Image ends with /launchctl and CommandLine contains 'submit', 'load' or 'start'. Substring matching also catches unload, kickstart and paths containing those words.",
+      "why_it_matters": "Attackers use launchctl to run binaries as services (T1569.001) and to load Launch Agents or Daemons that survive reboot (T1543.001, T1543.004). A plist loaded as a Launch Daemon runs as root.",
+      "triage_steps": [
+        "Read CommandLine: identify the subcommand (load, submit, start, kickstart) and the plist path or program given after '--'.",
+        "Open the referenced plist and check ProgramArguments, RunAtLoad and KeepAlive; note the executed binary and its path (/tmp, /Users/Shared, hidden folders are suspicious).",
+        "Get the target binary's hash and code signature (codesign -dv, spctl) and check its reputation.",
+        "Review ParentImage and the process tree: Terminal or an MDM agent is common; curl, osascript, python or an unknown installer is suspicious.",
+        "Identify the executing user and whether sudo was used; a plist in /Library/LaunchDaemons implies root privileges.",
+        "On the same host within +/- 15 minutes, look for downloads, file writes to LaunchAgents/LaunchDaemons and network connections from the binary.",
+        "Check earlier alerts for the same host and user, and search other endpoints for the same plist name."
+      ],
+      "false_positives": [
+        "Legitimate administration: IT staff manually loading or restarting services.",
+        "MDM, EDR or management agents (for example software updaters) loading their own signed plists.",
+        "Legitimate application installers registering helper services during install or update.",
+        "Developers testing local services with launchctl submit or load."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the change was expected and whether the binary is signed by a known developer.",
+        "If malicious, isolate the endpoint via EDR and preserve the plist, binary and logs before changing anything.",
+        "Unload the service (launchctl bootout or unload), then remove the plist and binary after evidence is collected.",
+        "Review other persistence locations (per-user LaunchAgents, Login Items, profiles) and rotate credentials if it ran as root.",
+        "Hunt for the same indicators fleet-wide and reimage the host if its integrity is in doubt."
+      ],
+      "severity_rationale": "Medium fits because launchctl with these subcommands is common in legitimate administration, yet it is a direct execution and persistence mechanism on macOS."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User loads a Launch Agent plist from a user LaunchAgents folder, spawned from a shell started by curl-downloaded script",
+        "event": {
+          "Image": "/bin/launchctl",
+          "CommandLine": "launchctl load -w /Users/jperez/Library/LaunchAgents/com.example.updater.plist",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4821,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "launchctl submit runs a hidden binary from /tmp as a job",
+        "event": {
+          "Image": "/bin/launchctl",
+          "CommandLine": "launchctl submit -l com.example.sync -- /tmp/.cache/syncd",
+          "ParentImage": "/usr/bin/python3",
+          "User": "root",
+          "ProcessId": 5107,
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator lists loaded services; no submit, load or start in the command line",
+        "event": {
+          "Image": "/bin/launchctl",
+          "CommandLine": "launchctl list com.apple.Finder",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4790,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "plutil inspecting a plist whose name contains 'load'; Image is not launchctl",
+        "event": {
+          "Image": "/usr/bin/plutil",
+          "CommandLine": "plutil -p /Library/LaunchDaemons/com.example.loader.plist",
+          "ParentImage": "/bin/zsh",
+          "User": "admin",
+          "ProcessId": 4802,
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

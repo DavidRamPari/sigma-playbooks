@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "fef394cd-f44d-4040-9b18-95d92fe278c0",
+    "title": "Potential DLL Sideloading Of DbgModel.DLL",
+    "level": "medium",
+    "status": "test",
+    "author": "Gary Lobermier",
+    "path": "windows/image_load/image_load_side_load_dbgmodel.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_side_load_dbgmodel.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cargó DbgModel.dll, la biblioteca del modelo de datos del depurador de Windows, desde una ruta fuera de System32, SysWOW64, WinSxS, WinDbg de la Store o Windows Kits. Puede tratarse de DLL sideloading.",
+      "what_it_detects": "Eventos de carga de imagen donde ImageLoaded termina en \\dbgmodel.dll y la ruta no comienza con C:\\Windows\\System32\\, C:\\Windows\\SysWOW64\\, C:\\Windows\\WinSxS\\, C:\\Program Files\\WindowsApps\\Microsoft.WinDbg_ ni con un directorio de Windows Kits.",
+      "why_it_matters": "Un atacante puede colocar una DLL maliciosa con un nombre de confianza junto a un ejecutable legítimo, a menudo firmado, para que este cargue su código (T1574.001, secuestro del orden de búsqueda de DLL). Así obtiene ejecución, persistencia o escalamiento de privilegios oculto tras un proceso confiable.",
+      "triage_steps": [
+        "Revise la ruta de ImageLoaded. Las ubicaciones con permisos de escritura del usuario (AppData, Temp, ProgramData, Downloads, Public) son más sospechosas que una carpeta de instalación.",
+        "Identifique el Image que cargó la DLL. Determine si es un binario de depuración de Microsoft copiado a una carpeta inusual y verifique su firma y su hash.",
+        "Compare el hash, la firma y la versión de la dbgmodel.dll cargada con la copia original de System32. Una DLL sin firma o no emitida por Microsoft es un indicador fuerte.",
+        "Averigüe cómo llegaron ambos archivos: eventos de creación de archivos, proceso padre del Image y descargas o descompresiones en el mismo host en +/- 15 minutos.",
+        "Revise las conexiones de red, los procesos hijos y los cambios de persistencia (claves Run, servicios, tareas programadas) que hizo el proceso después de la carga.",
+        "Busque el mismo hash y la misma carpeta en otros endpoints, y alertas previas del mismo host y usuario."
+      ],
+      "false_positives": [
+        "Aplicaciones o herramientas de depuración legítimas que incluyen su propia copia de dbgmodel.dll, como versiones portables de WinDbg o depuradores de terceros.",
+        "Desarrolladores que copiaron binarios del SDK de Windows o del depurador a carpetas de proyectos o herramientas."
+      ],
+      "response_steps": [
+        "Valide la DLL contra hashes y firmas conocidas de Microsoft antes de tomar cualquier acción.",
+        "Si es maliciosa, aísle el endpoint y detenga el proceso que la cargó.",
+        "Recolecte la DLL y el ejecutable para análisis y luego elimínelos junto con cualquier persistencia asociada.",
+        "Si hubo ejecución de código, restablezca las credenciales del usuario afectado y bloquee el hash en toda la flota.",
+        "Si es benigna, documente la ruta de la aplicación y cree una exclusión acotada por ruta."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el sideloading de esta biblioteca del depurador es una técnica conocida, pero algunas herramientas legítimas también la incluyen, así que se requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A process loaded DbgModel.dll, the Windows Debugger Data Model library, from outside System32, SysWOW64, WinSxS, the WinDbg Store app folder or the Windows Kits folders. This can mean DLL sideloading.",
+      "what_it_detects": "Image load events where ImageLoaded ends with \\dbgmodel.dll and the path does not start with C:\\Windows\\System32\\, C:\\Windows\\SysWOW64\\, C:\\Windows\\WinSxS\\, C:\\Program Files\\WindowsApps\\Microsoft.WinDbg_ or a Windows Kits directory.",
+      "why_it_matters": "Attackers can put a malicious DLL with a trusted name next to a legitimate, often signed, executable so that it loads their code (T1574.001, DLL search order hijacking). This gives them execution, persistence or privilege escalation while hiding behind a trusted process.",
+      "triage_steps": [
+        "Check the ImageLoaded path. User-writable locations such as AppData, Temp, ProgramData, Downloads or Public are more suspicious than an application install folder.",
+        "Identify the Image that loaded the DLL. Note whether it is a Microsoft debugging binary copied to an unusual folder, and check its signer and hash.",
+        "Compare the hash, signature and version info of the loaded dbgmodel.dll with the genuine System32 copy. An unsigned or non-Microsoft DLL is a strong indicator.",
+        "Find out how both files got there: check file creation events, the parent process of the Image, and any downloads or archive extractions on the same host within +/- 15 minutes.",
+        "Review network connections, child processes and persistence changes (Run keys, services, scheduled tasks) made by the loading process after the load.",
+        "Search for the same DLL hash and folder on other endpoints, and look for earlier alerts on this host and user."
+      ],
+      "false_positives": [
+        "Legitimate applications or debugging tools that ship their own copy of dbgmodel.dll, such as portable WinDbg builds or third-party debuggers.",
+        "Developers who copied Windows SDK or debugger binaries into project or tool folders."
+      ],
+      "response_steps": [
+        "Verify the DLL against known-good Microsoft hashes and signatures before you take any action.",
+        "If it is malicious, isolate the endpoint and stop the loading process.",
+        "Collect the DLL and executable for analysis, then remove them and any related persistence.",
+        "Reset credentials for the affected user if there was code execution, and block the hash across the fleet.",
+        "If it is benign, document the application path and add a narrow path-based exclusion."
+      ],
+      "severity_rationale": "Medium fits because sideloading a debugger library is a known hijack technique, but legitimate tools also bundle this DLL, so you need context before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Signed debugger host copied to a user's AppData folder loads a dbgmodel.dll placed next to it",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd\\enghost.exe",
+          "ImageLoaded": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd\\DbgModel.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      },
+      {
+        "description": "Process in ProgramData loads dbgmodel.dll from its own folder",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0217.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "Image": "C:\\ProgramData\\Cache\\svchelper.exe",
+          "ImageLoaded": "C:\\ProgramData\\Cache\\dbgmodel.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate load of DbgModel.dll from System32",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\cdb.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\DbgModel.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid"
+        }
+      },
+      {
+        "description": "WinDbg from the Windows Kits folder loads its bundled dbgmodel.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\windbg.exe",
+          "ImageLoaded": "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\dbgmodel.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Corporation",
+          "SignatureStatus": "Valid"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

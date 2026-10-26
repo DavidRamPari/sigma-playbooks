@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "7cded4b3-f09e-405a-b96f-24248433ba44",
+    "title": "OpenCanary - NTP Monlist Request",
+    "level": "high",
+    "status": "test",
+    "author": "Security Onion Solutions",
+    "path": "application/opencanary/opencanary_ntp_monlist.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/opencanary/opencanary_ntp_monlist.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1498"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un nodo OpenCanary con el servicio NTP señuelo recibió una solicitud monlist (logtype 11001). Ningún sistema legítimo debería consultar un honeypot, así que el origen está haciendo reconocimiento o preparando un abuso de amplificación NTP.",
+      "what_it_detects": "Eventos de OpenCanary con logtype 11001: el servicio NTP del honeypot recibió el comando de modo 7 'monlist', que pide la lista de los últimos clientes que contactaron al servidor.",
+      "why_it_matters": "monlist devuelve una respuesta mucho más grande que la solicitud, y por eso se usa en ataques DDoS de reflexión y amplificación (T1498, Network Denial of Service). Que llegue a un señuelo indica escaneo activo de servidores NTP vulnerables, o bien un host interno comprometido.",
+      "triage_steps": [
+        "Identifique src_host y src_port del evento y determine si el origen es interno o externo, y si pertenece a un rango de escáneres autorizados.",
+        "Revise node_id, dst_host y dst_port (123/UDP) para saber qué canary recibió la solicitud y en qué segmento de red está.",
+        "Busque otras alertas de OpenCanary del mismo src_host (escaneo de puertos, SSH, SMB) en +/- 15 minutos y en los días anteriores.",
+        "Revise NetFlow y firewall: ¿el mismo origen envió tráfico UDP/123 a otros hosts? ¿Algún servidor NTP real devolvió respuestas grandes?",
+        "Si el origen es interno, revise en EDR los procesos y conexiones de ese host en +/- 15 minutos para detectar herramientas de escaneo o malware.",
+        "Tenga en cuenta que UDP permite falsificar la IP de origen: src_host podría ser la víctima de una reflexión y no el atacante."
+      ],
+      "false_positives": [
+        "Escaneos de vulnerabilidades autorizados (por ejemplo, Nessus u OpenVAS) que prueban monlist en 123/UDP.",
+        "Escáneres de investigación de Internet, si el canary está expuesto al exterior.",
+        "Pruebas del equipo de seguridad que validan el honeypot o la regla."
+      ],
+      "response_steps": [
+        "Verifique con los equipos de vulnerabilidades y de red si hay un escaneo o una prueba programados desde src_host.",
+        "Si no está autorizado, bloquee el origen en el perímetro o en el firewall interno. Si es un host interno, aíslelo después de confirmar la actividad.",
+        "Asegúrese de que los servidores NTP reales tengan monlist deshabilitado (noquery o una versión actualizada) y limiten las consultas de modo 7.",
+        "Documente los hallazgos, y cierre la alerta o escálela a respuesta a incidentes si hay compromiso o amplificación real."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque cualquier interacción con un honeypot es anómala, y monlist apunta a reconocimiento para amplificación DDoS o a un host comprometido."
+    },
+    "en": {
+      "summary": "An OpenCanary node running the decoy NTP service received an NTP monlist request (logtype 11001). No legitimate system should query a honeypot, so the source is doing reconnaissance or getting ready for NTP amplification abuse.",
+      "what_it_detects": "OpenCanary events with logtype 11001: the honeypot NTP service received the mode 7 'monlist' command, which asks for the list of recent clients that contacted the server.",
+      "why_it_matters": "A monlist reply is much larger than the request, which is why it is used in reflection and amplification DDoS attacks (T1498, Network Denial of Service). A monlist request reaching a decoy means someone is actively scanning for vulnerable NTP servers, or an internal host is compromised.",
+      "triage_steps": [
+        "Identify src_host and src_port. Check whether the source is internal or external and whether it belongs to an authorized scanner range.",
+        "Review node_id, dst_host and dst_port (123/UDP) to see which canary was hit and which network segment it sits in.",
+        "Search for other OpenCanary alerts from the same src_host (port scans, SSH, SMB) within +/- 15 minutes and over the previous days.",
+        "Check NetFlow and firewall logs: did the same source send UDP/123 traffic to other hosts? Did any real NTP server send back large responses?",
+        "If the source is internal, review EDR process and network activity on that host within +/- 15 minutes for scanning tools or malware.",
+        "Keep in mind that UDP source addresses can be spoofed: src_host may be a reflection victim rather than the attacker."
+      ],
+      "false_positives": [
+        "Authorized vulnerability scans (for example, Nessus or OpenVAS) that probe monlist on 123/UDP.",
+        "Internet research scanners, if the canary is exposed externally.",
+        "Security team tests that validate the honeypot or this rule."
+      ],
+      "response_steps": [
+        "Check with the vulnerability management and network teams whether a scan or test was scheduled from src_host.",
+        "If it was not authorized, block the source at the perimeter or internal firewall. If it is an internal host, isolate it after confirming the activity.",
+        "Make sure real NTP servers have monlist disabled (noquery or an updated ntpd) and restrict mode 7 queries.",
+        "Document the findings, then close the alert or escalate to incident response if you find a compromise or real amplification."
+      ],
+      "severity_rationale": "High fits because any interaction with a honeypot is anomalous, and a monlist request points to DDoS amplification reconnaissance or a compromised host."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "OpenCanary NTP service logs a monlist request from an external address",
+        "event": {
+          "logtype": 11001,
+          "node_id": "canary-dmz-01",
+          "src_host": "203.0.113.45",
+          "src_port": 51234,
+          "dst_host": "198.51.100.10",
+          "dst_port": 123,
+          "local_time": "2024-03-08 14:03:12.481",
+          "utc_time": "2024-03-08 14:03:12.481",
+          "logdata": "{\"NTP CMD\": \"monlist\"}"
+        }
+      },
+      {
+        "description": "An internal workstation sends a monlist request to the internal canary",
+        "event": {
+          "logtype": 11001,
+          "node_id": "canary-lan-02",
+          "src_host": "192.0.2.77",
+          "src_port": 40123,
+          "dst_host": "192.0.2.250",
+          "dst_port": 123,
+          "local_time": "2024-03-09 02:17:45.102",
+          "utc_time": "2024-03-09 02:17:45.102",
+          "logdata": "{\"NTP CMD\": \"monlist\"}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "OpenCanary SSH login attempt (logtype 4002), a different event type",
+        "event": {
+          "logtype": 4002,
+          "node_id": "canary-dmz-01",
+          "src_host": "203.0.113.45",
+          "src_port": 51990,
+          "dst_host": "198.51.100.10",
+          "dst_port": 22,
+          "local_time": "2024-03-08 14:05:01.330",
+          "utc_time": "2024-03-08 14:05:01.330",
+          "logdata": "{\"USERNAME\": \"admin\", \"PASSWORD\": \"admin\"}"
+        }
+      },
+      {
+        "description": "OpenCanary service startup message (logtype 1001) from the same node",
+        "event": {
+          "logtype": 1001,
+          "node_id": "canary-dmz-01",
+          "src_host": "",
+          "src_port": -1,
+          "dst_host": "",
+          "dst_port": -1,
+          "local_time": "2024-03-08 08:00:00.000",
+          "utc_time": "2024-03-08 08:00:00.000",
+          "logdata": "{\"msg\": \"Canary running!!!\"}"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

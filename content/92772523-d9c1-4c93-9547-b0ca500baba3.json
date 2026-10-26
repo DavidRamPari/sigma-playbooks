@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "92772523-d9c1-4c93-9547-b0ca500baba3",
+    "title": "Potential Persistence Via Mpnotify",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_mpnotify.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_mpnotify.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor de registro mpnotify bajo la clave Winlogon. Winlogon puede ejecutar el programa al que apunta ese valor cuando un usuario inicia sesión, así que el cambio puede servir como persistencia.",
+      "what_it_detects": "Eventos registry_set (por ejemplo, Sysmon Event ID 13) en los que TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\mpnotify. La descripción de la regla habla de un proveedor SIP, pero la condición solo revisa este valor de Winlogon.",
+      "why_it_matters": "Si mpnotify apunta a un ejecutable controlado por el atacante, Winlogon lo lanza en cada inicio de sesión con privilegios elevados. Esto da persistencia y ejecución durante el inicio de sesión (técnica de autoarranque en logon, persistence). Además, casi nadie revisa este valor.",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique la ruta del ejecutable configurado en mpnotify y si está en un directorio escribible por usuarios (Temp, Public, AppData, ProgramData).",
+        "Identifique el proceso que hizo la escritura (Image, ProcessId) y su cadena de procesos padre. Sospeche de reg.exe, powershell.exe, cmd.exe o binarios desconocidos.",
+        "Verifique la cuenta (User) que modificó el registro y si debería tener privilegios administrativos en ese host.",
+        "Obtenga el hash, la firma y los metadatos del archivo indicado en Details. Consulte la reputación del hash y la fecha de creación del archivo.",
+        "Busque en el mismo host, +/- 15 minutos alrededor del evento, creación de archivos, otras escrituras en claves Run/Winlogon/Services y conexiones de red salientes.",
+        "Revise los siguientes inicios de sesión en el host y busque procesos hijo de winlogon.exe que coincidan con el ejecutable configurado.",
+        "Busque el mismo valor mpnotify y el mismo hash en otros endpoints, y revise alertas previas de este host y de este usuario."
+      ],
+      "false_positives": [
+        "Software legítimo de autenticación o de proveedores de red que registra un componente de notificación en Winlogon. Es poco común y hay que validarlo con el proveedor.",
+        "Pruebas autorizadas de red team o de detección, por ejemplo con herramientas de emulación de persistencia, en hosts de laboratorio."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad con el dueño del sistema o con el registro de cambios antes de actuar. Respalde la clave Winlogon y el ejecutable para análisis forense.",
+        "Si es malicioso, aísle el endpoint de la red y deshabilite o restablezca las credenciales de la cuenta que hizo el cambio.",
+        "Elimine el valor mpnotify y ponga en cuarentena el ejecutable referenciado después de preservar la evidencia. Busque otros mecanismos de persistencia en el host.",
+        "Recupere el host desde una imagen confiable si hubo ejecución como SYSTEM. Monitoree indicadores relacionados en toda la flota."
+      ],
+      "severity_rationale": "El nivel high se justifica porque este valor rara vez se configura de forma legítima y permite que Winlogon ejecute código con privilegios elevados en cada inicio de sesión."
+    },
+    "en": {
+      "summary": "A process wrote the mpnotify registry value under the Winlogon key. Winlogon can launch the program this value points to when a user logs on, so the change can serve as persistence.",
+      "what_it_detects": "registry_set events (for example Sysmon Event ID 13) where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\mpnotify. The rule description mentions a SIP provider, but the condition only checks this Winlogon value.",
+      "why_it_matters": "If mpnotify points to an attacker-controlled executable, Winlogon launches it at every logon with elevated privileges. That gives the attacker persistence and execution during logon, a logon autostart technique (persistence). The value is also rarely monitored.",
+      "triage_steps": [
+        "Review TargetObject and Details: find the executable path set in mpnotify and check whether it sits in a user-writable folder (Temp, Public, AppData, ProgramData).",
+        "Identify the process that made the write (Image, ProcessId) and its parent chain. Treat reg.exe, powershell.exe, cmd.exe or unknown binaries as suspicious.",
+        "Check the account (User) that changed the key and whether it should have admin rights on this host.",
+        "Collect the hash, signature and metadata of the file named in Details. Check the hash's reputation and the file's creation time.",
+        "On the same host, within +/- 15 minutes, look for file creation, other Run/Winlogon/Services registry writes and outbound network connections.",
+        "Review later logons on the host for child processes of winlogon.exe that match the configured executable.",
+        "Search other endpoints for the same mpnotify value or hash, and review earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Legitimate authentication or network provider software that registers a Winlogon notification component. This is uncommon, so validate it with the vendor.",
+        "Authorized red team or detection testing, for example persistence emulation tools on lab hosts."
+      ],
+      "response_steps": [
+        "Before acting, confirm legitimacy with the system owner or the change record. Back up the Winlogon key and the executable for forensics.",
+        "If malicious, isolate the endpoint from the network and disable the account that made the change or reset its credentials.",
+        "After preserving evidence, delete the mpnotify value and quarantine the referenced executable. Hunt for other persistence on the host.",
+        "If code ran as SYSTEM, rebuild the host from a trusted image. Watch for related indicators across the fleet."
+      ],
+      "severity_rationale": "High fits because this value is rarely set legitimately and lets Winlogon run code with elevated privileges at every logon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets the Winlogon mpnotify value to point to an executable in C:\\Users\\Public",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\mpnotify",
+          "Details": "C:\\Users\\Public\\notify.exe",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4312,
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.example.com"
+        }
+      },
+      {
+        "description": "PowerShell sets mpnotify to a binary in ProgramData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\mpnotify",
+          "Details": "C:\\ProgramData\\Updater\\mpsvc.exe",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 7720,
+          "User": "ANDES\\admin.rgomez",
+          "Computer": "SRV-FILE-02.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate write to the Winlogon Shell value with explorer.exe; the path does not contain mpnotify",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell",
+          "Details": "explorer.exe",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "ProcessId": 1180,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.example.com"
+        }
+      },
+      {
+        "description": "Write to the Winlogon Userinit value during an OS update; this is not the mpnotify value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Userinit",
+          "Details": "C:\\Windows\\system32\\userinit.exe,",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 3044,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0188.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

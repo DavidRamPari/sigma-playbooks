@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "9d3436ef-9476-4c43-acca-90ce06bdf33a",
+    "title": "DHCP Callout DLL Installation",
+    "level": "high",
+    "status": "test",
+    "author": "Dimitrios Slamaris",
+    "path": "windows/registry/registry_set/registry_set_dhcp_calloutdll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_dhcp_calloutdll.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor CalloutDlls o CalloutEnabled de la clave de parámetros del servidor DHCP. Esto puede registrar una DLL que el servicio DHCP Server cargará en su propio contexto después del próximo reinicio.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject termina en \\Services\\DHCPServer\\Parameters\\CalloutDlls o \\Services\\DHCPServer\\Parameters\\CalloutEnabled, es decir, el registro o la activación de una DLL de callout de DHCP.",
+      "why_it_matters": "Una DLL de callout se ejecuta dentro del servicio DHCP, con privilegios elevados, en cada inicio del servicio. Da persistencia y ejecución de código mediante secuestro de carga de DLL (T1574.001) y modificación del registro (T1112). La referencia de la regla describe este abuso con mimilib de Mimikatz.",
+      "triage_steps": [
+        "Revise TargetObject, Details (ruta de la DLL o valor de CalloutEnabled), Image y User del evento para identificar quién hizo el cambio y desde qué proceso.",
+        "Confirme que el host es un servidor DHCP autorizado y compruebe si existe un cambio aprobado o una herramienta de terceros (IPAM, NAC) que use callouts.",
+        "Ubique la DLL indicada en CalloutDlls: obtenga hash, firma digital, fecha de creación y propietario; consúltela en inteligencia de amenazas.",
+        "Busque en el mismo host, +/- 15 minutos, la creación del archivo DLL, ejecuciones de reg.exe, PowerShell o netsh y sesiones remotas o RDP.",
+        "Verifique si el servicio DHCPServer se reinició (eventos 7036/7040 de System) y si la DLL se cargó en svchost.exe (Sysmon evento 7).",
+        "Pivote por el usuario y la IP de origen del inicio de sesión: busque alertas previas, accesos inusuales o uso de credenciales privilegiadas en otros servidores."
+      ],
+      "false_positives": [
+        "Instalación o actualización de un producto legítimo que integra callouts de DHCP, como soluciones IPAM, NAC o de registro de concesiones, con DLL firmada por el proveedor.",
+        "Cambios de configuración documentados realizados por administradores de red durante una ventana de mantenimiento."
+      ],
+      "response_steps": [
+        "Valide con el dueño del servidor DHCP si el cambio estaba autorizado antes de actuar.",
+        "Si no está autorizado, aísle el servidor de la red o restrinja su acceso administrativo, considerando el impacto en la asignación de direcciones.",
+        "Preserve la DLL y exporte la clave de registro como evidencia; luego elimine CalloutDlls, ponga CalloutEnabled en 0 y reinicie el servicio de forma controlada.",
+        "Restablezca las credenciales usadas en el cambio, busque la misma DLL o modificación en otros servidores y revise la persistencia adicional."
+      ],
+      "severity_rationale": "Es alta porque el cambio rara vez es legítimo y otorga ejecución de código persistente con privilegios elevados en un servidor de infraestructura crítico."
+    },
+    "en": {
+      "summary": "The CalloutDlls or CalloutEnabled value under the DHCP Server parameters key was modified. This can register a DLL that the DHCP Server service will load into its own process after the next restart.",
+      "what_it_detects": "registry_set events where TargetObject ends with \\Services\\DHCPServer\\Parameters\\CalloutDlls or \\Services\\DHCPServer\\Parameters\\CalloutEnabled, meaning a DHCP callout DLL is being registered or enabled.",
+      "why_it_matters": "A callout DLL runs inside the privileged DHCP service every time it starts. This gives persistence and code execution through DLL hijacking (T1574.001) and registry modification (T1112). The rule's reference describes abuse with Mimikatz's mimilib.",
+      "triage_steps": [
+        "Review TargetObject, Details (DLL path or CalloutEnabled value), Image and User to identify who made the change and from which process.",
+        "Confirm the host is an authorized DHCP server and check for an approved change or a third-party tool (IPAM, NAC) that uses callouts.",
+        "Locate the DLL named in CalloutDlls: collect its hash, signature, creation time and owner; check it against threat intelligence.",
+        "On the same host within +/- 15 minutes, look for the DLL file being written, reg.exe, PowerShell or netsh executions, and remote or RDP sessions.",
+        "Check whether the DHCPServer service restarted (System events 7036/7040) and whether the DLL loaded into svchost.exe (Sysmon event 7).",
+        "Pivot on the user and logon source IP: look for earlier alerts, unusual access or privileged credential use on other servers."
+      ],
+      "false_positives": [
+        "Installation or update of a legitimate product that integrates DHCP callouts, such as IPAM, NAC or lease-logging tools, with a vendor-signed DLL.",
+        "Documented configuration changes made by network administrators during a maintenance window."
+      ],
+      "response_steps": [
+        "Confirm with the DHCP server owner whether the change was authorized before acting.",
+        "If unauthorized, isolate the server or restrict administrative access, weighing the impact on address assignment.",
+        "Preserve the DLL and export the registry key as evidence; then remove CalloutDlls, set CalloutEnabled to 0 and restart the service in a controlled way.",
+        "Reset the credentials used, hunt for the same DLL or change on other servers, and look for additional persistence."
+      ],
+      "severity_rationale": "High fits because this change is rarely legitimate and grants persistent, privileged code execution on a critical infrastructure server."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers a DLL as a DHCP callout via CalloutDlls",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DHCP-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\DHCPServer\\Parameters\\CalloutDlls",
+          "Details": "C:\\Windows\\System32\\dhcpext.dll",
+          "ProcessId": 4120
+        }
+      },
+      {
+        "description": "PowerShell enables the callout mechanism via CalloutEnabled",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DHCP-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\DHCPServer\\Parameters\\CalloutEnabled",
+          "Details": "DWORD (0x00000001)",
+          "ProcessId": 5236
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "DHCP management console changes the database path under the same Parameters key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DHCP-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\mmc.exe",
+          "User": "ANDES\\admin.red",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\DHCPServer\\Parameters\\DatabasePath",
+          "Details": "%SystemRoot%\\System32\\dhcp",
+          "ProcessId": 3008
+        }
+      },
+      {
+        "description": "Value name only partly matches (CalloutDllsBackup) so endswith does not apply",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DHCP-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\admin.red",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\DHCPServer\\Parameters\\CalloutDllsBackup",
+          "Details": "(Empty)",
+          "ProcessId": 2716
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

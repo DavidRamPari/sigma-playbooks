@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "faa031b5-21ed-4e02-8881-2591f98d82ed",
+    "title": "Unauthorized System Time Modification",
+    "level": "low",
+    "status": "test",
+    "author": "@neu5ron",
+    "path": "windows/builtin/security/win_security_susp_time_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_time_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso o usuario cambió la hora del sistema (evento 4616) y no es el servicio de hora de Windows ni una herramienta de virtualización conocida. Puede ser un ajuste legítimo o un intento de alterar la cronología de los registros.",
+      "what_it_detects": "Eventos de Seguridad 4616 (se cambió la hora del sistema). Excluye svchost.exe que se ejecuta como LOCAL SERVICE (S-1-5-19, servicio W32Time), VMware Tools, VBoxService y msoobe.exe. Requiere la auditoría Audit Security State Change.",
+      "why_it_matters": "Los atacantes cambian la hora para manipular marcas de tiempo (ATT&CK T1070.006, Timestomp), confundir la correlación de eventos, evadir licencias o validaciones de certificados y dificultar el análisis forense.",
+      "triage_steps": [
+        "Revise ProcessName, SubjectUserName, SubjectDomainName y SubjectUserSid para identificar quién hizo el cambio y con qué binario.",
+        "Compare PreviousTime y NewTime: un salto grande (horas, días, años) es más sospechoso que una corrección de segundos.",
+        "Valide que ProcessName esté en una ruta esperada y revise su hash, firma y reputación.",
+        "Busque la creación del proceso (4688 o Sysmon 1) por ProcessId en el mismo host +/- 15 minutos para ver CommandLine y ParentImage (por ejemplo, Set-Date, date, time, w32tm).",
+        "Correlacione con SubjectLogonId para ver el inicio de sesión (4624): tipo de logon, IP de origen y si fue interactivo o remoto.",
+        "Busque en el mismo host otras señales de antiforense: borrado de logs (1102, 104), cambios de marcas de tiempo de archivos o servicios nuevos.",
+        "Revise alertas anteriores del mismo usuario y host, y si el cambio de hora se repite en otros equipos."
+      ],
+      "false_positives": [
+        "Hyper-V u otras plataformas de virtualización cuyo agente de sincronización no está en el filtro.",
+        "Administradores que corrigen la hora manualmente desde el Panel de Control, Configuración o w32tm.",
+        "Agentes de sincronización de terceros (NTP, software de dominio o de equipos industriales).",
+        "Configuración inicial de imágenes o restablecimiento del equipo."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del equipo si el cambio fue autorizado y documentado.",
+        "Si no fue autorizado, resincronice la hora con la fuente NTP del dominio y preserve los registros antes de que se sobrescriban.",
+        "Si el binario es malicioso o desconocido, aísle el endpoint, recolecte evidencia y bloquee el hash.",
+        "Restablezca o revise las credenciales de la cuenta implicada y amplíe la búsqueda de actividad relacionada.",
+        "Ajuste la regla añadiendo binarios legítimos verificados de su entorno al filtro."
+      ],
+      "severity_rationale": "Nivel bajo porque los cambios de hora tienen muchas causas legítimas; la alerta aporta contexto valioso cuando se combina con otras señales de antiforense."
+    },
+    "en": {
+      "summary": "A process or user changed the system time (event 4616) and it was not the Windows Time service or a known virtualization tool. This may be a legitimate adjustment or an attempt to distort log timelines.",
+      "what_it_detects": "Security event 4616 (system time was changed). Excludes svchost.exe running as LOCAL SERVICE (S-1-5-19, W32Time), VMware Tools, VBoxService and msoobe.exe. Requires Audit Security State Change.",
+      "why_it_matters": "Attackers change the clock to manipulate timestamps (ATT&CK T1070.006, Timestomp), break event correlation, bypass license or certificate checks and hinder forensic analysis.",
+      "triage_steps": [
+        "Review ProcessName, SubjectUserName, SubjectDomainName and SubjectUserSid to identify who changed the time and with which binary.",
+        "Compare PreviousTime and NewTime: a large jump (hours, days, years) is more suspicious than a seconds-level correction.",
+        "Confirm ProcessName is in an expected path and check its hash, signature and reputation.",
+        "Find the process creation (4688 or Sysmon 1) by ProcessId on the same host +/- 15 minutes for CommandLine and ParentImage (Set-Date, date, time, w32tm).",
+        "Pivot on SubjectLogonId to the logon event (4624): logon type, source IP, interactive or remote.",
+        "Look on the same host for other anti-forensics: log clearing (1102, 104), file timestamp changes, new services.",
+        "Check earlier alerts for the same user and host, and whether time changes occur on other machines."
+      ],
+      "false_positives": [
+        "Hyper-V or other virtualization platforms whose time sync agent is not in the filter.",
+        "Administrators manually fixing the clock via Control Panel, Settings or w32tm.",
+        "Third-party time sync agents (NTP clients, domain or industrial equipment software).",
+        "Initial image setup or device reset."
+      ],
+      "response_steps": [
+        "Confirm with the user or system owner whether the change was authorized and documented.",
+        "If unauthorized, resync time with the domain NTP source and preserve logs before they roll over.",
+        "If the binary is malicious or unknown, isolate the endpoint, collect evidence and block the hash.",
+        "Reset or review credentials of the involved account and widen the hunt for related activity.",
+        "Tune the rule by adding verified legitimate binaries from your environment to the filter."
+      ],
+      "severity_rationale": "Low because time changes have many legitimate causes; the alert is most valuable combined with other anti-forensic signals."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User runs PowerShell Set-Date to move the clock back several days",
+        "event": {
+          "EventID": 4616,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E1A2F",
+          "PreviousTime": "2024-10-25T14:03:12.000Z",
+          "NewTime": "2024-10-18T09:00:00.000Z",
+          "ProcessId": "0x1a4c",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      },
+      {
+        "description": "Unknown binary in a public folder changes the system time",
+        "event": {
+          "EventID": 4616,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "SRV-FILE-02$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "PreviousTime": "2024-10-25T02:11:40.000Z",
+          "NewTime": "2021-01-01T00:00:00.000Z",
+          "ProcessId": "0x22f0",
+          "ProcessName": "C:\\Users\\Public\\tsync.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows Time service (svchost as LOCAL SERVICE) corrects clock drift",
+        "event": {
+          "EventID": 4616,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserSid": "S-1-5-19",
+          "SubjectUserName": "LOCAL SERVICE",
+          "SubjectDomainName": "NT AUTHORITY",
+          "SubjectLogonId": "0x3E5",
+          "PreviousTime": "2024-10-25T14:03:12.512Z",
+          "NewTime": "2024-10-25T14:03:12.498Z",
+          "ProcessId": "0x5d8",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe"
+        }
+      },
+      {
+        "description": "VMware Tools synchronizes guest time with the host",
+        "event": {
+          "EventID": 4616,
+          "Channel": "Security",
+          "Computer": "VM-APP-07.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "VM-APP-07$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "PreviousTime": "2024-10-25T08:00:05.000Z",
+          "NewTime": "2024-10-25T08:00:01.000Z",
+          "ProcessId": "0x9c4",
+          "ProcessName": "C:\\Program Files\\VMware\\VMware Tools\\vmtoolsd.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

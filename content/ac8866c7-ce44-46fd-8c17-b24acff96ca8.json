@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "ac8866c7-ce44-46fd-8c17-b24acff96ca8",
+    "title": "HybridConnectionManager Service Installation - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/registry/registry_event/registry_event_hybridconnectionmgr_svc_installation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_hybridconnectionmgr_svc_installation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1608"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió en el registro un servicio de Windows llamado HybridConnectionManager, o un valor que apunta a Microsoft.HybridConnectionManager.Listener.exe. Esto indica que se instaló Azure Hybrid Connection Manager en el host, lo que puede permitir que una función de Azure alcance o ejecute código en recursos internos.",
+      "what_it_detects": "Eventos de registro (Sysmon 12/13/14) cuyo TargetObject contiene '\\Services\\HybridConnectionManager', o eventos SetValue cuyo Details contiene 'Microsoft.HybridConnectionManager.Listener.exe', típicos de la instalación del servicio.",
+      "why_it_matters": "Hybrid Connection Manager crea un túnel saliente vía Azure Relay entre Azure App Service o Azure Functions y endpoints internos. Un atacante puede instalarlo para tener un canal controlado desde Azure hacia la red interna (ATT&CK T1608, Stage Capabilities).",
+      "triage_steps": [
+        "Revise TargetObject, Details, EventType y el campo Image del evento para identificar qué proceso escribió la clave (msiexec.exe, un instalador o algo inesperado).",
+        "Identifique al usuario y la sesión que iniciaron la instalación; confirme si tiene rol administrativo legítimo en ese host.",
+        "Busque un ticket de cambio o al equipo dueño de aplicaciones que use App Service Hybrid Connections para este servidor.",
+        "Pivote en el mismo host +/- 15 minutos: creación de procesos, descarga del MSI, evento 7045 del log System y escrituras de archivos en Program Files.",
+        "Revise conexiones de red del listener hacia *.servicebus.windows.net y qué hosts y puertos internos se publicaron en las hybrid connections configuradas.",
+        "Compruebe si el host es un servidor o una estación de trabajo; en estaciones de usuario la instalación es mucho más sospechosa.",
+        "Busque alertas previas para el mismo host, usuario o hash del instalador y otras instalaciones de HybridConnectionManager en la flota."
+      ],
+      "false_positives": [
+        "Despliegue legítimo por equipos de desarrollo o infraestructura que usan Azure App Service o Functions Hybrid Connections hacia bases de datos o APIs internas.",
+        "Actualización o reinstalación de una versión existente de Hybrid Connection Manager.",
+        "Herramientas de distribución de software (SCCM, Intune) instalando el paquete según una línea base aprobada."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema y el equipo de Azure si la instalación y las hybrid connections están autorizadas.",
+        "Si no está autorizada, preserve evidencia (registro, configuración, logs del servicio) y aísle el host según el procedimiento.",
+        "Detenga y deshabilite el servicio tras documentar las conexiones; elimine las hybrid connections y rote las claves SAS de Azure Relay asociadas.",
+        "Revise en la suscripción de Azure las function apps y relays involucrados, sus propietarios y actividad reciente.",
+        "Busque actividad posterior en los endpoints internos expuestos y restaure el host a una línea base confiable."
+      ],
+      "severity_rationale": "Nivel alto porque la instalación crea un canal persistente desde Azure hacia la red interna y es poco común fuera de despliegues planificados."
+    },
+    "en": {
+      "summary": "A Windows service named HybridConnectionManager, or a value pointing to Microsoft.HybridConnectionManager.Listener.exe, was written to the registry. Azure Hybrid Connection Manager was installed on the host, which can let an Azure function reach or run code on internal resources.",
+      "what_it_detects": "Registry events (Sysmon 12/13/14) where TargetObject contains '\\Services\\HybridConnectionManager', or SetValue events where Details contains 'Microsoft.HybridConnectionManager.Listener.exe', typical of the service installation.",
+      "why_it_matters": "Hybrid Connection Manager builds an outbound tunnel through Azure Relay between Azure App Service or Azure Functions and internal endpoints. An attacker can install it to get an Azure-controlled channel into the internal network (ATT&CK T1608, Stage Capabilities).",
+      "triage_steps": [
+        "Review TargetObject, Details, EventType and the event's Image field to see which process wrote the key (msiexec.exe, an installer or something unexpected).",
+        "Identify the user and session behind the installation; confirm they legitimately administer this host.",
+        "Look for a change ticket or an application team using App Service Hybrid Connections for this server.",
+        "Pivot on the same host +/- 15 minutes: process creation, MSI download, System log event 7045 and file writes under Program Files.",
+        "Check listener network connections to *.servicebus.windows.net and which internal hosts and ports are published in the configured hybrid connections.",
+        "Determine whether the host is a server or a workstation; installation on user workstations is far more suspicious.",
+        "Search earlier alerts for the same host, user or installer hash, and other HybridConnectionManager installs across the fleet."
+      ],
+      "false_positives": [
+        "Legitimate deployment by development or infrastructure teams using Azure App Service or Functions Hybrid Connections to internal databases or APIs.",
+        "Upgrade or reinstallation of an existing Hybrid Connection Manager version.",
+        "Software distribution tools (SCCM, Intune) installing the package per an approved baseline."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and the Azure team whether the installation and hybrid connections are authorized.",
+        "If unauthorized, preserve evidence (registry, configuration, service logs) and isolate the host per procedure.",
+        "Stop and disable the service after documenting connections; remove the hybrid connections and rotate the related Azure Relay SAS keys.",
+        "Review the Azure subscription for the involved function apps and relays, their owners and recent activity.",
+        "Hunt for follow-on activity on the exposed internal endpoints and restore the host to a trusted baseline."
+      ],
+      "severity_rationale": "High because the installation creates a persistent channel from Azure into the internal network and is rare outside planned deployments."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Sysmon 13 SetValue of the service ImagePath pointing to the HCM listener (matches selection1 and selection2).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\HybridConnectionManager\\ImagePath",
+          "Details": "\"C:\\Program Files\\Microsoft\\HybridConnectionManager 0.7\\Microsoft.HybridConnectionManager.Listener.exe\"",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Sysmon 12 CreateKey of the HybridConnectionManager service key during MSI install (matches selection1).",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\HybridConnectionManager",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Azure Connected Machine Agent service registration: different service name and binary.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\himds\\ImagePath",
+          "Details": "\"C:\\Program Files\\AzureConnectedMachineAgent\\himds.exe\"",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Value written under a non-Services software key whose Details do not reference the listener executable.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\HybridConnectionManager\\InstallDir",
+          "Details": "C:\\Program Files\\Microsoft\\HybridConnectionManager 0.7\\",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

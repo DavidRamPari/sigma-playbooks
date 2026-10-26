@@ -1,0 +1,111 @@
+{
+  "rule": {
+    "id": "4c54ba8f-73d2-4d40-8890-d9cf1dca3d30",
+    "title": "Invoke-Obfuscation VAR++ LAUNCHER OBFUSCATION - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Timur Zinniatullin, oscd.community",
+    "path": "windows/builtin/security/win_security_invoke_obfuscation_via_var_services_security.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_invoke_obfuscation_via_var_services_security.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (EID 4697) cuyo ServiceFileName contiene un launcher de PowerShell ofuscado con la técnica VAR++ de Invoke-Obfuscation. Suele indicar ejecución remota o persistencia con código ofuscado.",
+      "what_it_detects": "Eventos 4697 del log Security donde ServiceFileName incluye '&&set', 'cmd', '/c', '-f' y al menos un marcador de formato ({0} a {5}). Es el patrón de VAR++: guardar comandos en variables de entorno con cmd /c set y rearmar cadenas de PowerShell con el operador -f.",
+      "why_it_matters": "Un servicio con este binPath ejecuta PowerShell como SYSTEM. Es común en movimiento lateral (creación remota de servicios) y en persistencia. Corresponde a T1027 (archivos o información ofuscados) y T1059.001 (PowerShell).",
+      "triage_steps": [
+        "Lea el ServiceFileName completo y desofusque los marcadores {n} -f para reconstruir el comando real: busque DownloadString, IEX, URLs o rutas de payload.",
+        "Revise ServiceName, ServiceStartType y ServiceAccount: nombres aleatorios, inicio por demanda y LocalSystem son típicos de herramientas de ejecución remota.",
+        "Identifique SubjectUserName y SubjectDomainName; correlacione con eventos 4624 de tipo 3 en el mismo host ±15 minutos para hallar la IP de origen.",
+        "Busque el evento 7045 del log System y la creación de procesos (4688 o Sysmon 1) con services.exe como ParentImage y cmd.exe/powershell.exe como hijos.",
+        "Revise conexiones de red salientes del host tras la instalación, en especial hacia dominios o IP extraídos del comando desofuscado.",
+        "Pivote por el mismo usuario y la misma IP de origen en otros hosts para detectar instalaciones similares y alertas previas."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; el software legítimo casi nunca usa este nivel de ofuscación.",
+        "Ejercicios autorizados de red team o pruebas de detección con Invoke-Obfuscation; confirme con el equipo responsable y la ventana aprobada."
+      ],
+      "response_steps": [
+        "Confirme la malicia desofuscando el comando y validando con el responsable del host o del usuario.",
+        "Aísle el endpoint de la red y deshabilite o restablezca la cuenta indicada en SubjectUserName si se confirma el compromiso.",
+        "Detenga y elimine el servicio tras documentarlo (sc qc, exportar la clave del registro) y preserve evidencia del disco y la memoria.",
+        "Bloquee los dominios, IP y hash identificados y busque los mismos indicadores en toda la flota.",
+        "Restablezca credenciales expuestas, revise otros mecanismos de persistencia y devuelva el host a producción solo cuando esté limpio."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque PowerShell ofuscado instalado como servicio implica privilegios elevados y casi nunca tiene una explicación legítima."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EID 4697) whose ServiceFileName contains a PowerShell launcher obfuscated with Invoke-Obfuscation's VAR++ technique. This usually means remote execution or persistence using obfuscated code.",
+      "what_it_detects": "Security log 4697 events where ServiceFileName contains '&&set', 'cmd', '/c', '-f' and at least one format placeholder ({0} to {5}). That is the VAR++ pattern: commands are stored in environment variables with cmd /c set, and PowerShell strings are rebuilt with the -f operator.",
+      "why_it_matters": "A service with this binPath runs PowerShell as SYSTEM. Attackers use it for lateral movement (remote service creation) and for persistence. It maps to T1027 (obfuscated files or information) and T1059.001 (PowerShell).",
+      "triage_steps": [
+        "Read the full ServiceFileName and resolve the {n} -f placeholders to rebuild the real command. Look for DownloadString, IEX, URLs or payload paths.",
+        "Check ServiceName, ServiceStartType and ServiceAccount. Random names, demand start and LocalSystem are typical of remote-execution tools.",
+        "Identify SubjectUserName and SubjectDomainName. Look for type 3 logons (4624) on the same host within 15 minutes either side to find the source IP.",
+        "Find the matching System 7045 event and any process creation (4688 or Sysmon 1) where services.exe is the ParentImage and cmd.exe or powershell.exe is the child.",
+        "Check outbound network connections from the host after the install, especially to domains or IPs taken from the deobfuscated command.",
+        "Pivot on the same user and source IP across other hosts to find similar service installs and earlier alerts."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Legitimate software rarely uses this level of obfuscation.",
+        "Authorized red team exercises or detection tests that use Invoke-Obfuscation. Confirm with the owning team and check the approved window."
+      ],
+      "response_steps": [
+        "Confirm it is malicious by deobfuscating the command and checking with the owner of the host or account.",
+        "If compromise is confirmed, isolate the endpoint and disable or reset the SubjectUserName account.",
+        "Record the service details (sc qc, export the registry key), then stop and delete the service. Preserve disk and memory evidence.",
+        "Block the domains, IPs and hashes you identified, and hunt for the same indicators across all hosts.",
+        "Reset exposed credentials and check for other persistence. Return the host to production only once it is clean."
+      ],
+      "severity_rationale": "High fits because obfuscated PowerShell installed as a service runs with elevated privileges and almost never has a legitimate explanation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with a VAR++ obfuscated launcher: cmd /C with &&set, variables and {n} -f format placeholders",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "xKqTzb",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem",
+          "ServiceFileName": "c:\\WiNDOWS\\sYSTEm32\\CmD.exE /C \"sEt DeJLz=Write-Output placeholder&&set yBKM=PoWERShelL -noeX (\\\"{1}{0}\\\" -f 'ut','Write-Outp') 'test'&& c:\\WiNDOWS\\sYSTEm32\\CmD.exE /C %ybkm%\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service wrapper using cmd /c with &&set and a -f option but no {n} format placeholders",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "SubjectUserName": "svc_deploy",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "BackupAgent",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem",
+          "ServiceFileName": "cmd.exe /c set AGENT_HOME=C:\\Program Files\\BackupAgent&&set LOG=1&& \"C:\\Program Files\\BackupAgent\\agent.exe\" -f config.ini"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

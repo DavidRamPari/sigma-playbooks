@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "b28e4eb3-8bbc-4f0c-819f-edfe8e2f25db",
+    "title": "ESXi Account Creation Via ESXCLI",
+    "level": "medium",
+    "status": "test",
+    "author": "Cedric Maurugeon",
+    "path": "linux/process_creation/proc_creation_lnx_esxcli_user_account_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_esxcli_user_account_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.012",
+      "T1136"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó esxcli con los subcomandos \"system account add\" en un host ESXi, lo que crea una nueva cuenta local. Puede ser administración legítima o un atacante creando persistencia en el hipervisor.",
+      "what_it_detects": "Procesos cuyo Image termina en /esxcli y cuyo CommandLine contiene \"system \", \"account \" y \"add \", es decir, la creación de un usuario local de ESXi desde la línea de comandos (ESXi Shell o SSH).",
+      "why_it_matters": "Una cuenta local en ESXi da acceso directo al hipervisor y a todas sus máquinas virtuales, sin pasar por vCenter. Corresponde a ATT&CK T1136 (creación de cuentas para persistencia) y T1059.012 (uso del CLI del hipervisor).",
+      "triage_steps": [
+        "Lea el CommandLine completo: identifique el nombre de cuenta (-i/--id) y la descripción (-d). Desconfíe de nombres genéricos o que imitan cuentas de servicio.",
+        "Identifique quién ejecutó el comando (User) y el ParentImage: una shell interactiva vía SSH es más sospechosa que un script de aprovisionamiento conocido.",
+        "Revise /var/log/shell.log y auth.log del mismo host +/- 15 minutos: origen de la sesión SSH, IP de origen y otros comandos ejecutados.",
+        "Busque a continuación \"esxcli system permission set\" para la misma cuenta, sobre todo con rol Admin, y cambios en la configuración de SSH o firewall.",
+        "Confirme con el equipo de virtualización si existe un ticket de cambio o una tarea de mantenimiento que justifique la cuenta.",
+        "Busque alertas previas para el mismo host, usuario o IP de origen, y la misma cuenta creada en otros hosts ESXi."
+      ],
+      "false_positives": [
+        "Administradores que crean cuentas locales de servicio o soporte durante tareas planificadas.",
+        "Scripts de aprovisionamiento o hardening (Ansible, PowerCLI con SSH) que configuran usuarios locales en hosts nuevos.",
+        "Proveedores o equipos de soporte que crean cuentas temporales autorizadas para diagnóstico."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host si la cuenta es autorizada antes de actuar.",
+        "Si no lo es, preserve evidencia (shell.log, auth.log, hostd.log) y luego elimine o deshabilite la cuenta y sus permisos.",
+        "Rote la contraseña de root y de otras cuentas privilegiadas, y revise el origen del acceso inicial (IP, credenciales usadas).",
+        "Deshabilite SSH y ESXi Shell si no son necesarios, active lockdown mode y revise el resto de hosts ESXi en busca de cuentas similares."
+      ],
+      "severity_rationale": "Medium es adecuado: crear cuentas es una tarea administrativa habitual, pero una cuenta no autorizada en un hipervisor tiene alto impacto y exige revisión rápida."
+    },
+    "en": {
+      "summary": "esxcli was run with \"system account add\" on an ESXi host, creating a new local account. This may be legitimate administration or an attacker establishing persistence on the hypervisor.",
+      "what_it_detects": "Processes whose Image ends with /esxcli and whose CommandLine contains \"system \", \"account \" and \"add \", i.e. creation of a local ESXi user from the command line (ESXi Shell or SSH).",
+      "why_it_matters": "A local ESXi account grants direct access to the hypervisor and every VM on it, bypassing vCenter. Maps to ATT&CK T1136 (account creation for persistence) and T1059.012 (hypervisor CLI).",
+      "triage_steps": [
+        "Read the full CommandLine: note the account name (-i/--id) and description (-d). Be wary of generic names or ones mimicking service accounts.",
+        "Identify who ran it (User) and the ParentImage: an interactive SSH shell is more suspicious than a known provisioning script.",
+        "Review /var/log/shell.log and auth.log on the same host +/- 15 minutes: SSH session origin, source IP and other commands run.",
+        "Look for a following \"esxcli system permission set\" for the same account, especially with the Admin role, and SSH or firewall changes.",
+        "Confirm with the virtualization team whether a change ticket or maintenance task covers this account.",
+        "Check earlier alerts for the same host, user or source IP, and the same account name on other ESXi hosts."
+      ],
+      "false_positives": [
+        "Administrators creating local service or support accounts during planned work.",
+        "Provisioning or hardening scripts (Ansible, PowerCLI over SSH) configuring local users on new hosts.",
+        "Vendors or support teams creating authorized temporary accounts for diagnostics."
+      ],
+      "response_steps": [
+        "Verify with the host owner whether the account is authorized before acting.",
+        "If not, preserve evidence (shell.log, auth.log, hostd.log), then remove or disable the account and its permissions.",
+        "Rotate root and other privileged passwords, and investigate the initial access path (source IP, credentials used).",
+        "Disable SSH and ESXi Shell if not needed, enable lockdown mode, and sweep other ESXi hosts for similar accounts."
+      ],
+      "severity_rationale": "Medium fits: account creation is routine admin work, but an unauthorized account on a hypervisor is high impact and needs prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive SSH session on an ESXi host creates a new local account with esxcli",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system account add -i svc-backup2 -d \"Backup service\" -p REDACTED -c REDACTED",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "ProcessId": 2210345,
+          "Computer": "esxi-prod-03.example.com"
+        }
+      },
+      {
+        "description": "Long-form options used to add an account via esxcli from a script",
+        "event": {
+          "Image": "/usr/bin/esxcli",
+          "CommandLine": "/usr/bin/esxcli system account add --id=support01 --password=REDACTED --password-confirmation=REDACTED",
+          "ParentImage": "/bin/ash",
+          "User": "root",
+          "ProcessId": 1984411,
+          "Computer": "esxi-lab-01.example.org"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator lists existing local accounts; no 'add ' in the command line",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system account list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "ProcessId": 2210402,
+          "Computer": "esxi-prod-03.example.com"
+        }
+      },
+      {
+        "description": "Existing account description modified with 'set', not created",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system account set -i svc-monitor -d \"Monitoring account\"",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "ProcessId": 2210477,
+          "Computer": "esxi-prod-03.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

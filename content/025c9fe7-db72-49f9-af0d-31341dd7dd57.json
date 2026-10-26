@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "025c9fe7-db72-49f9-af0d-31341dd7dd57",
+    "title": "Azure Firewall Rule Collection Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_firewall_rule_collection_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_firewall_rule_collection_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Alguien creó, modificó o eliminó una colección de reglas (Application, NAT o Network) en un Azure Firewall. El cambio puede ser administración legítima, o un intento de abrir tráfico o de quitar controles de red.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es WRITE o DELETE sobre APPLICATIONRULECOLLECTIONS, NATRULECOLLECTIONS o NETWORKRULECOLLECTIONS de MICROSOFT.NETWORK/AZUREFIREWALLS (reglas clásicas, no Firewall Policy).",
+      "why_it_matters": "Un atacante con permisos en la suscripción puede borrar reglas de denegación, permitir salidas hacia su infraestructura o publicar servicios internos con DNAT. Esto debilita las defensas de red (táctica de impacto y deterioro de defensas, T1686.001).",
+      "triage_steps": [
+        "Identifique el caller, el callerIpAddress, el user agent y el resourceId del firewall y de la colección afectada en el evento.",
+        "Revise status y subStatus: confirme si la operación terminó en Succeeded o si solo fue un intento fallido.",
+        "Compare la configuración antes y después (Change Analysis o propiedades del evento): qué reglas, puertos, FQDN o destinos DNAT se agregaron o quitaron.",
+        "Verifique si existe un ticket de cambio aprobado o un despliegue de IaC (pipeline, service principal conocido) que explique la modificación.",
+        "Busque otras operaciones del mismo caller en +/- 15 minutos: asignaciones de roles, cambios en NSG, rutas, diagnósticos o eliminación de logs.",
+        "Revise los inicios de sesión de esa identidad en Entra ID: IP, ubicación, MFA, riesgo y alertas anteriores para la misma entidad.",
+        "Si se agregó una regla permisiva, consulte los logs del firewall para ver tráfico que la use después del cambio."
+      ],
+      "false_positives": [
+        "Administradores de red que ajustan reglas durante ventanas de cambio aprobadas.",
+        "Despliegues automatizados con Terraform, Bicep, ARM o pipelines de DevOps que reescriben las colecciones en cada ejecución.",
+        "Migraciones de reglas clásicas a Firewall Policy, que eliminan colecciones existentes."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del firewall o el autor del cambio si fue autorizado, antes de revertir nada.",
+        "Si no fue autorizado, restaure la colección desde IaC o desde una exportación previa y bloquee el tráfico abierto por la regla.",
+        "Revoque sesiones, rote las credenciales y revise los roles RBAC de la identidad comprometida.",
+        "Aplique bloqueos de recursos (resource locks) o Azure Policy, y limite quién puede escribir en el firewall.",
+        "Documente el incidente y, si el comportamiento es legítimo y recurrente, cree una exclusión acotada por caller."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estos cambios suelen ser administrativos, aunque un cambio no autorizado puede exponer la red de inmediato."
+    },
+    "en": {
+      "summary": "An Application, NAT or Network rule collection on an Azure Firewall was created, modified or deleted. This may be routine administration or an attempt to open traffic or strip network controls.",
+      "what_it_detects": "Azure Activity Log events whose operationName is WRITE or DELETE on APPLICATIONRULECOLLECTIONS, NATRULECOLLECTIONS or NETWORKRULECOLLECTIONS under MICROSOFT.NETWORK/AZUREFIREWALLS (classic rules, not Firewall Policy).",
+      "why_it_matters": "An attacker with subscription rights can remove deny rules, allow egress to their infrastructure or expose internal services through DNAT. This weakens network defenses (impact and defense impairment, T1686.001).",
+      "triage_steps": [
+        "From the event, note the caller, callerIpAddress, user agent, the firewall resourceId and the affected collection.",
+        "Check status and subStatus to see whether the operation Succeeded or was only a failed attempt.",
+        "Compare the before and after configuration (Change Analysis or event properties): which rules, ports, FQDNs or DNAT targets were added or removed.",
+        "Look for an approved change ticket or an IaC deployment (pipeline, known service principal) that explains the change.",
+        "Pivot on the same caller within +/- 15 minutes: role assignments, NSG, route table or diagnostic setting changes, log deletion.",
+        "Review Entra ID sign-ins for that identity: IP, location, MFA, risk level and earlier alerts for the same entity.",
+        "If a permissive rule was added, query firewall logs for traffic hitting it after the change."
+      ],
+      "false_positives": [
+        "Network administrators adjusting rules during approved change windows.",
+        "Automated Terraform, Bicep, ARM or DevOps pipeline deployments that rewrite collections on every run.",
+        "Migrations from classic rules to Firewall Policy, which delete existing collections."
+      ],
+      "response_steps": [
+        "Before reverting anything, confirm with the firewall owner or the change author whether the change was authorized.",
+        "If it was not authorized, restore the collection from IaC or a prior export and block any traffic the rule opened.",
+        "Revoke sessions, rotate credentials and review RBAC roles of the compromised identity.",
+        "Apply resource locks or Azure Policy and restrict who can write to the firewall.",
+        "Document the incident. If the activity is legitimate and recurring, add a narrow exclusion scoped to the caller."
+      ],
+      "severity_rationale": "Medium fits because these changes are usually administrative, but an unauthorized one can expose the network immediately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Network rule collection deleted on a production Azure Firewall by a user from an external IP",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/AZUREFIREWALLS/NETWORKRULECOLLECTIONS/DELETE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/azureFirewalls/fw-hub-01/networkRuleCollections/deny-outbound",
+          "correlationId": "7c1e2a90-1111-4c2b-9d3e-000000000001",
+          "level": "Informational"
+        }
+      },
+      {
+        "description": "NAT rule collection written (DNAT added) on an Azure Firewall",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/AZUREFIREWALLS/NATRULECOLLECTIONS/WRITE",
+          "category": "Administrative",
+          "status": "Started",
+          "caller": "mgarcia@example.com",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/azureFirewalls/fw-hub-01/natRuleCollections/dnat-rdp",
+          "correlationId": "7c1e2a90-2222-4c2b-9d3e-000000000002",
+          "level": "Informational"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only access to the Azure Firewall configuration, not a rule collection change",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/AZUREFIREWALLS/READ",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/azureFirewalls/fw-hub-01",
+          "correlationId": "7c1e2a90-3333-4c2b-9d3e-000000000003",
+          "level": "Informational"
+        }
+      },
+      {
+        "description": "Firewall Policy rule collection group write, which is a different operation the rule does not list",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/FIREWALLPOLICIES/RULECOLLECTIONGROUPS/WRITE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "sp-terraform-network",
+          "callerIpAddress": "192.0.2.50",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/firewallPolicies/fwp-hub/ruleCollectionGroups/default",
+          "correlationId": "7c1e2a90-4444-4c2b-9d3e-000000000004",
+          "level": "Informational"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

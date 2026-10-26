@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "f62176f3-8128-4faa-bf6c-83261322e5eb",
+    "title": "Malicious PowerShell Keywords",
+    "level": "medium",
+    "status": "test",
+    "author": "Sean Metcalf (source), Florian Roth (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_malicious_keywords.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_malicious_keywords.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell registrado (evento 4104) contiene palabras clave típicas de frameworks de explotación, como Mimikatz, MiniDumpWriteDump o constantes de manipulación de tokens. Puede indicar robo de credenciales, volcado de memoria o escalamiento de privilegios.",
+      "what_it_detects": "Script blocks cuyo ScriptBlockText contiene alguna de estas cadenas: AdjustTokenPrivileges, IMAGE_NT_OPTIONAL_HDR64_MAGIC, Metasploit, Microsoft.Win32.UnsafeNativeMethods, Mimikatz, MiniDumpWriteDump, PAGE_EXECUTE_READ, ReadProcessMemory.Invoke, SE_PRIVILEGE_ENABLED, SECURITY_DELEGATION o constantes TOKEN_*. Requiere Script Block Logging habilitado.",
+      "why_it_matters": "Estas cadenas aparecen en herramientas que cargan PE en memoria, vuelcan LSASS o duplican tokens (T1059.001, ejecución mediante PowerShell). Una coincidencia real suele preceder al robo de credenciales y al movimiento lateral.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo e identifique qué palabra clave coincidió y en qué contexto: definición P/Invoke, llamada a función o un simple comentario.",
+        "Reconstruya el script completo uniendo los fragmentos con el mismo ScriptBlockId (MessageNumber/MessageTotal); los scripts grandes se dividen en varios eventos 4104.",
+        "Revise Path y el usuario: un script firmado en una ruta corporativa difiere de uno sin ruta (ejecutado en memoria) o ubicado en %TEMP%.",
+        "Correlacione con eventos de creación de procesos del mismo host en +/- 15 minutos: proceso padre de powershell.exe, CommandLine codificada (-enc) o descargas (IEX, DownloadString).",
+        "Busque accesos a lsass.exe (Sysmon 10), archivos .dmp nuevos y conexiones de red salientes del mismo host en esa ventana.",
+        "Revise alertas previas del mismo usuario y host, y si el mismo hash de script o texto aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts administrativos o de diagnóstico que usan P/Invoke legítimo para ajustar privilegios de tokens (por ejemplo, SeBackupPrivilege) y requieren ajuste inicial.",
+        "Herramientas de seguridad, EDR o módulos de auditoría que incluyen firmas o cadenas como Mimikatz para detectarlas.",
+        "Ejercicios autorizados de red team o pentesting; confirme con el equipo responsable y la ventana aprobada."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del host o del script si la ejecución fue autorizada antes de actuar.",
+        "Si es malicioso o no se explica, aísle el endpoint desde el EDR y preserve el script reconstruido y la memoria si es posible.",
+        "Restablezca las credenciales de las cuentas con sesión en el host, priorizando cuentas privilegiadas, si hubo indicios de acceso a LSASS.",
+        "Elimine la persistencia y artefactos encontrados, y busque el mismo contenido en otros hosts; luego restaure y monitoree. Excluya scripts legítimos por ruta o hash firmado."
+      ],
+      "severity_rationale": "Medium es adecuado porque las palabras clave son fuertes indicadores de herramientas ofensivas, pero algunos scripts legítimos las usan y requieren contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A logged PowerShell script block (event 4104) contains keywords typical of exploitation frameworks, such as Mimikatz, MiniDumpWriteDump or token-manipulation constants. It may indicate credential theft, memory dumping or privilege escalation.",
+      "what_it_detects": "Script blocks whose ScriptBlockText contains any of: AdjustTokenPrivileges, IMAGE_NT_OPTIONAL_HDR64_MAGIC, Metasploit, Microsoft.Win32.UnsafeNativeMethods, Mimikatz, MiniDumpWriteDump, PAGE_EXECUTE_READ, ReadProcessMemory.Invoke, SE_PRIVILEGE_ENABLED, SECURITY_DELEGATION or TOKEN_* constants. Requires Script Block Logging.",
+      "why_it_matters": "These strings appear in tools that reflectively load PEs, dump LSASS or duplicate tokens (T1059.001, execution via PowerShell). A true match often precedes credential theft and lateral movement.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and identify which keyword matched and its context: P/Invoke definition, function call or just a comment.",
+        "Rebuild the full script by joining fragments sharing the same ScriptBlockId (MessageNumber/MessageTotal); large scripts span several 4104 events.",
+        "Check Path and the user: a signed script in a corporate path differs from one with no path (in-memory) or located in %TEMP%.",
+        "Correlate with process creation on the same host within +/- 15 minutes: powershell.exe parent, encoded CommandLine (-enc) or download cradles (IEX, DownloadString).",
+        "Look for lsass.exe access (Sysmon 10), new .dmp files and outbound network connections from the host in that window.",
+        "Review earlier alerts for the same user and host, and whether the same script text or hash appears on other endpoints."
+      ],
+      "false_positives": [
+        "Admin or diagnostic scripts using legitimate P/Invoke to adjust token privileges (for example SeBackupPrivilege); initial tuning is expected.",
+        "Security tools, EDR or audit modules that embed strings like Mimikatz as detection signatures.",
+        "Authorized red team or penetration tests; confirm with the responsible team and approved window."
+      ],
+      "response_steps": [
+        "Confirm with the host or script owner whether the execution was authorized before acting.",
+        "If malicious or unexplained, isolate the endpoint via EDR and preserve the rebuilt script and memory where possible.",
+        "If LSASS access is suspected, reset credentials for accounts logged on to the host, privileged accounts first.",
+        "Remove persistence and artifacts, hunt for the same content on other hosts, then restore and monitor. Exclude legitimate scripts by path or signed hash."
+      ],
+      "severity_rationale": "Medium fits because the keywords strongly indicate offensive tooling, yet some legitimate scripts use them and context is needed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "In-memory script block defining a P/Invoke for MiniDumpWriteDump, typical of LSASS dumping tools.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f9c2a1e-7b44-4d2e-9a10-5c2f8e6b1d01",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "$sig = '[DllImport(\"dbghelp.dll\")] public static extern bool MiniDumpWriteDump(IntPtr hProcess, uint ProcessId, IntPtr hFile, uint DumpType, IntPtr e, IntPtr u, IntPtr c);'; Add-Type -MemberDefinition $sig -Name Dbg -Namespace Win32"
+        }
+      },
+      {
+        "description": "Script from a temp folder adjusting token privileges using TOKEN_ADJUST_PRIVILEGES constants.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "UserID": "ANDES\\svc_backup",
+          "ScriptBlockId": "a1b2c3d4-0000-4e5f-8a9b-112233445566",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\svc_backup\\AppData\\Local\\Temp\\p.ps1",
+          "ScriptBlockText": "$TOKEN_ADJUST_PRIVILEGES = 0x0020; $TOKEN_QUERY = 0x0008; $h = [IntPtr]::Zero; [Win32.Adv]::OpenProcessToken($proc, $TOKEN_ADJUST_PRIVILEGES -bor $TOKEN_QUERY, [ref]$h)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine admin script listing processes and privileges with whoami; no listed keyword appears.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "7e8f9a0b-1c2d-4e3f-a4b5-c6d7e8f90a1b",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Inventory\\Get-HostInfo.ps1",
+          "ScriptBlockText": "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10; whoami /priv | Out-File C:\\Scripts\\Inventory\\priv.txt"
+        }
+      },
+      {
+        "description": "Near miss: text mentions token elevation and privileges in plain words, without the exact underscore constants.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UserID": "ANDES\\mrojas",
+          "ScriptBlockId": "0f1e2d3c-4b5a-4968-8776-655443322110",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Program Files\\Contoso\\Check-Admin.ps1",
+          "ScriptBlockText": "# Token elevation check\n$id = [Security.Principal.WindowsIdentity]::GetCurrent(); $p = New-Object Security.Principal.WindowsPrincipal($id); Write-Host \"Token privileges admin: $($p.IsInRole('Administrators'))\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

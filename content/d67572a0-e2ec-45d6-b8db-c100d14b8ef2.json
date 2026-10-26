@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "d67572a0-e2ec-45d6-b8db-c100d14b8ef2",
+    "title": "NetNTLM Downgrade Attack - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), wagga, Nasreddine Bencherchali (Splunk STRT)",
+    "path": "windows/registry/registry_event/registry_event_net_ntlm_downgrade.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_net_ntlm_downgrade.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó un valor de registro bajo SYSTEM\\...ControlSet...\\Control\\Lsa que controla la seguridad de NTLM, de una forma que puede permitir NTLMv1/LM o tráfico NTLM sin restricciones. Esto puede indicar un ataque de downgrade de NetNTLM para capturar hashes débiles.",
+      "what_it_detects": "Eventos de registro donde TargetObject está bajo Control\\Lsa y se escribe LmCompatibilityLevel con valor 0, 1 o 2; NtlmMinClientSec con 0x0, 0x10, 0x20 o 0x30; o cualquier valor de RestrictSendingNTLMTraffic.",
+      "why_it_matters": "Al bajar el nivel de autenticación NTLM, un atacante puede obtener respuestas NetNTLMv1 fáciles de crackear o de reenviar y robar credenciales. Corresponde a modificación del registro (T1112) para debilitar las defensas (T1685).",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique qué valor cambió y si el nuevo valor permite LM/NTLMv1 o elimina las restricciones de NTLM saliente.",
+        "Identifique Image y el usuario del evento. Desconfíe de reg.exe, powershell.exe o binarios no estándar en rutas de usuario; svchost.exe que aplica GPO es más probable que sea legítimo.",
+        "Busque la creación de procesos en el mismo host +/- 15 minutos para obtener CommandLine y ParentImage del proceso que escribió el valor.",
+        "Compare con la línea base y las GPO de seguridad: ¿hay un cambio aprobado o un objeto de directiva que establezca este valor?",
+        "Revise eventos 4624 posteriores en el host buscando Package Name NTLM V1 o LM, y conexiones SMB/HTTP salientes hacia destinos inusuales.",
+        "Verifique si el valor se restauró poco después; un cambio temporal es típico de herramientas como Internal Monologue.",
+        "Busque el mismo cambio en otros hosts y alertas previas para el mismo usuario o equipo."
+      ],
+      "false_positives": [
+        "Servicios, GPO o herramientas de hardening que establecen valores más restrictivos, por ejemplo RestrictSendingNTLMTraffic=2.",
+        "Aplicaciones heredadas que requieren NTLMv1 y cuya configuración fue documentada y aprobada.",
+        "Scripts de imagen o despliegue que reescriben la configuración de Lsa durante el aprovisionamiento."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o de las GPO si el cambio estaba autorizado antes de actuar.",
+        "Si no está autorizado, restaure los valores seguros (por ejemplo LmCompatibilityLevel=5) mediante GPO y aísle el endpoint si hay actividad maliciosa adicional.",
+        "Restablezca las credenciales de las cuentas que se autenticaron desde el host tras el cambio y revise su uso posterior.",
+        "Elimine la herramienta o el proceso responsable y busque persistencia relacionada; documente y ajuste la línea base."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque debilitar NTLM es una técnica directa de robo de credenciales y rara vez ocurre fuera de cambios planificados."
+    },
+    "en": {
+      "summary": "A registry value under SYSTEM\\...ControlSet...\\Control\\Lsa that governs NTLM security was changed in a way that may allow LM/NTLMv1 or unrestricted NTLM traffic. This may be a NetNTLM downgrade attack aimed at capturing weak hashes.",
+      "what_it_detects": "Registry events where TargetObject is under Control\\Lsa and LmCompatibilityLevel is set to 0, 1 or 2; NtlmMinClientSec to 0x0, 0x10, 0x20 or 0x30; or RestrictSendingNTLMTraffic is set to any value.",
+      "why_it_matters": "Downgrading NTLM lets an attacker obtain NetNTLMv1 responses that are easy to crack or relay, leading to credential theft. This is registry modification (T1112) used to weaken defenses (T1685).",
+      "triage_steps": [
+        "Check TargetObject and Details: which value changed, and does the new value allow LM/NTLMv1 or remove outbound NTLM restrictions?",
+        "Identify Image and user. Be suspicious of reg.exe, powershell.exe or unusual binaries in user paths; svchost.exe applying GPO is more likely benign.",
+        "Pivot to process creation on the same host +/- 15 minutes to get the writer's CommandLine and ParentImage.",
+        "Compare against the baseline and security GPOs: is there an approved change or policy setting this value?",
+        "Review later 4624 events on the host for Package Name NTLM V1 or LM, and outbound SMB/HTTP to unusual destinations.",
+        "Check whether the value was reverted shortly after; a temporary change is typical of tools like Internal Monologue.",
+        "Search for the same change on other hosts and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Services, GPOs or hardening tools setting more restrictive values, e.g. RestrictSendingNTLMTraffic=2.",
+        "Legacy applications that require NTLMv1, with a documented and approved configuration.",
+        "Imaging or deployment scripts rewriting Lsa settings during provisioning."
+      ],
+      "response_steps": [
+        "Confirm with the host or GPO owner whether the change was authorized before acting.",
+        "If unauthorized, restore secure values (e.g. LmCompatibilityLevel=5) via GPO and isolate the endpoint if other malicious activity exists.",
+        "Reset credentials of accounts that authenticated from the host after the change and review their subsequent use.",
+        "Remove the responsible tool or process, hunt for related persistence, and update the baseline."
+      ],
+      "severity_rationale": "High fits because weakening NTLM is a direct credential-theft technique and rarely happens outside planned changes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe lowers LmCompatibilityLevel to 2, allowing NTLMv1 responses",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\LmCompatibilityLevel",
+          "Details": "DWORD (0x00000002)"
+        }
+      },
+      {
+        "description": "PowerShell sets RestrictSendingNTLMTraffic to 0 (allow all outbound NTLM)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\MSV1_0\\RestrictSendingNTLMTraffic",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "GPO hardening sets LmCompatibilityLevel to 5 (NTLMv2 only), not in the weak value list",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\LmCompatibilityLevel",
+          "Details": "DWORD (0x00000005)"
+        }
+      },
+      {
+        "description": "NtlmMinClientSec set to secure value 0x20080000 (NTLMv2 session security and 128-bit encryption)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\MSV1_0\\NtlmMinClientSec",
+          "Details": "DWORD (0x20080000)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

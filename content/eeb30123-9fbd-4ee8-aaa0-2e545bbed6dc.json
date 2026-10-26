@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "eeb30123-9fbd-4ee8-aaa0-2e545bbed6dc",
+    "title": "Security Support Provider (SSP) Added to LSA Configuration",
+    "level": "high",
+    "status": "test",
+    "author": "iwillkeepwatch",
+    "path": "windows/registry/registry_event/registry_event_ssp_added_lsa_config.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_ssp_added_lsa_config.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto de msiexec modificó el valor 'Security Packages' de la configuración de LSA. Esto puede significar que se registró un Security Support Provider (SSP) malicioso que LSASS cargará para capturar credenciales.",
+      "what_it_detects": "Eventos de registro (Sysmon 12/13/14 o equivalente) donde TargetObject termina en '\\Control\\Lsa\\Security Packages' o '\\Control\\Lsa\\OSConfig\\Security Packages'. Se excluyen las escrituras de msiexec.exe y los eventos sin campo Image.",
+      "why_it_matters": "Es la técnica ATT&CK T1547.005 (Security Support Provider). Una DLL agregada a esta lista se carga en LSASS al reiniciar o mediante la API AddSecurityPackage. Con eso obtiene persistencia con privilegios SYSTEM y acceso a contraseñas en texto claro y cifradas, como hacen Install-SSP de PowerSploit y Empire.",
+      "triage_steps": [
+        "Revise Details para ver la lista completa de paquetes y compárela con la línea base del sistema operativo (kerberos, msv1_0, schannel, wdigest, tspkg, pku2u). Identifique cualquier nombre nuevo.",
+        "Para cada paquete nuevo, busque la DLL en C:\\Windows\\System32 y obtenga su hash, su firma digital y su fecha de creación.",
+        "Revise el Image y el User que hicieron la escritura. PowerShell, cmd, reg.exe o binarios en rutas de usuario son mucho más sospechosos.",
+        "Pivotee en el mismo host +/- 15 minutos: creación de procesos, línea de comandos del padre (ParentImage, CommandLine), escritura de archivos DLL en System32 y scripts de PowerShell (Event ID 4104).",
+        "Busque eventos de carga de imagen de lsass.exe con la DLL nueva (Sysmon Event ID 7) y reinicios recientes del equipo.",
+        "Busque alertas previas del mismo usuario y del mismo host, y otras escrituras de la misma DLL o del mismo valor en otros equipos."
+      ],
+      "false_positives": [
+        "Instalación legítima de software de autenticación (tarjetas inteligentes, SSO o MFA de terceros) mediante un instalador que no sea msiexec.",
+        "Herramientas de gestión de configuración o scripts de hardening de TI que reescriben la lista de Security Packages."
+      ],
+      "response_steps": [
+        "Valide con el responsable del equipo y con el área de TI si hubo un cambio autorizado. Documente el valor de Details y el hash de la DLL.",
+        "Si no está autorizado, aísle el endpoint de la red y conserve la DLL y un volcado de memoria de LSASS para el análisis forense.",
+        "Retire el paquete no autorizado del valor de registro, elimine la DLL después de preservarla y reinicie el equipo para que LSASS deje de cargarla.",
+        "Considere comprometidas las credenciales de las cuentas que iniciaron sesión en el host. Fuerce el cambio de contraseña y revise los movimientos laterales."
+      ],
+      "severity_rationale": "El nivel alto es correcto: fuera de los instaladores, cambiar los SSP es raro y da persistencia en LSASS con acceso directo a credenciales."
+    },
+    "en": {
+      "summary": "A process other than msiexec modified the LSA 'Security Packages' value. This may mean a malicious Security Support Provider (SSP) was registered for LSASS to load and harvest credentials.",
+      "what_it_detects": "Registry events (Sysmon 12/13/14 or similar) where TargetObject ends with '\\Control\\Lsa\\Security Packages' or '\\Control\\Lsa\\OSConfig\\Security Packages'. Writes by msiexec.exe and events with no Image field are excluded.",
+      "why_it_matters": "This is ATT&CK T1547.005 (Security Support Provider). A DLL added to this list is loaded into LSASS after a reboot or through the AddSecurityPackage API. That gives SYSTEM-level persistence and access to plaintext and encrypted passwords, which is what PowerSploit and Empire Install-SSP do.",
+      "triage_steps": [
+        "Read Details for the full package list and compare it with the OS baseline (kerberos, msv1_0, schannel, wdigest, tspkg, pku2u). Flag any new name.",
+        "For each new package, find the DLL in C:\\Windows\\System32 and collect its hash, digital signature and creation time.",
+        "Check the Image and User that made the write. PowerShell, cmd, reg.exe or binaries in user paths are highly suspicious.",
+        "Pivot on the same host +/- 15 minutes: process creation, the parent's command line (ParentImage, CommandLine), DLL writes to System32 and PowerShell script blocks (Event ID 4104).",
+        "Look for lsass.exe image loads of the new DLL (Sysmon Event ID 7) and recent reboots.",
+        "Search for earlier alerts on the same user and host, and for the same DLL or registry value on other machines."
+      ],
+      "false_positives": [
+        "Legitimate install of authentication software (smart card, third-party SSO or MFA) through an installer other than msiexec.",
+        "Configuration management tools or IT hardening scripts that rewrite the Security Packages list."
+      ],
+      "response_steps": [
+        "Check with the system owner and IT whether the change was authorized. Record the Details value and the DLL hash.",
+        "If it was not authorized, isolate the endpoint and keep the DLL and an LSASS memory dump for forensics.",
+        "Remove the unauthorized package from the registry value, delete the DLL after preserving it, and reboot so LSASS stops loading it.",
+        "Treat credentials of accounts that logged on to the host as compromised. Force password resets and review lateral movement."
+      ],
+      "severity_rationale": "High fits because SSP changes outside installers are rare and give persistence inside LSASS with direct access to credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell appends an unknown SSP DLL name to the LSA Security Packages value (Install-SSP style).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 5124,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\Security Packages",
+          "Details": "kerberos msv1_0 schannel wdigest tspkg pku2u secpkgx"
+        }
+      },
+      {
+        "description": "reg.exe writes the OSConfig Security Packages value.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "User": "ANDES\\admin.rlopez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 3380,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\OSConfig\\Security Packages",
+          "Details": "kerberos msv1_0 schannel wdigest tspkg pku2u customssp"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An MSI installer run by msiexec updates Security Packages; the msiexec filter excludes it.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\msiexec.exe",
+          "ProcessId": 2210,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\Security Packages",
+          "Details": "kerberos msv1_0 schannel wdigest tspkg pku2u"
+        }
+      },
+      {
+        "description": "PowerShell writes a different LSA value (Notification Packages), so TargetObject does not match.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0201.andes.example.com",
+          "User": "ANDES\\mgomez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4410,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\Notification Packages",
+          "Details": "scecli"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "1bac86ba-41aa-4f62-9d6b-405eac99b485",
+    "title": "Systemd Service Creation",
+    "level": "medium",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/path/lnx_auditd_systemd_service_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/path/lnx_auditd_systemd_service_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró la creación de un archivo en un directorio de unidades de systemd, ya sea del sistema (/etc/systemd/system/, /usr/lib/systemd/system/) o de un usuario (~/.config/systemd/user/). Puede ser una instalación legítima o un intento de persistencia mediante un servicio malicioso.",
+      "what_it_detects": "Registros PATH de auditd con nametype=CREATE cuyo name empieza por /usr/lib/systemd/system/ o /etc/systemd/system/, o contiene /.config/systemd/user/. Incluye unidades nuevas, drop-ins de override y symlinks de enable.",
+      "why_it_matters": "Los atacantes crean o modifican servicios de systemd para que su código se ejecute al arrancar el sistema o al iniciar sesión, muchas veces como root (ATT&CK T1543.002, Create or Modify System Process: Systemd Service). Así obtienen persistencia y pueden escalar privilegios.",
+      "triage_steps": [
+        "Anote la ruta creada en name y el número de serie del evento en msg=audit(tiempo:serie). Busque el registro SYSCALL con esa serie para obtener exe, comm, uid, euid y auid.",
+        "Revise qué proceso creó el archivo. Si es dpkg, rpm, apt, dnf, snap o un agente de gestión de configuración, apunta a una instalación. Una shell, curl, python o binarios en /tmp o /dev/shm son sospechosos.",
+        "Lea el archivo de la unidad y sus drop-ins. Revise ExecStart, ExecStartPre, User y WorkingDirectory en busca de scripts en rutas escribibles, reverse shells, comandos codificados o descargas.",
+        "Obtenga el hash del binario o script que indica ExecStart, revise su propietario y fecha de modificación, y verifique si pertenece a algún paquete (dpkg -S o rpm -qf).",
+        "En el mismo host, dentro de +/- 15 minutos, busque systemctl daemon-reload, enable o start, conexiones salientes nuevas e inicios de sesión del mismo auid.",
+        "Si es una unidad de usuario, verifique si la cuenta tiene lingering habilitado (loginctl show-user) y revise su acceso: método de inicio de sesión e IP de origen.",
+        "Compare el horario con los tickets de cambio y busque alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Instalaciones o actualizaciones de paquetes que incluyen unidades en /usr/lib/systemd/system/.",
+        "Administradores que ejecutan systemctl edit o enable, lo que crea overrides y symlinks .wants en /etc/systemd/system/.",
+        "Herramientas de gestión de configuración como Ansible, Puppet o Chef que despliegan servicios.",
+        "Desarrolladores o aplicaciones de escritorio que crean unidades de usuario en ~/.config/systemd/user/."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con el responsable del sistema o con un registro de cambios si el servicio era esperado.",
+        "Si es malicioso, guarde como evidencia una copia de la unidad y del payload de ExecStart. Después ejecute systemctl stop y disable sobre la unidad.",
+        "Aísle el endpoint si el payload abre conexiones de red o se ejecutó como root. Luego busque otros mecanismos de persistencia: cron, llaves SSH y otras unidades.",
+        "Elimine la unidad y el payload, ejecute systemctl daemon-reload y restablezca las credenciales de la cuenta involucrada.",
+        "Ajuste la regla para las herramientas de despliegue conocidas, filtrando por el exe del registro SYSCALL, y documente la excepción."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque crear unidades es habitual en la administración normal, pero cuando no se espera es un indicio fuerte de persistencia con privilegios de root."
+    },
+    "en": {
+      "summary": "auditd recorded the creation of a file in a systemd unit directory, either system-wide (/etc/systemd/system/, /usr/lib/systemd/system/) or per-user (~/.config/systemd/user/). This may be a legitimate install or someone setting up persistence through a malicious service.",
+      "what_it_detects": "auditd PATH records with nametype=CREATE where name starts with /usr/lib/systemd/system/ or /etc/systemd/system/, or contains /.config/systemd/user/. This covers new unit files, drop-in overrides and enable symlinks.",
+      "why_it_matters": "Attackers create or change systemd services so their code runs at boot or user login, often as root (ATT&CK T1543.002, Create or Modify System Process: Systemd Service). This gives them persistence and can let them escalate privileges.",
+      "triage_steps": [
+        "Note the created path in name and the audit event serial from msg=audit(time:serial). Find the matching SYSCALL record to get exe, comm, uid, euid and auid.",
+        "Check which process created the file. dpkg, rpm, apt, dnf, snap or config-management agents point to an install. Shells, curl, python or binaries in /tmp or /dev/shm are suspicious.",
+        "Read the unit file and any drop-in. Look at ExecStart, ExecStartPre, User and WorkingDirectory for scripts in writable paths, reverse shells, encoded commands or downloads.",
+        "Hash the binary or script that ExecStart points to, check its owner and modification time, and see if a package owns it (dpkg -S or rpm -qf).",
+        "On the same host within +/- 15 minutes, look for systemctl daemon-reload, enable or start, new outbound connections, and logins by the same auid.",
+        "For user units, check whether lingering is enabled for that account (loginctl show-user). Also check how that user logged in and from which source IP.",
+        "Compare the timing with change tickets and look for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Package installs or upgrades that ship unit files under /usr/lib/systemd/system/.",
+        "Administrators running systemctl edit or enable, which create drop-in overrides and .wants symlinks in /etc/systemd/system/.",
+        "Configuration management tools such as Ansible, Puppet or Chef deploying services.",
+        "Developers or desktop apps creating user units under ~/.config/systemd/user/."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or a change record whether the service was expected before you act.",
+        "If it is malicious, save a copy of the unit file and its ExecStart payload for evidence, then run systemctl stop and disable on the unit.",
+        "Isolate the host if the payload makes network connections or ran as root. Then look for other persistence such as cron jobs, SSH keys and other units.",
+        "Remove the unit and payload, run systemctl daemon-reload, and reset credentials for the account involved.",
+        "Tune the rule for known deployment tools by matching on the exe from the SYSCALL record, and document the decision."
+      ],
+      "severity_rationale": "Medium fits because unit file creation is common during normal administration, but when unexpected it is a strong sign of root-level persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "New system-wide unit file created in /etc/systemd/system/ (e.g. by a shell redirect from a non-package process).",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865012.431:48213)",
+          "item": 1,
+          "name": "/etc/systemd/system/sys-update.service",
+          "inode": 1311054,
+          "dev": "fd:00",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Per-user unit created under a home directory's ~/.config/systemd/user/.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865390.112:48390)",
+          "item": 1,
+          "name": "/home/jperez/.config/systemd/user/dbus-helper.service",
+          "inode": 2490371,
+          "dev": "fd:02",
+          "mode": "0100664",
+          "ouid": 1001,
+          "ogid": 1001,
+          "nametype": "CREATE",
+          "host": "WS-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Existing unit file in /etc/systemd/system/ only opened for reading (nametype NORMAL, not CREATE).",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865500.020:48411)",
+          "item": 0,
+          "name": "/etc/systemd/system/sshd.service",
+          "inode": 1310780,
+          "dev": "fd:00",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "File created outside any systemd unit directory (a .service file staged in /tmp).",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865601.774:48432)",
+          "item": 1,
+          "name": "/tmp/build/myapp.service",
+          "inode": 393229,
+          "dev": "fd:00",
+          "mode": "0100644",
+          "ouid": 1001,
+          "ogid": 1001,
+          "nametype": "CREATE",
+          "host": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

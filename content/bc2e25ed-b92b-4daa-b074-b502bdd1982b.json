@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "bc2e25ed-b92b-4daa-b074-b502bdd1982b",
+    "title": "Local Privilege Escalation Indicator TabTip",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/builtin/system/microsoft_windows_distributed_com/win_system_lpe_indicators_tabtip.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/microsoft_windows_distributed_com/win_system_lpe_indicators_tabtip.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1557.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un evento DCOM 10001 indica que el servidor DCOM de TabTip (CLSID {054AAE20-4BEA-4347-8A35-64A533254A9D}) falló al iniciarse con el error 2147943140. Este patrón aparece cuando JuicyPotatoNG prueba CLSID por fuerza bruta para escalar a SYSTEM.",
+      "what_it_detects": "Eventos del log System con proveedor Microsoft-Windows-DistributedCOM y EventID 10001. Deben tener param1 con la ruta de TabTip.exe, param2 igual a 2147943140 (0x800702E4, se requiere elevación) y param3 con el CLSID de TabTip. Es un efecto secundario de JuicyPotatoNG al recorrer CLSID.",
+      "why_it_matters": "JuicyPotatoNG abusa de la activación DCOM y de la autenticación NTLM local. Así, una cuenta con SeImpersonatePrivilege (IIS, SQL u otras cuentas de servicio) puede suplantar a SYSTEM. La regla lo asocia a adversary-in-the-middle mediante relay SMB/NTLM (T1557.001). Si tiene éxito, el atacante obtiene control total del equipo.",
+      "triage_steps": [
+        "Anote el Computer y la hora. Revise el log System en +/- 15 minutos: ráfagas de otros eventos DCOM 10001/10016 con distintos CLSID indican el modo de fuerza bruta.",
+        "Revise la creación de procesos (Sysmon 1 o Security 4688) en esa ventana. Busque binarios desconocidos o CommandLine con argumentos de CLSID o puerto, como -t, -p, -c o -l.",
+        "Identifique el proceso padre y la cuenta. Es sospechoso que una cuenta de servicio (IIS APPPOOL, NETWORK SERVICE, MSSQL) lance herramientas, y también cualquier proceso hijo que corra como SYSTEM.",
+        "Busque en Security 4624 inicios de sesión locales desde 127.0.0.1 o ::1 hacia SYSTEM o ANONYMOUS en ese momento.",
+        "Busque actividad posterior: servicios nuevos (7045), usuarios locales o cambios en grupos de administradores (4720, 4732), tareas programadas o volcado de credenciales.",
+        "En servidores web o de base de datos, busque web shells o ejecución de comandos SQL que pudieran lanzar la herramienta.",
+        "Revise alertas previas del mismo host y de la misma cuenta de servicio. Obtenga el hash de los binarios sospechosos y consúltelo en threat intel."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Un fallo de TabTip con este código exacto es poco común en uso normal.",
+        "El equipo de seguridad ejecutó JuicyPotatoNG a propósito en una prueba de penetración o ejercicio de red team autorizado.",
+        "Fallas en los componentes de teclado táctil o escritura a mano en equipos tipo tablet. Confirme si el evento se repite sin otra actividad sospechosa."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del activo si hay una prueba de seguridad aprobada. Si no la hay, trate la alerta como una escalada de privilegios probable.",
+        "Aísle el host mediante EDR y preserve la evidencia volátil: procesos, conexiones de red y, si es posible, memoria.",
+        "Recolecte y elimine la herramienta, los web shells y la persistencia creada. Restablezca las contraseñas de las cuentas de servicio afectadas y de las cuentas que puedan estar expuestas.",
+        "Corrija el vector de entrada. Retire SeImpersonatePrivilege donde no se necesite y restrinja las cuentas de servicio. Devuelva el host a producción solo después de validarlo y vigile si se repite."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque este fallo específico está muy ligado a una herramienta pública de escalada a SYSTEM y rara vez tiene causas legítimas."
+    },
+    "en": {
+      "summary": "A DCOM 10001 event shows that the TabTip DCOM server (CLSID {054AAE20-4BEA-4347-8A35-64A533254A9D}) failed to start with error 2147943140. This pattern appears when JuicyPotatoNG brute-forces CLSIDs to escalate to SYSTEM.",
+      "what_it_detects": "System log events from Microsoft-Windows-DistributedCOM, EventID 10001. The event must have param1 set to the TabTip.exe path, param2 set to 2147943140 (0x800702E4, elevation required) and param3 set to the TabTip CLSID. This failed activation is a side effect of JuicyPotatoNG cycling through CLSIDs.",
+      "why_it_matters": "JuicyPotatoNG abuses DCOM activation and local NTLM authentication. It lets an account with SeImpersonatePrivilege, such as IIS, SQL or other service accounts, impersonate SYSTEM. The rule maps this to adversary-in-the-middle via SMB/NTLM relay (T1557.001). Success gives full control of the host.",
+      "triage_steps": [
+        "Note the Computer and timestamp. Check the System log within +/- 15 minutes for bursts of other DCOM 10001/10016 events with different CLSIDs, which point to brute-force mode.",
+        "Look at Sysmon 1 or Security 4688 process creation on the host in that window. Look for unknown binaries or command lines with CLSID or port arguments such as -t, -p, -c or -l.",
+        "Find the parent process and account. A service account (IIS APPPOOL, NETWORK SERVICE, MSSQL) launching tools is suspicious, and so is any child process running as SYSTEM.",
+        "Check Security 4624 for local logons from 127.0.0.1 or ::1 to SYSTEM or ANONYMOUS around that time. JuicyPotatoNG triggers local authentication.",
+        "Search for follow-on activity: new services (7045), new local users or admin group changes (4720, 4732), scheduled tasks, or credential dumping.",
+        "On web or database servers, look for web shells or SQL command execution that could have run the tool.",
+        "Check earlier alerts for this host and service account, and hash any suspicious binary for threat intel lookups."
+      ],
+      "false_positives": [
+        "The rule lists none as known. A failed TabTip activation with this exact error code is rare in normal use.",
+        "A security team running JuicyPotatoNG on purpose during an authorized penetration test or red team exercise.",
+        "Faulty touch keyboard or handwriting components on tablet devices could log this event. Check for repeated events without other suspicious activity."
+      ],
+      "response_steps": [
+        "Ask the asset owner and check for an approved security test. If there is no approval, treat the alert as a likely privilege escalation.",
+        "Isolate the host through EDR and keep volatile evidence: process list, network connections and memory, if possible.",
+        "Collect and remove the escalation tool, any web shell and any persistence it created. Reset passwords for affected service accounts and any accounts that may be exposed.",
+        "Patch or harden the entry point. Remove unneeded SeImpersonatePrivilege rights and limit service accounts. Return the host to service only after validation, and watch for recurrence."
+      ],
+      "severity_rationale": "High fits because this specific failure is closely tied to a public SYSTEM escalation tool, and benign causes are rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DCOM 10001 failure to start TabTip via its CLSID with error 2147943140, as generated by JuicyPotatoNG brute force",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-DistributedCOM",
+          "EventID": 10001,
+          "Channel": "System",
+          "Computer": "WEB-SRV-07.andes.example.com",
+          "Level": 2,
+          "param1": "C:\\Program Files\\Common Files\\microsoft shared\\ink\\TabTip.exe",
+          "param2": 2147943140,
+          "param3": "{054AAE20-4BEA-4347-8A35-64A533254A9D}",
+          "TimeCreated": "2024-03-14T02:17:45.312Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same TabTip CLSID and binary but a different error code (access denied), not the JuicyPotatoNG pattern",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-DistributedCOM",
+          "EventID": 10001,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "Level": 2,
+          "param1": "C:\\Program Files\\Common Files\\microsoft shared\\ink\\TabTip.exe",
+          "param2": 2147942405,
+          "param3": "{054AAE20-4BEA-4347-8A35-64A533254A9D}",
+          "TimeCreated": "2024-03-14T09:02:11.004Z"
+        }
+      },
+      {
+        "description": "DCOM 10001 failure for an unrelated COM server and binary",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-DistributedCOM",
+          "EventID": 10001,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "Level": 2,
+          "param1": "C:\\Windows\\System32\\RuntimeBroker.exe -Embedding",
+          "param2": 2147943140,
+          "param3": "{D63B10C5-BB46-4990-A94F-E40B9D520160}",
+          "TimeCreated": "2024-03-14T09:05:40.887Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

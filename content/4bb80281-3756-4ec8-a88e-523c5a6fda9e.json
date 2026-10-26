@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "4bb80281-3756-4ec8-a88e-523c5a6fda9e",
+    "title": "New Root Certificate Authority Added",
+    "level": "medium",
+    "status": "test",
+    "author": "Harjot Shah Singh, '@cyb3rjy0t'",
+    "path": "cloud/azure/audit_logs/azure_ad_new_root_ca_added.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_ad_new_root_ca_added.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1556"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se agregó o modificó una autoridad de certificación raíz de confianza en el tenant de Entra ID (Azure AD) para la autenticación basada en certificados (CBA). Si el cambio no está autorizado, un atacante podría emitir certificados propios y autenticarse como cualquier usuario sin contraseña.",
+      "what_it_detects": "Eventos de Azure AD Audit Logs con OperationName 'Set Company Information' en los que TargetResources.modifiedProperties.newValue contiene 'TrustedCAsForPasswordlessAuth', es decir, un cambio en la lista de CA confiables para la autenticación sin contraseña.",
+      "why_it_matters": "Una CA raíz controlada por un atacante le permite crear certificados de cliente válidos para cualquier usuario, incluidos administradores. Así obtiene persistencia y escalamiento de privilegios sin necesitar contraseñas ni MFA. Esto corresponde a la técnica T1556 (Modify Authentication Process).",
+      "triage_steps": [
+        "Identifique quién hizo el cambio (InitiatedBy.user.userPrincipalName o la aplicación), la IP de origen y la hora. Confirme que Result sea success.",
+        "Revise TargetResources.modifiedProperties: compare oldValue con newValue y extraiga el emisor, el thumbprint y las URL de CRL de la CA agregada.",
+        "Valide con el equipo de PKI o de identidad si existe un ticket de cambio para incorporar o renovar esa CA.",
+        "Compruebe que la CA sea conocida comparándola con la configuración de Certificate Authorities en el portal de Entra ID y con el inventario interno de PKI.",
+        "Revise los inicios de sesión del iniciador: IP, país, user agent, nivel de riesgo y si es la primera vez que usa esa IP o ese dispositivo.",
+        "Busque otras acciones del mismo iniciador en +/- 15 minutos: habilitación de la política de métodos de autenticación CBA, asignaciones de roles o cambios en credenciales de aplicaciones.",
+        "Busque inicios de sesión con autenticación por certificado posteriores al cambio, sobre todo de cuentas privilegiadas o desde IPs poco comunes."
+      ],
+      "false_positives": [
+        "Incorporación planificada de una PKI corporativa para habilitar CBA.",
+        "Renovación o rotación programada de un certificado de CA raíz o intermedia.",
+        "Scripts de administración (Microsoft Graph o el módulo AzureAD de PowerShell) que mantienen la lista de CA confiables."
+      ],
+      "response_steps": [
+        "Verifique con el propietario de la PKI antes de actuar. Si el cambio es legítimo, documente el ticket y cierre la alerta.",
+        "Si no está autorizado, elimine la CA no reconocida de la configuración del tenant y, mientras investiga, considere restringir temporalmente la política CBA.",
+        "Revoque las sesiones de la cuenta iniciadora, restablezca sus credenciales y revise sus roles y métodos de MFA.",
+        "Revoque las sesiones de los usuarios que iniciaron sesión con certificados emitidos por la CA maliciosa y revise lo que hicieron después.",
+        "Busque otros mecanismos de persistencia (federación de dominios, credenciales de service principals, roles nuevos) y escale el caso como incidente de identidad."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el cambio es poco frecuente y puede ser una tarea legítima de PKI, pero si es malicioso compromete la autenticación de todo el tenant."
+    },
+    "en": {
+      "summary": "A trusted root certificate authority was added or changed in the Entra ID (Azure AD) tenant for certificate-based authentication (CBA). If the change is unauthorized, an attacker could issue their own certificates and sign in as any user without a password.",
+      "what_it_detects": "Azure AD Audit Log events with OperationName 'Set Company Information' where TargetResources.modifiedProperties.newValue contains 'TrustedCAsForPasswordlessAuth', meaning the list of trusted CAs for passwordless authentication was changed.",
+      "why_it_matters": "A root CA controlled by an attacker lets them create valid client certificates for any user, including admins. That gives persistence and privilege escalation without passwords or MFA. This maps to T1556 (Modify Authentication Process).",
+      "triage_steps": [
+        "Identify who made the change (InitiatedBy.user.userPrincipalName or the app), the source IP and the time. Confirm that Result is success.",
+        "Review TargetResources.modifiedProperties: compare oldValue with newValue and pull out the added CA's issuer, thumbprint and CRL URLs.",
+        "Check with the PKI or identity team whether a change ticket exists for adding or renewing that CA.",
+        "Confirm the CA is known by comparing it with the Certificate Authorities settings in the Entra ID portal and the internal PKI inventory.",
+        "Review the initiator's sign-ins: IP, country, user agent, risk level, and whether the IP or device has been seen before.",
+        "Look for other actions by the same initiator within +/- 15 minutes: CBA authentication method policy enablement, role assignments or app credential changes.",
+        "Look for certificate-based sign-ins after the change, especially by privileged accounts or from unusual IPs."
+      ],
+      "false_positives": [
+        "Planned onboarding of a corporate PKI to enable CBA.",
+        "Scheduled renewal or rotation of a root or intermediate CA certificate.",
+        "Admin scripts (Microsoft Graph or the AzureAD PowerShell module) that maintain the trusted CA list."
+      ],
+      "response_steps": [
+        "Check with the PKI owner before acting. If the change is legitimate, record the ticket and close the alert.",
+        "If it is unauthorized, remove the unknown CA from the tenant settings. Consider temporarily restricting the CBA policy while you investigate.",
+        "Revoke the initiator's sessions, reset their credentials, and review their roles and MFA methods.",
+        "Revoke sessions for users who signed in with certificates from the rogue CA, and review what they did afterward.",
+        "Hunt for other persistence (domain federation, service principal credentials, new roles) and escalate as an identity incident."
+      ],
+      "severity_rationale": "Medium fits because the change is rare and can be legitimate PKI work, but if it is malicious it compromises authentication for the whole tenant."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A global admin signing in from an unfamiliar IP adds a new trusted root CA for passwordless (certificate-based) authentication.",
+        "event": {
+          "ActivityDateTime": "2024-04-02T14:03:12Z",
+          "Category": "DirectoryManagement",
+          "LoggedByService": "Core Directory",
+          "OperationName": "Set Company Information",
+          "Result": "success",
+          "InitiatedBy.user.userPrincipalName": "jperez@example.com",
+          "InitiatedBy.user.ipAddress": "203.0.113.45",
+          "TargetResources.displayName": "Company",
+          "TargetResources.modifiedProperties.displayName": "TrustedCAsForPasswordlessAuth",
+          "TargetResources.modifiedProperties.oldValue": "[]",
+          "TargetResources.modifiedProperties.newValue": "[\"<TrustedCAsForPasswordlessAuth><CertificateAuthority IsRootAuthority=\\\"true\\\" Issuer=\\\"CN=Example Root CA\\\" Thumbprint=\\\"A1B2C3D4E5F60718293A4B5C6D7E8F9012345678\\\" CrlDistributionPoint=\\\"http://pki.example.org/root.crl\\\"/></TrustedCAsForPasswordlessAuth>\"]"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Set Company Information that changes only the technical notification email and does not touch the trusted CA list.",
+        "event": {
+          "ActivityDateTime": "2024-04-02T09:41:55Z",
+          "Category": "DirectoryManagement",
+          "LoggedByService": "Core Directory",
+          "OperationName": "Set Company Information",
+          "Result": "success",
+          "InitiatedBy.user.userPrincipalName": "mrodriguez@example.com",
+          "InitiatedBy.user.ipAddress": "198.51.100.20",
+          "TargetResources.displayName": "Company",
+          "TargetResources.modifiedProperties.displayName": "TechnicalNotificationMails",
+          "TargetResources.modifiedProperties.oldValue": "[\"it-old@example.com\"]",
+          "TargetResources.modifiedProperties.newValue": "[\"it-alerts@example.com\"]"
+        }
+      },
+      {
+        "description": "A different directory operation (Update user) whose new value mentions certificate authentication but not the trusted CA property.",
+        "event": {
+          "ActivityDateTime": "2024-04-02T10:15:03Z",
+          "Category": "UserManagement",
+          "LoggedByService": "Core Directory",
+          "OperationName": "Update user",
+          "Result": "success",
+          "InitiatedBy.user.userPrincipalName": "admin.ops@example.com",
+          "InitiatedBy.user.ipAddress": "192.0.2.15",
+          "TargetResources.displayName": "Ana Gomez",
+          "TargetResources.modifiedProperties.displayName": "StrongAuthenticationMethod",
+          "TargetResources.modifiedProperties.oldValue": "[]",
+          "TargetResources.modifiedProperties.newValue": "[{\"MethodType\":\"X509Certificate\",\"Default\":false}]"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "65d506d3-fcfe-4071-b4b2-bcefe721bbbb",
+    "title": "Potential Persistence Via PlistBuddy",
+    "level": "high",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r)",
+    "path": "macos/process_creation/proc_creation_macos_persistence_via_plistbuddy.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_persistence_via_plistbuddy.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.001",
+      "T1543.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PlistBuddy se ejecutó para fijar RunAtLoad en true en un archivo plist ubicado en una ruta LaunchAgents o LaunchDaemons. Esto puede indicar que alguien está creando o modificando un mecanismo de persistencia en macOS.",
+      "what_it_detects": "Procesos cuyo Image termina en /PlistBuddy y cuyo CommandLine contiene 'RunAtLoad', 'true' y además 'LaunchAgents' o 'LaunchDaemons'. Es el patrón típico para configurar un servicio de launchd que se inicie automáticamente al cargar la sesión o el sistema.",
+      "why_it_matters": "Los LaunchAgents y LaunchDaemons con RunAtLoad ejecutan un programa en cada inicio de sesión o arranque (ATT&CK T1543.001 y T1543.004). Los LaunchDaemons corren como root, por lo que también sirven para escalar privilegios. Hay malware para macOS que usa PlistBuddy con este fin.",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique la ruta del plist, la acción (Add/Set) y si el plist está en ~/Library/LaunchAgents, /Library/LaunchAgents o /Library/LaunchDaemons.",
+        "Revise ParentImage y la cadena de procesos: un shell, un script en /tmp o un instalador sin firma resultan más sospechosos que un instalador .pkg conocido.",
+        "Obtenga el plist afectado y revise las claves ProgramArguments o Program: ¿a qué binario o script apunta? ¿Está en una ruta oculta, temporal o con un nombre que imita a Apple?",
+        "Calcule el hash del binario referenciado, verifique su firma de código (codesign) y consúltelo en sus fuentes de threat intelligence.",
+        "Pivote en el mismo host +/- 15 minutos: busque descargas con curl, ejecuciones de launchctl load/bootstrap, cambios de permisos con chmod y conexiones de red salientes.",
+        "Revise el usuario que ejecutó el proceso y si se usó sudo; un LaunchDaemon creado por un usuario estándar merece prioridad.",
+        "Busque alertas anteriores para el mismo host o usuario y el mismo nombre de plist en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos, pero instaladores legítimos (agentes de MDM, VPN, antivirus) pueden usar PlistBuddy para configurar sus servicios de launchd.",
+        "Scripts de administración o de despliegue de TI que configuran agentes corporativos en la flota."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo o con el equipo de TI si la instalación del software asociado fue autorizada.",
+        "Si es maliciosa, aísle el endpoint de la red y conserve como evidencia el plist, el binario referenciado y los logs.",
+        "Descargue el servicio con launchctl bootout o unload y luego elimine el plist y el payload, siempre después de preservar la evidencia.",
+        "Busque el mismo plist, hash o ruta en otros equipos y bloquee los indicadores encontrados.",
+        "Restablezca las credenciales del usuario si hubo uso de sudo o indicios de robo de credenciales, y vigile el host después de la limpieza."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque se trata de una modificación directa de persistencia con inicio automático, posiblemente como root, y el patrón tiene poco uso legítimo fuera de instaladores conocidos."
+    },
+    "en": {
+      "summary": "PlistBuddy was used to set RunAtLoad to true in a plist under a LaunchAgents or LaunchDaemons path. This may mean someone is creating or changing a macOS persistence mechanism.",
+      "what_it_detects": "Processes whose Image ends with /PlistBuddy and whose CommandLine contains 'RunAtLoad', 'true', and either 'LaunchAgents' or 'LaunchDaemons'. This is the usual way to make a launchd job start automatically at login or boot.",
+      "why_it_matters": "LaunchAgents and LaunchDaemons with RunAtLoad run a program at every login or boot (ATT&CK T1543.001 and T1543.004). LaunchDaemons run as root, so they also give privilege escalation. Some macOS malware uses PlistBuddy for exactly this.",
+      "triage_steps": [
+        "Read the full CommandLine: note the plist path, the action (Add/Set), and whether it sits in ~/Library/LaunchAgents, /Library/LaunchAgents or /Library/LaunchDaemons.",
+        "Check ParentImage and the process tree: a shell, a script in /tmp or an unsigned installer is more suspicious than a known .pkg installer.",
+        "Collect the plist and inspect ProgramArguments or Program: which binary or script does it launch? Is it hidden, in a temp path, or named to look like Apple?",
+        "Hash the referenced binary, check its code signature (codesign), and look it up in threat intelligence.",
+        "Pivot on the same host +/- 15 minutes: curl downloads, launchctl load/bootstrap, chmod changes and outbound network connections.",
+        "Check the executing user and whether sudo was used; a LaunchDaemon written by a standard user deserves priority.",
+        "Look for earlier alerts on the same host or user, and for the same plist name on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives, but legitimate installers (MDM, VPN, antivirus agents) may use PlistBuddy to configure their launchd jobs.",
+        "IT administration or deployment scripts that configure corporate agents across the fleet."
+      ],
+      "response_steps": [
+        "Confirm with the device owner or IT whether the related software install was authorized.",
+        "If malicious, isolate the endpoint and preserve the plist, the referenced binary and relevant logs.",
+        "Unload the job with launchctl bootout or unload, then remove the plist and payload after evidence is preserved.",
+        "Hunt for the same plist, hash or path on other hosts and block the indicators found.",
+        "Reset the user's credentials if sudo was used or credential theft is suspected, and monitor the host after cleanup."
+      ],
+      "severity_rationale": "High fits because this is a direct auto-start persistence change, possibly running as root, and the pattern has little legitimate use outside known installers."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PlistBuddy adds RunAtLoad true to a user LaunchAgent plist, launched from a bash script in /tmp",
+        "event": {
+          "Image": "/usr/libexec/PlistBuddy",
+          "CommandLine": "/usr/libexec/PlistBuddy -c \"Add :RunAtLoad bool true\" /Users/jperez/Library/LaunchAgents/com.example.updater.plist",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /tmp/.inst/setup.sh",
+          "User": "jperez",
+          "ProcessId": 4127,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "PlistBuddy run via sudo sets RunAtLoad true on a system LaunchDaemon",
+        "event": {
+          "Image": "/usr/libexec/PlistBuddy",
+          "CommandLine": "/usr/libexec/PlistBuddy -c \"Set :RunAtLoad true\" /Library/LaunchDaemons/com.example.helper.plist",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 5310,
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PlistBuddy only reads the RunAtLoad value of a LaunchAgent; 'true' is absent from the command line",
+        "event": {
+          "Image": "/usr/libexec/PlistBuddy",
+          "CommandLine": "/usr/libexec/PlistBuddy -c \"Print :RunAtLoad\" /Users/jperez/Library/LaunchAgents/com.example.updater.plist",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4388,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "PlistBuddy sets RunAtLoad true in an application preferences plist outside LaunchAgents/LaunchDaemons",
+        "event": {
+          "Image": "/usr/libexec/PlistBuddy",
+          "CommandLine": "/usr/libexec/PlistBuddy -c \"Set :RunAtLoad true\" /Users/jperez/Library/Preferences/com.example.notes.plist",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4402,
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

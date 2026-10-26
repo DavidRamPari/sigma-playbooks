@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "961d0ba2-3eea-4303-a930-2cf78bbfcc5e",
+    "title": "HackTool - Credential Dumping Tools Named Pipe Created",
+    "level": "critical",
+    "status": "test",
+    "author": "Teymur Kheirkhabarov, oscd.community",
+    "path": "windows/pipe_created/pipe_created_hktl_generic_cred_dump_tools_pipes.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/pipe_created/pipe_created_hktl_generic_cred_dump_tools_pipes.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001",
+      "T1003.002",
+      "T1003.004",
+      "T1003.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un named pipe cuyo nombre contiene \\cachedump, \\lsadump o \\wceservicepipe. Estos nombres corresponden a herramientas conocidas de volcado de credenciales y casi siempre indican robo de credenciales en curso.",
+      "what_it_detects": "Eventos de Sysmon de creación de named pipe (Event ID 17/18) en los que el campo PipeName contiene \\cachedump, \\lsadump o \\wceservicepipe. Estos pipes los usan variantes de pwdump/fgdump (volcado de LSA y caché de dominio) y Windows Credential Editor (WCE) para devolver los resultados de su servicio inyectado al cliente.",
+      "why_it_matters": "Estas herramientas extraen hashes y secretos de la memoria de LSASS (T1003.001), la SAM (T1003.002), los LSA secrets (T1003.004) y las credenciales de dominio en caché (T1003.005). Con esos datos el atacante puede moverse lateralmente, hacer pass-the-hash y escalar a cuentas de dominio.",
+      "triage_steps": [
+        "Revise PipeName, Image, ProcessId, ProcessGuid y User del evento para identificar el proceso que creó el pipe y la cuenta que lo ejecuta.",
+        "Busque el ProcessGuid en Sysmon Event ID 1 para obtener CommandLine, ParentImage, hash y firma del binario; los dumpers suelen estar en Temp, ProgramData o carpetas de usuario.",
+        "Revise el mismo host +/- 15 minutos: instalación de servicios (Event ID 7045/4697), acceso a lsass.exe (Sysmon 10), escrituras en ADMIN$ y archivos de salida creados.",
+        "Determine si la ejecución fue remota: busque inicios de sesión tipo 3 (4624) y conexiones SMB entrantes poco antes, e identifique la IP y la cuenta de origen.",
+        "Pivote por la cuenta y la IP de origen en otros hosts para detectar el mismo pipe o servicios similares, señal de volcado masivo.",
+        "Consulte alertas previas del host y del usuario, y confirme con el equipo de TI si hay una auditoría de contraseñas autorizada y documentada."
+      ],
+      "false_positives": [
+        "Administrador o equipo de seguridad que usa una herramienta de recuperación o auditoría de contraseñas de forma autorizada y documentada.",
+        "Ejercicios de pentest o red team aprobados que usan fgdump, pwdump o WCE en hosts del alcance."
+      ],
+      "response_steps": [
+        "Si no hay autorización confirmada, aísle el host desde el EDR y conserve el binario, los archivos de salida y la memoria para análisis forense.",
+        "Considere comprometidas las credenciales que estuvieron en el host: restablezca las contraseñas de las cuentas que iniciaron sesión allí, empezando por las privilegiadas y las de servicio.",
+        "Elimine el servicio y los binarios del dumper solo después de recolectar la evidencia, y bloquee su hash en el EDR.",
+        "Busque reutilización de las credenciales robadas (pass-the-hash, inicios de sesión anómalos) en todo el dominio y recupere el host desde una imagen confiable si se confirma el compromiso."
+      ],
+      "severity_rationale": "El nivel critical se justifica porque estos nombres de pipe son exclusivos de herramientas de volcado de credenciales y tienen muy pocos usos legítimos."
+    },
+    "en": {
+      "summary": "A named pipe whose name contains \\cachedump, \\lsadump or \\wceservicepipe was created. These names belong to well-known credential dumping tools and almost always mean credential theft is happening.",
+      "what_it_detects": "Sysmon named pipe events (Event ID 17/18) where PipeName contains \\cachedump, \\lsadump or \\wceservicepipe. pwdump/fgdump variants (LSA and cached domain credential dumping) and Windows Credential Editor (WCE) use these pipes to send results from their injected service back to the client.",
+      "why_it_matters": "These tools extract hashes and secrets from LSASS memory (T1003.001), the SAM (T1003.002), LSA secrets (T1003.004) and cached domain credentials (T1003.005). Attackers use them for pass-the-hash, lateral movement and escalation to domain accounts.",
+      "triage_steps": [
+        "Review PipeName, Image, ProcessId, ProcessGuid and User to identify the creating process and the account running it.",
+        "Look up the ProcessGuid in Sysmon Event ID 1 for CommandLine, ParentImage, hash and signature; dumpers often run from Temp, ProgramData or user folders.",
+        "Check the same host +/- 15 minutes: service installs (7045/4697), lsass.exe access (Sysmon 10), writes to ADMIN$ and new output files.",
+        "Determine whether execution was remote: look for type 3 logons (4624) and inbound SMB shortly before, and note the source IP and account.",
+        "Pivot on that account and source IP across other hosts for the same pipe or similar services, which points to mass dumping.",
+        "Check earlier alerts for the host and user, and confirm with IT whether an authorized, documented password audit was underway."
+      ],
+      "false_positives": [
+        "An administrator or security team running an authorized, documented password recovery or audit tool.",
+        "Approved penetration tests or red team exercises using fgdump, pwdump or WCE on in-scope hosts."
+      ],
+      "response_steps": [
+        "Unless authorization is confirmed, isolate the host via EDR and preserve the binary, output files and memory for forensics.",
+        "Treat credentials present on the host as compromised: reset passwords of accounts that logged on there, privileged and service accounts first.",
+        "Remove the dumper service and binaries only after evidence is collected, and block the hash in EDR.",
+        "Hunt for reuse of stolen credentials (pass-the-hash, unusual logons) domain-wide, and rebuild the host from a trusted image if compromise is confirmed."
+      ],
+      "severity_rationale": "Critical fits because these pipe names are specific to credential dumping tools and have very few legitimate uses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "fgdump/pwdump-style service creates the \\lsadump pipe from a Windows temp folder",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-05-14 02:13:47.512",
+          "ProcessGuid": "{5a1c2e3f-1b2c-6643-8a01-000000001f00}",
+          "ProcessId": 4312,
+          "PipeName": "\\lsadump",
+          "Image": "C:\\Windows\\Temp\\lsremora.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Windows Credential Editor creates its service pipe",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-05-14 02:20:05.031",
+          "ProcessGuid": "{5a1c2e3f-1c4d-6643-9b02-000000001f00}",
+          "ProcessId": 5120,
+          "PipeName": "\\wceservicepipe",
+          "Image": "C:\\ProgramData\\wce.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "SRV-FILE-02.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate lsass.exe pipe; the name does not contain \\lsadump",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-05-14 08:01:12.004",
+          "ProcessGuid": "{5a1c2e3f-0a11-6643-0c00-000000001f00}",
+          "ProcessId": 712,
+          "PipeName": "\\lsass",
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Windows Search pipe from a normal service, no credential dumping pipe name",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-05-14 08:05:40.220",
+          "ProcessGuid": "{5a1c2e3f-0b22-6643-1d00-000000001f00}",
+          "ProcessId": 3988,
+          "PipeName": "\\MsFteWds",
+          "Image": "C:\\Windows\\System32\\SearchIndexer.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

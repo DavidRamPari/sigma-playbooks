@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "df3fcaea-2715-4214-99c5-0056ea59eb35",
+    "title": "Credentials In Files - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Igor Fits, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_find_cred_in_files.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_find_cred_in_files.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un evento EXECVE cuyos argumentos contienen \"grep\" y \"password\" a la vez. Esto puede indicar una búsqueda de credenciales en texto plano dentro de archivos.",
+      "what_it_detects": "Eventos EXECVE de auditd en los que aparecen ambas palabras clave, \"grep\" y \"password\", en cualquier parte del registro y sin distinguir mayúsculas. Ejemplo típico: grep -ri password /home. También coinciden subcadenas como egrep, pgrep o --password-file.",
+      "why_it_matters": "Tras comprometer un host Linux, un atacante suele buscar contraseñas guardadas en archivos de configuración, scripts y directorios home. Las usa para moverse lateralmente o escalar privilegios. Corresponde a ATT&CK T1552.001, Unsecured Credentials: Credentials In Files.",
+      "triage_steps": [
+        "Revise los argumentos del EXECVE (a0, a1, ...). Decodifique los que vengan en hexadecimal con ausearch -i e identifique el patrón buscado y las rutas objetivo.",
+        "Con el número de serie del evento de audit, ubique el registro SYSCALL asociado. Obtenga auid, uid, exe, ppid, tty y session para identificar al usuario real.",
+        "Identifique el proceso padre y la sesión: shell SSH interactiva, proceso hijo del servidor web, tarea cron o agente de automatización.",
+        "Evalúe las rutas. Una búsqueda recursiva amplia en /, /home, /etc, /var/www, archivos .env o respaldos es más sospechosa que una consulta a un archivo conocido.",
+        "En el mismo host, dentro de +/- 15 minutos, busque redirección de salida, compresión de archivos, transferencias con curl/wget/scp, uso de su/sudo o nuevas conexiones SSH.",
+        "Pivotee por el mismo auid y la misma IP de origen en otros hosts. Revise alertas previas de reconocimiento, fuerza bruta o webshell."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores que revisan parámetros de contraseña en archivos de configuración durante un troubleshooting.",
+        "Scripts de gestión de configuración, cumplimiento o hardening que buscan parámetros de contraseña con grep.",
+        "Coincidencias por subcadena, como pgrep o egrep, sobre procesos o archivos que contienen \"password\" en el nombre."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la cuenta, o en los registros de cambios, si la búsqueda estaba autorizada.",
+        "Si no hay justificación, aísle el host y deshabilite o restrinja la cuenta. Preserve los logs de audit y el historial de shell.",
+        "Rote todas las credenciales que estaban en los archivos consultados y revise los logs de autenticación para detectar su uso.",
+        "Elimine los secretos en texto plano o páselos a un gestor de secretos. Busque mecanismos de persistencia y elimínelos antes de restablecer la operación normal."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque la recolección de credenciales suele preceder al movimiento lateral o a la escalada de privilegios, aunque los administradores también hacen este tipo de búsquedas."
+    },
+    "en": {
+      "summary": "auditd logged an EXECVE record whose arguments contain both \"grep\" and \"password\". Someone may be searching files for plaintext credentials.",
+      "what_it_detects": "auditd EXECVE events where the keywords \"grep\" and \"password\" both appear anywhere in the record, case-insensitive. Typical example: grep -ri password /home. Substrings also match, so egrep, pgrep or --password-file trigger it too.",
+      "why_it_matters": "Attackers who land on a Linux host often grep config files, scripts and home directories for stored passwords to move laterally or escalate. This is ATT&CK T1552.001, Unsecured Credentials: Credentials In Files.",
+      "triage_steps": [
+        "Read the EXECVE arguments (a0, a1, ...). Decode hex-encoded arguments with ausearch -i, then note the search pattern and the target paths.",
+        "Use the audit serial number to find the matching SYSCALL record. Get auid, uid, exe, ppid, tty and session, then identify the real user.",
+        "Look at the parent process and session. Decide whether it was an interactive SSH shell, a web server child, a cron job or an automation agent.",
+        "Check the targets. Broad recursive searches of /, /home, /etc, /var/www, .env files or backup directories are more suspicious than one known file.",
+        "On the same host within +/- 15 minutes, look for output redirection, archive creation, curl/wget/scp transfers, su/sudo use or new SSH connections.",
+        "Pivot on the same auid and source IP across other hosts. Review earlier alerts for discovery, brute force or webshell activity."
+      ],
+      "false_positives": [
+        "Administrators or developers checking config files for password settings during troubleshooting.",
+        "Configuration management, compliance or hardening scripts that grep for password parameters.",
+        "Substring matches such as pgrep or egrep run against processes or files with \"password\" in their names."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or the change records whether the search was authorized.",
+        "If it is not explained, isolate the host and disable or restrict the account. Preserve the audit logs and shell history.",
+        "Rotate every credential stored in the searched files. Check authentication logs for use of those credentials.",
+        "Remove plaintext secrets from files or move them to a secrets manager. Look for persistence and remove it before you restore normal operation."
+      ],
+      "severity_rationale": "High fits because credential harvesting usually comes right before lateral movement or privilege escalation, though admins also run this kind of search."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user recursively greps home directories for the string password.",
+        "event": {
+          "type": "EXECVE",
+          "argc": 4,
+          "a0": "grep",
+          "a1": "-ri",
+          "a2": "password",
+          "a3": "/home",
+          "host": "bastion-01",
+          "message": "type=EXECVE msg=audit(1729865000.123:4521): argc=4 a0=\"grep\" a1=\"-ri\" a2=\"password\" a3=\"/home\""
+        }
+      },
+      {
+        "description": "Search of web application configs for password entries, with the pattern in uppercase (case-insensitive match).",
+        "event": {
+          "type": "EXECVE",
+          "argc": 5,
+          "a0": "grep",
+          "a1": "-rn",
+          "a2": "PASSWORD",
+          "a3": "--include=*.env",
+          "a4": "/var/www",
+          "host": "web-03",
+          "message": "type=EXECVE msg=audit(1729865412.887:5102): argc=5 a0=\"grep\" a1=\"-rn\" a2=\"PASSWORD\" a3=\"--include=*.env\" a4=\"/var/www\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "grep for a user in /etc/passwd: 'passwd' is not the keyword 'password'.",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "grep",
+          "a1": "jperez",
+          "a2": "/etc/passwd",
+          "host": "bastion-01",
+          "message": "type=EXECVE msg=audit(1729866001.004:4630): argc=3 a0=\"grep\" a1=\"jperez\" a2=\"/etc/passwd\""
+        }
+      },
+      {
+        "description": "Same grep for password, but recorded as a SYSCALL record rather than EXECVE, so the type selection fails.",
+        "event": {
+          "type": "SYSCALL",
+          "syscall": 59,
+          "exe": "/usr/bin/grep",
+          "comm": "grep",
+          "auid": 1001,
+          "host": "bastion-01",
+          "message": "type=SYSCALL msg=audit(1729865000.123:4521): arch=c000003e syscall=59 success=yes exit=0 ppid=2210 pid=2245 auid=1001 uid=1001 tty=pts0 comm=\"grep\" exe=\"/usr/bin/grep\" key=\"password_search\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

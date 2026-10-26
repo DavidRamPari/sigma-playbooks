@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "2e4e488a-6164-4811-9ea1-f960c7359c40",
+    "title": "HackTool - CACTUSTORCH Remote Thread Creation",
+    "level": "high",
+    "status": "test",
+    "author": "@SBousseaden (detection), Thomas Patzke (rule)",
+    "path": "windows/create_remote_thread/create_remote_thread_win_hktl_cactustorch.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_remote_thread/create_remote_thread_win_hktl_cactustorch.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055.012",
+      "T1059.005",
+      "T1059.007",
+      "T1218.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un host de scripts (cscript, wscript o mshta) o Word/Excel creó un hilo remoto en un proceso de SysWOW64 cuya dirección de inicio no pertenece a ningún módulo cargado. Es el patrón de inyección de shellcode de CACTUSTORCH.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon EID 8) en los que SourceImage termina en System32\\cscript.exe, wscript.exe, mshta.exe, winword.exe o excel.exe, TargetImage contiene \\SysWOW64\\ y StartModule está vacío, es decir, el hilo arranca en memoria sin respaldo de una imagen.",
+      "why_it_matters": "CACTUSTORCH genera payloads en JScript, VBScript, HTA o VBA que lanzan un proceso de 32 bits (por defecto rundll32.exe) e inyectan shellcode con CreateRemoteThread (T1055). Casi siempre carga un beacon o implante en memoria tras un adjunto o un enlace malicioso (T1059.005, T1059.007, T1218.005).",
+      "triage_steps": [
+        "Revise SourceImage, TargetImage, StartAddress y SourceUser; confirme que StartModule y StartFunction están vacíos.",
+        "Busque la creación del proceso destino (EID 1): un rundll32.exe de SysWOW64 sin argumentos lanzado por el host de scripts u Office es muy sospechoso.",
+        "Identifique el proceso padre de SourceImage y su CommandLine: qué archivo .js, .vbs, .hta o documento se ejecutó y desde qué ruta (Downloads, Temp, adjuntos de Outlook).",
+        "Correlacione en el mismo host +/- 15 minutos: conexiones de red del proceso destino (EID 3), consultas DNS y archivos creados.",
+        "Obtenga el hash del script o documento y búsquelo en otros endpoints y en el gateway de correo o el proxy.",
+        "Busque alertas previas del mismo usuario y host, sobre todo de ejecución de macros o de mshta con URL remotas."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Excepcionalmente, macros o scripts internos poco comunes que usan inyección de código; valide con el responsable antes de excluir."
+      ],
+      "response_steps": [
+        "Si se confirma, aísle el endpoint desde el EDR y conserve un volcado de memoria del proceso destino antes de terminarlo.",
+        "Termine los procesos inyectados y el host de scripts u Office, y ponga en cuarentena el script o documento origen.",
+        "Bloquee los dominios e IP de C2 identificados y busque el mismo hash o remitente en el resto del entorno.",
+        "Restablezca las credenciales del usuario afectado y revise la persistencia (Run keys, tareas programadas, carpeta Startup) antes de reincorporar el equipo."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un hilo remoto sin módulo de inicio, creado desde un host de scripts u Office hacia un proceso de 32 bits, casi siempre indica inyección de shellcode."
+    },
+    "en": {
+      "summary": "A script host (cscript, wscript or mshta) or Word/Excel created a remote thread in a SysWOW64 process, and the thread's start address belongs to no loaded module. This matches CACTUSTORCH shellcode injection.",
+      "what_it_detects": "Remote thread creation events (Sysmon EID 8) where SourceImage ends with System32\\cscript.exe, wscript.exe, mshta.exe, winword.exe or excel.exe, TargetImage contains \\SysWOW64\\ and StartModule is null. That means the thread starts in memory that no image on disk backs.",
+      "why_it_matters": "CACTUSTORCH builds JScript, VBScript, HTA or VBA payloads. They spawn a 32-bit process (rundll32.exe by default) and inject shellcode into it with CreateRemoteThread (T1055). This usually delivers an in-memory implant after a malicious attachment or link (T1059.005, T1059.007, T1218.005).",
+      "triage_steps": [
+        "Review SourceImage, TargetImage, StartAddress and SourceUser. Confirm that StartModule and StartFunction are empty.",
+        "Find the target process creation event (EID 1). An argument-less SysWOW64 rundll32.exe spawned by a script host or Office is highly suspicious.",
+        "Identify the parent of SourceImage and its CommandLine: which .js, .vbs or .hta file or document ran, and from which path (Downloads, Temp, Outlook attachments).",
+        "On the same host within +/- 15 minutes, check the target process's network connections (EID 3), DNS queries and file writes.",
+        "Hash the script or document, then hunt for that hash on other endpoints and in mail gateway or proxy logs.",
+        "Check earlier alerts for the same user and host, especially macro execution or mshta loading remote URLs."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "In rare cases, unusual internal macros or scripts that use code injection. Confirm with the owner before excluding them."
+      ],
+      "response_steps": [
+        "If confirmed, isolate the endpoint through EDR. Capture a memory dump of the target process before you terminate it.",
+        "Terminate the injected process and the script host or Office process. Quarantine the source script or document.",
+        "Block the C2 domains and IPs you found. Hunt for the same hash or sender across the environment.",
+        "Reset the affected user's credentials. Check for persistence (Run keys, scheduled tasks, Startup folder) before you return the host to service."
+      ],
+      "severity_rationale": "High fits because a script host or Office creating a remote thread with no start module in a 32-bit process almost always means shellcode injection."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "wscript.exe runs a CACTUSTORCH JScript payload and injects shellcode into a 32-bit rundll32.exe. The thread has no start module.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 4312,
+          "SourceImage": "C:\\Windows\\System32\\wscript.exe",
+          "TargetProcessId": 6120,
+          "TargetImage": "C:\\Windows\\SysWOW64\\rundll32.exe",
+          "NewThreadId": 7084,
+          "StartAddress": "0x0000000002A10000",
+          "StartModule": null,
+          "StartFunction": null,
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "A VBA macro in excel.exe injects into a SysWOW64 process. The thread has no backing module.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 3388,
+          "SourceImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+          "TargetProcessId": 5940,
+          "TargetImage": "C:\\Windows\\SysWOW64\\rundll32.exe",
+          "NewThreadId": 2216,
+          "StartAddress": "0x0000000003C50000",
+          "StartModule": null,
+          "StartFunction": null,
+          "SourceUser": "ANDES\\mrojas",
+          "TargetUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "wscript.exe creates a remote thread in a SysWOW64 process, but the thread starts inside kernel32.dll, so StartModule is populated.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 4312,
+          "SourceImage": "C:\\Windows\\System32\\wscript.exe",
+          "TargetProcessId": 6120,
+          "TargetImage": "C:\\Windows\\SysWOW64\\rundll32.exe",
+          "NewThreadId": 7090,
+          "StartAddress": "0x0000000076E32A40",
+          "StartModule": "C:\\Windows\\SysWOW64\\kernel32.dll",
+          "StartFunction": "LoadLibraryW",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "mshta.exe creates an unbacked thread in a 64-bit System32 process. TargetImage does not contain \\SysWOW64\\.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0311.andes.example.com",
+          "SourceProcessId": 2904,
+          "SourceImage": "C:\\Windows\\System32\\mshta.exe",
+          "TargetProcessId": 4480,
+          "TargetImage": "C:\\Windows\\System32\\notepad.exe",
+          "NewThreadId": 5012,
+          "StartAddress": "0x000001F2B4C00000",
+          "StartModule": null,
+          "StartFunction": null,
+          "SourceUser": "ANDES\\lgomez",
+          "TargetUser": "ANDES\\lgomez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

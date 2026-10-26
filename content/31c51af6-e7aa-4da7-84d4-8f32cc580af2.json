@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "31c51af6-e7aa-4da7-84d4-8f32cc580af2",
+    "title": "Sliver C2 Default Service Installation",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_service_install_sliver.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_service_install_sliver.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003",
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (EventID 7045) cuyo nombre o ruta coincide con los valores por defecto del comando psexec de Sliver C2. Esto suele indicar movimiento lateral o ejecución remota desde un implante Sliver.",
+      "what_it_detects": "Eventos 7045 de Service Control Manager donde ImagePath es un ejecutable con nombre alfanumérico de 10 caracteres en <unidad>:\\windows\\temp\\ o donde ServiceName es exactamente 'Sliver' o 'Sliver implant'.",
+      "why_it_matters": "Sliver es un framework de C2 de código abierto. Su psexec copia un binario por SMB y crea un servicio para ejecutarlo como SYSTEM. Corresponde a ATT&CK T1543.003 (servicio de Windows) y T1569.002 (ejecución de servicios), lo que da ejecución privilegiada en el host destino.",
+      "triage_steps": [
+        "Revise ServiceName, ImagePath, StartType y AccountName del evento 7045; confirme si el binario está en windows\\temp con un nombre aleatorio de 10 caracteres.",
+        "Obtenga el hash del archivo en ImagePath, si aún existe, y búsquelo en EDR y en inteligencia de amenazas; el psexec de Sliver suele borrar el binario y el servicio tras ejecutarlo.",
+        "Busque eventos 4624 de tipo 3 y 5140/5145 (acceso a ADMIN$ o C$) en el host +/- 15 minutos para identificar la IP de origen y la cuenta usada.",
+        "Pivote al host de origen: busque procesos inusuales, conexiones salientes persistentes (mTLS, HTTPS, DNS) y otras alertas de C2 previas.",
+        "Revise los procesos hijos del servicio creado en el host destino y conexiones de red iniciadas por ese binario.",
+        "Busque el mismo patrón de ImagePath o ServiceName en otros hosts para medir el alcance del movimiento lateral.",
+        "Valide con el equipo de red team o pentest si hay un ejercicio autorizado con Sliver en curso."
+      ],
+      "false_positives": [
+        "Ejercicios autorizados de red team o pruebas de penetración que usan Sliver con su configuración por defecto.",
+        "Instaladores legítimos que copian un ejecutable con nombre aleatorio de 10 caracteres a windows\\temp y lo registran como servicio (poco frecuente)."
+      ],
+      "response_steps": [
+        "Si no hay ejercicio autorizado, aísle el host destino y el host de origen mediante el EDR, preservando memoria y registros.",
+        "Restablezca las credenciales de la cuenta usada en el inicio de sesión remoto y revise su uso en otros sistemas.",
+        "Elimine el servicio y el binario solo después de recolectar evidencia (hash, copia del archivo, volcado de memoria).",
+        "Bloquee los indicadores de C2 identificados (IP, dominios, certificados) en proxy, firewall y DNS.",
+        "Barra el resto del entorno buscando el mismo patrón y restaure los hosts afectados desde una base confiable."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque los valores coinciden con los predeterminados de una herramienta de C2 y casi no tienen usos legítimos, aunque un red team autorizado podría generarlos."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EventID 7045) whose name or image path matches the defaults of Sliver C2's psexec command. This usually indicates lateral movement or remote execution from a Sliver implant.",
+      "what_it_detects": "Service Control Manager 7045 events where ImagePath is a 10-character alphanumeric executable in <drive>:\\windows\\temp\\, or ServiceName is exactly 'Sliver' or 'Sliver implant'.",
+      "why_it_matters": "Sliver is an open-source C2 framework. Its psexec copies a binary over SMB and creates a service to run it as SYSTEM. This maps to ATT&CK T1543.003 (Windows service) and T1569.002 (service execution), giving privileged execution on the target.",
+      "triage_steps": [
+        "Review ServiceName, ImagePath, StartType and AccountName in the 7045 event; confirm the binary sits in windows\\temp with a random 10-character name.",
+        "Hash the ImagePath file if it still exists and check it in EDR and threat intel; Sliver's psexec often deletes the binary and service after execution.",
+        "Search for 4624 logon type 3 and 5140/5145 (ADMIN$ or C$ access) on the host within +/- 15 minutes to identify source IP and account.",
+        "Pivot to the source host: look for unusual processes, persistent outbound connections (mTLS, HTTPS, DNS) and earlier C2 alerts.",
+        "Review child processes of the created service on the target and network connections opened by that binary.",
+        "Hunt for the same ImagePath pattern or ServiceName on other hosts to scope lateral movement.",
+        "Check with the red team or pentest owners whether an authorized Sliver exercise is running."
+      ],
+      "false_positives": [
+        "Authorized red team or penetration tests using Sliver with default settings.",
+        "Legitimate installers that drop a randomly named 10-character executable in windows\\temp and register it as a service (uncommon)."
+      ],
+      "response_steps": [
+        "If no exercise is authorized, isolate the target and source hosts via EDR while preserving memory and logs.",
+        "Reset credentials of the account used for the remote logon and review its use elsewhere.",
+        "Remove the service and binary only after collecting evidence (hash, file copy, memory dump).",
+        "Block identified C2 indicators (IPs, domains, certificates) at proxy, firewall and DNS.",
+        "Sweep the environment for the same pattern and rebuild affected hosts from a trusted baseline."
+      ],
+      "severity_rationale": "High fits because the values match a C2 tool's defaults with almost no legitimate use, although an authorized red team could trigger it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Sliver psexec service with a random 10-character binary in C:\\windows\\temp",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinUpdHelper",
+          "ImagePath": "C:\\windows\\temp\\Xk3pQ9mZ2a.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service installed with the default Sliver service name",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ServiceName": "Sliver",
+          "ImagePath": "C:\\Users\\Public\\svc.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate vendor service installed from Program Files",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "AcmeUpdater",
+          "ImagePath": "\"C:\\Program Files\\Acme\\AcmeUpdater.exe\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Binary in windows\\temp but with an 8-character name, not 10",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0207.andes.example.com",
+          "ServiceName": "DismSvcHelper",
+          "ImagePath": "C:\\windows\\temp\\DismHost.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

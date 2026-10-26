@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "bb0e9cec-d4da-46f5-997f-22efc59f3dca",
+    "title": "Potential JNDI Injection Exploitation In JVM Based Application",
+    "level": "high",
+    "status": "test",
+    "author": "Moti Harmats",
+    "path": "application/jvm/java_jndi_injection_exploitation_attempt.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/jvm/java_jndi_injection_exploitation_attempt.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El log de errores de una aplicación JVM registró una excepción originada en el cliente LDAP de JNDI o en el JndiManager de Log4j. Esto suele indicar que un payload de inyección JNDI (por ejemplo, Log4Shell) disparó una búsqueda remota.",
+      "what_it_detects": "Líneas de log de error de aplicaciones Java que contienen las cadenas 'com.sun.jndi.ldap.' u 'org.apache.logging.log4j.core.net.JndiManager'. Suelen aparecer en stack traces cuando una búsqueda JNDI hacia un servidor LDAP externo falla o se ejecuta.",
+      "why_it_matters": "La inyección JNDI permite que un atacante haga que la aplicación se conecte a un servidor LDAP/RMI controlado por él y cargue código remoto. Es una explotación de aplicación expuesta a Internet (ATT&CK T1190, acceso inicial) que puede terminar en ejecución remota de código.",
+      "triage_steps": [
+        "Extraiga del message la URL JNDI (ldap://, rmi://, dns://), el host o IP de destino, el puerto y el hilo o la clase que generó el error.",
+        "Identifique el servidor, la aplicación y la versión de Log4j o del JDK. Verifique si es una versión vulnerable conocida.",
+        "Busque en los access logs del mismo host (±15 minutos) '${jndi:' y variantes ofuscadas en el URI, los headers y el user agent. Anote la IP de origen.",
+        "Revise el tráfico de salida del host hacia el destino LDAP/RMI y si hubo una segunda descarga HTTP de clases Java.",
+        "Busque procesos hijos del proceso java (sh, bash, cmd, powershell, curl, wget) y archivos nuevos en el host después del evento.",
+        "Determine si la excepción indica un fallo de conexión (posiblemente bloqueado) o una búsqueda que se completó con éxito.",
+        "Pivotee por la IP de origen y el destino JNDI en otros servidores y en alertas previas."
+      ],
+      "false_positives": [
+        "Bugs o configuraciones erróneas de la aplicación que generan excepciones JNDI, como se indica en la regla.",
+        "Aplicaciones que autentican contra LDAP o Active Directory legítimo y registran errores de conexión del directorio corporativo.",
+        "Escaneos de vulnerabilidades autorizados que envían payloads JNDI de prueba."
+      ],
+      "response_steps": [
+        "Confirme si el destino LDAP es interno y legítimo o externo y desconocido antes de escalar.",
+        "Bloquee en el perímetro la IP de origen y el destino de callback; restrinja el egress del servidor afectado.",
+        "Si hubo conexión saliente exitosa o procesos hijos sospechosos, aísle el host y preserve la memoria y los logs.",
+        "Actualice Log4j o el componente vulnerable, o aplique la mitigación del proveedor (por ejemplo, eliminar JndiLookup).",
+        "Rote las credenciales y los secretos accesibles por la aplicación y haga hunting en otros servidores con la misma versión."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque estas trazas rara vez aparecen en operación normal y suelen indicar explotación activa de una aplicación expuesta con potencial de RCE."
+    },
+    "en": {
+      "summary": "A JVM application error log recorded an exception from the JNDI LDAP client or Log4j's JndiManager. This often means a JNDI injection payload such as Log4Shell triggered a remote lookup.",
+      "what_it_detects": "Java application error log lines containing 'com.sun.jndi.ldap.' or 'org.apache.logging.log4j.core.net.JndiManager', typically in stack traces produced when a JNDI lookup to an external LDAP server runs or fails.",
+      "why_it_matters": "JNDI injection makes the application contact an attacker-controlled LDAP/RMI server and potentially load remote code. It is exploitation of a public-facing application (ATT&CK T1190, initial access) that can lead to remote code execution.",
+      "triage_steps": [
+        "Extract the JNDI URL (ldap://, rmi://, dns://), destination host or IP, port and the thread or class that logged the error from the message.",
+        "Identify the server, application and Log4j or JDK version; check whether it is a known vulnerable version.",
+        "Search the same host's access logs (+/- 15 minutes) for '${jndi:' and obfuscated variants in the URI, headers and user agent; note the source IP.",
+        "Check outbound traffic from the host to the LDAP/RMI destination and any follow-up HTTP download of Java classes.",
+        "Look for child processes of java (sh, bash, cmd, powershell, curl, wget) and new files on the host after the event.",
+        "Determine whether the exception shows a failed (possibly blocked) connection or a lookup that completed.",
+        "Pivot on the source IP and JNDI destination across other servers and earlier alerts."
+      ],
+      "false_positives": [
+        "Application bugs or misconfigurations producing JNDI exceptions, as noted in the rule.",
+        "Applications that legitimately authenticate against LDAP or Active Directory and log corporate directory connection errors.",
+        "Authorized vulnerability scans sending test JNDI payloads."
+      ],
+      "response_steps": [
+        "Confirm whether the LDAP destination is internal and legitimate or external and unknown before escalating.",
+        "Block the source IP and callback destination at the perimeter; restrict egress from the affected server.",
+        "If an outbound connection succeeded or suspicious child processes ran, isolate the host and preserve memory and logs.",
+        "Upgrade Log4j or the vulnerable component, or apply the vendor mitigation (for example, removing JndiLookup).",
+        "Rotate credentials and secrets the application can access; hunt on other servers running the same version."
+      ],
+      "severity_rationale": "High fits because these traces are rare in normal operation and usually indicate active exploitation of an exposed application with RCE potential."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Log4j StatusLogger error with a com.sun.jndi.ldap stack frame after a failed lookup to an external LDAP server",
+        "event": {
+          "message": "2023-10-25 14:03:12,481 ERROR [http-nio-8080-exec-7] StatusLogger Error looking up JNDI resource [ldap://203.0.113.45:1389/Exploit]. javax.naming.CommunicationException: 203.0.113.45:1389 [Root exception is java.net.ConnectException: Connection refused] at com.sun.jndi.ldap.Connection.<init>(Connection.java:252)",
+          "host": "app-web-03",
+          "service": "tomcat",
+          "log_level": "ERROR",
+          "source": "/opt/tomcat/logs/catalina.out"
+        }
+      },
+      {
+        "description": "Stack trace line showing Log4j JndiManager performing the lookup",
+        "event": {
+          "message": "2023-10-25 14:03:12,483 ERROR [http-nio-8080-exec-7] c.e.portal.LoginController Lookup failed javax.naming.NamingException at org.apache.logging.log4j.core.net.JndiManager.lookup(JndiManager.java:172)",
+          "host": "app-web-03",
+          "service": "tomcat",
+          "log_level": "ERROR",
+          "source": "/opt/tomcat/logs/catalina.out"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate JNDI DataSource lookup error via Tomcat naming context, without LDAP or JndiManager classes",
+        "event": {
+          "message": "2023-10-25 14:05:40,112 ERROR [main] c.e.portal.DbConfig javax.naming.NameNotFoundException: Name [jdbc/appDB] is not bound in this Context. Unable to find [jdbc]. at org.apache.naming.NamingContext.lookup(NamingContext.java:833)",
+          "host": "app-web-03",
+          "service": "tomcat",
+          "log_level": "ERROR",
+          "source": "/opt/tomcat/logs/catalina.out"
+        }
+      },
+      {
+        "description": "Log4j FileManager error: shares the org.apache.logging.log4j.core. prefix but is not JndiManager",
+        "event": {
+          "message": "2023-10-25 14:07:02,009 ERROR [main] StatusLogger Unable to create file /var/log/portal/app.log java.io.IOException: Permission denied at org.apache.logging.log4j.core.appender.FileManager$FileManagerFactory.createManager(FileManager.java:440)",
+          "host": "app-web-03",
+          "service": "tomcat",
+          "log_level": "ERROR",
+          "source": "/opt/tomcat/logs/catalina.out"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

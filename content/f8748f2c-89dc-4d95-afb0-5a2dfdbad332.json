@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "f8748f2c-89dc-4d95-afb0-5a2dfdbad332",
+    "title": "SAM Registry Hive Handle Request",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/builtin/security/win_security_sam_registry_hive_handle_request.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_sam_registry_hive_handle_request.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1012",
+      "T1552.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso solicitó un handle a la clave del hive SAM del registro, y Windows lo registró como evento de seguridad 4656. Salvo que lo haya hecho un proceso conocido de sistema o de respaldo, trátelo como un posible intento de volcar credenciales locales.",
+      "what_it_detects": "Evento de seguridad 4656 (solicitud de handle a un objeto) con ObjectType 'Key' y un ObjectName que termina en '\\SAM', como \\REGISTRY\\MACHINE\\SAM. El evento solo aparece si una SACL audita la clave SAM.",
+      "why_it_matters": "El hive SAM guarda los hashes de las contraseñas de las cuentas locales. Los atacantes lo leen o lo exportan (por ejemplo, con 'reg save HKLM\\SAM') para crackear los hashes o usarlos en pass-the-hash. Corresponde a consulta del registro (T1012) y credenciales en el registro (T1552.002).",
+      "triage_steps": [
+        "Identifique ProcessName y ProcessId. Trate como sospechosos reg.exe, powershell.exe, cmd.exe, rundll32.exe, los binarios sin firma y cualquier ejecutable en rutas de usuario o temporales.",
+        "Revise SubjectUserName, SubjectDomainName y SubjectLogonId. Verifique si la cuenta es un administrador o servicio esperado y correlacione el logon ID con el evento 4624 para obtener el tipo de logon y la IP de origen.",
+        "Revise AccessMask y AccessList para ver si se pidió acceso de lectura, de respaldo o de escritura. Anote si el proceso usó privilegios como SeBackupPrivilege (eventos 4673/4674).",
+        "Pivote a la creación de procesos (4688 o Sysmon 1) en el mismo host dentro de +/- 15 minutos. Busque 'reg save', 'reg export', esentutl, vssadmin o comandos de shadow copy que también toquen SYSTEM y SECURITY.",
+        "Busque archivos nuevos llamados sam, sam.save, system.hive o similares, y transferencias salientes (SMB, HTTP, almacenamiento en la nube) justo después de la solicitud del handle.",
+        "Revise alertas previas del mismo host y del mismo usuario: herramientas de volcado de credenciales, movimiento lateral o logons remotos que reutilicen cuentas de administrador local."
+      ],
+      "false_positives": [
+        "Software de respaldo o de imágenes, Windows Server Backup o writers de VSS que leen los hives del registro.",
+        "EDR, antivirus o escáneres de vulnerabilidades que inspeccionan el hive SAM.",
+        "Administradores que ejecutan herramientas aprobadas de recolección forense o de migración de equipos.",
+        "Procesos integrados del sistema (por ejemplo, lsass.exe o services.exe) si la auditoría es amplia; confirme la ruta del binario y su firma."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con el responsable del equipo o en los registros de cambios si la actividad estaba autorizada.",
+        "Si es maliciosa, aísle el host mediante el EDR y preserve la memoria, el log de Security y cualquier archivo de hive exportado.",
+        "Rote las contraseñas de las cuentas locales del host afectado, incluida la del Administrador integrado. Revise dónde se reutiliza la misma contraseña local (por ejemplo, la cobertura de LAPS).",
+        "Busque la misma herramienta, hash o línea de comandos en otros endpoints y bloquéela.",
+        "Elimine la persistencia y los artefactos, luego restaure el host y vigílelo de cerca por si la actividad se repite."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el acceso al hive SAM fuera de los procesos normales del sistema es un paso directo hacia el robo de credenciales locales y el movimiento lateral."
+    },
+    "en": {
+      "summary": "A process requested a handle to the SAM registry hive key, which Windows logged as Security event 4656. Unless a known system or backup process made the request, treat it as a possible attempt to dump local credentials.",
+      "what_it_detects": "Security event 4656 (handle to an object requested) with ObjectType 'Key' and an ObjectName ending in '\\SAM', such as \\REGISTRY\\MACHINE\\SAM. The event only appears if a SACL audits the SAM key.",
+      "why_it_matters": "The SAM hive stores local account password hashes. Attackers read or export it (for example with 'reg save HKLM\\SAM') to crack the hashes or use them for pass-the-hash. This maps to registry querying (T1012) and credentials in the registry (T1552.002).",
+      "triage_steps": [
+        "Identify ProcessName and ProcessId. Treat reg.exe, powershell.exe, cmd.exe, rundll32.exe, unsigned binaries or anything in user or temp paths as suspicious.",
+        "Review SubjectUserName, SubjectDomainName and SubjectLogonId. Check whether the account is an expected administrator or service, and correlate the logon ID with event 4624 for logon type and source IP.",
+        "Check AccessMask and AccessList for read, backup or write access. Note whether the requesting process held privileges such as SeBackupPrivilege (event 4673/4674).",
+        "Pivot to process creation (4688 or Sysmon 1) on the same host within +/- 15 minutes. Look for 'reg save', 'reg export', esentutl, vssadmin or shadow copy commands that touch SYSTEM and SECURITY too.",
+        "Look for new files named sam, sam.save, system.hive or similar, and for outbound transfers (SMB, HTTP, cloud storage) right after the handle request.",
+        "Check earlier alerts for the same host and user: credential dumping tools, lateral movement or remote logons that reuse local admin accounts."
+      ],
+      "false_positives": [
+        "Backup or imaging software and Windows Server Backup or VSS writers reading the registry hives.",
+        "EDR, antivirus or vulnerability scanners that inspect the SAM hive.",
+        "Administrators running approved forensic collection or system migration tools.",
+        "Built-in system processes (for example lsass.exe or services.exe) if auditing is broad; confirm the binary path and signature."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change records whether the activity was authorized before you act.",
+        "If it is malicious, isolate the host through EDR and preserve memory, the Security log and any exported hive files.",
+        "Rotate local account passwords on the affected host, including the built-in Administrator. Check where the same local password is reused (for example through LAPS coverage).",
+        "Hunt for the same tool, hash or command line on other endpoints, and block it.",
+        "Remove persistence and artifacts, then restore the host and watch it closely for recurrence."
+      ],
+      "severity_rationale": "High fits because access to the SAM hive outside normal system processes is a direct step toward stealing local credentials and moving laterally."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe run by a domain user requests a handle to HKLM\\SAM (typical of 'reg save HKLM\\SAM').",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SAM",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ProcessId": "0x1a2c",
+          "ProcessName": "C:\\Windows\\System32\\reg.exe",
+          "AccessMask": "0x20019",
+          "AccessList": "%%1538 %%4432 %%4435 %%4436"
+        }
+      },
+      {
+        "description": "PowerShell requests a handle to the SAM key with mixed-case ObjectName (matching is case-insensitive).",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\Sam",
+          "SubjectUserName": "adm_rgomez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5B10F4",
+          "ProcessId": "0x2204",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "AccessMask": "0x20019"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Handle request to a subkey inside the SAM hive: ObjectName ends in \\Account, not \\SAM.",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SAM\\SAM\\Domains\\Account",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ProcessId": "0x2a0",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "AccessMask": "0x20019"
+        }
+      },
+      {
+        "description": "Handle request to the SAM hive file on disk: ObjectType is File, not Key.",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "SRV-BKP-01.andes.example.com",
+          "ObjectServer": "Security",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Windows\\System32\\config\\SAM",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x7C21A0",
+          "ProcessId": "0x1f88",
+          "ProcessName": "C:\\Program Files\\ExampleBackup\\agent.exe",
+          "AccessMask": "0x120089"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

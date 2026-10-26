@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "6adfbf8f-52be-4444-9bac-81b539624146",
+    "title": "Shell Execution via Find - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_find_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_find_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario find con -exec para lanzar un shell (/bin/sh, /bin/bash, etc.). Esta técnica, documentada en GTFOBins, permite escapar de shells restringidos o escalar privilegios cuando find tiene sudo o SUID.",
+      "what_it_detects": "Eventos process_creation en Linux donde Image termina en '/find', el CommandLine contiene ' . ' y '-exec', y además incluye la ruta de un shell: /bin/bash, /bin/dash, /bin/fish, /bin/sh o /bin/zsh. Ejemplo típico: 'find . -exec /bin/sh \\; -quit'.",
+      "why_it_matters": "Usar find como lanzador de shell es un método conocido para salir de entornos restringidos u obtener un shell con los privilegios de find (sudo o bit SUID). La regla lo etiqueta como T1083 (descubrimiento de archivos y directorios), pero el riesgo real es la ejecución no autorizada de comandos y la escalada de privilegios.",
+      "triage_steps": [
+        "Lea el CommandLine completo: ¿lanza un shell interactivo ('-exec /bin/sh \\; -quit') o ejecuta un script concreto con '-c'?",
+        "Identifique el usuario y el UID efectivo; verifique si find corrió vía sudo, con bit SUID o como root desde una cuenta sin privilegios.",
+        "Revise ParentImage y la cadena de procesos: sudo, servicio web, cron, sesión SSH o un shell restringido (rbash) como origen.",
+        "Busque procesos hijos del shell creado en el mismo host +/- 15 minutos: id, whoami, descargas, modificación de /etc/passwd, sudoers o claves SSH.",
+        "Consulte los logs de sudo (/var/log/auth.log o secure) para COMMAND= con find y la regla de sudoers que lo permitió.",
+        "Compruebe si /usr/bin/find tiene permisos SUID inesperados (ls -l) o si su hash difiere del paquete oficial.",
+        "Busque alertas previas para el mismo usuario, host o IP de origen de la sesión SSH."
+      ],
+      "false_positives": [
+        "Administradores o scripts de mantenimiento que usan find . -exec /bin/sh -c '...' para procesar archivos en lote.",
+        "Scripts de build, CI/CD o instaladores que invocan un shell por cada archivo encontrado.",
+        "Pruebas de seguridad o ejercicios de pentest autorizados que validan vectores de GTFOBins."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o del usuario si la ejecución estaba autorizada y documentada.",
+        "Si no lo está, aísle el host o termine la sesión y los procesos shell asociados, preservando evidencia (lista de procesos, historial de shell).",
+        "Retire de sudoers las entradas que permiten find sin restricción y elimine bits SUID indebidos tras verificarlos.",
+        "Restablezca credenciales de la cuenta implicada y revise persistencia: cron, claves SSH, usuarios nuevos, servicios.",
+        "Documente los hallazgos y ajuste la regla con exclusiones específicas para scripts legítimos verificados."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque find lanzando un shell rara vez es legítimo y suele indicar escape de shell restringido o escalada de privilegios."
+    },
+    "en": {
+      "summary": "The find binary was run with -exec to spawn a shell (/bin/sh, /bin/bash, etc.). This GTFOBins technique can break out of restricted shells or escalate privileges when find runs via sudo or SUID.",
+      "what_it_detects": "Linux process_creation events where Image ends with '/find', CommandLine contains both ' . ' and '-exec', and also contains a shell path: /bin/bash, /bin/dash, /bin/fish, /bin/sh or /bin/zsh. Typical example: 'find . -exec /bin/sh \\; -quit'.",
+      "why_it_matters": "Using find as a shell launcher is a known way to escape restricted environments or gain a shell with find's privileges (sudo or SUID). The rule is tagged T1083 (File and Directory Discovery), but the real risk is unauthorized command execution and privilege escalation.",
+      "triage_steps": [
+        "Read the full CommandLine: does it spawn an interactive shell ('-exec /bin/sh \\; -quit') or run a specific script with '-c'?",
+        "Identify the user and effective UID; check whether find ran via sudo, with SUID, or as root from an unprivileged account.",
+        "Review ParentImage and the process tree: sudo, web service, cron, SSH session or a restricted shell (rbash) as origin.",
+        "Look for children of the spawned shell on the same host +/- 15 minutes: id, whoami, downloads, edits to /etc/passwd, sudoers or SSH keys.",
+        "Check sudo logs (/var/log/auth.log or secure) for COMMAND= lines with find and the sudoers rule that allowed it.",
+        "Verify whether /usr/bin/find has unexpected SUID permissions or a hash differing from the vendor package.",
+        "Search earlier alerts for the same user, host or SSH source IP."
+      ],
+      "false_positives": [
+        "Administrators or maintenance scripts using find . -exec /bin/sh -c '...' for batch file processing.",
+        "Build, CI/CD or installer scripts that invoke a shell per matched file.",
+        "Authorized penetration tests validating GTFOBins vectors."
+      ],
+      "response_steps": [
+        "Confirm with the system or account owner whether the execution was authorized and documented.",
+        "If not, isolate the host or kill the session and spawned shells, preserving evidence (process list, shell history).",
+        "Remove sudoers entries allowing unrestricted find and strip improper SUID bits after verification.",
+        "Reset the involved account's credentials and hunt for persistence: cron, SSH keys, new users, services.",
+        "Document findings and tune the rule with narrow exclusions for verified legitimate scripts."
+      ],
+      "severity_rationale": "High fits because find spawning a shell is rarely legitimate and usually indicates restricted-shell escape or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GTFOBins-style shell spawn via find run through sudo by an unprivileged user",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find . -exec /bin/sh \\; -quit",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo find . -exec /bin/sh \\; -quit",
+          "User": "root",
+          "LogonId": "1001",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "find launching bash with -p from a restricted shell session",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "/usr/bin/find . -maxdepth 0 -exec /bin/bash -p \\;",
+          "ParentImage": "/bin/rbash",
+          "User": "svc-backup",
+          "CurrentDirectory": "/opt/app",
+          "ProcessId": 51007,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate find with -exec running grep, no shell path in the command line",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find . -type f -name \"*.conf\" -exec grep -l listen {} +",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/etc/nginx",
+          "ProcessId": 39120,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "find invoking /bin/sh but searching an absolute path, so ' . ' is absent",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find /var/log/app -name \"*.log\" -mtime +7 -exec /bin/sh -c 'gzip \"$1\"' _ {} \\;",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 40551,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

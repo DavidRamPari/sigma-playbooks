@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "48ea844d-19b1-4642-944e-fe39c2cc1fec",
+    "title": "UAC Bypass Using IDiagnostic Profile - File",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_uac_bypass_idiagnostic_profile.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_uac_bypass_idiagnostic_profile.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "dllhost.exe (el COM surrogate) creó un archivo .dll directamente en C:\\Windows\\System32\\. Esto coincide con la etapa de escritura del bypass de UAC IDiagnosticProfileUAC y podría indicar que un proceso con privilegios de usuario obtuvo permisos de escritura elevados.",
+      "what_it_detects": "Eventos de creación de archivos donde Image termina en \\DllHost.exe y TargetFilename empieza con C:\\Windows\\System32\\ y termina en .dll.",
+      "why_it_matters": "La técnica IDiagnosticProfileUAC abusa de un objeto COM con autoelevación alojado en dllhost.exe para escribir un archivo en una carpeta protegida sin mostrar el aviso de UAC. Luego, un proceso elevado puede cargar la DLL plantada en System32. Corresponde a Bypass User Account Control (T1548.002) y permite escalar privilegios.",
+      "triage_steps": [
+        "Registre el TargetFilename, el host, el usuario y la hora. Verifique si el nombre de la DLL corresponde a un binario conocido de Windows o es inusual en System32.",
+        "Ubique el evento de creación de dllhost.exe (mismo ProcessId). Revise el argumento /Processid:{CLSID} y el proceso padre.",
+        "Identifique el proceso de integridad media que inició la activación COM: busque binarios o scripts en rutas escribibles por el usuario, del mismo usuario y en +/- 15 minutos.",
+        "Obtenga el hash de la DLL y revise su firma, la información de versión y su reputación. Una DLL sin firmar o desconocida en System32 es muy sospechosa.",
+        "Busque eventos de carga de imágenes del TargetFilename para saber qué procesos la cargaron y con qué nivel de integridad.",
+        "Revise si justo después del evento aparecieron en el host procesos hijos elevados, servicios nuevos, tareas programadas u otras escrituras en System32.",
+        "Consulte alertas previas del mismo host y del mismo usuario, y busque el mismo hash en otros endpoints."
+      ],
+      "false_positives": [
+        "Un administrador aprueba una copia elevada de una DLL a System32 desde el Explorador. El Explorador hace esa copia mediante un COM surrogate dllhost.exe.",
+        "Instaladores o herramientas de gestión legítimas que usan operaciones de archivo COM elevadas para colocar drivers o DLL de soporte en System32."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el usuario o con los registros de cambios. Trátela como maliciosa si la DLL no tiene firma, es desconocida o le sigue una ejecución elevada.",
+        "Aísle el endpoint y preserve la DLL, el árbol de procesos de dllhost.exe y la memoria relevante antes de eliminar cualquier cosa.",
+        "Elimine la DLL y la persistencia asociada solo después de confirmar que no son componentes legítimos de Windows.",
+        "Restablezca las credenciales del usuario afectado y busque el hash en toda la flota. Considere configurar UAC en 'Notificar siempre' o retirar los privilegios de administrador local."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque es raro que el COM surrogate escriba legítimamente DLL inesperadas en System32, y esto apunta a un bypass de UAC y a una escalada de privilegios."
+    },
+    "en": {
+      "summary": "dllhost.exe (the COM surrogate) created a .dll file directly under C:\\Windows\\System32\\. This matches the file-write stage of the IDiagnosticProfileUAC bypass and may mean a user-level process gained elevated write access.",
+      "what_it_detects": "File creation events where Image ends with \\DllHost.exe and TargetFilename starts with C:\\Windows\\System32\\ and ends with .dll.",
+      "why_it_matters": "The IDiagnosticProfileUAC technique abuses an auto-elevated COM object hosted in dllhost.exe to write a file into a protected folder without a UAC prompt. A DLL planted in System32 can then be loaded by an elevated process. This is Bypass User Account Control (T1548.002), which leads to privilege escalation.",
+      "triage_steps": [
+        "Record the TargetFilename, host, user and timestamp. Check whether the DLL name matches a known Windows binary or is unusual for System32.",
+        "Find the dllhost.exe process creation event (same ProcessId). Note the /Processid:{CLSID} argument and the parent process.",
+        "Identify the medium-integrity process that started the COM activation: look for unusual binaries or scripts in user-writable paths run by the same user within +/- 15 minutes.",
+        "Hash the dropped DLL and check its signature, version info and reputation. An unsigned or unknown DLL in System32 is highly suspicious.",
+        "Search image load events for the TargetFilename to see which processes loaded it and at what integrity level.",
+        "Look for elevated child processes, new services, scheduled tasks or other System32 writes on the host right after the event.",
+        "Check for earlier alerts on the same host and user, and search for the same DLL hash on other endpoints."
+      ],
+      "false_positives": [
+        "An administrator approves an elevated Explorer copy of a DLL into System32. Explorer performs that copy through a dllhost.exe COM surrogate.",
+        "Legitimate installers or management tools that use elevated COM file operations to place drivers or support DLLs in System32."
+      ],
+      "response_steps": [
+        "Confirm the activity with the user or change records. Treat it as malicious if the DLL is unsigned, unknown or followed by elevated execution.",
+        "Isolate the endpoint and preserve the DLL, the dllhost.exe process tree and relevant memory before you remove anything.",
+        "Find and remove the dropped DLL and any persistence it created. Only remove them after confirming they are not legitimate Windows components.",
+        "Reset credentials for the affected user. Hunt for the hash fleet-wide, and consider setting UAC to 'Always notify' or removing local admin rights."
+      ],
+      "severity_rationale": "High fits because unexpected DLL writes into System32 by the COM surrogate rarely happen legitimately and point to UAC bypass and privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dllhost.exe COM surrogate writes an unknown DLL into System32, as in the IDiagnosticProfileUAC bypass",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-10-25 14:03:12.481",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\DllHost.exe",
+          "TargetFilename": "C:\\Windows\\System32\\wercplsupport.dll"
+        }
+      },
+      {
+        "description": "Lower-case dllhost.exe path still matches case-insensitively and writes a DLL in System32",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-10-25 14:05:40.102",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "ProcessId": 4388,
+          "Image": "c:\\windows\\system32\\dllhost.exe",
+          "TargetFilename": "C:\\Windows\\System32\\diagsvc_helper.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "dllhost.exe writes a .cab diagnostic file to a user temp folder, so neither the path nor the extension matches",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-10-25 14:10:03.555",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\DllHost.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\diag_20241025.cab"
+        }
+      },
+      {
+        "description": "Windows servicing (TiWorker.exe) writes a DLL to System32 during an update; the Image is not dllhost.exe",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-10-25 03:12:44.019",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2216,
+          "Image": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.4170_none_7e4b1a2f9c3d1e8a\\TiWorker.exe",
+          "TargetFilename": "C:\\Windows\\System32\\wuaueng.dll"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

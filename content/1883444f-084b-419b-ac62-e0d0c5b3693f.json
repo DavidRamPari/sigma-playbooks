@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "1883444f-084b-419b-ac62-e0d0c5b3693f",
+    "title": "Suspicious Connection to Remote Account",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_networkcredential.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_networkcredential.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1110.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un bloque de script de PowerShell en este equipo hizo referencia a clases .NET que crean credenciales de red o conexiones LDAP directas. Este tipo de script puede adivinar contraseñas contra un controlador de dominio por LDAP.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) cuyo ScriptBlockText contiene System.DirectoryServices.Protocols.LdapDirectoryIdentifier, System.DirectoryServices.Protocols.LdapConnection o System.Net.NetworkCredential.",
+      "why_it_matters": "Con estas clases un script puede autenticarse en LDAP con el usuario y la contraseña que él mismo proporciona. Dentro de un bucle se convierten en una herramienta para adivinar contraseñas (T1110.001, Brute Force: Password Guessing) que puede comprometer o bloquear cuentas del dominio.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Busque bucles, listas de contraseñas, contraseñas en texto plano, usuarios objetivo y el controlador de dominio indicado en LdapDirectoryIdentifier.",
+        "Si el script quedó registrado en varias partes, reconstrúyalo con todos los eventos que comparten el ScriptBlockId, en orden de MessageNumber.",
+        "Identifique el usuario y el equipo. Revise Path para saber si el script vino de un archivo en una carpeta temporal o de usuario, o si se ejecutó de forma interactiva.",
+        "Correlacione la creación de procesos en el equipo en +/- 15 minutos: el proceso padre de PowerShell, su línea de comandos y cualquier comando codificado.",
+        "En los controladores de dominio, busque inicios de sesión fallidos desde este equipo en +/- 15 minutos: 4625, 4771 y 4776, además de bloqueos (4740) y cualquier éxito posterior.",
+        "Revise los logs de red en busca de conexiones LDAP (389/636) desde este equipo hacia los controladores de dominio, y cuántas hubo.",
+        "Busque alertas previas del mismo usuario o equipo, y este hash o contenido de script en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts administrativos o de automatización que usan System.Net.NetworkCredential para peticiones web, SMTP, proxies o recursos compartidos.",
+        "Verificaciones de salud de LDAP, sincronización de identidades o scripts de aprovisionamiento que se conectan al directorio.",
+        "Módulos de gestión o monitoreo que crean credenciales para cuentas de servicio."
+      ],
+      "response_steps": [
+        "Confirme el propósito con el dueño del script o con el jefe del usuario. Documente si se trata de una automatización conocida.",
+        "Si es malicioso o no tiene explicación, aísle el equipo y detenga el proceso de PowerShell.",
+        "Restablezca las contraseñas de las cuentas atacadas que muestren intentos fallidos o exitosos. Revise las sesiones iniciadas después de cualquier acierto.",
+        "Elimine el script y cualquier mecanismo de persistencia que lo ejecute. Luego busque el mismo contenido en otros equipos.",
+        "Agregue una exclusión ajustada por Path o firmante para los scripts legítimos confirmados."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estas clases son comunes en scripts legítimos. La alerta necesita correlación con fallos de autenticación antes de indicar un ataque real."
+    },
+    "en": {
+      "summary": "A PowerShell script block on this host referenced .NET classes for building network credentials or raw LDAP connections. Scripts like this can guess passwords against a domain controller over LDAP.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains System.DirectoryServices.Protocols.LdapDirectoryIdentifier, System.DirectoryServices.Protocols.LdapConnection or System.Net.NetworkCredential.",
+      "why_it_matters": "These classes let a script bind to LDAP with a username and password it supplies. Inside a loop they turn into a password-guessing tool (T1110.001, Brute Force: Password Guessing) that can compromise domain accounts or lock them out.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Look for loops, password lists, hardcoded passwords, target usernames and the domain controller passed to LdapDirectoryIdentifier.",
+        "If the script was logged in several parts, rebuild it from every event that shares the ScriptBlockId, ordered by MessageNumber.",
+        "Find the user and host. Check Path to see whether the script came from a file in a temp or user-writable folder, or was run interactively.",
+        "Correlate process creation on the host within +/- 15 minutes: the PowerShell parent process, its command line and any encoded commands.",
+        "On domain controllers, look for failed logons from this host within +/- 15 minutes: 4625, 4771 and 4776, plus lockouts (4740) and any success that follows them.",
+        "Check network logs for LDAP connections (389/636) from this host to domain controllers, and how many there were.",
+        "Search for earlier alerts for the same user or host, and for this script hash or content on other endpoints."
+      ],
+      "false_positives": [
+        "Admin or automation scripts that use System.Net.NetworkCredential for web requests, SMTP, proxies or file shares.",
+        "LDAP health checks, identity sync jobs or provisioning scripts that bind to directory services.",
+        "Management or monitoring modules that build credentials for service accounts."
+      ],
+      "response_steps": [
+        "Confirm intent with the script owner or the user's manager. Document whether this is known automation.",
+        "If it is malicious or unexplained, isolate the host and stop the PowerShell process.",
+        "Reset passwords for targeted accounts that show failed or successful binds. Review sessions that started after any successful guess.",
+        "Remove the script and any persistence that launches it, then sweep other hosts for the same content.",
+        "Add confirmed legitimate scripts to a tuned exclusion by Path or signer."
+      ],
+      "severity_rationale": "Low fits because these classes are common in legitimate scripts. The alert needs correlation with authentication failures before it signals a real attack."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "LDAP password-guessing loop in the style of Atomic Red Team T1110.001, using LdapDirectoryIdentifier, NetworkCredential and LdapConnection",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "3f2a9c1e-7b44-4d0a-9e61-0c5d2b8a1f37",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\check.ps1",
+          "ScriptBlockText": "$di = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier(\"dc01.andes.example.com\",389); foreach ($p in Get-Content .\\pw.txt) { $c = New-Object System.Net.NetworkCredential(\"svc_backup\",$p,\"ANDES\"); $conn = New-Object System.DirectoryServices.Protocols.LdapConnection($di,$c); try { $conn.Bind(); Write-Output \"OK $p\" } catch {} }"
+        }
+      },
+      {
+        "description": "Script that only builds a System.Net.NetworkCredential for a web request (matches on one value)",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "a81d0e55-2c3b-4f19-8d7e-5e6f90b1c2d4",
+          "Path": "",
+          "ScriptBlockText": "$wc = New-Object System.Net.WebClient; $wc.Credentials = New-Object System.Net.NetworkCredential('ANDES\\mrojas','Placeholder1'); $wc.DownloadString('https://intranet.example.com/status')"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script using PSCredential and GetNetworkCredential(), with no reference to the full NetworkCredential class name",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "c47e2b90-1f6a-4e83-b2d5-9a0c3e7f6b11",
+          "Path": "C:\\Scripts\\Map-Share.ps1",
+          "ScriptBlockText": "$cred = Get-Credential ANDES\\jperez; New-PSDrive -Name S -PSProvider FileSystem -Root \\\\fs01.andes.example.com\\share -Credential $cred; $u = $cred.GetNetworkCredential().UserName"
+        }
+      },
+      {
+        "description": "Directory query through DirectorySearcher (System.DirectoryServices, not the Protocols LDAP classes)",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-MGMT-01.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "e9b3a6d2-58c1-4a7f-a0e4-2d7c1f8b5a63",
+          "Path": "C:\\Scripts\\Report-Users.ps1",
+          "ScriptBlockText": "$s = New-Object System.DirectoryServices.DirectorySearcher; $s.Filter = '(objectClass=user)'; $s.FindAll() | Select-Object -First 10"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

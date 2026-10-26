@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "b04934b2-0a68-4845-8a19-bdfed3a68a7a",
+    "title": "App Assigned To Azure RBAC/Microsoft Entra Role",
+    "level": "medium",
+    "status": "test",
+    "author": "Bailey Bercik '@baileybercik', Mark Morowczynski '@markmorow'",
+    "path": "cloud/azure/audit_logs/azure_app_role_added.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_app_role_added.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se asignó un rol de Microsoft Entra (por ejemplo, Global Administrator) o un rol de Azure RBAC (por ejemplo, Owner de la suscripción) a un service principal. Puede ser un cambio legítimo o un mecanismo de persistencia y escalamiento de privilegios.",
+      "what_it_detects": "Eventos de Azure AD Audit Logs con targetResources.type igual a 'Service Principal' y properties.message igual a 'Add member to role', 'Add eligible member to role' o 'Add scoped member to role'. Esto cubre asignaciones permanentes, elegibles (PIM) y con alcance limitado.",
+      "why_it_matters": "Un atacante que controla una aplicación puede darle roles privilegiados para conservar acceso sin depender de cuentas de usuario (ATT&CK T1098.003, Additional Cloud Roles). Los service principals no usan MFA y sus credenciales suelen pasar desapercibidas.",
+      "triage_steps": [
+        "Identifique el service principal en targetResources (displayName, ID) y el rol asignado en modifiedProperties (Role.DisplayName, alcance).",
+        "Determine quién hizo la asignación con initiatedBy (usuario o aplicación), su IP de origen y su user agent.",
+        "Valide si existe un ticket de cambio o una solicitud del dueño de la aplicación que justifique ese rol.",
+        "Revise la aplicación: fecha de creación, propietarios, credenciales o certificados agregados recientemente y consentimientos otorgados.",
+        "Busque en los Audit Logs del mismo iniciador, +/- 15 minutos, la creación de apps, la adición de secretos o cambios de propietarios.",
+        "Consulte los sign-ins del service principal después de la asignación: IPs desconocidas, uso de Graph API o acciones administrativas.",
+        "Revise alertas previas del iniciador, como inicios de sesión riesgosos o cambios de MFA."
+      ],
+      "false_positives": [
+        "Una aplicación que necesita legítimamente el permiso, como una herramienta de automatización, backup o IaC que requiere roles específicos.",
+        "Asignaciones elegibles de PIM configuradas por el equipo de identidad durante un proyecto aprobado.",
+        "Despliegues de integraciones de terceros (SIEM, CSPM) que solicitan roles de lectura o de administración documentados."
+      ],
+      "response_steps": [
+        "Confirme con el iniciador y con el dueño de la aplicación si el cambio fue autorizado antes de actuar.",
+        "Si no fue autorizado, retire la asignación del rol y deshabilite el service principal.",
+        "Revoque los secretos y certificados de la aplicación y revise sus propietarios.",
+        "Si la cuenta iniciadora está comprometida, revoque sus sesiones, restablezca credenciales y revise sus otros cambios.",
+        "Audite las acciones ejecutadas por el service principal con el rol y revierta los cambios maliciosos.",
+        "Aplique PIM y aprobaciones para asignar roles privilegiados a aplicaciones."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque estas asignaciones suelen ser legítimas, pero si el rol es privilegiado y el cambio no fue autorizado, el impacto es alto y debe escalarse."
+    },
+    "en": {
+      "summary": "A service principal was assigned a Microsoft Entra role (e.g., Global Administrator) or an Azure RBAC role (e.g., subscription Owner). This may be a legitimate change or a way to gain persistence and escalate privileges.",
+      "what_it_detects": "Azure AD Audit Log events where targetResources.type is 'Service Principal' and properties.message is 'Add member to role', 'Add eligible member to role' or 'Add scoped member to role'. This covers permanent, PIM-eligible and scoped assignments.",
+      "why_it_matters": "An attacker who controls an app can grant it privileged roles and keep access without relying on user accounts (ATT&CK T1098.003, Additional Cloud Roles). Service principals do not use MFA and their credentials are often overlooked.",
+      "triage_steps": [
+        "Identify the service principal in targetResources (displayName, ID) and the assigned role and scope in modifiedProperties.",
+        "Find who made the assignment in initiatedBy (user or app), plus their source IP and user agent.",
+        "Check for a change ticket or a request from the app owner that justifies the role.",
+        "Review the app: creation date, owners, recently added secrets or certificates, and granted consents.",
+        "Search Audit Logs for the same initiator within +/- 15 minutes for app creation, new credentials or owner changes.",
+        "Review the service principal's sign-ins after the assignment for unfamiliar IPs, Graph API use or admin actions.",
+        "Check earlier alerts for the initiator, such as risky sign-ins or MFA changes."
+      ],
+      "false_positives": [
+        "An app that legitimately needs the permission, such as automation, backup or IaC tooling that requires specific roles.",
+        "PIM-eligible assignments set up by the identity team during an approved project.",
+        "Third-party integrations (SIEM, CSPM) being onboarded with documented reader or admin roles."
+      ],
+      "response_steps": [
+        "Confirm with the initiator and the app owner whether the change was authorized before acting.",
+        "If it was not authorized, remove the role assignment and disable the service principal.",
+        "Revoke the app's secrets and certificates and review its owners.",
+        "If the initiating account is compromised, revoke its sessions, reset credentials and review its other changes.",
+        "Audit actions the service principal performed with the role and revert malicious changes.",
+        "Require PIM and approvals before privileged roles can be assigned to apps."
+      ],
+      "severity_rationale": "Medium fits because these assignments are often legitimate, but an unauthorized privileged role is high impact and should be escalated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user assigns the Global Administrator directory role to a service principal",
+        "event": {
+          "targetResources.type": "Service Principal",
+          "targetResources.displayName": "sync-connector-app",
+          "properties.message": "Add member to role",
+          "activityDisplayName": "Add member to role",
+          "category": "RoleManagement",
+          "initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "initiatedBy.user.ipAddress": "203.0.113.45",
+          "result": "success",
+          "modifiedProperties.Role.DisplayName": "Global Administrator"
+        }
+      },
+      {
+        "description": "PIM-eligible assignment of a privileged role to a service principal",
+        "event": {
+          "targetResources.type": "Service Principal",
+          "targetResources.displayName": "reporting-automation",
+          "properties.message": "Add eligible member to role",
+          "activityDisplayName": "Add eligible member to role",
+          "category": "RoleManagement",
+          "initiatedBy.user.userPrincipalName": "mgomez@example.com",
+          "initiatedBy.user.ipAddress": "198.51.100.20",
+          "result": "success",
+          "modifiedProperties.Role.DisplayName": "Privileged Role Administrator"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The same role assignment, but the target is a user instead of a service principal",
+        "event": {
+          "targetResources.type": "User",
+          "targetResources.displayName": "lrodriguez@example.com",
+          "properties.message": "Add member to role",
+          "activityDisplayName": "Add member to role",
+          "category": "RoleManagement",
+          "initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "initiatedBy.user.ipAddress": "203.0.113.45",
+          "result": "success"
+        }
+      },
+      {
+        "description": "A role is removed from a service principal, which is not an assignment",
+        "event": {
+          "targetResources.type": "Service Principal",
+          "targetResources.displayName": "sync-connector-app",
+          "properties.message": "Remove member from role",
+          "activityDisplayName": "Remove member from role",
+          "category": "RoleManagement",
+          "initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "initiatedBy.user.ipAddress": "203.0.113.45",
+          "result": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

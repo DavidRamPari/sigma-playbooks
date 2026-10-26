@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "1b45b0d1-773f-4f23-aedc-814b759563b1",
+    "title": "Application AppID Uri Configuration Changes",
+    "level": "high",
+    "status": "test",
+    "author": "Mark Morowczynski '@markmorow', Bailey Bercik '@baileybercik'",
+    "path": "cloud/azure/audit_logs/azure_app_appid_uri_changes.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_app_appid_uri_changes.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004",
+      "T1552"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se actualizó una aplicación o un service principal en Entra ID (\"Update Application\" o \"Update Service principal\"). La regla busca cambios en el AppID URI, así que primero confirme si cambiaron identifierUris o servicePrincipalNames.",
+      "what_it_detects": "Eventos de Azure Audit Logs donde properties.message es exactamente \"Update Application\" o \"Update Service principal\". Estos eventos registran muchos tipos de actualizaciones, entre ellos agregar, modificar o eliminar un AppID URI (identifierUris).",
+      "why_it_matters": "El AppID URI identifica a la aplicación como audiencia de los tokens. Si un atacante con permisos sobre la aplicación lo cambia, puede suplantar un recurso de confianza, interceptar tokens o mantener persistencia usando cuentas cloud válidas (T1078.004). También puede exponer credenciales (T1552).",
+      "triage_steps": [
+        "Revise modifiedProperties del evento y confirme si cambiaron identifierUris o servicePrincipalNames. Anote el valor anterior y el nuevo.",
+        "Identifique quién hizo el cambio (UPN o aplicación en initiatedBy) y la IP de origen. Valide que sea un administrador de aplicaciones autorizado.",
+        "Verifique si el nuevo URI usa un dominio verificado del tenant o un dominio externo, desconocido o con un nombre parecido a uno legítimo.",
+        "Busque un ticket de cambio o un despliegue planificado que coincida con la aplicación y la hora.",
+        "Revise la actividad del mismo iniciador +/- 15 minutos: nuevas credenciales, cambios de propietario, consentimientos o asignaciones de roles.",
+        "Revise los inicios de sesión del iniciador. Busque ubicación inusual, user agent extraño, fallas de MFA o riesgo detectado.",
+        "Busque alertas previas sobre la misma aplicación o el mismo iniciador en los últimos 30 días."
+      ],
+      "false_positives": [
+        "Cambios planificados por administradores en registros de aplicaciones.",
+        "Pipelines de CI/CD o IaC (Terraform, Bicep) que actualizan aplicaciones y service principals.",
+        "Automatizaciones de Microsoft o de primera parte que actualizan service principals.",
+        "Cambios en otras propiedades (reply URLs, nombre visible) que esta regla también detecta porque es amplia."
+      ],
+      "response_steps": [
+        "Confirme el cambio con el dueño de la aplicación y con el iniciador por un canal independiente.",
+        "Si el cambio no fue autorizado, restaure el valor anterior de identifierUris. Retire también las credenciales y los propietarios que haya agregado el mismo actor.",
+        "Revoque las sesiones de la cuenta iniciadora, restablezca sus credenciales y exija MFA.",
+        "Revise los inicios de sesión del service principal afectado y el uso de tokens contra el recurso.",
+        "Limite los roles de administración de aplicaciones. Considere ajustar la regla para que filtre por identifierUris en modifiedProperties."
+      ],
+      "severity_rationale": "Es alta porque un cambio no autorizado en el AppID URI permite suplantar tokens y mantener persistencia en el tenant, aunque los cambios planificados son frecuentes."
+    },
+    "en": {
+      "summary": "An Entra ID application or service principal was updated (\"Update Application\" or \"Update Service principal\"). The rule targets AppID URI changes, so first confirm whether identifierUris or servicePrincipalNames changed.",
+      "what_it_detects": "Azure Audit Log events where properties.message is exactly \"Update Application\" or \"Update Service principal\". These events record many kinds of updates, including adding, changing or removing an AppID URI (identifierUris).",
+      "why_it_matters": "The AppID URI identifies the application as a token audience. An attacker with rights over the app can change it to impersonate a trusted resource, intercept tokens or keep persistence using valid cloud accounts (T1078.004). It can also expose credentials (T1552).",
+      "triage_steps": [
+        "Open the event's modifiedProperties and check whether identifierUris or servicePrincipalNames changed. Record the old and new values.",
+        "Identify who made the change (UPN or app in initiatedBy) and the source IP. Confirm it is an authorized application administrator.",
+        "Check whether the new URI uses a verified tenant domain or an external, unfamiliar or lookalike domain.",
+        "Look for a change ticket or planned deployment that matches the application and the time.",
+        "Review the same initiator's activity +/- 15 minutes: added credentials, owner changes, consent grants or role assignments.",
+        "Review the initiator's sign-ins. Look for an unusual location, odd user agent, MFA failures or detected risk.",
+        "Look for earlier alerts on the same application or initiator in the last 30 days."
+      ],
+      "false_positives": [
+        "Planned changes to app registrations by administrators.",
+        "CI/CD pipelines or IaC (Terraform, Bicep) that update applications and service principals.",
+        "Microsoft or first-party automation that updates service principals.",
+        "Changes to other properties (reply URLs, display name), which this broad rule also matches."
+      ],
+      "response_steps": [
+        "Confirm the change with the app owner and the initiator through a separate channel.",
+        "If the change was not authorized, restore the previous identifierUris value. Also remove any credentials and owners the same actor added.",
+        "Revoke the initiating account's sessions, reset its credentials and require MFA.",
+        "Review sign-ins of the affected service principal and token use against the resource.",
+        "Limit application admin roles. Consider tuning the rule to filter on identifierUris in modifiedProperties."
+      ],
+      "severity_rationale": "High because an unauthorized AppID URI change allows token impersonation and persistence in the tenant, even though planned admin changes are common."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An application administrator updates an app registration's identifierUris (AppID URI) to an external domain.",
+        "event": {
+          "properties.message": "Update Application",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "properties.initiatedBy.user.ipAddress": "203.0.113.45",
+          "properties.targetResources.displayName": "Finance-API",
+          "properties.targetResources.modifiedProperties.displayName": "AppIdentifierUri",
+          "properties.targetResources.modifiedProperties.newValue": "[\"api://finance.example.org\"]",
+          "properties.targetResources.modifiedProperties.oldValue": "[\"api://finance.example.com\"]",
+          "operationName": "Update application"
+        }
+      },
+      {
+        "description": "A service principal's servicePrincipalNames are modified.",
+        "event": {
+          "properties.message": "Update Service principal",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "mlopez@example.com",
+          "properties.initiatedBy.user.ipAddress": "198.51.100.23",
+          "properties.targetResources.displayName": "HR-Portal",
+          "properties.targetResources.modifiedProperties.displayName": "ServicePrincipalNames",
+          "operationName": "Update service principal"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A new application is created. The message does not equal either value the rule looks for.",
+        "event": {
+          "properties.message": "Add application",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "properties.initiatedBy.user.ipAddress": "192.0.2.10",
+          "properties.targetResources.displayName": "Inventory-App",
+          "operationName": "Add application"
+        }
+      },
+      {
+        "description": "Near-miss: a certificate and secrets management update. The message only partly matches \"Update Application\", and the rule needs an exact match.",
+        "event": {
+          "properties.message": "Update application – Certificates and secrets management",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "mlopez@example.com",
+          "properties.initiatedBy.user.ipAddress": "192.0.2.20",
+          "properties.targetResources.displayName": "Finance-API",
+          "operationName": "Update application – Certificates and secrets management"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

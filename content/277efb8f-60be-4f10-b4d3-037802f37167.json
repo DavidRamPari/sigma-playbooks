@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "277efb8f-60be-4f10-b4d3-037802f37167",
+    "title": "Registry Persistence Mechanisms in Recycle Bin",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_event/registry_event_persistence_recycle_bin.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_persistence_recycle_bin.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó o modificó el verbo shell\\open de la Papelera de reciclaje (CLSID {645FF040-5081-101B-9F08-00AA002F954E}). Así, abrir la Papelera puede ejecutar un comando elegido por un atacante.",
+      "what_it_detects": "Eventos de registro (Sysmon 13/14) en los que un valor SetValue escribe shell\\open\\command\\(Default) bajo el CLSID de la Papelera, o en los que una clave se renombra (RenameKey) a shell\\open dentro de ese CLSID.",
+      "why_it_matters": "Es una técnica de persistencia poco conocida (ATT&CK T1547, ejecución automática al arrancar o iniciar sesión). Cada vez que el usuario abre la Papelera, Explorer ejecuta el payload con los privilegios de ese usuario. Pocos controles revisan esta clave.",
+      "triage_steps": [
+        "Lea Details en el evento SetValue para ver el comando configurado: la ruta del ejecutable, los argumentos y si usa LOLBins como powershell, rundll32 o mshta.",
+        "Revise TargetObject o NewName: si está en HKLM\\SOFTWARE\\Classes afecta a todos los usuarios y requiere privilegios de administrador; si está en HKU\\<SID>_Classes, solo afecta a un usuario.",
+        "Identifique Image y User del proceso que escribió la clave. Luego revise su proceso padre y su línea de comandos en los eventos de creación de procesos.",
+        "Obtenga el hash del binario que aparece en Details, revise su firma y su reputación, y compruebe si existe en disco y cuándo se creó.",
+        "Busque procesos hijos de explorer.exe que ejecuten ese comando después de la alerta. Así sabrá si la persistencia ya se activó.",
+        "Pivote en el mismo host durante +/- 15 minutos: otros cambios de registro, archivos escritos, conexiones de red y otras alertas para el mismo usuario o host."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos y es raro que software legítimo modifique este verbo.",
+        "Pruebas autorizadas de red team o emulación (por ejemplo, Atomic Red Team) que validan esta técnica.",
+        "Herramientas de personalización del shell que cambian la acción de la Papelera. Confírmelo con el dueño del equipo."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el equipo de TI si el cambio fue autorizado y documente el comando que se encontró.",
+        "Si es malicioso, aísle el endpoint y conserve evidencia: exporte la clave, guarde el binario referenciado y su hash.",
+        "Después de exportar la clave, elimine la subclave shell\\open agregada y deje solo la configuración original de la Papelera.",
+        "Ponga el payload en cuarentena y busque el mismo hash y la misma ruta de registro en toda la flota.",
+        "Si el payload se ejecutó, investigue el robo de credenciales, restablezca las contraseñas afectadas y revise otras formas de persistencia."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque esta clave casi nunca cambia de forma legítima y el cambio permite ejecutar código de manera persistente al abrir la Papelera."
+    },
+    "en": {
+      "summary": "The Recycle Bin shell\\open verb (CLSID {645FF040-5081-101B-9F08-00AA002F954E}) was created or modified. Opening the Recycle Bin can then run a command chosen by an attacker.",
+      "what_it_detects": "Registry events (Sysmon 13/14) where a SetValue writes shell\\open\\command\\(Default) under the Recycle Bin CLSID, or where a key is renamed (RenameKey) to shell\\open under that CLSID.",
+      "why_it_matters": "This is a little-known persistence technique (ATT&CK T1547, boot or logon autostart execution). Each time the user opens the Recycle Bin, Explorer runs the payload with that user's privileges. Few tools review this key.",
+      "triage_steps": [
+        "Read Details in the SetValue event to see the configured command: the executable path, its arguments and any LOLBins such as powershell, rundll32 or mshta.",
+        "Check TargetObject or NewName: HKLM\\SOFTWARE\\Classes affects all users and needs admin rights; HKU\\<SID>_Classes affects only one user.",
+        "Identify the Image and User that wrote the key. Then review its parent process and command line in process creation events.",
+        "Get the hash of the binary named in Details, check its signature and reputation, and confirm whether it exists on disk and when it was created.",
+        "Look for explorer.exe child processes running that command after the alert. This tells you whether the persistence has already fired.",
+        "Pivot on the same host within +/- 15 minutes: other registry changes, file writes, network connections and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives, and legitimate software rarely changes this verb.",
+        "Authorized red team or emulation tests (for example, Atomic Red Team) that validate this technique.",
+        "Shell customization tools that change the Recycle Bin action. Confirm with the device owner."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the change was authorized, and record the command you found.",
+        "If it is malicious, isolate the endpoint and keep evidence: export the key, save the referenced binary and its hash.",
+        "After exporting the key, delete the added shell\\open subkey and leave only the original Recycle Bin configuration.",
+        "Quarantine the payload and hunt for the same hash and registry path across the fleet.",
+        "If the payload ran, investigate credential theft, reset the affected passwords and check for other persistence."
+      ],
+      "severity_rationale": "High fits because this key almost never changes legitimately, and the change gives persistent code execution whenever the Recycle Bin is opened."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets the Recycle Bin shell\\open\\command default value to run a payload from C:\\Users\\Public",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 14:03:12.481",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Users\\Public\\update.exe"
+        }
+      },
+      {
+        "description": "PowerShell renames a staging key to shell\\open under the Recycle Bin CLSID",
+        "event": {
+          "EventID": 14,
+          "EventType": "RenameKey",
+          "UtcTime": "2024-03-12 14:05:40.112",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 7344,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}\\shell\\tmp",
+          "NewName": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}\\shell\\open"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Explorer updates the Recycle Bin DefaultIcon value when the bin is emptied (normal behavior, not shell\\open\\command)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 15:10:02.007",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\explorer.exe",
+          "ProcessId": 4412,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}\\DefaultIcon\\(Default)",
+          "Details": "%SystemRoot%\\System32\\imageres.dll,-55"
+        }
+      },
+      {
+        "description": "SetValue on shell\\open\\command for a different CLSID, not the Recycle Bin",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 15:20:44.300",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 2980,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\shell\\Manage\\command\\(Default)",
+          "Details": "%SystemRoot%\\system32\\CompMgmtLauncher.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "63e3365d-4824-42d8-8b82-e56810fefa0c",
+    "title": "Invoke-Obfuscation Via Use Clip - System",
+    "level": "high",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_via_use_clip_services.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_via_use_clip_services.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows cuyo ImagePath contiene '(Clipboard|i', un indicio del lanzador USE CLIP de Invoke-Obfuscation. Lo más probable es que alguien usara un servicio para ejecutar PowerShell ofuscado que lee el payload desde el portapapeles.",
+      "what_it_detects": "Evento 7045 del log System con origen Service Control Manager, cuando el ImagePath del servicio contiene '(Clipboard|i'. Esto coincide con líneas de comando que envían el contenido del portapapeles a Invoke-Expression, el patrón que genera el lanzador de Invoke-Obfuscation basado en clip.exe.",
+      "why_it_matters": "Los atacantes esconden PowerShell (T1059.001) con ofuscación (T1027) y crean servicios para ejecutarlo como SYSTEM, a menudo durante ejecución remota o movimiento lateral. Las herramientas legítimas casi nunca ponen esta lógica en un ImagePath.",
+      "triage_steps": [
+        "Lea el ImagePath completo: identifique cmd.exe, echo ... | clip, powershell -sta y el comando copiado al portapapeles. Desofusque el contenido en un sandbox.",
+        "Registre ServiceName, ServiceType, StartType y AccountName. Los nombres aleatorios y la cuenta LocalSystem son típicos de herramientas de ejecución remota.",
+        "Determine quién instaló el servicio: revise el evento 4697 y los inicios de sesión 4624 tipo 3 en el host dentro de +/- 15 minutos. Anote la IP de origen y la cuenta.",
+        "Revise la creación de procesos en el host: busque procesos hijos de services.exe con cmd.exe, clip.exe y powershell.exe, y sus conexiones de red.",
+        "Revise los logs de PowerShell (4103/4104) del host para ver el script block desofuscado y cualquier descarga o acceso a credenciales.",
+        "Busque el mismo ServiceName, fragmento de ImagePath o cuenta de origen en otros hosts, y revise alertas previas del host y del usuario."
+      ],
+      "false_positives": [
+        "La regla no lista ninguno. Las causas posibles son ejercicios autorizados de red team, pruebas de penetración o validación de herramientas de seguridad con Invoke-Obfuscation. Confírmelas con el responsable."
+      ],
+      "response_steps": [
+        "Confirme que no se trata de una prueba aprobada. Si no lo es, aísle el host mediante el EDR.",
+        "Primero preserve la evidencia: clave de registro del servicio, ImagePath, eventos relacionados y, si es posible, una imagen de memoria. Después detenga y elimine el servicio malicioso.",
+        "Deshabilite la cuenta que creó el servicio o restablezca su contraseña, junto con las credenciales usadas en el host.",
+        "Busque movimiento lateral desde la IP de origen, elimine la persistencia y devuelva el host a producción solo después de verificar que está limpio."
+      ],
+      "severity_rationale": "El nivel alto corresponde porque un lanzador ofuscado que pasa el portapapeles a IEX dentro del ImagePath de un servicio rara vez es legítimo e indica ejecución de código como SYSTEM."
+    },
+    "en": {
+      "summary": "A new Windows service was installed whose ImagePath contains '(Clipboard|i', a sign of Invoke-Obfuscation's USE CLIP launcher. Someone likely used a service to run obfuscated PowerShell that reads its payload from the clipboard.",
+      "what_it_detects": "System log event 7045 from Service Control Manager where the service ImagePath contains '(Clipboard|i'. This matches command lines that pipe clipboard content into Invoke-Expression, the pattern Invoke-Obfuscation's clip.exe launcher produces.",
+      "why_it_matters": "Attackers hide PowerShell (T1059.001) behind obfuscation (T1027) and use service creation to run it as SYSTEM, often during remote execution or lateral movement. Real administration tools almost never put clipboard-to-IEX logic in a service ImagePath.",
+      "triage_steps": [
+        "Read the full ImagePath: note cmd.exe, echo ... | clip, powershell -sta and the command echoed into the clipboard. Decode or deobfuscate it in a sandbox.",
+        "Record ServiceName, ServiceType, StartType and AccountName. Random or meaningless names and LocalSystem accounts are typical of remote execution tools.",
+        "Find who installed the service: check Security event 4697 and 4624 logons (type 3) on the host within +/- 15 minutes, and note the source IP and account.",
+        "Pivot to process creation on the host: look for children of services.exe running cmd.exe, clip.exe and powershell.exe, plus network connections they made.",
+        "Check PowerShell logs (4103/4104) on the host for the deobfuscated script block and any download or credential access.",
+        "Search for the same ServiceName, ImagePath fragment or source account on other hosts, and review earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Rule lists none known. Possible causes are authorized red team or penetration tests and security tool validation that run Invoke-Obfuscation; confirm them with the engagement owner."
+      ],
+      "response_steps": [
+        "Confirm the activity is not an approved test. If it is not, isolate the host through EDR.",
+        "Capture evidence first: service registry key, ImagePath, related event logs and a memory image if you can. Then stop and remove the malicious service.",
+        "Disable or reset the account that created the service, and any credentials used on the host.",
+        "Hunt for lateral movement from the source IP, remove persistence, and bring the host back only after it is verified clean."
+      ],
+      "severity_rationale": "High fits because an obfuscated clipboard-to-IEX launcher in a service ImagePath is rarely legitimate and points to SYSTEM-level code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with an Invoke-Obfuscation USE CLIP style launcher piping clipboard content into IEX (benign echoed command).",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "xQwZpLmT",
+          "ImagePath": "C:\\Windows\\System32\\cmd.exe /c \"echo Write-Host 'svc-test' | clip.exe && powershell.exe -NoP -sta -c Add-Type -A System.Windows.Forms;(Clipboard|IEX)\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Lowercase variant of the same launcher; Sigma matching is case-insensitive.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ServiceName": "UpdSvcHelper",
+          "ImagePath": "cmd /c echo write-host 'hello'|clip&&powershell -sta \"add-type -an system.windows.forms;(clipboard|iex)\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Clipboard-based PowerShell service that uses the static GetText() call, so '(Clipboard|i' does not appear verbatim.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ClipHelper",
+          "ImagePath": "cmd /c echo Write-Host 'test' | clip && powershell -sta \"[Windows.Forms.Clipboard]::GetText() | iex\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Legitimate software service installation with an ordinary executable path.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0207.andes.example.com",
+          "ServiceName": "ExampleBackupAgent",
+          "ImagePath": "\"C:\\Program Files\\Example\\Backup\\agent.exe\" --service",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

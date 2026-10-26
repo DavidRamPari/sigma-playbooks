@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "9e36ed87-4986-482e-8e3b-5c23ffff11bf",
+    "title": "RemCom Service Installation",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_service_install_remcom.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_service_install_remcom.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló en el host un servicio llamado RemComSvc o un binario que termina en \\RemComSvc.exe (evento 7045 del Service Control Manager). Esto suele indicar ejecución remota de comandos con RemCom, una alternativa de código abierto a PsExec.",
+      "what_it_detects": "Eventos 7045 del log System con Provider_Name 'Service Control Manager' en los que ServiceName es 'RemComSvc' o ImagePath termina en '\\RemComSvc.exe'. Esto corresponde al servicio que RemCom instala en el equipo destino para ejecutar comandos.",
+      "why_it_matters": "RemCom copia su servicio al host remoto por SMB y lo usa para lanzar comandos con privilegios elevados (ATT&CK T1569.002, ejecución de servicios). Los atacantes lo usan para moverse lateralmente y ejecutar payloads sin necesidad de PsExec.",
+      "triage_steps": [
+        "Revise ServiceName, ImagePath, StartType y AccountName del evento 7045. Confirme la ruta del binario, que normalmente es C:\\Windows\\RemComSvc.exe.",
+        "Busque en el log Security del mismo host, dentro de +/- 15 minutos, inicios de sesión 4624 de tipo 3 previos a la instalación. Identifique la IP de origen y el usuario.",
+        "Verifique en el equipo de origen si se ejecutó RemCom.exe y con qué línea de comandos. Revise también qué usuario lo lanzó y si existe un ticket de cambio asociado.",
+        "Revise los procesos hijos de RemComSvc.exe en el destino (Sysmon 1 o 4688): cmd.exe, powershell.exe, herramientas de volcado de credenciales o de descarga.",
+        "Obtenga el hash de RemComSvc.exe y de los archivos que se crearon cerca del momento de la instalación, y compárelo con la inteligencia de amenazas interna.",
+        "Busque el mismo ServiceName o ImagePath en otros hosts y alertas anteriores de la misma IP de origen o del mismo usuario. Así podrá dimensionar el movimiento lateral."
+      ],
+      "false_positives": [
+        "Administradores o herramientas internas de despliegue que usan RemCom para ejecutar comandos de forma remota. Confírmelo con el responsable y con un ticket de cambio.",
+        "Pruebas autorizadas de pentesting o red team que usan RemCom o herramientas que lo integran."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema y con el usuario de origen si la actividad estaba autorizada antes de tomar acciones.",
+        "Si no está autorizada, aísle el host destino y, si es posible, también el de origen. Deshabilite o restablezca la cuenta usada.",
+        "Detenga y elimine el servicio RemComSvc y preserve una copia del binario para análisis forense antes de borrarlo.",
+        "Investigue los comandos ejecutados y los artefactos que dejaron. Rote las credenciales expuestas y restaure el sistema a un estado confiable."
+      ],
+      "severity_rationale": "Se asigna nivel medio porque RemCom tiene usos administrativos legítimos, pero su instalación como servicio es un indicador fuerte de ejecución remota que siempre debe verificarse."
+    },
+    "en": {
+      "summary": "A service named RemComSvc, or a binary ending in \\RemComSvc.exe, was installed on the host (Service Control Manager event 7045). This usually means a remote command execution with RemCom, an open-source PsExec alternative.",
+      "what_it_detects": "System log event 7045 from Provider_Name 'Service Control Manager' where ServiceName is 'RemComSvc' or ImagePath ends with '\\RemComSvc.exe'. This is the service RemCom installs on the target to run commands.",
+      "why_it_matters": "RemCom copies its service to the remote host over SMB and uses it to run commands with elevated privileges (ATT&CK T1569.002, Service Execution). Attackers use it for lateral movement and payload execution without PsExec.",
+      "triage_steps": [
+        "Review ServiceName, ImagePath, StartType and AccountName in the 7045 event. Confirm the binary path, which is typically C:\\Windows\\RemComSvc.exe.",
+        "In the same host's Security log, within +/- 15 minutes, find type 3 logons (4624) just before the installation. Note the source IP and user.",
+        "On the source machine, check whether RemCom.exe ran, with what command line and by which user. Look for a matching change ticket.",
+        "Review child processes of RemComSvc.exe on the target (Sysmon 1 or 4688): cmd.exe, powershell.exe, credential dumping or download tools.",
+        "Hash RemComSvc.exe and any files created around the install time, and compare them with internal threat intelligence.",
+        "Hunt for the same ServiceName or ImagePath on other hosts and for earlier alerts from the same source IP or user. This shows how far the lateral movement spread."
+      ],
+      "false_positives": [
+        "Administrators or internal deployment tooling using RemCom for remote commands. Confirm with the owner and a change ticket.",
+        "Authorized penetration tests or red team exercises using RemCom or tools that bundle it."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the system owner and the source user whether the activity was authorized.",
+        "If it was not authorized, isolate the target host (and the source if feasible). Disable or reset the account that was used.",
+        "Stop and remove the RemComSvc service. Keep a copy of the binary for forensics before you delete it.",
+        "Investigate the executed commands and what they left behind. Rotate exposed credentials and restore the system to a known-good state."
+      ],
+      "severity_rationale": "Medium fits because RemCom has legitimate admin uses, but its service installation is a strong remote-execution signal that always needs verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Default RemCom service installed on a workstation",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "RemComSvc",
+          "ImagePath": "%SystemRoot%\\RemComSvc.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Renamed service but binary path still ends with RemComSvc.exe",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ServiceName": "WinUpdHelper",
+          "ImagePath": "C:\\Windows\\Temp\\RemComSvc.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PsExec service installation, not RemCom",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "PSEXESVC",
+          "ImagePath": "%SystemRoot%\\PSEXESVC.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "RemComSvc state change event 7036, not an installation",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7036,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "param1": "RemComSvc",
+          "param2": "running"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

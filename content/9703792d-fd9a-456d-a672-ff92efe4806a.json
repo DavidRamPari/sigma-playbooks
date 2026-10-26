@@ -1,0 +1,118 @@
+{
+  "rule": {
+    "id": "9703792d-fd9a-456d-a672-ff92efe4806a",
+    "title": "Backup Catalog Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Tom U. @c_APT_ure (collection)",
+    "path": "windows/builtin/application/microsoft_windows_backup/win_susp_backup_delete.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/microsoft_windows_backup/win_susp_backup_delete.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Windows Server Backup registró el evento 524: se eliminó el catálogo de respaldos del equipo. Sin catálogo, los respaldos locales no aparecen para restaurar, algo típico antes o durante un ataque de ransomware.",
+      "what_it_detects": "Eventos del log Application con EventID 524 y Provider_Name Microsoft-Windows-Backup, que se generan cuando se borra el catálogo de respaldos, normalmente con 'wbadmin delete catalog'.",
+      "why_it_matters": "Borrar el catálogo elimina las referencias a los respaldos existentes y complica la recuperación. La regla lo asocia con eliminación de indicadores (T1070.004), y también es un paso común para impedir la recuperación del sistema antes de cifrar datos.",
+      "triage_steps": [
+        "Identifique el host (Computer) y la hora del evento 524; confirme con el equipo de respaldos si ese servidor usa Windows Server Backup y si había mantenimiento planificado.",
+        "Busque la creación de wbadmin.exe en el mismo host +/- 15 minutos y revise CommandLine en busca de 'delete catalog' o '-quiet'.",
+        "Revise ParentImage y el usuario que ejecutó wbadmin; cmd.exe o powershell.exe lanzados desde Office, scripts o herramientas remotas son sospechosos.",
+        "En la misma ventana, pivote a vssadmin delete shadows, wmic shadowcopy delete, bcdedit /set recoveryenabled no y wevtutil cl.",
+        "Revise los inicios de sesión recientes en el host (4624 tipo 3 y 10) y si esa cuenta o IP de origen accedió a otros servidores.",
+        "Busque eventos 524 u otras alertas de la misma regla en otros equipos; varios hosts en poco tiempo indican actividad de ransomware en curso.",
+        "Verifique señales de cifrado: renombrado masivo de archivos, notas de rescate o picos de escritura en disco."
+      ],
+      "false_positives": [
+        "Un administrador eliminó un catálogo dañado de forma intencional para recrearlo o restaurarlo desde la ubicación de respaldo.",
+        "Migración a otra solución de respaldo o baja del servidor, con borrado del catálogo de Windows Server Backup."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del servidor si la eliminación fue autorizada y documente el ticket de cambio.",
+        "Si no fue autorizada, aísle el host desde el EDR y deshabilite o restablezca la cuenta que ejecutó wbadmin.",
+        "Proteja de inmediato los respaldos offline o inmutables y restrinja el acceso a los repositorios de respaldo.",
+        "Busque la misma actividad en otros hosts y elimine el mecanismo de ejecución identificado (script, tarea programada, servicio).",
+        "Recupere el catálogo con 'wbadmin restore catalog' desde el destino de respaldo y valide que los respaldos se puedan restaurar."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque es una acción administrativa poco frecuente que rara vez tiene una causa legítima y que suele preceder al ransomware, aunque se debe validar con contexto de procesos."
+    },
+    "en": {
+      "summary": "Windows Server Backup logged event 524: the host's backup catalog was deleted. Without the catalog, local backups no longer show up for restore, which is typical before or during ransomware.",
+      "what_it_detects": "Application log events with EventID 524 and Provider_Name Microsoft-Windows-Backup, raised when the backup catalog is deleted, usually through 'wbadmin delete catalog'.",
+      "why_it_matters": "Deleting the catalog removes the references to existing backups and makes recovery harder. The rule maps it to indicator removal (T1070.004). Attackers also commonly do this before encrypting data so the system cannot be recovered.",
+      "triage_steps": [
+        "Note the host (Computer) and event time; ask the backup team whether this server uses Windows Server Backup and whether maintenance was scheduled.",
+        "Search for wbadmin.exe process creation on the same host +/- 15 minutes; check CommandLine for 'delete catalog' or '-quiet'.",
+        "Review ParentImage and the executing user; cmd.exe or powershell.exe spawned by Office, scripts or remote tools is suspicious.",
+        "In the same window, pivot to vssadmin delete shadows, wmic shadowcopy delete, bcdedit /set recoveryenabled no and wevtutil cl.",
+        "Review recent logons to the host (4624 types 3 and 10) and whether that account or source IP reached other servers.",
+        "Look for event 524 or other alerts from this rule on other hosts; several hosts in a short time suggest active ransomware.",
+        "Check for encryption signs: mass file renames, ransom notes or disk write spikes."
+      ],
+      "false_positives": [
+        "An administrator deliberately deleted a corrupted catalog to recreate it or restore it from the backup target.",
+        "Migration to another backup product or server decommissioning that included deleting the Windows Server Backup catalog."
+      ],
+      "response_steps": [
+        "Confirm with the server owner whether the deletion was authorized and record the change ticket.",
+        "If unauthorized, isolate the host via EDR and disable or reset the account that ran wbadmin.",
+        "Protect offline or immutable backups right away and restrict access to backup repositories.",
+        "Hunt for the same activity on other hosts and remove the execution mechanism you found (script, scheduled task, service).",
+        "Recover the catalog with 'wbadmin restore catalog' from the backup target and check that backups can be restored."
+      ],
+      "severity_rationale": "Medium fits because this is a rare administrative action that seldom has a legitimate cause and often comes before ransomware, but it still needs process context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Backup catalog deleted on a file server, logged by Windows Server Backup as event 524",
+        "event": {
+          "EventID": 524,
+          "Provider_Name": "Microsoft-Windows-Backup",
+          "Channel": "Application",
+          "Level": "Information",
+          "Computer": "FS-01.andes.example.com",
+          "TimeCreated": "2024-10-25T03:12:44.512Z",
+          "Message": "The backup catalog has been deleted."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Successful backup completion event from the same provider (EventID 4), not a catalog deletion",
+        "event": {
+          "EventID": 4,
+          "Provider_Name": "Microsoft-Windows-Backup",
+          "Channel": "Application",
+          "Level": "Information",
+          "Computer": "FS-01.andes.example.com",
+          "TimeCreated": "2024-10-24T23:05:10.101Z",
+          "Message": "The backup operation has finished successfully."
+        }
+      },
+      {
+        "description": "EventID 524 from an unrelated application provider, so the provider does not match",
+        "event": {
+          "EventID": 524,
+          "Provider_Name": "MSSQLSERVER",
+          "Channel": "Application",
+          "Level": "Information",
+          "Computer": "DB-02.andes.example.com",
+          "TimeCreated": "2024-10-25T03:20:00.000Z",
+          "Message": "Informational message from SQL Server."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "rule": {
+    "id": "815bfc17-7fc6-4908-a55e-2f37b98cedb4",
+    "title": "AD Groups Or Users Enumeration Using PowerShell - PoshModule",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_module/posh_pm_susp_ad_group_reco.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_susp_ad_group_reco.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1069.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El registro de módulos de PowerShell (evento 4103) muestra Get-ADPrincipalGroupMembership o Get-ADUser con abreviaturas -f/-pr y DoesNotRequirePreAuth. Puede indicar que alguien está enumerando grupos y usuarios de Active Directory.",
+      "what_it_detects": "Busca en los campos Payload o ContextInfo del log ps_module dos patrones. El primero es la llamada a Get-ADPrincipalGroupMembership. El segundo es Get-ADUser con los parámetros abreviados '-f ' y '-pr ' junto con la propiedad DoesNotRequirePreAuth.",
+      "why_it_matters": "Corresponde a Permission Groups Discovery (T1069). Saber a qué grupos pertenece cada usuario permite ubicar cuentas privilegiadas. Consultar DoesNotRequirePreAuth revela cuentas sin preautenticación Kerberos, que suelen ser el objetivo de AS-REP roasting.",
+      "triage_steps": [
+        "Lea Payload y ContextInfo completos: el cmdlet, los parámetros, Host Application, la ruta del script y el usuario que lo ejecutó.",
+        "Identifique al usuario y al host. Confirme si la cuenta pertenece a un administrador de AD o a una cuenta de servicio de automatización conocida.",
+        "Revise el proceso padre de powershell.exe en Sysmon o EDR. Considere sospechosos un padre como Office, wscript, mshta o un servicio inusual.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, otras consultas a AD (Get-ADGroupMember, Get-ADComputer, net group), descargas o Invoke-Expression.",
+        "Si se consultó DoesNotRequirePreAuth, revise en los controladores de dominio si hubo eventos 4768 con tipo de preautenticación 0 hacia esas cuentas.",
+        "Compare con alertas previas del mismo usuario y host, y averigüe si existe un script o una tarea programada que haga esta consulta con frecuencia."
+      ],
+      "false_positives": [
+        "Scripts de administradores que auditan membresías de grupos o la configuración de cuentas en AD.",
+        "Auditorías de seguridad o pentests autorizados que revisan cuentas sin preautenticación Kerberos.",
+        "Herramientas internas de gestión de identidades o de reportes que usan el módulo ActiveDirectory."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la cuenta o con el equipo de AD si la actividad era esperada y está documentada.",
+        "Si no está autorizada, aísle el endpoint mediante el EDR y conserve los logs de PowerShell y el historial de la sesión.",
+        "Restablezca las credenciales del usuario implicado y revise sus inicios de sesión recientes en el dominio.",
+        "Habilite la preautenticación Kerberos en las cuentas que la tengan deshabilitada y rote sus contraseñas, en especial si son privilegiadas.",
+        "Si la actividad es legítima, documente el script, el host y la cuenta para afinar la regla."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estas consultas son habituales en la administración de AD y solo tienen relevancia cuando se suman a otros indicios."
+    },
+    "en": {
+      "summary": "PowerShell module logging (event 4103) recorded Get-ADPrincipalGroupMembership, or Get-ADUser with the abbreviated -f/-pr parameters and DoesNotRequirePreAuth. This may mean someone is enumerating Active Directory groups or users.",
+      "what_it_detects": "It looks for two patterns in the Payload or ContextInfo fields of ps_module logs. The first is a call to Get-ADPrincipalGroupMembership. The second is Get-ADUser with the abbreviated '-f ' and '-pr ' parameters plus the DoesNotRequirePreAuth property.",
+      "why_it_matters": "This maps to Permission Groups Discovery (T1069). Group membership data shows which accounts are privileged. Querying DoesNotRequirePreAuth finds accounts without Kerberos pre-authentication, which are the usual targets of AS-REP roasting.",
+      "triage_steps": [
+        "Read the full Payload and ContextInfo: the cmdlet, its parameters, Host Application, the script path and the user who ran it.",
+        "Identify the user and host. Check whether the account belongs to an AD administrator or a known automation service account.",
+        "Check the parent process of powershell.exe in Sysmon or EDR. Treat Office, wscript, mshta or an unusual service as a suspicious parent.",
+        "On the same host within +/- 15 minutes, look for other AD queries (Get-ADGroupMember, Get-ADComputer, net group), downloads or Invoke-Expression.",
+        "If DoesNotRequirePreAuth was queried, check the domain controllers for event 4768 with pre-authentication type 0 against those accounts.",
+        "Compare with earlier alerts for the same user and host, and find out whether a script or scheduled task runs this query regularly."
+      ],
+      "false_positives": [
+        "Administrator scripts that audit group membership or account settings in AD.",
+        "Authorized security audits or pentests that check for accounts without Kerberos pre-authentication.",
+        "Internal identity-management or reporting tools that use the ActiveDirectory module."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or the AD team whether the activity was expected and documented.",
+        "If it was not authorized, isolate the endpoint through EDR and preserve the PowerShell logs and session history.",
+        "Reset the credentials of the user involved and review that user's recent domain logons.",
+        "Enable Kerberos pre-authentication on accounts where it is disabled and rotate their passwords, especially privileged ones.",
+        "If the activity is legitimate, document the script, host and account so the rule can be tuned."
+      ],
+      "severity_rationale": "Low fits because these queries are common in AD administration and only matter when they appear alongside other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Group membership enumeration of a domain user with Get-ADPrincipalGroupMembership",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe -nop Get-ADPrincipalGroupMembership -Identity mlopez Command Name = Get-ADPrincipalGroupMembership Command Type = Cmdlet User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Get-ADPrincipalGroupMembership): \"Get-ADPrincipalGroupMembership\" ParameterBinding(Get-ADPrincipalGroupMembership): name=\"Identity\"; value=\"mlopez\""
+        }
+      },
+      {
+        "description": "Search for accounts without Kerberos pre-authentication using abbreviated Get-ADUser parameters",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe get-aduser -f * -pr DoesNotRequirePreAuth Command Name = Get-ADUser Command Type = Cmdlet User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Get-ADUser): \"Get-ADUser\" ParameterBinding(Get-ADUser): name=\"Filter\"; value=\"*\" ParameterBinding(Get-ADUser): name=\"Properties\"; value=\"DoesNotRequirePreAuth\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Get-ADUser with full parameter names (-Filter, -Properties), so the '-f ' and '-pr ' substrings are absent",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-SRV-01.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe Get-ADUser -Filter * -Properties DoesNotRequirePreAuth Command Name = Get-ADUser Command Type = Cmdlet User = ANDES\\adm_rgarcia",
+          "Payload": "CommandInvocation(Get-ADUser): \"Get-ADUser\" ParameterBinding(Get-ADUser): name=\"Filter\"; value=\"*\""
+        }
+      },
+      {
+        "description": "Routine single-user lookup with Get-ADUser, no pre-auth property and no group membership cmdlet",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-SRV-01.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe Get-ADUser -Identity mlopez Command Name = Get-ADUser Command Type = Cmdlet User = ANDES\\adm_rgarcia",
+          "Payload": "CommandInvocation(Get-ADUser): \"Get-ADUser\" ParameterBinding(Get-ADUser): name=\"Identity\"; value=\"mlopez\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

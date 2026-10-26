@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "6a53d871-682d-40b6-83e0-b7c1a6c4e3a5",
+    "title": "PetitPotam Suspicious Kerberos TGT Request",
+    "level": "high",
+    "status": "test",
+    "author": "Mauricio Velazco, Michael Haag",
+    "path": "windows/builtin/security/win_security_petitpotam_susp_tgt_request.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_petitpotam_susp_tgt_request.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1187"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró una solicitud de TGT Kerberos (evento 4768) para una cuenta de equipo que se autenticó con un certificado (PKINIT) desde una dirección que no es local. Esto puede indicar que alguien usa un certificado de equipo obtenido mediante PetitPotam y un relay NTLM hacia AD CS.",
+      "what_it_detects": "Eventos 4768 donde TargetUserName termina en '$' (cuenta de equipo) y CertThumbprint tiene valor, es decir, el TGT se pidió con certificado. Excluye las solicitudes con IpAddress '::1' y las que tienen CertThumbprint vacío.",
+      "why_it_matters": "PetitPotam obliga a un servidor, normalmente un controlador de dominio, a autenticarse por NTLM ante el atacante (autenticación forzada, T1187). El atacante reenvía esa autenticación a AD CS y obtiene un certificado de la máquina. Con herramientas como Rubeus usa ese certificado para pedir un TGT, se hace pasar por el DC y puede llegar a DCSync y a comprometer todo el dominio.",
+      "triage_steps": [
+        "Identifique TargetUserName: ¿corresponde a un controlador de dominio u otro servidor crítico? Confirme si esa cuenta usa autenticación por certificado de forma habitual en su entorno.",
+        "Compare IpAddress con la IP real del equipo dueño de la cuenta. Si se pide un TGT de DC01$ desde una estación de trabajo u otra IP, el indicio es fuerte.",
+        "Busque CertThumbprint, CertSerialNumber y CertIssuerName en la CA (eventos 4886/4887). Revise la plantilla, el solicitante y si el certificado se emitió hace poco por Web Enrollment.",
+        "En los logs IIS de la CA, revise solicitudes a /certsrv/ y logons NTLM (4624, tipo 3) de la cuenta de equipo hacia la CA en una ventana de +/- 15 minutos.",
+        "Revise el DC víctima en la misma ventana: conexiones salientes SMB/RPC hacia IPs inusuales, compatibles con coerción por MS-EFSR (EFSRPC).",
+        "Pivote por IpAddress y TargetUserName para ver qué pasó después: eventos 4769 (tickets de servicio), 4624 y eventos 4662 con GUID de replicación (DCSync).",
+        "En el host de origen, busque procesos y líneas de comando de Rubeus, Certify, PetitPotam o ntlmrelayx, y revise alertas previas para esa IP o ese usuario."
+      ],
+      "false_positives": [
+        "Entornos donde las cuentas de equipo se autentican de forma legítima con certificados (PKINIT), por ejemplo con autenticación de dispositivos basada en certificados.",
+        "Pruebas de PKI o de autenticación por certificado que hacen administradores autorizados.",
+        "Ejercicios de red team o pentest autorizados. Confirme el alcance y las fechas con el responsable."
+      ],
+      "response_steps": [
+        "Verifique con el equipo de PKI y los dueños del servidor si la solicitud es legítima antes de actuar.",
+        "Si no es legítima, aísle el host de origen y bloquee la IpAddress en la red interna.",
+        "Revoque en la CA el certificado identificado por CertSerialNumber y publique una CRL actualizada.",
+        "Si hubo DCSync o se usó el TGT, trate el dominio como comprometido: rote las credenciales afectadas, incluido krbtgt dos veces, y analice si hay persistencia.",
+        "Mitigue la vía de ataque: deshabilite NTLM o active EPA y HTTPS en AD CS Web Enrollment, y restrinja MS-EFSR en los DC.",
+        "Ajuste la regla con una lista de cuentas de equipo que usan certificados de forma legítima, y documente el caso."
+      ],
+      "severity_rationale": "El nivel high se justifica porque un TGT con certificado para una cuenta de equipo, sobre todo de un DC, puede dar control total del dominio, aunque la regla requiere ajuste según el entorno."
+    },
+    "en": {
+      "summary": "A domain controller logged a Kerberos TGT request (event 4768) for a computer account that authenticated with a certificate (PKINIT) from a non-loopback address. This may mean a machine certificate obtained through PetitPotam and an NTLM relay to AD CS is being used.",
+      "what_it_detects": "4768 events where TargetUserName ends with '$' (a computer account) and CertThumbprint has a value, meaning the TGT was requested with a certificate. It excludes requests with IpAddress '::1' and requests with an empty CertThumbprint.",
+      "why_it_matters": "PetitPotam forces a server, usually a domain controller, to authenticate over NTLM to the attacker (forced authentication, T1187). The attacker relays it to AD CS and gets a certificate for that machine. With tools like Rubeus they use it to request a TGT as the DC, which can lead to DCSync and full domain compromise.",
+      "triage_steps": [
+        "Identify TargetUserName: is it a domain controller or another critical server? Check whether that account normally uses certificate authentication in your environment.",
+        "Compare IpAddress with the real IP of the account's host. A TGT for DC01$ requested from a workstation or another IP is a strong indicator.",
+        "Look up CertThumbprint, CertSerialNumber and CertIssuerName on the CA (events 4886/4887). Check the template, the requester and whether Web Enrollment issued it recently.",
+        "In the CA's IIS logs, check for /certsrv/ requests and NTLM logons (4624 type 3) by the computer account to the CA within +/- 15 minutes.",
+        "Check the victim DC in the same window for outbound SMB/RPC connections to unusual IPs, which would fit coercion over MS-EFSR (EFSRPC).",
+        "Pivot on IpAddress and TargetUserName to see what followed: 4769 service tickets, 4624 logons and 4662 events with replication GUIDs (DCSync).",
+        "On the source host, hunt for Rubeus, Certify, PetitPotam or ntlmrelayx processes and command lines, and review earlier alerts for that IP or user."
+      ],
+      "false_positives": [
+        "Environments where computer accounts legitimately authenticate with certificates (PKINIT), for example certificate-based device authentication.",
+        "PKI or certificate-authentication testing by authorized administrators.",
+        "Authorized red team or penetration tests. Confirm the scope and dates with the owner."
+      ],
+      "response_steps": [
+        "Check with the PKI team and the server owners whether the request is legitimate before you act.",
+        "If it is not legitimate, isolate the source host and block the IpAddress internally.",
+        "Revoke the certificate identified by CertSerialNumber on the CA and publish an updated CRL.",
+        "If DCSync happened or the TGT was used, treat the domain as compromised: rotate the affected credentials, including krbtgt twice, and hunt for persistence.",
+        "Close the attack path: disable NTLM or enable EPA and HTTPS on AD CS Web Enrollment, and restrict MS-EFSR on DCs.",
+        "Tune the rule with an allowlist of computer accounts that use certificates legitimately, and document the case."
+      ],
+      "severity_rationale": "High fits because a certificate-based TGT for a computer account, especially a DC, can give full domain control, although the rule needs tuning for each environment."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Certificate-based TGT request for the DC01$ machine account from a workstation IP (PKINIT, consistent with Rubeus asktgt using a relayed certificate)",
+        "event": {
+          "EventID": 4768,
+          "Channel": "Security",
+          "Computer": "DC02.andes.example.com",
+          "TargetUserName": "DC01$",
+          "TargetDomainName": "ANDES",
+          "ServiceName": "krbtgt",
+          "IpAddress": "::ffff:192.0.2.45",
+          "IpPort": "49812",
+          "Status": "0x0",
+          "PreAuthType": "16",
+          "TicketEncryptionType": "0x12",
+          "CertIssuerName": "ANDES-CA01-CA",
+          "CertSerialNumber": "6100000012A4B7C9D2E3000000000012",
+          "CertThumbprint": "3F2A9C1B7D4E6F80A1B2C3D4E5F60718293A4B5C"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal password-based TGT request for a workstation computer account; CertThumbprint is empty so filter_thumbprint excludes it",
+        "event": {
+          "EventID": 4768,
+          "Channel": "Security",
+          "Computer": "DC02.andes.example.com",
+          "TargetUserName": "WS-0142$",
+          "TargetDomainName": "ANDES",
+          "ServiceName": "krbtgt",
+          "IpAddress": "::ffff:192.0.2.142",
+          "IpPort": "50211",
+          "Status": "0x0",
+          "PreAuthType": "2",
+          "TicketEncryptionType": "0x12",
+          "CertIssuerName": "",
+          "CertSerialNumber": "",
+          "CertThumbprint": ""
+        }
+      },
+      {
+        "description": "Certificate-based TGT request made locally on the DC itself (IpAddress ::1), excluded by filter_local",
+        "event": {
+          "EventID": 4768,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "TargetUserName": "DC01$",
+          "TargetDomainName": "ANDES",
+          "ServiceName": "krbtgt",
+          "IpAddress": "::1",
+          "IpPort": "0",
+          "Status": "0x0",
+          "PreAuthType": "16",
+          "TicketEncryptionType": "0x12",
+          "CertIssuerName": "ANDES-CA01-CA",
+          "CertSerialNumber": "6100000009F1E2D3C4B5000000000009",
+          "CertThumbprint": "9B8A7C6D5E4F30211A2B3C4D5E6F708192A3B4C5"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

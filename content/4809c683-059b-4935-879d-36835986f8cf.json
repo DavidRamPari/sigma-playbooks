@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "4809c683-059b-4935-879d-36835986f8cf",
+    "title": "System Information Discovery Using System_Profiler",
+    "level": "medium",
+    "status": "test",
+    "author": "Stephen Lincoln `@slincoln_aiq` (AttackIQ)",
+    "path": "macos/process_creation/proc_creation_macos_system_profiler_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_system_profiler_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1082",
+      "T1497.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó system_profiler en un equipo macOS para consultar tipos de datos (aplicaciones, hardware, red o USB) que el malware para macOS usa con frecuencia en reconocimiento o detección de máquinas virtuales.",
+      "what_it_detects": "Procesos donde Image termina en /system_profiler o CommandLine contiene 'system_profiler', y además CommandLine incluye SPApplicationsDataType, SPHardwareDataType, SPNetworkDataType o SPUSBDataType.",
+      "why_it_matters": "Un atacante obtiene así modelo, número de serie, UUID, aplicaciones instaladas, interfaces de red y dispositivos USB (T1082). También puede buscar indicios de virtualización para no ejecutarse en un sandbox (T1497.001). Suele ser un paso previo al perfilado de la víctima o a la exfiltración.",
+      "triage_steps": [
+        "Revise CommandLine completo: qué tipos de datos se consultaron, si la salida se filtra con grep por cadenas como 'VMware', 'VirtualBox', 'Parallels' o 'Serial', o se redirige a un archivo.",
+        "Identifique ParentImage y la cadena de procesos: sh, bash, zsh, osascript o python lanzados desde un binario desconocido en /tmp, /Users/Shared o ~/Library son sospechosos.",
+        "Determine el usuario y si la ejecución coincide con una sesión interactiva, un script de MDM o un agente de inventario conocido.",
+        "Verifique la firma de código y el hash del proceso padre; un binario sin firmar o con firma ad hoc aumenta la sospecha.",
+        "Revise el mismo host en +/- 15 minutos: otros comandos de reconocimiento (sw_vers, ioreg, sysctl, whoami, ifconfig), persistencia en LaunchAgents o LaunchDaemons y conexiones de red salientes.",
+        "Busque alertas anteriores del mismo host y usuario, y si el mismo padre ejecuta system_profiler en otros equipos de la flota."
+      ],
+      "false_positives": [
+        "Tareas administrativas legítimas o soporte técnico recopilando información del equipo.",
+        "Agentes de MDM o de inventario de activos (Jamf u otros) que recopilan hardware y aplicaciones periódicamente.",
+        "Herramientas de diagnóstico, instaladores o actualizadores que verifican compatibilidad de hardware.",
+        "Usuarios avanzados o desarrolladores que ejecutan el comando manualmente en Terminal."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo de TI si la ejecución era esperada; si corresponde a una herramienta aprobada, documente la exclusión por ParentImage firmado.",
+        "Si el padre es desconocido o sin firmar, aísle el endpoint de la red con el EDR y preserve el binario, su hash y los logs de Unified Logging.",
+        "Investigue y elimine la persistencia asociada (LaunchAgents, LaunchDaemons, elementos de inicio) solo tras verificarla y respaldarla.",
+        "Bloquee el hash y los dominios o IP de comando y control identificados; busque los mismos indicadores en otros equipos macOS.",
+        "Restablezca credenciales del usuario si hay indicios de robo de información y reintegre el equipo tras confirmar su limpieza."
+      ],
+      "severity_rationale": "Media es adecuada: el comando es común en administración legítima, pero estos tipos de datos coinciden con reconocimiento y evasión de sandbox observados en malware para macOS."
+    },
+    "en": {
+      "summary": "system_profiler ran on a macOS host to query data types (applications, hardware, network or USB) that macOS malware commonly uses for reconnaissance or virtual-machine checks.",
+      "what_it_detects": "Processes whose Image ends with /system_profiler or whose CommandLine contains 'system_profiler', and whose CommandLine also includes SPApplicationsDataType, SPHardwareDataType, SPNetworkDataType or SPUSBDataType.",
+      "why_it_matters": "Attackers gain model, serial number, hardware UUID, installed apps, network interfaces and USB devices (T1082). The output can also reveal virtualization so malware avoids sandboxes (T1497.001). It often precedes victim profiling or exfiltration.",
+      "triage_steps": [
+        "Read the full CommandLine: which data types were queried, whether output is grepped for 'VMware', 'VirtualBox', 'Parallels' or 'Serial', or redirected to a file.",
+        "Identify ParentImage and the process tree: sh, bash, zsh, osascript or python spawned by an unknown binary in /tmp, /Users/Shared or ~/Library is suspicious.",
+        "Determine the user and whether the run matches an interactive session, an MDM script or a known inventory agent.",
+        "Check the code signature and hash of the parent; unsigned or ad hoc signed binaries raise suspicion.",
+        "Review the same host within +/- 15 minutes: other discovery commands (sw_vers, ioreg, sysctl, whoami, ifconfig), LaunchAgent/LaunchDaemon persistence and outbound connections.",
+        "Look for earlier alerts for the same host and user, and whether the same parent runs system_profiler elsewhere in the fleet."
+      ],
+      "false_positives": [
+        "Legitimate administrative activity or IT support collecting system details.",
+        "MDM or asset inventory agents (Jamf or similar) periodically gathering hardware and application data.",
+        "Diagnostic tools, installers or updaters checking hardware compatibility.",
+        "Power users or developers running the command manually in Terminal."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the run was expected; for approved tooling, document an exclusion based on the signed ParentImage.",
+        "If the parent is unknown or unsigned, isolate the endpoint via EDR and preserve the binary, its hash and Unified Logging data.",
+        "Investigate and remove related persistence (LaunchAgents, LaunchDaemons, login items) only after verifying and backing it up.",
+        "Block the hash and any identified C2 domains or IPs; hunt for the same indicators on other macOS hosts.",
+        "Reset the user's credentials if data theft is suspected and return the host to service once confirmed clean."
+      ],
+      "severity_rationale": "Medium fits: the command is common in legitimate administration, but these data types match reconnaissance and sandbox-evasion behavior seen in macOS malware."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in /Users/Shared spawns system_profiler to collect hardware details",
+        "event": {
+          "Image": "/usr/sbin/system_profiler",
+          "CommandLine": "system_profiler SPHardwareDataType",
+          "ParentImage": "/Users/Shared/.updater/agentd",
+          "User": "jperez",
+          "ProcessId": 4127,
+          "ParentProcessId": 4090,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "Shell wrapper runs system_profiler on USB data and greps for virtualization vendors",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c system_profiler SPUSBDataType | grep -i -e VirtualBox -e VMware",
+          "ParentImage": "/private/tmp/launcher",
+          "User": "mrojas",
+          "ProcessId": 5310,
+          "ParentProcessId": 5302,
+          "Computer": "MBA-0077"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "system_profiler queried for display data, a type not in the rule's list",
+        "event": {
+          "Image": "/usr/sbin/system_profiler",
+          "CommandLine": "system_profiler SPDisplaysDataType",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 6021,
+          "ParentProcessId": 6010,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "grep searches a saved report for a data type name without invoking system_profiler",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep SPHardwareDataType /Users/jperez/Documents/inventario.txt",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 6105,
+          "ParentProcessId": 6010,
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

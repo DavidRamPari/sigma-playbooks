@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "f8931561-97f5-4c46-907f-0a4a592e47a7",
+    "title": "CodeIntegrity - Unmet Signing Level Requirements By File Under Validation",
+    "level": "low",
+    "status": "experimental",
+    "author": "Florian Roth (Nextron Systems), Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/code_integrity/win_codeintegrity_attempted_dll_load.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/code_integrity/win_codeintegrity_attempted_dll_load.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Code Integrity de Windows registró que un proceso intentó cargar un archivo que no cumple el nivel de firma requerido (EventID 3033 = bloqueado, 3034 = modo auditoría, se permitió la carga). Suele indicar una firma revocada, un certificado Lifetime Signing expirado o una DLL sin firma o alterada.",
+      "what_it_detects": "Eventos 3033/3034 del log CodeIntegrity-Operational en los que la imagen de FileNameBuffer, cargada por ProcessNameBuffer, no cumplió el nivel de firma de RequestedPolicy. Se excluyen pares benignos conocidos: proveedores AV/AMSI, Office, Firefox, Slack, Teams, GAC de .NET, SentinelOne, Kaspersky, entre otros.",
+      "why_it_matters": "Un atacante puede cargar DLL sin firma o mal firmadas en procesos confiables mediante sideloading, inyección o manipulación de herramientas de seguridad (Execution). Un 3034 implica que el archivo sí se cargó porque la política solo audita.",
+      "triage_steps": [
+        "Identifique el EventID: 3033 indica carga bloqueada; 3034, carga permitida por política de auditoría. Priorice los 3034 en procesos sensibles.",
+        "Revise FileNameBuffer: ruta, nombre y ubicación. Las rutas escribibles por el usuario (AppData, Temp, ProgramData, Downloads) son más sospechosas que Program Files.",
+        "Revise ProcessNameBuffer y RequestedPolicy. Una DLL inesperada en lsass.exe, svchost.exe, un navegador o un producto de seguridad requiere atención.",
+        "Correlacione con el EventID 3089 del mismo host y momento para obtener firmante, emisor y error de validación del archivo.",
+        "Obtenga el hash del archivo y contrástelo con fuentes de reputación internas, el EDR y el inventario de software. Confirme si el proveedor revocó la firma.",
+        "Pivotee en el mismo host +/- 15 minutos: creación de procesos, carga de imágenes (Sysmon 7), escritura de archivos y conexiones del proceso que carga la DLL.",
+        "Busque alertas previas del mismo host, usuario o hash, y si la misma DLL aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "DLL de antivirus, EDR o proveedores AMSI que aún no están cubiertas por los filtros; es una causa frecuente de esta regla.",
+        "DLL legítimas de proveedores con certificados Lifetime Signing expirados o firmas revocadas tras una rotación de llaves.",
+        "DLL internas o de desarrollo, herramientas de depuración y plugins cargados en procesos firmados como Office o navegadores."
+      ],
+      "response_steps": [
+        "Si el archivo pertenece a un producto legítimo conocido, documéntelo y agregue un filtro acotado por FileNameBuffer, ProcessNameBuffer y RequestedPolicy.",
+        "Si es desconocido o está en una ruta escribible por el usuario, recolecte el archivo, su hash y el evento 3089, y preserve la telemetría del endpoint.",
+        "Si es malicioso o se cargó en auditoría (3034), aísle el host con el EDR, finalice el proceso y elimine el archivo solo tras verificarlo.",
+        "Busque el hash y la ruta en otros hosts, revise mecanismos de persistencia y evalúe pasar la política WDAC de auditoría a modo enforce."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque software de seguridad y de terceros genera estos eventos con frecuencia; la alerta es un indicio que requiere contexto (ruta, proceso, estado 3034)."
+    },
+    "en": {
+      "summary": "Windows Code Integrity reported that a process tried to load a file that did not meet the required signing level (EventID 3033 = blocked, 3034 = audit mode, allowed to load). Common causes are a revoked signature, an expired Lifetime Signing certificate, or an unsigned or tampered DLL.",
+      "what_it_detects": "CodeIntegrity-Operational events 3033/3034 where the image in FileNameBuffer, loaded by ProcessNameBuffer, failed the signing level in RequestedPolicy. Known benign pairs (AV/AMSI providers, Office, Firefox, Slack, Teams, .NET GAC, SentinelOne, Kaspersky and others) are filtered out.",
+      "why_it_matters": "Attackers load unsigned or badly signed DLLs into trusted processes through sideloading, injection or security-tool tampering (Execution). A 3034 event means the file actually loaded because the policy only audits.",
+      "triage_steps": [
+        "Note the EventID: 3033 means the load was blocked, 3034 means it was allowed under audit policy. Treat 3034 in sensitive processes as more urgent.",
+        "Review FileNameBuffer: path, name and location. User-writable paths such as AppData, Temp, ProgramData or Downloads are more suspicious than Program Files.",
+        "Review ProcessNameBuffer and RequestedPolicy. An unexpected DLL in lsass.exe, svchost.exe, a browser or a security product deserves close attention.",
+        "Correlate with EventID 3089 from the same host and time to get the signer, issuer and validation error for the file.",
+        "Get the file hash and check it against internal reputation sources, your EDR and software inventory. Confirm whether the vendor signature was revoked.",
+        "Pivot on the same host within +/- 15 minutes: process creation, image loads (Sysmon 7), file writes and network connections from the loading process.",
+        "Look for earlier alerts on the same host, user or file hash, and check whether the same DLL shows up on other endpoints."
+      ],
+      "false_positives": [
+        "Antivirus, EDR and AMSI provider DLLs not yet covered by filters, which commonly trigger this rule.",
+        "Legitimate vendor DLLs with expired Lifetime Signing certificates or revoked signatures after a vendor key rotation.",
+        "Internal or developer-built DLLs, debugging tools and plugins loaded into signed processes such as Office or browsers."
+      ],
+      "response_steps": [
+        "If the file is a known legitimate product, document it and add a narrow filter on FileNameBuffer, ProcessNameBuffer and RequestedPolicy.",
+        "If the file is unknown or sits in a user-writable path, collect it with its hash and 3089 details, and preserve endpoint telemetry.",
+        "If malicious or loaded under audit (3034), isolate the host through EDR, end the loading process and remove the file only after verification.",
+        "Hunt for the hash and path on other hosts, review persistence, and consider moving the WDAC policy from audit to enforce."
+      ],
+      "severity_rationale": "Low fits because security and third-party software often generate these events; the alert is a lead that needs context such as path, process and 3034 status."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Audit-mode event 3034: rundll32.exe loaded an unsigned DLL from a user Temp folder that failed the Microsoft signing level.",
+        "event": {
+          "EventID": 3034,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume3\\Windows\\System32\\rundll32.exe",
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Users\\jperez\\AppData\\Local\\Temp\\upd4721.dll",
+          "RequestedPolicy": 8,
+          "ValidatedPolicy": 1,
+          "Status": "0xc0000428"
+        }
+      },
+      {
+        "description": "Blocked event 3033: svchost.exe attempted to load a DLL from ProgramData that did not meet the Windows signing level.",
+        "event": {
+          "EventID": 3033,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume2\\Windows\\System32\\svchost.exe",
+          "FileNameBuffer": "\\Device\\HarddiskVolume2\\ProgramData\\SyncHelper\\wlbsctrl.dll",
+          "RequestedPolicy": 12,
+          "ValidatedPolicy": 1,
+          "Status": "0xc0000428"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Firefox loading its own mozavcodec.dll with RequestedPolicy 8, excluded by the Firefox filter.",
+        "event": {
+          "EventID": 3033,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume3\\Program Files\\Mozilla Firefox\\firefox.exe",
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Program Files\\Mozilla Firefox\\mozavcodec.dll",
+          "RequestedPolicy": 8,
+          "ValidatedPolicy": 1,
+          "Status": "0xc0000428"
+        }
+      },
+      {
+        "description": "EventID 3089 signature information event for the same file; not part of the selection.",
+        "event": {
+          "EventID": 3089,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Users\\jperez\\AppData\\Local\\Temp\\upd4721.dll",
+          "PublisherName": "Example Software Ltd",
+          "IssuerName": "Example Code Signing CA"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

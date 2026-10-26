@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "7c81fec3-1c1d-43b0-996a-46753041b1b6",
+    "title": "UAC Bypass via Event Viewer",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_uac_bypass_eventvwr.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_uac_bypass_eventvwr.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor en una clave de registro que termina en \\mscfile\\shell\\open\\command. Es el secuestro que usa el bypass de UAC del Visor de eventos (eventvwr.exe) para ejecutar con integridad alta un comando que elige el atacante.",
+      "what_it_detects": "Eventos de modificación de registro (por ejemplo, Sysmon Event ID 13) donde TargetObject termina en \\mscfile\\shell\\open\\command, por lo general bajo HKCU\\Software\\Classes o HKU\\<SID>_Classes. Esa clave cambia cómo se abren los archivos .msc para el usuario actual.",
+      "why_it_matters": "Es la técnica T1548.002 de MITRE ATT&CK, Bypass User Account Control. eventvwr.exe se eleva automáticamente y busca el manejador mscfile del usuario antes que el del sistema. El comando escrito ahí se ejecuta elevado sin mostrar UAC, lo que permite escalar privilegios.",
+      "triage_steps": [
+        "Revise TargetObject. Una ruta bajo HKU\\<SID> o HKCU indica un override por usuario, que es muy sospechoso. Un cambio al valor por defecto de HKLM (mmc.exe \"%1\") requiere una revisión aparte.",
+        "Examine Details para ver el comando escrito: cmd.exe, powershell.exe, rundll32.exe, mshta.exe, scripts o binarios en %TEMP%, %APPDATA% o en carpetas Public.",
+        "Identifique Image y User del proceso que escribió la clave. Obtenga su cadena de procesos padre y su línea de comandos en los logs de creación de procesos.",
+        "En el mismo host, dentro de +/- 15 minutos, busque ejecuciones de eventvwr.exe y procesos hijos de eventvwr.exe o mmc.exe, sobre todo con integridad alta.",
+        "Verifique si la clave se borró poco después. La limpieza rápida es típica de esta técnica.",
+        "Calcule el hash de cualquier binario mencionado en Details y búsquelo en inteligencia de amenazas. Revise las conexiones de red del proceso hijo elevado.",
+        "Busque alertas previas del mismo host o usuario, como otras claves de bypass de UAC (ms-settings, Folder\\shell) o mecanismos de persistencia."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Es raro que software legítimo configure un comando de apertura mscfile por usuario.",
+        "Herramientas administrativas o de reparación que restablecen la asociación de archivos .msc. Normalmente escriben el valor por defecto con mmc.exe.",
+        "Ejercicios de red team o purple team que prueban bypasses de UAC."
+      ],
+      "response_steps": [
+        "Confirme la intención maliciosa con Details, el proceso que escribió la clave y cualquier proceso hijo elevado. Si se confirma, escale a respuesta a incidentes.",
+        "Aísle el endpoint de la red si se ejecutó un payload elevado o si hubo conexiones salientes.",
+        "Después de preservar la evidencia, elimine la clave HKCU\\Software\\Classes\\mscfile maliciosa. Luego termine y ponga en cuarentena los procesos y archivos del payload.",
+        "Restablezca las credenciales del usuario afectado, revise cambios en el grupo de administradores locales y busque persistencia creada por el proceso elevado.",
+        "Si el compromiso es amplio, restaure el host desde un estado confiable. Considere configurar UAC en Notificar siempre y retirar los privilegios de administrador local."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque esta clave casi no tiene uso legítimo y su modificación indica un intento activo de escalar privilegios sin que aparezca UAC."
+    },
+    "en": {
+      "summary": "A process wrote a value to a registry key ending in \\mscfile\\shell\\open\\command. This is the hijack behind the Event Viewer (eventvwr.exe) UAC bypass, which runs an attacker-chosen command with high integrity.",
+      "what_it_detects": "Registry set events (for example Sysmon Event ID 13) where TargetObject ends with \\mscfile\\shell\\open\\command, usually under HKCU\\Software\\Classes or HKU\\<SID>_Classes. This key overrides how .msc files open for the current user.",
+      "why_it_matters": "This is MITRE ATT&CK T1548.002, Bypass User Account Control. eventvwr.exe auto-elevates and looks up the user's mscfile handler before the system one. A non-admin-prompted command written there runs elevated without a UAC prompt, giving the attacker privilege escalation.",
+      "triage_steps": [
+        "Read TargetObject. A hive of HKU\\<SID> or HKCU means a per-user override, which is highly suspicious. A change to the default HKLM value (mmc.exe \"%1\") needs separate review.",
+        "Inspect Details for the command written: cmd.exe, powershell.exe, rundll32.exe, mshta.exe, script paths, or binaries in %TEMP%, %APPDATA% or Public folders.",
+        "Identify Image and User of the writing process. Pull its parent chain and command line from process creation logs.",
+        "On the same host within +/- 15 minutes, search for eventvwr.exe launches and for child processes of eventvwr.exe or mmc.exe, especially at high integrity.",
+        "Check whether the key was deleted shortly after. Quick cleanup is typical of the technique.",
+        "Hash and look up any binary referenced in Details. Review network connections from the elevated child process.",
+        "Look for earlier alerts on the same host or user, such as other UAC bypass keys (ms-settings, Folder\\shell) or persistence."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Legitimate software rarely sets a per-user mscfile open command.",
+        "Administrative or repair tools that reset .msc file associations, which normally write the default mmc.exe value.",
+        "Red team or purple team exercises testing UAC bypasses."
+      ],
+      "response_steps": [
+        "Confirm malicious intent from Details, the writing process, and any elevated child process. Escalate to incident response if confirmed.",
+        "Isolate the endpoint from the network if an elevated payload ran or made outbound connections.",
+        "After collecting evidence, remove the rogue HKCU\\Software\\Classes\\mscfile key, then kill and quarantine the payload processes and files.",
+        "Reset the affected user's credentials, review local admin group changes, and hunt for persistence created by the elevated process.",
+        "Recover the host from a known-good state if compromise is extensive. Consider setting UAC to Always notify and removing local admin rights."
+      ],
+      "severity_rationale": "High fits because this key has almost no legitimate use and setting it signals an active attempt to escalate privileges without a UAC prompt."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell writes a per-user mscfile open command pointing to a payload in AppData before launching eventvwr.exe",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\mscfile\\shell\\open\\command",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.exe"
+        }
+      },
+      {
+        "description": "reg.exe sets the HKCU mscfile handler to cmd.exe",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0203.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\mlopez",
+          "TargetObject": "HKCU\\Software\\Classes\\mscfile\\shell\\open\\command",
+          "Details": "C:\\Windows\\System32\\cmd.exe /c start C:\\Users\\Public\\svc.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Browser installer registers the htmlfile open command, a different ProgID",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Program Files\\Example Browser\\Installer\\setup.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\htmlfile\\shell\\open\\command",
+          "Details": "\"C:\\Program Files\\Example Browser\\browser.exe\" \"%1\""
+        }
+      },
+      {
+        "description": "Windows servicing updates the mscfile DefaultIcon value, not the open command",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\mscfile\\DefaultIcon",
+          "Details": "%SystemRoot%\\system32\\mmc.exe,0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "2f400434-01e1-416b-b52c-bb5bfbb9eb78",
+    "title": "Potential WSL Binary Modification from Installed Location",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Liran Ravich, Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_wsl_binary_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_wsl_binary_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036.005",
+      "T1218"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que no es el instalador de Windows (msiexec) ni el servicio de AppX (svchost) creó o sobrescribió un archivo wsl.exe en una ubicación de instalación de WSL. Esto puede indicar que el binario legítimo fue reemplazado por un payload malicioso.",
+      "what_it_detects": "Eventos de creación o modificación de archivos cuyo TargetFilename termina en \\wsl.exe dentro de C:\\Program Files\\WSL\\, del paquete MicrosoftCorporationII.WindowsSubsystemForLinux_ en WindowsApps o de %LOCALAPPDATA%\\Microsoft\\WindowsApps\\, cuando Image no es msiexec.exe ni svchost.exe escribiendo en WindowsApps.",
+      "why_it_matters": "Si se reemplaza wsl.exe, el código del atacante se ejecuta cada vez que el usuario o un script invoca WSL, con un nombre y una ruta confiables. Corresponde a enmascaramiento por suplantación de nombre o ubicación legítima (T1036.005) y a ejecución mediante proxy con binarios del sistema (T1218).",
+      "triage_steps": [
+        "Revise Image, el usuario y el ProcessId que escribieron TargetFilename. Un proceso desde Temp, Downloads, AppData o un intérprete de scripts aumenta mucho la sospecha.",
+        "Obtenga el hash del wsl.exe actual y compárelo con el de otro equipo con la misma versión de WSL. Verifique la firma digital de Microsoft y los metadatos del archivo.",
+        "Reconstruya el árbol de procesos: ParentImage y línea de comandos del proceso escritor, y cómo llegó al equipo (descarga, adjunto, ejecución remota).",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, otras escrituras en rutas de WSL, cambios de permisos (takeown, icacls) y la desactivación de Defender.",
+        "Revise las ejecuciones posteriores de wsl.exe en el host: procesos hijos inesperados, conexiones de red o comandos fuera del uso habitual del usuario.",
+        "Consulte alertas previas del mismo usuario y del mismo host, y busque el mismo hash o nombre de proceso escritor en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla indica que los falsos positivos son poco probables.",
+        "Actualizaciones de WSL realizadas con instaladores o herramientas de despliegue (por ejemplo, SCCM o Intune) que no usan msiexec ni svchost.",
+        "Desarrolladores que compilan o copian builds personalizadas de WSL en su perfil de WindowsApps."
+      ],
+      "response_steps": [
+        "Valide con el usuario y con el equipo de TI si hubo una actualización o instalación autorizada de WSL en ese momento.",
+        "Si el binario no es legítimo, aísle el endpoint y preserve una copia del wsl.exe modificado y del proceso escritor para su análisis.",
+        "Elimine el binario malicioso y restaure WSL reinstalando el paquete oficial (wsl --update o reinstalación desde la tienda) después de preservar la evidencia.",
+        "Busque persistencia adicional y revise las credenciales del usuario afectado. Bloquee el hash del payload en EDR en toda la flota."
+      ],
+      "severity_rationale": "Nivel medio: reemplazar un binario confiable es un indicador fuerte de evasión, pero requiere verificar el hash y el proceso escritor antes de confirmar el compromiso."
+    },
+    "en": {
+      "summary": "A process other than Windows Installer (msiexec) or the AppX service (svchost) created or overwrote a wsl.exe file in a WSL install location. The legitimate binary may have been replaced with a malicious payload.",
+      "what_it_detects": "File creation or modification events where TargetFilename ends in \\wsl.exe under C:\\Program Files\\WSL\\, the MicrosoftCorporationII.WindowsSubsystemForLinux_ WindowsApps package, or %LOCALAPPDATA%\\Microsoft\\WindowsApps\\, excluding msiexec.exe and svchost.exe writing to WindowsApps.",
+      "why_it_matters": "A replaced wsl.exe runs attacker code whenever a user or script invokes WSL, under a trusted name and path. This is masquerading by matching a legitimate name or location (T1036.005) and system binary proxy execution (T1218).",
+      "triage_steps": [
+        "Check the Image, user and ProcessId that wrote TargetFilename. A writer running from Temp, Downloads, AppData or a script interpreter is highly suspicious.",
+        "Hash the current wsl.exe and compare it with a host running the same WSL version. Verify the Microsoft signature and file metadata.",
+        "Rebuild the process tree: the writer's ParentImage, its command line, and how it arrived (download, attachment, remote execution).",
+        "On the same host within +/- 15 minutes, look for other writes to WSL paths, permission changes (takeown, icacls) and Defender tampering.",
+        "Review later wsl.exe executions on the host for unexpected child processes, network connections or commands outside the user's normal use.",
+        "Check earlier alerts for the same user and host, and hunt for the same hash or writer process on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unlikely.",
+        "WSL updates pushed by installers or deployment tools (for example SCCM or Intune) that do not run through msiexec or svchost.",
+        "Developers building or copying custom WSL builds into their WindowsApps profile folder."
+      ],
+      "response_steps": [
+        "Confirm with the user and IT whether an authorized WSL install or update happened at that time.",
+        "If the binary is not legitimate, isolate the endpoint and preserve copies of the modified wsl.exe and the writer process for analysis.",
+        "Once evidence is preserved, remove the malicious binary and restore WSL from the official package (wsl --update or a Store reinstall).",
+        "Hunt for additional persistence, review the affected user's credentials, and block the payload hash in EDR across the fleet."
+      ],
+      "severity_rationale": "Medium fits because replacing a trusted binary is a strong evasion signal, but you need to verify the hash and writer process before confirming compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder overwrites wsl.exe in C:\\Program Files\\WSL",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2026-05-12 14:03:12.481",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd_helper.exe",
+          "TargetFilename": "C:\\Program Files\\WSL\\wsl.exe",
+          "CreationUtcTime": "2026-05-12 14:03:12.479"
+        }
+      },
+      {
+        "description": "PowerShell drops wsl.exe into the user's WindowsApps alias folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2026-05-12 16:41:05.112",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4388,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetFilename": "C:\\Users\\mrojas\\AppData\\Local\\Microsoft\\WindowsApps\\wsl.exe",
+          "CreationUtcTime": "2026-05-12 16:41:05.110"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate WSL MSI update by Windows Installer, excluded by filter_main_msiexec",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2026-05-10 09:15:44.020",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2216,
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetFilename": "C:\\Program Files\\WSL\\wsl.exe",
+          "CreationUtcTime": "2026-05-10 09:15:44.018"
+        }
+      },
+      {
+        "description": "AppX deployment service (svchost) updates the Store WSL package, excluded by filter_main_svchost",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2026-05-11 03:02:19.733",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 1544,
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetFilename": "C:\\Program Files\\WindowsApps\\MicrosoftCorporationII.WindowsSubsystemForLinux_2.4.13.0_x64__8wekyb3d8bbwe\\wsl.exe",
+          "CreationUtcTime": "2026-05-11 03:02:19.731"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

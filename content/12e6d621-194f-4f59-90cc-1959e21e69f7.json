@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "12e6d621-194f-4f59-90cc-1959e21e69f7",
+    "title": "Register new Logon Process by Rubeus",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (source), Ilyas Ochkov (rule), oscd.community",
+    "path": "windows/builtin/security/win_security_register_new_logon_process_by_rubeus.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_register_new_logon_process_by_rubeus.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en la LSA un proceso de logon de confianza llamado 'User32LogonProcesss' (con tres 's'), el nombre que usa la herramienta Rubeus. Indica casi con certeza la ejecución de Rubeus con privilegios elevados en el equipo.",
+      "what_it_detects": "Eventos 4611 del log Security en los que LogonProcessName es exactamente 'User32LogonProcesss'. Rubeus registra este nombre mediante LsaRegisterLogonProcess cuando se ejecuta elevado para listar, extraer o vigilar tickets Kerberos de otras sesiones.",
+      "why_it_matters": "Rubeus sirve para abusar de Kerberos: robo y extracción de tickets, Kerberoasting (T1558.003) y pass-the-ticket. Con tickets robados, un atacante puede escalar privilegios y moverse lateralmente por el dominio sin conocer las contraseñas.",
+      "triage_steps": [
+        "Identifique el Computer, el SubjectUserName, el SubjectDomainName y el SubjectLogonId del evento 4611.",
+        "Busque la creación de procesos (4688 o Sysmon 1) en el mismo host +/- 15 minutos y con el mismo LogonId; revise CommandLine en busca de dump, triage, monitor, harvest, ptt, asktgt o kerberoast.",
+        "Revise el hash, la ruta y el proceso padre del binario sospechoso; Rubeus suele renombrarse o cargarse en memoria desde PowerShell o execute-assembly.",
+        "Correlacione el 4624 del SubjectLogonId para saber cómo se inició la sesión y desde qué IP de origen.",
+        "En los controladores de dominio, revise los eventos 4768 y 4769 originados en este host, sobre todo solicitudes de tickets de servicio con cifrado RC4 (0x17).",
+        "Compruebe si hay alertas previas del mismo host o usuario y si existe un pentest o ejercicio de red team autorizado."
+      ],
+      "false_positives": [
+        "Ejercicios de red team o pruebas de penetración autorizadas que usan Rubeus.",
+        "Herramientas internas o de investigación que reutilizan código de Rubeus y conservan el mismo nombre de proceso de logon."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de seguridad ofensiva si la actividad está autorizada; si no lo está, trátela como incidente.",
+        "Aísle el endpoint y conserve memoria, el binario y los logs antes de purgar los tickets Kerberos.",
+        "Restablezca las contraseñas de las cuentas con sesiones o tickets en el host y de las cuentas de servicio que pudieran haber sido objeto de Kerberoasting.",
+        "Si se comprometieron tickets de cuentas privilegiadas o TGT de dominio, evalúe una rotación controlada de krbtgt y busque uso de esos tickets en otros equipos."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el nombre con tres 's' es exclusivo de Rubeus y requiere privilegios elevados, por lo que es raro que sea benigno."
+    },
+    "en": {
+      "summary": "A trusted logon process named 'User32LogonProcesss' (three 's') was registered with the LSA, the name hardcoded in the Rubeus tool. It strongly suggests Rubeus ran elevated on this host.",
+      "what_it_detects": "Security log Event ID 4611 where LogonProcessName is exactly 'User32LogonProcesss'. Rubeus registers this name via LsaRegisterLogonProcess when running elevated to list, dump or monitor Kerberos tickets from other logon sessions.",
+      "why_it_matters": "Rubeus is a Kerberos abuse toolkit: ticket extraction, Kerberoasting (T1558.003) and pass-the-ticket. Stolen tickets let an attacker escalate privileges and move laterally across the domain without knowing passwords.",
+      "triage_steps": [
+        "Record the Computer, SubjectUserName, SubjectDomainName and SubjectLogonId from the 4611 event.",
+        "Search process creation (4688 or Sysmon 1) on the same host +/- 15 minutes and same LogonId; check CommandLine for dump, triage, monitor, harvest, ptt, asktgt or kerberoast.",
+        "Review the hash, path and parent process of the suspect binary; Rubeus is often renamed or loaded in memory via PowerShell or execute-assembly.",
+        "Correlate the 4624 for the SubjectLogonId to learn the logon type and source IP.",
+        "On domain controllers, review 4768 and 4769 events from this host, especially service ticket requests with RC4 encryption (0x17).",
+        "Check earlier alerts for the same host or user and whether an authorized pentest or red team exercise is running."
+      ],
+      "false_positives": [
+        "Authorized red team or penetration tests using Rubeus.",
+        "Internal or research tools that reuse Rubeus code and keep the same logon process name."
+      ],
+      "response_steps": [
+        "Confirm with the offensive security team whether the activity is authorized; if not, handle it as an incident.",
+        "Isolate the endpoint and preserve memory, the binary and logs before purging Kerberos tickets.",
+        "Reset passwords for accounts with sessions or tickets on the host and for service accounts possibly targeted by Kerberoasting.",
+        "If privileged tickets or domain TGTs were exposed, consider a controlled krbtgt rotation and hunt for reuse of those tickets on other hosts."
+      ],
+      "severity_rationale": "High fits because the three-'s' name is unique to Rubeus and requires elevated privileges, so benign occurrences are rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Rubeus run elevated by a compromised admin registers its hardcoded logon process name",
+        "event": {
+          "EventID": 4611,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7a21",
+          "LogonProcessName": "User32LogonProcesss"
+        }
+      },
+      {
+        "description": "Same name in different case still matches (case-insensitive), registered under SYSTEM after privilege escalation",
+        "event": {
+          "EventID": 4611,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "SRV-APP-07$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "LogonProcessName": "user32logonprocesss"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal Winlogon trusted logon process registration at boot",
+        "event": {
+          "EventID": 4611,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "LogonProcessName": "Winlogon"
+        }
+      },
+      {
+        "description": "Near miss: name spelled with only two 's' does not equal the exact rule value",
+        "event": {
+          "EventID": 4611,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "WS-0207.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "WS-0207$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "LogonProcessName": "User32LogonProcess"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

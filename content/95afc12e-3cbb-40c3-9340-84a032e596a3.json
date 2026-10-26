@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "95afc12e-3cbb-40c3-9340-84a032e596a3",
+    "title": "Service Registry Permissions Weakness Check",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_get_acl_service.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_get_acl_service.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.011"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell ejecutó Get-Acl sobre claves de servicios en HKLM\\SYSTEM\\CurrentControlSet\\Services mediante el proveedor REGISTRY::. Puede ser un reconocimiento de permisos débiles en el registro de servicios para escalar privilegios.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene a la vez 'get-acl' y 'REGISTRY::HKLM\\SYSTEM\\CurrentControlSet\\Services\\', es decir, la consulta de las ACL de claves de configuración de servicios.",
+      "why_it_matters": "Si un usuario sin privilegios puede escribir en la clave de un servicio, puede cambiar ImagePath o agregar parámetros para que el servicio ejecute su payload como SYSTEM (T1574.011, secuestro del flujo de ejecución por permisos débiles en el registro de servicios). Enumerar estas ACL suele ser el paso previo.",
+      "triage_steps": [
+        "Revise el ScriptBlockText completo: ¿enumera todos los servicios (Services\\*) o uno concreto? ¿Filtra por permisos de escritura, como FullControl, SetValue o grupos Users/Everyone?",
+        "Identifique el usuario (UserID/SID) y el host (Computer). Confirme si la cuenta es administrativa y si ese host suele ejecutar scripts de inventario o auditoría.",
+        "Use el campo Path y el ScriptBlockId para reconstruir el script completo y su origen: archivo en disco, descarga remota o comando interactivo.",
+        "Pivote a eventos de creación de procesos en el mismo host +/- 15 minutos: proceso padre de powershell.exe, línea de comandos, flags como -enc, -nop o -w hidden.",
+        "Busque cambios en el registro (Sysmon 12/13) sobre Services\\*\\ImagePath, Parameters o FailureCommand en el mismo host después de la alerta.",
+        "Revise los eventos 7045 y 4697 (servicio nuevo), los reinicios de servicios y las alertas previas de herramientas de escalamiento como PowerUp, winPEAS o SharpUp para el mismo usuario o host."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que auditan permisos del registro de servicios, por ejemplo hardening, cumplimiento o CIS benchmarks.",
+        "Herramientas de inventario o de gestión de vulnerabilidades que revisan las ACL de servicios.",
+        "Ejercicios autorizados de pentest o red team, o pruebas de Atomic Red Team."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o con el equipo de TI si la ejecución estaba autorizada. Si lo estaba, documéntelo y considere una exclusión acotada por script o cuenta.",
+        "Si no estaba autorizada, compare el ImagePath actual de los servicios consultados con una línea base y verifique si hubo modificaciones.",
+        "Si confirma manipulación, aísle el endpoint, detenga el servicio afectado y preserve el binario y la clave del registro para el análisis forense.",
+        "Restaure el ImagePath y las ACL correctas, corrija permisos débiles en las claves de servicios y restablezca las credenciales de la cuenta involucrada."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque es reconocimiento sin cambios en el sistema y es común en auditorías legítimas, aunque suele preceder a un escalamiento a SYSTEM."
+    },
+    "en": {
+      "summary": "A PowerShell script ran Get-Acl against service keys under HKLM\\SYSTEM\\CurrentControlSet\\Services using the REGISTRY:: provider. This may be reconnaissance for weak service registry permissions to escalate privileges.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains both 'get-acl' and 'REGISTRY::HKLM\\SYSTEM\\CurrentControlSet\\Services\\', meaning the script queried ACLs on service configuration keys.",
+      "why_it_matters": "If an unprivileged user can write to a service key, they can change ImagePath or add parameters so the service runs their payload as SYSTEM (T1574.011, hijacking execution via weak service registry permissions). Enumerating those ACLs is usually the first step.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: does it enumerate all services (Services\\*) or one service? Does it filter for write rights such as FullControl, SetValue, Users or Everyone?",
+        "Identify the user (UserID/SID) and host (Computer). Check whether the account is administrative and whether the host normally runs inventory or audit scripts.",
+        "Use Path and ScriptBlockId to rebuild the full script and find its origin: a file on disk, a remote download or an interactive command.",
+        "Pivot to process creation on the same host within +/- 15 minutes: the powershell.exe parent, its command line, and flags such as -enc, -nop or -w hidden.",
+        "Look for registry writes (Sysmon 12/13) to Services\\*\\ImagePath, Parameters or FailureCommand on the host after the alert.",
+        "Check events 7045 and 4697 (new service), service restarts, and earlier alerts for privesc tools such as PowerUp, winPEAS or SharpUp for the same user or host."
+      ],
+      "false_positives": [
+        "Legitimate admin scripts that audit service registry permissions, for example hardening, compliance or CIS benchmark checks.",
+        "Inventory or vulnerability management tools that review service ACLs.",
+        "Authorized penetration tests, red team exercises or Atomic Red Team runs."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether the run was authorized. If it was, document it and consider a narrow exclusion for that script or account.",
+        "If it was not authorized, compare the current ImagePath of the queried services against a baseline and check for changes.",
+        "If you confirm tampering, isolate the endpoint, stop the affected service, and preserve the binary and registry key for forensics.",
+        "Restore the correct ImagePath and ACLs, fix weak permissions on service keys, and reset the credentials of the account involved."
+      ],
+      "severity_rationale": "Medium fits because this is reconnaissance with no system change and is common in legitimate audits, but it often comes right before escalation to SYSTEM."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic Red Team style enumeration of ACLs on all service registry keys via the REGISTRY:: provider",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-1105",
+          "ScriptBlockId": "7c1e2a9b-3f4d-4e8a-9b21-5d6f0a1c2e34",
+          "Path": "",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "get-acl REGISTRY::HKLM\\SYSTEM\\CurrentControlSet\\Services\\* | FL"
+        }
+      },
+      {
+        "description": "Script checking a single service key's ACL for writable entries",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-1213",
+          "ScriptBlockId": "b2d4f6a8-1c3e-4a5b-8d7f-9e0a1b2c3d4e",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\chk.ps1",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "$acl = Get-Acl -Path 'REGISTRY::HKLM\\SYSTEM\\CurrentControlSet\\Services\\UpdSvc\\'\n$acl.Access | Where-Object { $_.RegistryRights -match 'FullControl|SetValue' -and $_.IdentityReference -match 'Users|Everyone' }"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Get-Acl on a service key using the HKLM: drive instead of the REGISTRY:: provider, so the required literal is absent",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-500",
+          "ScriptBlockId": "0a9b8c7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d",
+          "Path": "C:\\Scripts\\audit_services.ps1",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "Get-Acl -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Spooler' | Format-List"
+        }
+      },
+      {
+        "description": "Reading a service configuration through REGISTRY:: without calling Get-Acl",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-500",
+          "ScriptBlockId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "Path": "C:\\Scripts\\inventory.ps1",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "Get-ItemProperty -Path 'REGISTRY::HKLM\\SYSTEM\\CurrentControlSet\\Services\\Spooler\\' | Select-Object ImagePath, Start"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "72862bf2-0eb1-11eb-adc1-0242ac120002",
+    "title": "Invoke-Obfuscation STDIN+ Launcher - System",
+    "level": "high",
+    "status": "test",
+    "author": "Jonathan Cheong, oscd.community",
+    "path": "windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_stdin_services.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_stdin_services.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (evento 7045 de System) cuyo ImagePath ejecuta cmd.exe /c o /r y canaliza comandos a PowerShell por stdin. Coincide con el launcher STDIN+ de Invoke-Obfuscation y es un fuerte indicio de ejecución maliciosa mediante servicios.",
+      "what_it_detects": "Eventos 7045 de Service Control Manager cuyo ImagePath contiene 'cmd', 'powershell' y '/c' o '/r', además de 'noexit' o bien 'input' y '$' a la vez. Corresponde a un echo de comandos canalizado a 'powershell -NoExit -' o a $input.",
+      "why_it_matters": "Los atacantes crean servicios para ejecutar código como SYSTEM, a menudo de forma remota (por ejemplo, movimiento lateral al estilo PsExec). Pasar el payload por stdin evade el registro de línea de comandos. Corresponde a ofuscación (T1027) y ejecución de PowerShell (T1059.001).",
+      "triage_steps": [
+        "Lea el ImagePath completo y extraiga el comando del echo. Busque DownloadString, IEX, bloques codificados o URLs.",
+        "Revise ServiceName, AccountName y StartType. Los nombres aleatorios o muy cortos, LocalSystem y el inicio a demanda apuntan a herramientas de ataque.",
+        "Busque eventos 4624 tipo 3 y 4697 de Security en el host en +/- 15 minutos para obtener la IP de origen y la cuenta que instaló el servicio.",
+        "Revise la telemetría de procesos (Sysmon 1 o EDR): cmd.exe hijo de services.exe, el proceso PowerShell hijo, conexiones de red y archivos creados.",
+        "Consulte los logs 4103/4104 de PowerShell del host para ver el script block ya desofuscado.",
+        "Busque el mismo ServiceName o patrón de ImagePath en otros hosts, y alertas previas asociadas a la misma cuenta o IP de origen."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos. El software legítimo rara vez canaliza comandos a PowerShell desde el ImagePath de un servicio.",
+        "Ejercicios autorizados de red team o pentesting con Invoke-Obfuscation o herramientas tipo PsExec. Confírmelo con el calendario del ejercicio."
+      ],
+      "response_steps": [
+        "Confirme que la actividad es maliciosa y no una prueba aprobada. Preserve el evento 7045, el ImagePath y los eventos de logon relacionados.",
+        "Aísle el host. Deshabilite y elimine el servicio malicioso solo después de documentar su configuración.",
+        "Restablezca o deshabilite la cuenta que instaló el servicio y bloquee las URLs o IPs encontradas en el payload.",
+        "Busque los mismos artefactos en todo el entorno y, si el payload se ejecutó, restaure los hosts afectados desde un estado confiable."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque crear un servicio con privilegios SYSTEM que ejecuta PowerShell ofuscado por stdin casi no tiene uso legítimo y suele indicar movimiento lateral o persistencia."
+    },
+    "en": {
+      "summary": "A new Windows service was installed (System event 7045) whose ImagePath runs cmd.exe /c or /r and pipes text into PowerShell through stdin. This matches the Invoke-Obfuscation STDIN+ launcher and is a strong sign of malicious service-based execution.",
+      "what_it_detects": "Service Control Manager event 7045 where ImagePath contains 'cmd', 'powershell' and '/c' or '/r', plus either 'noexit' or both 'input' and '$'. The pattern is an echo of commands piped into 'powershell -NoExit -' or into $input.",
+      "why_it_matters": "Attackers create services to run code as SYSTEM, often remotely (for example PsExec-style lateral movement). Hiding the payload in stdin evades command-line logging. This covers obfuscation (T1027) and PowerShell execution (T1059.001).",
+      "triage_steps": [
+        "Read the full ImagePath and pull out the echoed command. Look for DownloadString, IEX, encoded blobs or URLs.",
+        "Check ServiceName, AccountName and StartType. Random or very short names, LocalSystem and demand start point to tooling.",
+        "Look for Security 4624 logon type 3 and 4697 events on the host within +/- 15 minutes to find the source IP and account that installed the service.",
+        "Review process telemetry (Sysmon 1 or EDR) for cmd.exe spawned by services.exe and the PowerShell child, plus any network connections or dropped files.",
+        "Check PowerShell logs 4103/4104 on the host for the deobfuscated script block.",
+        "Search other hosts for the same ServiceName or ImagePath pattern, and for earlier alerts tied to the same source account or IP."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Legitimate software rarely pipes commands into PowerShell from a service ImagePath.",
+        "Authorized red team or penetration tests that use Invoke-Obfuscation or PsExec-style tools. Confirm against the engagement schedule."
+      ],
+      "response_steps": [
+        "Confirm the activity is malicious and not an approved test. Preserve the 7045 event, the ImagePath and the related logon events.",
+        "Isolate the host. Disable and remove the malicious service only after you have captured its configuration.",
+        "Reset or disable the account used to install the service, and block any URLs or IPs found in the payload.",
+        "Hunt for the same artifacts across the environment, then restore affected hosts from a known-good state if a payload ran."
+      ],
+      "severity_rationale": "High fits because SYSTEM-level service creation combined with obfuscated stdin PowerShell has almost no legitimate use and usually points to lateral movement or persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with cmd /C echo piped into PowerShell -NoExit reading stdin",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "xKqPzT",
+          "ImagePath": "c:\\windows\\sYstEm32\\CmD.eXE /C\"echO\\Invoke-Expression (New-Object Net.WebClient).DownloadString | POwersHELl -NoEXiT -\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service installed with cmd /C echo piped into PowerShell invoking $InpUt via ExecutionContext",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ServiceName": "WinUpdSvc",
+          "ImagePath": "c:\\WiNDOws\\sysTEm32\\cmd.EXe /C \" ECHo Invoke-Expression (New-Object Net.WebClient).DownloadString | POwersHELl -nol ${EXEcUtIONCONTeXT}.INvOkEComMANd.InvOKEScRIPt( $InpUt )\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Vendor service wrapper that runs a PowerShell script via cmd /c, with no NoExit and no $input, so selection_other does not match",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ContosoAgent",
+          "ImagePath": "C:\\Windows\\System32\\cmd.exe /c powershell.exe -ExecutionPolicy Bypass -File C:\\ProgramData\\Contoso\\agent.ps1",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service launching PowerShell -NoExit directly without cmd or a /c or /r switch, so selection_main does not match",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Computer": "SRV-APP-07.andes.example.com",
+          "ServiceName": "ExampleMonitor",
+          "ImagePath": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoExit -File C:\\Tools\\monitor.ps1",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "NT AUTHORITY\\NetworkService"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

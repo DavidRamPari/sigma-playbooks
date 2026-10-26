@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "70ad982f-67c8-40e0-a955-b920c2fa05cb",
+    "title": "Suspicious IO.FileStream",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_iofilestream.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_iofilestream.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell creó un objeto IO.FileStream sobre una ruta de dispositivo DOS \\\\.\\, lo que indica un intento de leer o escribir directamente en un volumen o disco sin pasar por el sistema de archivos.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) cuyo ScriptBlockText contiene a la vez New-Object, IO.FileStream y la ruta de dispositivo \\\\.\\ (por ejemplo \\\\.\\C: o \\\\.\\PhysicalDrive0), como en la prueba Atomic Red Team de acceso directo a volumen.",
+      "why_it_matters": "El acceso directo a un volumen permite leer archivos bloqueados (SAM, NTDS.dit), sectores de arranque o datos borrados, y evadir ACL y auditoría de archivos. La regla está etiquetada como T1070.003 y su referencia es la técnica T1006 (Direct Volume Access).",
+      "triage_steps": [
+        "Revise el ScriptBlockText completo: identifique el destino (\\\\.\\C:, PhysicalDriveN), el modo (Read/Write) y cuántos bytes se leen o escriben.",
+        "Reconstruya el script completo uniendo los fragmentos con el mismo ScriptBlockId y revise el campo Path para ver el archivo de origen.",
+        "Identifique el usuario y el proceso host de PowerShell; verifique si tenía privilegios de administrador, necesarios para abrir el volumen.",
+        "Busque el proceso padre de powershell.exe y su CommandLine en la telemetría de procesos (4688 o Sysmon 1) del mismo host.",
+        "Revise el host en +/- 15 minutos: creación de archivos grandes, copias de SAM/SYSTEM/NTDS.dit, compresión o conexiones salientes.",
+        "Busque alertas previas para el mismo usuario y host, y el mismo script en otros equipos.",
+        "Si hay modo Write sobre PhysicalDrive, trátelo como posible alteración de MBR o destrucción de datos."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administración, forense o respaldo que leen el sector de arranque o el volumen en bruto.",
+        "Herramientas de inventario o diagnóstico de discos ejecutadas por TI.",
+        "Ejercicios de Atomic Red Team o pruebas de red team autorizadas."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el equipo de TI si la actividad estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint y preserve memoria y el script recuperado.",
+        "Si se leyeron hives o NTDS.dit, restablezca las credenciales afectadas, incluida la cuenta krbtgt si aplica.",
+        "Elimine el script y los mecanismos de persistencia asociados tras verificarlos, y restaure desde respaldo si hubo escritura en disco."
+      ],
+      "severity_rationale": "Nivel medio: el patrón es poco común y potente, pero también lo usan herramientas legítimas de administración y forense, así que requiere contexto."
+    },
+    "en": {
+      "summary": "A PowerShell script created an IO.FileStream object on a \\\\.\\ DOS device path, indicating an attempt to read or write a volume or disk directly, bypassing the file system.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains New-Object, IO.FileStream and the \\\\.\\ device path (for example \\\\.\\C: or \\\\.\\PhysicalDrive0), as in the Atomic Red Team direct volume access test.",
+      "why_it_matters": "Raw volume access lets an attacker read locked files (SAM, NTDS.dit), boot sectors or deleted data while evading file ACLs and auditing. The rule is tagged T1070.003; its reference covers T1006 (Direct Volume Access).",
+      "triage_steps": [
+        "Read the full ScriptBlockText: note the target (\\\\.\\C:, PhysicalDriveN), access mode (Read/Write) and how many bytes are read or written.",
+        "Rebuild the full script from fragments sharing the same ScriptBlockId and check the Path field for the source file.",
+        "Identify the user and PowerShell host process; confirm whether it ran elevated, which raw volume access requires.",
+        "Find the powershell.exe parent process and its CommandLine in process telemetry (4688 or Sysmon 1) on the same host.",
+        "Review the host within +/- 15 minutes: large file creation, SAM/SYSTEM/NTDS.dit copies, archiving or outbound connections.",
+        "Search for earlier alerts on the same user and host, and the same script on other machines.",
+        "If Write mode targets a PhysicalDrive, treat it as possible MBR tampering or data destruction."
+      ],
+      "false_positives": [
+        "Legitimate admin, forensic or backup scripts reading the boot sector or raw volume.",
+        "Disk inventory or diagnostic tools run by IT.",
+        "Atomic Red Team exercises or authorized red team tests."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether the activity was authorized.",
+        "If not, isolate the endpoint and preserve memory and the recovered script.",
+        "If hives or NTDS.dit were read, reset affected credentials, including krbtgt where applicable.",
+        "After verification, remove the script and related persistence; restore from backup if disk writes occurred."
+      ],
+      "severity_rationale": "Medium: the pattern is uncommon and powerful, but legitimate admin and forensic tooling also uses it, so context is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic-style raw read of the first bytes of the C: volume via IO.FileStream on \\\\.\\C:",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c21-5d6e7f8a9b01",
+          "Path": "",
+          "ScriptBlockText": "$buffer = New-Object byte[] 11; $handle = New-Object IO.FileStream \"\\\\.\\C:\", 'Open', 'Read', 'ReadWrite'; $handle.Read($buffer, 0, $buffer.Length); $handle.Close(); Format-Hex -InputObject $buffer"
+        }
+      },
+      {
+        "description": "Script reading the first sector of PhysicalDrive0",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "UserID": "ANDES\\adm_lrojas",
+          "ScriptBlockId": "a81c44d0-2e6f-4b1a-8f33-0c9d1e2f3a4b",
+          "Path": "C:\\Users\\adm_lrojas\\AppData\\Local\\Temp\\mbr.ps1",
+          "ScriptBlockText": "$fs = New-Object System.IO.FileStream('\\\\.\\PhysicalDrive0', [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); $b = New-Object byte[] 512; [void]$fs.Read($b,0,512); $fs.Dispose()"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate IO.FileStream on a regular file path, no \\\\.\\ device path",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "c0d1e2f3-4455-4677-8899-aabbccddeeff",
+          "Path": "C:\\Scripts\\ExportReport.ps1",
+          "ScriptBlockText": "$fs = New-Object IO.FileStream 'C:\\Reports\\daily.csv', 'Create', 'Write'; $sw = New-Object IO.StreamWriter($fs); $sw.WriteLine('date,total'); $sw.Close()"
+        }
+      },
+      {
+        "description": "Device path used with Get-Volume cmdlets only, without New-Object IO.FileStream",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "UserID": "ANDES\\adm_lrojas",
+          "ScriptBlockId": "11223344-5566-4778-899a-abbccddeeff0",
+          "Path": "C:\\Scripts\\DiskInventory.ps1",
+          "ScriptBlockText": "Get-Volume | Select-Object DriveLetter, Path, SizeRemaining; Get-CimInstance Win32_DiskDrive | Where-Object DeviceID -eq '\\\\.\\PHYSICALDRIVE0'"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

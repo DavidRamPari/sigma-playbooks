@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "35ba1d85-724d-42a3-889f-2e2362bcaf23",
+    "title": "AD Privileged Users or Groups Reconnaissance",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden",
+    "path": "windows/builtin/security/win_security_account_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_account_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1087.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una cuenta que no es de equipo solicitó en un Domain Controller un handle de SAM sobre un usuario o grupo privilegiado (Domain Admins, Administrators, krbtgt u objetos con 'admin'). Suele indicar enumeración de cuentas privilegiadas del dominio.",
+      "what_it_detects": "Eventos 4661 con ObjectType SAM_USER o SAM_GROUP cuyo ObjectName termina en RID privilegiados (-500, -502, -512, -519, -520, -544, -551, -555, -505) o contiene 'admin', excluyendo SubjectUserName terminados en '$'. Requiere auditoría de Object Access SAM en los DC.",
+      "why_it_matters": "Enumerar quién pertenece a los grupos privilegiados es un paso previo típico de escalamiento y movimiento lateral (ATT&CK T1087.002, Domain Account Discovery). Herramientas como net group /domain, PowerView o SharpHound generan este patrón.",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId; confirme si la cuenta es administrativa o de servicio con justificación para consultar SAM.",
+        "Traduzca ObjectName (SID) al usuario o grupo real y anote qué objetos privilegiados se consultaron.",
+        "Use SubjectLogonId para encontrar el 4624 correspondiente en el mismo DC y obtener la IP y el host de origen.",
+        "Cuente eventos 4661 del mismo SubjectUserName en +/- 15 minutos: muchas consultas a distintos SID sugieren herramientas automatizadas tipo SharpHound.",
+        "En el host de origen, revise procesos en la misma ventana (net.exe, powershell.exe, binarios desconocidos) y sus CommandLine y ParentImage.",
+        "Busque alertas previas del mismo usuario o host: Kerberoasting, consultas LDAP masivas, ejecución de herramientas de reconocimiento.",
+        "Verifique con el dueño de la cuenta o el equipo de TI si hubo una auditoría o tarea administrativa planificada."
+      ],
+      "false_positives": [
+        "Administradores del dominio usando ADUC, net group o PowerShell para revisar membresías; si la cuenta no es admin, es muy sospechoso.",
+        "Herramientas de auditoría de identidades o evaluaciones de seguridad autorizadas ejecutadas con cuentas de usuario.",
+        "Scripts de inventario o cumplimiento que revisan grupos privilegiados periódicamente."
+      ],
+      "response_steps": [
+        "Valide la actividad con el usuario y su responsable antes de actuar; documente SID consultados e IP de origen.",
+        "Si no está autorizada, aísle el endpoint de origen y deshabilite o restablezca la contraseña de la cuenta implicada.",
+        "Recolecte artefactos del host (procesos, historial de PowerShell, archivos de herramientas) y elimine las herramientas no autorizadas.",
+        "Revise accesos posteriores de la cuenta a recursos privilegiados y busque intentos de escalamiento en el dominio.",
+        "Si es legítima, documente y ajuste la regla con una exclusión acotada para la cuenta o herramienta aprobada."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque enumerar cuentas privilegiadas desde cuentas de usuario rara vez es rutinario y suele preceder a un ataque contra el dominio."
+    },
+    "en": {
+      "summary": "A non-computer account requested a SAM handle on a Domain Controller for a privileged user or group (Domain Admins, Administrators, krbtgt or objects containing 'admin'). This usually indicates enumeration of privileged domain accounts.",
+      "what_it_detects": "Event 4661 with ObjectType SAM_USER or SAM_GROUP whose ObjectName ends in privileged RIDs (-500, -502, -512, -519, -520, -544, -551, -555, -505) or contains 'admin', excluding SubjectUserName ending in '$'. Requires Object Access SAM auditing on DCs.",
+      "why_it_matters": "Mapping who holds privileged group membership is a common precursor to privilege escalation and lateral movement (ATT&CK T1087.002, Domain Account Discovery). net group /domain, PowerView and SharpHound produce this pattern.",
+      "triage_steps": [
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId; confirm whether the account is an admin or service account with a reason to query SAM.",
+        "Resolve the ObjectName SID to the actual user or group and list which privileged objects were queried.",
+        "Use SubjectLogonId to find the matching 4624 on the same DC and get the source IP and workstation.",
+        "Count 4661 events for the same SubjectUserName within +/- 15 minutes; many distinct SIDs suggest automated tools like SharpHound.",
+        "On the source host, review processes in that window (net.exe, powershell.exe, unknown binaries) with CommandLine and ParentImage.",
+        "Check earlier alerts for the same user or host: Kerberoasting, bulk LDAP queries, recon tool execution.",
+        "Confirm with the account owner or IT whether a planned audit or admin task took place."
+      ],
+      "false_positives": [
+        "Domain admins using ADUC, net group or PowerShell to review memberships; if the account is not an admin, treat as highly suspicious.",
+        "Authorized identity audit tools or security assessments run under user accounts.",
+        "Inventory or compliance scripts that periodically review privileged groups."
+      ],
+      "response_steps": [
+        "Validate the activity with the user and their manager before acting; record queried SIDs and source IP.",
+        "If unauthorized, isolate the source endpoint and disable or reset the involved account.",
+        "Collect host artifacts (processes, PowerShell history, tool files) and remove unauthorized tools.",
+        "Review the account's subsequent access to privileged resources and hunt for escalation attempts in the domain.",
+        "If legitimate, document it and add a narrow exclusion for the approved account or tool."
+      ],
+      "severity_rationale": "High fits because privileged account enumeration from user accounts is rarely routine and often precedes a domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Regular user queries the Domain Admins group (RID 512) via SAM on a DC, e.g. from net group \"domain admins\" /domain",
+        "event": {
+          "EventID": 4661,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_GROUP",
+          "ObjectName": "S-1-5-21-1004336348-1177238915-682003330-512",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "AccessMask": "0x2000D"
+        }
+      },
+      {
+        "description": "User account opens a SAM user object whose name contains 'admin'",
+        "event": {
+          "EventID": 4661,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x51BC02",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_USER",
+          "ObjectName": "CN=svc-admin-backup,OU=Service,DC=andes,DC=example,DC=com",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "AccessMask": "0x20094"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Computer account (ends with $) queries Domain Admins; excluded by the filter",
+        "event": {
+          "EventID": 4661,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_GROUP",
+          "ObjectName": "S-1-5-21-1004336348-1177238915-682003330-512",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "AccessMask": "0x2000D"
+        }
+      },
+      {
+        "description": "User queries the non-privileged Domain Users group (RID 513), which matches no privileged RID or 'admin'",
+        "event": {
+          "EventID": 4661,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_GROUP",
+          "ObjectName": "S-1-5-21-1004336348-1177238915-682003330-513",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "AccessMask": "0x2000D"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "5aad0995-46ab-41bd-a9ff-724f41114971",
+    "title": "Esentutl Volume Shadow Copy Service Keys",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/registry/registry_event/registry_event_esentutl_volume_shadow_copy_service_keys.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_esentutl_volume_shadow_copy_service_keys.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "esentutl.exe escribió o modificó claves de registro del servicio Volume Shadow Copy (VSS). Esto suele indicar que se usó esentutl con /vss para copiar archivos bloqueados, como SAM, SYSTEM o ntds.dit, desde una instantánea.",
+      "what_it_detects": "Eventos de registro (Sysmon 12/13/14) donde Image termina en esentutl.exe y TargetObject contiene System\\CurrentControlSet\\Services\\VSS (por ejemplo, VSS\\Diag\\VolSnap\\Volume). Se excluyen los cambios a VSS\\Start.",
+      "why_it_matters": "esentutl es un binario firmado por Microsoft que, con /y /vss, puede copiar desde una shadow copy archivos que el sistema mantiene bloqueados. Los atacantes lo usan para extraer la base SAM y obtener hashes de credenciales locales (ATT&CK T1003.002, Security Account Manager).",
+      "triage_steps": [
+        "Revise Image, TargetObject, User y ProcessId del evento y confirme que esentutl.exe se ejecuta desde System32 o SysWOW64 y no desde una ruta inusual.",
+        "Busque el evento de creación de proceso del mismo ProcessId y revise el CommandLine: /y, /vss, /d y rutas como config\\SAM, SYSTEM, SECURITY o ntds.dit.",
+        "Identifique el ParentImage y la cadena de procesos: cmd, PowerShell, wmiprvse o herramientas de acceso remoto indican operación manual o automatizada sospechosa.",
+        "Verifique en el mismo host, dentro de +/- 15 minutos, la creación de archivos de destino (por ejemplo en Temp, ProgramData o carpetas compartidas) y su posterior compresión o copia.",
+        "Revise si el usuario tiene privilegios administrativos legítimos, de dónde inició sesión (eventos 4624, IP de origen) y si es una cuenta de servicio o de respaldo conocida.",
+        "Busque alertas previas para el mismo host o usuario: reg save de hives, vssadmin, ntdsutil, herramientas de volcado de credenciales o movimiento lateral."
+      ],
+      "false_positives": [
+        "La regla indica falsos positivos desconocidos; posibles casos incluyen scripts de respaldo o mantenimiento de bases ESE que usan esentutl /y /vss de forma documentada.",
+        "Pruebas autorizadas de Atomic Red Team, ejercicios de red team o validación de controles EDR."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del cambio si la ejecución estaba autorizada antes de tomar acciones disruptivas.",
+        "Si no está autorizada, aísle el endpoint y preserve los archivos copiados, el hash de esentutl y la memoria para análisis forense.",
+        "Considere comprometidas las credenciales locales: rote la contraseña del administrador local (por ejemplo con LAPS) y de cuentas con sesión en el host; si se copió ntds.dit, escale a compromiso de dominio.",
+        "Elimine los archivos extraídos tras preservarlos, investigue el acceso inicial y busque reutilización de hashes (pass-the-hash) en otros equipos."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque esentutl accediendo a VSS es poco común en uso legítimo y suele preceder al robo directo de hashes de credenciales."
+    },
+    "en": {
+      "summary": "esentutl.exe wrote or changed Volume Shadow Copy Service (VSS) registry keys. This usually means esentutl ran with /vss to copy locked files such as SAM, SYSTEM or ntds.dit from a shadow copy.",
+      "what_it_detects": "Registry events (Sysmon 12/13/14) where Image ends with esentutl.exe and TargetObject contains System\\CurrentControlSet\\Services\\VSS (for example VSS\\Diag\\VolSnap\\Volume). Changes to VSS\\Start are excluded.",
+      "why_it_matters": "esentutl is a signed Microsoft binary that, with /y /vss, can copy files Windows keeps locked from a shadow copy. Attackers use it to grab the SAM database and extract local credential hashes (ATT&CK T1003.002, Security Account Manager).",
+      "triage_steps": [
+        "Review Image, TargetObject, User and ProcessId; confirm esentutl.exe runs from System32 or SysWOW64, not an unusual path.",
+        "Find the process creation event for the same ProcessId and check CommandLine for /y, /vss, /d and paths like config\\SAM, SYSTEM, SECURITY or ntds.dit.",
+        "Identify ParentImage and the process chain; cmd, PowerShell, wmiprvse or remote access tools suggest suspicious hands-on or scripted activity.",
+        "On the same host within +/- 15 minutes, look for destination files (Temp, ProgramData, shares) and their later compression or transfer.",
+        "Check whether the user is a legitimate admin or known backup account, and where it logged on from (4624 events, source IP).",
+        "Search earlier alerts for the same host or user: reg save of hives, vssadmin, ntdsutil, credential dumping tools or lateral movement."
+      ],
+      "false_positives": [
+        "The rule lists unknown false positives; plausible cases are backup or ESE database maintenance scripts that use esentutl /y /vss by design.",
+        "Authorized Atomic Red Team tests, red team exercises or EDR validation."
+      ],
+      "response_steps": [
+        "Confirm with the host or change owner whether the run was authorized before taking disruptive action.",
+        "If unauthorized, isolate the endpoint and preserve copied files, the esentutl hash and memory for forensics.",
+        "Treat local credentials as compromised: rotate the local admin password (e.g. via LAPS) and accounts logged on to the host; if ntds.dit was copied, escalate as domain compromise.",
+        "Remove extracted files after preservation, investigate initial access and hunt for pass-the-hash reuse on other hosts."
+      ],
+      "severity_rationale": "High fits because esentutl touching VSS is rare in legitimate use and typically directly precedes credential hash theft."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "esentutl.exe /y /vss copying SAM sets the VSS VolSnap diagnostic key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\esentutl.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\VSS\\Diag\\VolSnap\\Volume",
+          "Details": "Binary Data"
+        }
+      },
+      {
+        "description": "esentutl.exe creating a VSS Diag key during shadow copy initialization",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\SysWOW64\\esentutl.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\VSS\\Diag\\Shadow Copy Optimization Writer"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "esentutl.exe touching only the VSS Start value, excluded by the filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\esentutl.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\VSS\\Start",
+          "Details": "DWORD (0x00000003)"
+        }
+      },
+      {
+        "description": "Legitimate VSS service process writing its own diagnostic key, not esentutl",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2284,
+          "Image": "C:\\Windows\\System32\\VSSVC.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\VSS\\Diag\\VolSnap\\Volume",
+          "Details": "Binary Data"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

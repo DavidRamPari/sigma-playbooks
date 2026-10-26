@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "4ae68615-866f-4304-b24b-ba048dfa5ca7",
+    "title": "AWS ElastiCache Security Group Created",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_elasticache_security_group_created.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_elasticache_security_group_created.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1136",
+      "T1136.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en CloudTrail una llamada CreateCacheSecurityGroup a ElastiCache, es decir, alguien creó un security group de caché. Puede ser un cambio administrativo legítimo, pero conviene confirmar quién lo hizo y con qué propósito.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource elasticache.amazonaws.com y eventName CreateCacheSecurityGroup. Este tipo de security group controla qué grupos de seguridad de EC2 pueden conectarse a los clústeres de ElastiCache. Es una función heredada de EC2-Classic, así que en cuentas modernas suele ser poco común.",
+      "why_it_matters": "Un atacante con credenciales válidas puede crear reglas de acceso a la red para mantener o ampliar su acceso a datos en caché, como sesiones o tokens. La regla lo asocia con persistencia (T1136.003, creación de cuentas en la nube): el atacante crea recursos o accesos nuevos en la nube para conservar su presencia.",
+      "triage_steps": [
+        "Identifique la identidad en userIdentity (arn, type, accessKeyId y sessionContext) y determine si es un usuario, un rol asumido o un servicio esperado.",
+        "Revise sourceIPAddress, userAgent y awsRegion; compárelos con la actividad habitual de esa identidad y con las regiones que usa la organización.",
+        "Examine requestParameters (cacheSecurityGroupName, description) y errorCode para saber si la creación tuvo éxito y si el nombre sigue sus convenciones.",
+        "Busque en un rango de +/- 15 minutos llamadas AuthorizeCacheSecurityGroupIngress, ModifyCacheCluster o CreateCacheCluster de la misma identidad que vinculen o expongan el grupo.",
+        "Pivote por la misma identidad y la misma IP de origen para detectar CreateUser, CreateAccessKey, AttachUserPolicy u otros cambios de IAM.",
+        "Revise si hubo alertas anteriores sobre la misma identidad o clave de acceso y verifique si existe un ticket de cambio aprobado."
+      ],
+      "false_positives": [
+        "Administradores de sistemas o de red que crean security groups de ElastiCache durante un cambio planificado.",
+        "Plantillas de infraestructura como código (CloudFormation, Terraform) que se ejecutan desde pipelines de CI/CD con roles conocidos.",
+        "Herramientas de migración o pruebas en cuentas de desarrollo que todavía usan recursos heredados de EC2-Classic."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la identidad o del pipeline si el cambio estaba autorizado y documente la evidencia.",
+        "Si no estaba autorizado, revoque las reglas de ingreso del grupo y elimínelo con DeleteCacheSecurityGroup, después de verificar que ningún clúster legítimo lo usa.",
+        "Deshabilite o rote las claves de acceso comprometidas y revoque las sesiones activas del rol involucrado.",
+        "Revise toda la actividad de CloudTrail de esa identidad para encontrar otros recursos creados y restaure la configuración aprobada.",
+        "Si el comportamiento es conocido, cree una exclusión específica por rol o pipeline en lugar de desactivar la regla."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque crear un security group es una operación administrativa frecuente que por sí sola no otorga acceso; el riesgo aparece al combinarla con otras acciones."
+    },
+    "en": {
+      "summary": "CloudTrail recorded a CreateCacheSecurityGroup call to ElastiCache, which means someone created a cache security group. This may be legitimate admin work, so confirm who did it and why.",
+      "what_it_detects": "CloudTrail events where eventSource is elasticache.amazonaws.com and eventName is CreateCacheSecurityGroup. A cache security group controls which EC2 security groups can reach ElastiCache clusters. It is a legacy EC2-Classic feature, so it is uncommon in modern accounts.",
+      "why_it_matters": "An attacker with valid credentials can create network access rules to keep or widen access to cached data such as sessions or tokens. The rule maps this to persistence (T1136.003, Create Cloud Account): creating new cloud resources or access to keep a foothold.",
+      "triage_steps": [
+        "Identify the actor in userIdentity (arn, type, accessKeyId, sessionContext) and decide whether it is an expected user, assumed role or service.",
+        "Review sourceIPAddress, userAgent and awsRegion and compare them with that identity's usual activity and your approved regions.",
+        "Inspect requestParameters (cacheSecurityGroupName, description) and errorCode to see whether the call succeeded and whether the name follows your conventions.",
+        "Within +/- 15 minutes, look for AuthorizeCacheSecurityGroupIngress, ModifyCacheCluster or CreateCacheCluster calls from the same identity that attach or expose the group.",
+        "Pivot on the same identity and source IP for CreateUser, CreateAccessKey, AttachUserPolicy or other IAM changes.",
+        "Check for earlier alerts on the same identity or access key and look for an approved change ticket."
+      ],
+      "false_positives": [
+        "System or network administrators creating ElastiCache security groups during a planned change.",
+        "Infrastructure-as-code templates (CloudFormation, Terraform) run from CI/CD pipelines under known roles.",
+        "Migration tools or tests in development accounts that still use legacy EC2-Classic resources."
+      ],
+      "response_steps": [
+        "Confirm with the owner of the identity or pipeline that the change was authorized, and record the evidence.",
+        "If it was unauthorized, revoke the group's ingress rules and delete it with DeleteCacheSecurityGroup once you have confirmed no legitimate cluster uses it.",
+        "Disable or rotate the compromised access keys and revoke active sessions for the role involved.",
+        "Review all CloudTrail activity for that identity to find other resources it created, and restore the approved configuration.",
+        "If the behavior is known, add a narrow exclusion for that role or pipeline instead of disabling the rule."
+      ],
+      "severity_rationale": "Low fits because creating a security group is a common admin task that grants no access by itself; the risk comes when it is combined with other actions."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user creates an ElastiCache cache security group from the AWS CLI using an unfamiliar IP.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticache.amazonaws.com",
+          "eventName": "CreateCacheSecurityGroup",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.13.5 Python/3.11.4 Linux/5.15.0 exe/x86_64.ubuntu.22",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0001",
+          "requestParameters.cacheSecurityGroupName": "cache-sg-temp",
+          "requestParameters.description": "temp access",
+          "eventTime": "2024-03-14T02:17:09Z",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "An assumed role from a Terraform pipeline creates a cache security group.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticache.amazonaws.com",
+          "eventName": "CreateCacheSecurityGroup",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.6.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deploy/terraform-run-42",
+          "requestParameters.cacheSecurityGroupName": "app-redis-sg",
+          "requestParameters.description": "Redis access for app tier",
+          "eventTime": "2024-03-14T10:05:33Z",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same ElastiCache service, but an ingress authorization rather than a group creation, so eventName does not match.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticache.amazonaws.com",
+          "eventName": "AuthorizeCacheSecurityGroupIngress",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.13.5 Python/3.11.4 Linux/5.15.0 exe/x86_64.ubuntu.22",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.cacheSecurityGroupName": "cache-sg-temp",
+          "eventTime": "2024-03-14T02:18:40Z"
+        }
+      },
+      {
+        "description": "An EC2 security group creation: similar action, but a different eventSource and eventName.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "CreateSecurityGroup",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/NetworkAdmin/mlopez",
+          "requestParameters.groupName": "web-tier-sg",
+          "eventTime": "2024-03-14T11:22:01Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

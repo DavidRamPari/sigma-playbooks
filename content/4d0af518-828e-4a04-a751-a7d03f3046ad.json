@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "4d0af518-828e-4a04-a751-a7d03f3046ad",
+    "title": "Potential OGNL Injection Exploitation In JVM Based Application",
+    "level": "high",
+    "status": "test",
+    "author": "Moti Harmats",
+    "path": "application/jvm/java_ognl_injection_exploitation_attempt.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/jvm/java_ognl_injection_exploitation_attempt.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una aplicación basada en JVM registró una excepción de OGNL (OgnlException o ExpressionSyntaxException) en su log de errores. Puede indicar que alguien envió expresiones OGNL manipuladas para intentar ejecutar código remoto.",
+      "what_it_detects": "Líneas del log de errores de aplicaciones JVM que contienen 'org.apache.commons.ognl.OgnlException' o 'ExpressionSyntaxException'. Aparecen cuando el motor OGNL no logra evaluar o parsear una expresión, algo típico de intentos de inyección malformados o de pruebas de reconocimiento.",
+      "why_it_matters": "La inyección OGNL (T1190, explotación de una aplicación expuesta) puede llevar a ejecución remota de código en el servidor, como en Apache Struts (CVE-2017-5638) y Confluence (CVE-2022-26134). Un error suele significar que alguien está probando payloads y que un intento posterior podría funcionar.",
+      "triage_steps": [
+        "Lea la línea de log completa y el stack trace: identifique la aplicación, el hilo HTTP, la clase que evaluó la expresión y el texto de la expresión que falló.",
+        "Busque en la expresión patrones como %{...}, ${...}, @java.lang.Runtime, ProcessBuilder, #context o #_memberAccess. Indican intento de explotación, no un bug.",
+        "Correlacione la marca de tiempo con los access logs del proxy, WAF o servidor web (+/- 15 minutos) para obtener la IP de origen, la URI, los headers (Content-Type) y el user agent.",
+        "Revise todas las solicitudes de esa IP de origen: escaneo de rutas, otros payloads o respuestas 200 tras los errores.",
+        "En el mismo host (+/- 15 minutos), busque procesos hijos del proceso Java (sh, bash, cmd, powershell, curl, wget), conexiones salientes nuevas y archivos creados en directorios web.",
+        "Confirme la versión de la aplicación (Struts, Confluence u otra) y si tiene parches para las CVE de OGNL conocidas.",
+        "Busque alertas previas del mismo host, aplicación o IP de origen."
+      ],
+      "false_positives": [
+        "Bugs de la aplicación que generan expresiones OGNL inválidas, por ejemplo plantillas o configuraciones mal escritas tras un despliegue.",
+        "Escaneos de vulnerabilidades autorizados o pruebas de penetración contra la aplicación.",
+        "Entradas de usuario legítimas con caracteres especiales que la aplicación evalúa por error como expresión."
+      ],
+      "response_steps": [
+        "Valide con el equipo de la aplicación y de pentesting si el error se debe a un cambio o una prueba autorizada.",
+        "Si hay indicios de explotación, bloquee la IP de origen en el WAF o firewall y active reglas de WAF contra OGNL.",
+        "Si hubo procesos hijos sospechosos o conexiones salientes, aísle el host, preserve memoria y logs, y abra un incidente.",
+        "Aplique los parches del fabricante o mitigaciones temporales; restrinja la exposición de la aplicación a Internet mientras tanto.",
+        "Busque web shells, cuentas nuevas y persistencia antes de devolver el servidor a producción."
+      ],
+      "severity_rationale": "Es alta porque la inyección OGNL en aplicaciones expuestas puede dar ejecución remota de código y su forma más común de manifestarse es una excepción de este tipo."
+    },
+    "en": {
+      "summary": "A JVM-based application logged an OGNL exception (OgnlException or ExpressionSyntaxException) in its error log. Someone may have sent crafted OGNL expressions to try remote code execution.",
+      "what_it_detects": "JVM application error log lines containing 'org.apache.commons.ognl.OgnlException' or 'ExpressionSyntaxException'. These appear when the OGNL engine fails to evaluate or parse an expression, which is typical of malformed injection attempts or probing.",
+      "why_it_matters": "OGNL injection (T1190, exploit public-facing application) can lead to remote code execution on the server, as in Apache Struts (CVE-2017-5638) and Confluence (CVE-2022-26134). An error often means someone is testing payloads and a later attempt may succeed.",
+      "triage_steps": [
+        "Read the full log line and stack trace: identify the application, HTTP worker thread, evaluating class and the expression text that failed.",
+        "Look in the expression for patterns such as %{...}, ${...}, @java.lang.Runtime, ProcessBuilder, #context or #_memberAccess. These point to exploitation, not a bug.",
+        "Correlate the timestamp with proxy, WAF or web server access logs (+/- 15 minutes) to get source IP, URI, headers (Content-Type) and user agent.",
+        "Review all requests from that source IP: path scanning, other payloads, or 200 responses following the errors.",
+        "On the same host (+/- 15 minutes), check for child processes of the Java process (sh, bash, cmd, powershell, curl, wget), new outbound connections and files written to web directories.",
+        "Confirm the application and version (Struts, Confluence or other) and whether patches for known OGNL CVEs are applied.",
+        "Search for earlier alerts on the same host, application or source IP."
+      ],
+      "false_positives": [
+        "Application bugs that build invalid OGNL expressions, such as broken templates or configuration after a deployment.",
+        "Authorized vulnerability scans or penetration tests against the application.",
+        "Legitimate user input with special characters that the application wrongly evaluates as an expression."
+      ],
+      "response_steps": [
+        "Check with the application owners and pentest team whether a change or authorized test explains the error.",
+        "If exploitation is indicated, block the source IP at the WAF or firewall and enable WAF rules for OGNL injection.",
+        "If suspicious child processes or outbound connections occurred, isolate the host, preserve memory and logs, and open an incident.",
+        "Apply vendor patches or interim mitigations; restrict internet exposure of the application until patched.",
+        "Hunt for web shells, new accounts and persistence before returning the server to production."
+      ],
+      "severity_rationale": "High fits because OGNL injection in exposed applications can yield remote code execution, and such exceptions are a common visible trace of it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Error log line with org.apache.commons.ognl.OgnlException raised while evaluating a request parameter.",
+        "event": {
+          "message": "2023-02-11 14:03:12,345 ERROR [http-nio-8080-exec-7] com.example.web.ActionInvoker - Failed to evaluate parameter 'redirect' org.apache.commons.ognl.OgnlException: Method \"getRuntime\" failed for object java.lang.Runtime",
+          "host": "app-web-02",
+          "level": "ERROR",
+          "logger": "com.example.web.ActionInvoker"
+        }
+      },
+      {
+        "description": "Error log line with ExpressionSyntaxException caused by a malformed probe expression in a URI.",
+        "event": {
+          "message": "2023-02-11 14:03:15,812 ERROR [http-nio-8080-exec-9] com.example.web.UrlMapper - Could not parse expression from URI /%24%7B7*7%7D/ org.apache.commons.ognl.ExpressionSyntaxException: Malformed OGNL expression: ${7*7",
+          "host": "app-web-02",
+          "level": "ERROR",
+          "logger": "com.example.web.UrlMapper"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Struts-style ognl.OgnlException without the org.apache.commons package prefix; does not contain either keyword verbatim.",
+        "event": {
+          "message": "2023-02-11 14:10:02,101 ERROR [http-nio-8080-exec-3] com.example.web.FormBinder - Error setting value ognl.OgnlException: source is null for getProperty(null, \"address\")",
+          "host": "app-web-02",
+          "level": "ERROR",
+          "logger": "com.example.web.FormBinder"
+        }
+      },
+      {
+        "description": "Ordinary application error unrelated to OGNL.",
+        "event": {
+          "message": "2023-02-11 14:12:44,560 ERROR [http-nio-8080-exec-5] com.example.service.OrderService - Order lookup failed java.lang.NullPointerException: customerId must not be null",
+          "host": "app-web-02",
+          "level": "ERROR",
+          "logger": "com.example.service.OrderService"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

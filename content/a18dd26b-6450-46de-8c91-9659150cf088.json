@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "a18dd26b-6450-46de-8c91-9659150cf088",
+    "title": "Potentially Suspicious GrantedAccess Flags On LSASS",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth, Roberto Rodriguez, Dimitrios Slamaris, Mark Russinovich, Thomas Patzke, Teymur Kheirkhabarov, Sherif Eldeeb, James Dickenson, Aleksey Potapov, oscd.community",
+    "path": "windows/process_access/proc_access_win_lsass_susp_access_flag.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_lsass_susp_access_flag.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de las rutas habituales de software instalado abrió un handle a lsass.exe con permisos (GrantedAccess) típicos del volcado de credenciales. Puede tratarse de un robo de credenciales en curso.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon Event ID 10) donde TargetImage termina en \\lsass.exe y GrantedAccess coincide con máscaras que incluyen PROCESS_VM_READ o similares (p. ej. 0x1438, 0x1F0FFF, 0x40). Se excluyen SourceImage en Program Files, System32 y SysWOW64, Defender, VMware Tools y varias herramientas conocidas.",
+      "why_it_matters": "LSASS guarda en memoria hashes NTLM, tickets Kerberos y a veces contraseñas en texto claro. Leer su memoria (ATT&CK T1003.001, LSASS Memory; Mimikatz, S0002) permite el movimiento lateral y la escalada de privilegios en el dominio.",
+      "triage_steps": [
+        "Revise SourceImage, SourceProcessId y SourceUser: un binario en Temp, AppData, ProgramData o en una carpeta de usuario es muy sospechoso.",
+        "Decodifique GrantedAccess: 0x10 (VM_READ), 0x1F0FFF/0x1F3FFF (acceso total) y 0x40 (DUP_HANDLE) indican intención de leer o duplicar el handle.",
+        "Analice CallTrace: llamadas desde UNKNOWN, dbghelp.dll o dbgcore.dll (MiniDumpWriteDump) sugieren volcado de memoria.",
+        "Obtenga el hash, la firma y la línea de comandos del SourceImage y busque el proceso padre en la creación de procesos (Event ID 1).",
+        "Busque en el mismo host, +/- 15 minutos, la creación de archivos .dmp, archivos comprimidos o conexiones salientes del mismo proceso.",
+        "Revise los inicios de sesión posteriores del SourceUser y de las cuentas con sesión en el host para detectar movimiento lateral.",
+        "Consulte alertas anteriores del mismo host, usuario o hash en Centinela."
+      ],
+      "false_positives": [
+        "Agentes AV/EDR o de respaldo instalados en rutas no estándar, como ProgramData o carpetas propias del producto.",
+        "Herramientas de diagnóstico de TI o desarrollo, como depuradores o Process Explorer portátil, ejecutadas desde carpetas de usuario.",
+        "Instaladores o actualizadores de software de seguridad que se ejecutan de forma temporal desde Temp."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo o con TI si la herramienta es legítima; si es así, documente una exclusión específica por ruta y hash.",
+        "Si no hay justificación, aísle el endpoint desde el EDR y conserve el binario, los archivos .dmp y una imagen de memoria.",
+        "Restablezca las contraseñas de las cuentas con sesión en el host y considere invalidar los tickets Kerberos; si hubo cuentas privilegiadas, evalúe rotar krbtgt dos veces.",
+        "Elimine el binario y la persistencia relacionada solo después de recolectar la evidencia y busque el mismo hash en otros hosts.",
+        "Habilite RunAsPPL o Credential Guard en LSASS para reducir el riesgo de que se repita."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la combinación de permisos y ruta es un fuerte indicio de volcado de credenciales, pero algunos productos de seguridad legítimos producen la misma señal."
+    },
+    "en": {
+      "summary": "A process outside the usual installed-software paths opened a handle to lsass.exe with access rights (GrantedAccess) typical of credential dumping. Credential theft may be in progress.",
+      "what_it_detects": "Process access events (Sysmon Event ID 10) where TargetImage ends with \\lsass.exe and GrantedAccess matches masks that include PROCESS_VM_READ or similar (e.g. 0x1438, 0x1F0FFF, 0x40). It excludes SourceImage in Program Files, System32, SysWOW64, Defender, VMware Tools and several known tools.",
+      "why_it_matters": "LSASS holds NTLM hashes, Kerberos tickets and sometimes cleartext passwords in memory. Reading that memory (ATT&CK T1003.001, LSASS Memory; Mimikatz, S0002) enables lateral movement and domain privilege escalation.",
+      "triage_steps": [
+        "Check SourceImage, SourceProcessId and SourceUser. A binary in Temp, AppData, ProgramData or a user folder is highly suspicious.",
+        "Decode GrantedAccess: 0x10 (VM_READ), 0x1F0FFF/0x1F3FFF (full access) and 0x40 (DUP_HANDLE) show intent to read memory or duplicate the handle.",
+        "Inspect CallTrace. Frames from UNKNOWN, dbghelp.dll or dbgcore.dll (MiniDumpWriteDump) suggest a memory dump.",
+        "Get the hash, signature and command line of SourceImage, then find its parent in process creation events (Event ID 1).",
+        "On the same host, within +/- 15 minutes, look for new .dmp files, archives or outbound connections from the same process.",
+        "Review later logons by SourceUser and by accounts with sessions on the host to spot lateral movement.",
+        "Check Centinela for earlier alerts on the same host, user or hash."
+      ],
+      "false_positives": [
+        "AV, EDR or backup agents installed in non-standard paths, such as ProgramData or vendor-specific folders.",
+        "IT diagnostic or developer tools, such as debuggers or portable Process Explorer, run from user folders.",
+        "Security software installers or updaters that run temporarily from Temp."
+      ],
+      "response_steps": [
+        "Ask the host owner or IT whether the tool is legitimate. If it is, document a narrow exclusion by path and hash.",
+        "If there is no justification, isolate the endpoint through EDR and keep the binary, any .dmp files and a memory image.",
+        "Reset passwords for accounts with sessions on the host and consider purging Kerberos tickets. If privileged accounts were exposed, consider rotating krbtgt twice.",
+        "Remove the binary and any related persistence only after collecting evidence, then hunt for the same hash on other hosts.",
+        "Enable LSASS RunAsPPL or Credential Guard to reduce the risk of a repeat."
+      ],
+      "severity_rationale": "Medium fits because the combination of access rights and path strongly suggests credential dumping, but some legitimate security products produce the same signal."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown binary in a user Temp folder opens LSASS with 0x1438 through dbgcore.dll (MiniDump pattern)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:03:12.418",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\pd64.exe",
+          "SourceUser": "ANDES\\jperez",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1438",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\SYSTEM32\\dbgcore.DLL+1a4b2|C:\\Users\\jperez\\AppData\\Local\\Temp\\pd64.exe+1f3a"
+        }
+      },
+      {
+        "description": "Binary in ProgramData requests full access 0x1F3FFF to LSASS from an unbacked memory region",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-FS02.andes.example.com",
+          "UtcTime": "2024-10-25 02:41:57.090",
+          "SourceProcessId": 4488,
+          "SourceImage": "C:\\ProgramData\\svcupd\\updater.exe",
+          "SourceUser": "ANDES\\svc_backup",
+          "TargetProcessId": 668,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "GrantedAccess": "0x1F3FFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|UNKNOWN(00000000004A1C2F)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Microsoft Defender MsMpEng.exe from its ProgramData platform folder accessing LSASS (excluded by filter_main_windefend_1)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:05:00.002",
+          "SourceProcessId": 3310,
+          "SourceImage": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MsMpEng.exe",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1F3FFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MpSvc.dll+5e1a2"
+        }
+      },
+      {
+        "description": "Unusual path but only 0x1000 (PROCESS_QUERY_LIMITED_INFORMATION), which is not in the access list",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2024-10-25 09:12:33.761",
+          "SourceProcessId": 7720,
+          "SourceImage": "C:\\Users\\mrojas\\AppData\\Local\\Programs\\tasktool\\tasktool.exe",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetProcessId": 700,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+3a1b0|C:\\Users\\mrojas\\AppData\\Local\\Programs\\tasktool\\tasktool.exe+2210"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

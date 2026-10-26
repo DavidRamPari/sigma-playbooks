@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "acd74772-5f88-45c7-956b-6a7b36c294d2",
+    "title": "Removal Of SD Value to Hide Schedule Task - Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Sittikorn S",
+    "path": "windows/registry/registry_delete/registry_delete_schtasks_hide_task_via_sd_value_removal.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_delete/registry_delete_schtasks_hide_task_via_sd_value_removal.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminó un valor SD (Security Descriptor) bajo la clave TaskCache\\Tree del Programador de tareas. Sin ese descriptor, la tarea programada sigue ejecutándose pero deja de aparecer en schtasks /query y en la consola del Programador de tareas.",
+      "what_it_detects": "Eventos registry_delete (por ejemplo, Sysmon EventID 12) donde TargetObject contiene la ruta \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\ y la cadena SD. Es la técnica que Microsoft documentó para el malware Tarrask.",
+      "why_it_matters": "Ocultar una tarea programada mantiene la persistencia y evade la revisión manual del administrador. La regla la etiqueta como deterioro de defensas (T1685). Normalmente borrar SD requiere privilegios de SYSTEM, lo que apunta a que el host ya está muy comprometido.",
+      "triage_steps": [
+        "A partir de TargetObject, extraiga el nombre de la tarea (el segmento entre Tree\\ y \\SD) y confirme que EventType sea DeleteValue sobre el valor SD.",
+        "Revise Image, User y ProcessId: reg.exe, powershell.exe o un binario desconocido que corra como SYSTEM es muy sospechoso; las herramientas de administración conocidas lo son menos.",
+        "Obtenga el proceso padre y la línea de comandos del proceso que borró el valor a partir de los eventos de creación de procesos (Sysmon 1 / 4688).",
+        "Lea el valor Id de Tree\\<tarea> y revise TaskCache\\Tasks\\{GUID} (Actions, Path) y C:\\Windows\\System32\\Tasks\\<tarea> para saber qué ejecuta la tarea.",
+        "Revise el mismo host +/- 15 minutos: creación de tareas (4698, 106), escritura en TaskCache, herramientas como PsExec y conexiones de red salientes.",
+        "Busque en otros endpoints el mismo nombre de tarea, el mismo hash de Image y alertas anteriores para el mismo usuario o host."
+      ],
+      "false_positives": [
+        "El nombre de la tarea o de la carpeta contiene 'sd' (por ejemplo, SDUpdate) y el servicio Schedule o un instalador borra un valor al quitar la tarea.",
+        "Herramientas de limpieza o de hardening que modifican descriptores de tareas, documentadas por TI."
+      ],
+      "response_steps": [
+        "Valide con el responsable del equipo si hubo algún cambio autorizado; si no lo hubo, trate el host como comprometido con privilegios de SYSTEM.",
+        "Aísle el endpoint, conserve una exportación de la clave TaskCache y del archivo de la tarea, y recolecte el binario que la tarea ejecuta.",
+        "Después de documentar la evidencia, deshabilite y elimine la tarea oculta y los artefactos de persistencia relacionados; restablezca las credenciales expuestas.",
+        "Busque el mismo indicador en toda la flota y vigile si la tarea vuelve a aparecer."
+      ],
+      "severity_rationale": "Es medium porque la técnica es muy específica y casi nunca es legítima, pero la regla también coincide con cualquier ruta que contenga 'sd', así que antes de escalar hay que confirmar que el valor borrado sea SD."
+    },
+    "en": {
+      "summary": "An SD (Security Descriptor) value was deleted under the Task Scheduler TaskCache\\Tree key. Without it, the scheduled task still runs but no longer shows up in schtasks /query or the Task Scheduler console.",
+      "what_it_detects": "registry_delete events (for example Sysmon EventID 12) where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\ and the string SD. Microsoft documented this technique for the Tarrask malware.",
+      "why_it_matters": "Hiding a scheduled task keeps persistence in place and gets past manual review by administrators. The rule tags it as defense impairment (T1685). Deleting SD usually needs SYSTEM privileges, which points to a host that is already deeply compromised.",
+      "triage_steps": [
+        "Take the task name from TargetObject (the segment between Tree\\ and \\SD) and confirm that EventType is DeleteValue on the SD value.",
+        "Review Image, User and ProcessId: reg.exe, powershell.exe or an unknown binary running as SYSTEM is highly suspicious. Known admin tooling is less so.",
+        "Get the parent process and command line of the deleting process from process creation events (Sysmon 1 / 4688).",
+        "Read the Id value under Tree\\<task>, then inspect TaskCache\\Tasks\\{GUID} (Actions, Path) and C:\\Windows\\System32\\Tasks\\<task> to see what the task runs.",
+        "Review the same host +/- 15 minutes: task creation (4698, 106), TaskCache writes, tools like PsExec and outbound network connections.",
+        "Search other endpoints for the same task name, the same Image hash and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "The task or folder name contains 'sd' (for example SDUpdate), and the Schedule service or an installer deletes a value while removing the task.",
+        "Cleanup or hardening tools that change task descriptors, documented by IT."
+      ],
+      "response_steps": [
+        "Check with the system owner whether the change was authorized. If it was not, treat the host as compromised at SYSTEM level.",
+        "Isolate the endpoint, keep an export of the TaskCache key and the task file, and collect the binary the task runs.",
+        "After documenting the evidence, disable and remove the hidden task and related persistence, then reset any exposed credentials.",
+        "Hunt for the same indicator across the fleet and watch for the task to come back."
+      ],
+      "severity_rationale": "Medium fits because the technique is very specific and rarely legitimate, but the rule also matches any path that contains 'sd', so confirm the deleted value is SD before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe running as SYSTEM deletes the SD value of a task, hiding it in the Tarrask style",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2025-10-25 14:03:12.481",
+          "ProcessGuid": "{6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8}",
+          "ProcessId": 4312,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\WinUpdateCheck\\SD",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "PowerShell deletes the SD value of a task inside a subfolder",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2025-10-25 14:05:40.102",
+          "ProcessId": 5120,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\Microsoft\\Windows\\Maintenance\\Helper\\SD",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The Schedule service deletes the Index value of an Office task. The path contains no 'SD'",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2025-10-25 09:12:03.554",
+          "ProcessId": 1460,
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\Microsoft\\Office\\OfficeTelemetryAgentLogOn\\Index",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "An SD value is deleted outside TaskCache\\Tree, under an unrelated software key",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2025-10-25 10:20:11.900",
+          "ProcessId": 2290,
+          "Image": "C:\\Program Files\\Example\\updater.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Example\\Agent\\Config\\SD",
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

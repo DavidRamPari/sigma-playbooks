@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "9991c683-05aa-47b7-a865-df14dc4b9dc4",
+    "title": "Potential HackTool - Defendnot Security Center AV Registry Modification",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_security_center_av_registry_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_security_center_av_registry_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el registro de un producto antivirus en Windows Security Center (DisplayName, ProductEXE o ReportingExe) con un valor o proceso que no corresponde a un fabricante conocido. Puede indicar que se registró un antivirus falso para que Microsoft Defender se desactive.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject contiene '\\Software\\Microsoft\\Security Center\\Provider\\Av\\' y termina en \\ProductEXE, \\DisplayName o \\ReportingExe. Se excluyen las escrituras de C:\\Windows\\System32\\svchost.exe cuyo Details contiene el nombre de un fabricante antivirus conocido.",
+      "why_it_matters": "Herramientas como Defendnot abusan de la API de Windows Security Center para registrar un antivirus ficticio. Windows asume que hay otra protección activa y desactiva Defender, lo que deja el equipo sin protección en tiempo real. Corresponde a deterioro de defensas (ATT&CK T1685).",
+      "triage_steps": [
+        "Revise Details, TargetObject (GUID del proveedor) e Image: ¿el nombre o la ruta del ejecutable corresponden a un antivirus instalado y aprobado en la organización?",
+        "Si ProductEXE o ReportingExe apuntan a un archivo, verifique que exista, su firma digital y su hash; desconfíe de rutas en perfiles de usuario, Temp o ProgramData.",
+        "Compruebe el estado de Defender en el endpoint (Get-MpComputerStatus) y busque cambios de estado de Security Center en el registro Application cerca del evento.",
+        "Si Image no es svchost.exe, analice ese proceso, su proceso padre y la línea de comandos; busque inyección en binarios firmados de Microsoft en el mismo host +/- 15 minutos.",
+        "Busque tareas programadas, servicios o claves Run nuevas en el mismo host que puedan relanzar la herramienta al reiniciar.",
+        "Identifique el usuario que ejecutó el proceso y revise alertas previas de ese usuario y host.",
+        "Busque el mismo DisplayName o GUID en otros endpoints para medir el alcance."
+      ],
+      "false_positives": [
+        "Instalación o actualización legítima de un antivirus que no figura en la lista del filtro.",
+        "Agentes EDR o antivirus que registran su producto desde su propio proceso en lugar de svchost.exe.",
+        "Herramientas de despliegue o imágenes corporativas que configuran Security Center durante el aprovisionamiento."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de endpoints si el producto registrado es legítimo antes de actuar.",
+        "Si no lo es, aísle el host y reactive Microsoft Defender, verificando que la protección en tiempo real quede activa.",
+        "Elimine el registro del proveedor falso, el binario asociado y cualquier mecanismo de persistencia identificado.",
+        "Ejecute un análisis completo y revise la actividad realizada mientras Defender estaba desactivado.",
+        "Agregue los fabricantes legítimos faltantes al filtro tras el baselining y considere subir la severidad a high."
+      ],
+      "severity_rationale": "Medium es adecuado porque la técnica desactiva la protección del endpoint, pero el filtro de fabricantes aún no está ajustado y pueden aparecer instalaciones legítimas."
+    },
+    "en": {
+      "summary": "A Windows Security Center antivirus provider entry (DisplayName, ProductEXE or ReportingExe) was written with a value or by a process that does not match a known vendor. This may mean a fake AV was registered so that Microsoft Defender turns itself off.",
+      "what_it_detects": "registry_set events where TargetObject contains '\\Software\\Microsoft\\Security Center\\Provider\\Av\\' and ends with \\ProductEXE, \\DisplayName or \\ReportingExe, excluding writes by C:\\Windows\\System32\\svchost.exe whose Details contains a known AV vendor name.",
+      "why_it_matters": "Tools such as Defendnot abuse the Windows Security Center API to register a fictitious antivirus. Windows assumes another product protects the host and disables Defender, removing real-time protection. This is defense impairment (ATT&CK T1685).",
+      "triage_steps": [
+        "Review Details, TargetObject (provider GUID) and Image: does the name or executable path match an approved, installed antivirus?",
+        "If ProductEXE or ReportingExe reference a file, check it exists, its signature and hash; distrust paths under user profiles, Temp or ProgramData.",
+        "Check Defender state on the endpoint (Get-MpComputerStatus) and look for Security Center state changes in the Application log near the event.",
+        "If Image is not svchost.exe, examine that process, its parent and command line; look for injection into signed Microsoft binaries on the same host +/- 15 minutes.",
+        "Look for new scheduled tasks, services or Run keys on the host that could relaunch the tool at reboot.",
+        "Identify the user behind the process and review earlier alerts for that user and host.",
+        "Search for the same DisplayName or GUID on other endpoints to scope the activity."
+      ],
+      "false_positives": [
+        "Legitimate install or update of an antivirus vendor missing from the filter list.",
+        "EDR or AV agents that register their product from their own process instead of svchost.exe.",
+        "Deployment tooling or corporate images configuring Security Center during provisioning."
+      ],
+      "response_steps": [
+        "Confirm with the endpoint team whether the registered product is legitimate before acting.",
+        "If not, isolate the host and re-enable Microsoft Defender, confirming real-time protection is on.",
+        "Remove the fake provider entry, the related binary and any persistence found.",
+        "Run a full scan and review activity that occurred while Defender was disabled.",
+        "After baselining, add missing legitimate vendors to the filter and consider raising the level to high."
+      ],
+      "severity_rationale": "Medium fits because the technique disables endpoint protection, but the vendor filter is not yet tuned and legitimate installs may still alert."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "svchost.exe writes a DisplayName for an unknown, fictitious AV product into the Security Center AV provider key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Security Center\\Provider\\Av\\{4E1B9A2C-7D3F-4C1A-9B6E-2F8D0C5A1E77}\\DisplayName",
+          "Details": "ShieldGuard Antivirus",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "A binary in the user's AppData writes ProductEXE pointing to its own path",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_x64.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Security Center\\Provider\\Av\\{4E1B9A2C-7D3F-4C1A-9B6E-2F8D0C5A1E77}\\ProductEXE",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_x64.exe",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "svchost.exe registers the legitimate Windows Defender DisplayName; excluded by the vendor filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Security Center\\Provider\\Av\\{D68DDC3A-831F-4FAE-9E44-DA132C1ACF46}\\DisplayName",
+          "Details": "Windows Defender",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Write to the Firewall provider key, not the Av key, so the selection does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_x64.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Security Center\\Provider\\Firewall\\{4E1B9A2C-7D3F-4C1A-9B6E-2F8D0C5A1E77}\\DisplayName",
+          "Details": "ShieldGuard Firewall",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

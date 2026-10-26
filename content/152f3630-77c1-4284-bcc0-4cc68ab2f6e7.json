@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "152f3630-77c1-4284-bcc0-4cc68ab2f6e7",
+    "title": "Shell Open Registry Keys Manipulation",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/registry/registry_event/registry_event_shell_open_keys_manipulation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_shell_open_keys_manipulation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.001",
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió en las claves de comando shell\\open de ms-settings o exefile, una técnica habitual para hacer bypass de UAC (por ejemplo con fodhelper.exe) o para lograr persistencia mediante el secuestro de asociaciones de archivos.",
+      "what_it_detects": "Eventos de registro (Sysmon 12/13/14) que cambian el valor (Default), DelegateExecute o SymbolicLinkValue bajo Classes\\ms-settings\\shell\\open\\command, o el valor (Default) de Classes\\exefile\\shell\\open\\command. Quedan excluidos los valores vacíos y los CLSID COM predeterminados de Windows.",
+      "why_it_matters": "Binarios con autoelevación como fodhelper.exe leen el comando de ms-settings desde HKCU y ejecutan lo que encuentren con integridad alta sin mostrar el aviso de UAC (T1548.002). Si se modifica exefile, el atacante consigue que su payload se ejecute cada vez que se abre un ejecutable (T1546.001).",
+      "triage_steps": [
+        "Revise Details: anote la ruta o el comando escrito. Los ejecutables en carpetas de usuario, Temp o Public, o los comandos con cmd o powershell, son muy sospechosos.",
+        "Identifique el Image y el User que hicieron la escritura. Revise su proceso padre y su línea de comandos (reg.exe, powershell.exe, un proceso de Office o un binario desconocido).",
+        "Busque en el mismo host, dentro de +/- 15 minutos, ejecuciones de fodhelper.exe, computerdefaults.exe o sdclt.exe y los procesos hijo que hayan generado con integridad alta.",
+        "Revise si la clave se borró poco después (EventType DeleteKey/DeleteValue). Borrar el rastro justo después del bypass es típico.",
+        "Si apareció SymbolicLinkValue, siga el CLSID que aparece en Details y revise qué comando hay registrado bajo Software\\Classes\\{CLSID}.",
+        "Obtenga el hash del ejecutable indicado en Details y verifique su firma, su reputación y su fecha de creación.",
+        "Busque alertas anteriores del mismo host o usuario, como ejecución inicial, descargas o conexiones salientes poco comunes."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Instaladores o herramientas de administración que restauran asociaciones de archivos con valores no estándar. Verifique el proveedor y la firma del proceso.",
+        "Pruebas autorizadas de red team o de validación de controles, por ejemplo UACME o Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con TI si el cambio está autorizado. Si no lo está, aísle el endpoint de la red.",
+        "Exporte la clave como evidencia y luego restaure su valor original o elimine la entrada maliciosa de HKCU\\Software\\Classes.",
+        "Termine los procesos ejecutados con integridad alta a partir del bypass y ponga en cuarentena el binario referenciado en Details.",
+        "Restablezca las credenciales del usuario afectado, busque el mismo hash o la misma ruta en otros equipos y considere configurar UAC en 'Notificar siempre'."
+      ],
+      "severity_rationale": "Es alta porque estas claves casi nunca cambian de forma legítima y su modificación suele indicar una escalada de privilegios o persistencia activa."
+    },
+    "en": {
+      "summary": "A process wrote to the shell\\open command keys of ms-settings or exefile. This is a common way to bypass UAC (for example through fodhelper.exe) or to gain persistence by hijacking file associations.",
+      "what_it_detects": "Registry events (Sysmon 12/13/14) that change the (Default), DelegateExecute or SymbolicLinkValue value under Classes\\ms-settings\\shell\\open\\command, or the (Default) value of Classes\\exefile\\shell\\open\\command. Empty values and the default Windows COM CLSIDs are excluded.",
+      "why_it_matters": "Auto-elevating binaries such as fodhelper.exe read the ms-settings command from HKCU and run it at high integrity without a UAC prompt (T1548.002). Changing exefile makes the attacker's payload run every time an executable is opened (T1546.001).",
+      "triage_steps": [
+        "Read Details and record the path or command that was written. Binaries in user, Temp or Public folders, or commands that use cmd or powershell, are highly suspicious.",
+        "Identify the Image and User that made the write. Review its parent process and command line, for example reg.exe, powershell.exe, an Office process or an unknown binary.",
+        "On the same host within +/- 15 minutes, look for fodhelper.exe, computerdefaults.exe or sdclt.exe executions and any high-integrity children they spawned.",
+        "Check whether the key was deleted shortly afterwards (EventType DeleteKey/DeleteValue). Cleaning up right after the bypass is typical.",
+        "For SymbolicLinkValue, follow the CLSID in Details and check what command is registered under Software\\Classes\\{CLSID}.",
+        "Get the hash of the binary named in Details and check its signature, reputation and creation time.",
+        "Look for earlier alerts on the same host or user, such as initial execution, downloads or unusual outbound connections."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Installers or admin tools that restore file associations with non-standard values. Check the vendor and the process signature.",
+        "Authorized red team or control-validation tests, for example UACME or Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirm with the user and IT whether the change was authorized. If it was not, isolate the endpoint from the network.",
+        "Export the key as evidence, then restore its original value or remove the malicious entry under HKCU\\Software\\Classes.",
+        "Stop processes that the bypass launched at high integrity and quarantine the binary referenced in Details.",
+        "Reset the affected user's credentials, search other hosts for the same hash or path, and consider setting UAC to 'Always notify'."
+      ],
+      "severity_rationale": "High, because these keys rarely change for legitimate reasons and a change usually means active privilege escalation or persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell sets the ms-settings open command to a payload in a user-writable folder, the setup step of a fodhelper UAC bypass.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 10:21:07.512",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Software\\Classes\\ms-settings\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Users\\Public\\update.exe"
+        }
+      },
+      {
+        "description": "An unknown binary creates a SymbolicLinkValue that points ms-settings to an attacker-controlled CLSID under Software\\Classes.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 11:02:44.090",
+          "Computer": "WS-0187.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\svch.exe",
+          "ProcessId": 4432,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1210\\Software\\Classes\\ms-settings\\shell\\open\\command\\SymbolicLinkValue",
+          "Details": "\\REGISTRY\\USER\\S-1-5-21-1111111111-2222222222-3333333333-1210\\Software\\Classes\\{0A1B2C3D-1234-4321-ABCD-0123456789AB}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows sets DelegateExecute for ms-settings to a default COM CLSID, which filter_main_default_com excludes.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 08:00:12.331",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1088,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\ms-settings\\shell\\open\\command\\DelegateExecute",
+          "Details": "{4ED3A719-CEA8-4BD9-910D-E252F997AFC2}"
+        }
+      },
+      {
+        "description": "The ms-settings (Default) value is set to an empty value, which filter_main_empty excludes.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 08:00:12.335",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1088,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\ms-settings\\shell\\open\\command\\(Default)",
+          "Details": "(Empty)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

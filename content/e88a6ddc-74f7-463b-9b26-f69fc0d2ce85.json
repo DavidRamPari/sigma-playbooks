@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "e88a6ddc-74f7-463b-9b26-f69fc0d2ce85",
+    "title": "New TimeProviders Registered With Uncommon DLL Name",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_timeproviders_dllname.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_timeproviders_dllname.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor DllName bajo la clave de registro TimeProviders de W32Time que apunta a una DLL distinta de las DLL estándar del servicio de hora de Windows. Puede indicar que se registró un time provider malicioso para lograr persistencia.",
+      "what_it_detects": "Eventos de modificación de registro donde TargetObject contiene \\Services\\W32Time\\TimeProviders y termina en \\DllName, salvo que Details sea una de las DLL legítimas conocidas (w32time.dll o vmictimeprovider.dll).",
+      "why_it_matters": "El servicio de hora de Windows carga las DLL de los time providers dentro de svchost al iniciar. Un atacante que registra su propia DLL obtiene ejecución como SYSTEM en cada arranque. Corresponde a ATT&CK T1547.003 (Time Providers).",
+      "triage_steps": [
+        "Revise TargetObject y Details: anote el nombre de la subclave del proveedor (NtpClient, NtpServer o un nombre nuevo) y la ruta completa de la DLL escrita.",
+        "Identifique el proceso que escribió el valor (Image, ProcessId) y el usuario. Verifique si fue reg.exe, powershell.exe o un instalador y obtenga su CommandLine.",
+        "Analice la DLL en disco: ubicación (carpetas escribibles como C:\\Users\\Public o Temp son sospechosas), hash, firma, fecha de compilación y reputación.",
+        "En el mismo host, +/- 15 minutos, busque valores relacionados (Enabled, InputProvider) en la misma subclave, creación del archivo DLL y reinicios del servicio w32time.",
+        "Revise la cadena de procesos padre y la sesión de inicio para detectar acceso remoto, movimiento lateral u otros cambios de persistencia.",
+        "Busque el mismo hash, ruta o nombre de proveedor en otros endpoints y alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Software de hardware o virtualización (por ejemplo, agentes de reloj de precisión o GPS) que instala su propio time provider firmado.",
+        "Valores DllName legítimos con un formato de ruta no cubierto por el filtro, como la ruta completa C:\\Windows\\System32\\w32time.dll.",
+        "Pruebas autorizadas de red team o de Atomic Red Team para T1547.003."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema o con los registros de cambios si se esperaba un time provider personalizado; verifique firma y editor de la DLL.",
+        "Si es malicioso, aísle el endpoint y recolecte la DLL, una exportación de la clave de registro y la memoria del svchost de w32time.",
+        "Elimine la subclave del proveedor ilegítimo o restaure el DllName original, borre la DLL y reinicie W32Time tras verificar.",
+        "Busque el mismo hash y nombre de proveedor en toda la flota, restablezca las credenciales usadas en la sesión y vigile si se vuelve a crear."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque una DLL de time provider inesperada rara vez es legítima y otorga persistencia como SYSTEM en el arranque."
+    },
+    "en": {
+      "summary": "A process wrote a DllName value under the W32Time TimeProviders registry key that points to a DLL other than the standard Windows time provider DLLs. This can mean someone registered a malicious time provider for persistence.",
+      "what_it_detects": "Registry set events where TargetObject contains \\Services\\W32Time\\TimeProviders and ends with \\DllName, unless Details is one of the known legitimate DLLs (w32time.dll or vmictimeprovider.dll).",
+      "why_it_matters": "The Windows Time service loads time provider DLLs inside svchost when it starts. An attacker who registers their own DLL gets code execution as SYSTEM at every boot. This is ATT&CK T1547.003 (Boot or Logon Autostart Execution: Time Providers).",
+      "triage_steps": [
+        "Read TargetObject and Details: note the provider subkey name (for example NtpClient, NtpServer, or a new name) and the full DLL path that was written.",
+        "Identify the writing process (Image, ProcessId) and the user. Check whether it was reg.exe, powershell.exe or an installer, and get its CommandLine from process creation logs.",
+        "Check the DLL on disk: path location (user-writable folders such as C:\\Users\\Public or Temp are suspicious), hash, signature, compile time and reputation.",
+        "Pivot on the same host within +/- 15 minutes for sibling values (Enabled, InputProvider) under the same subkey, file creation of the DLL, and w32time service restarts.",
+        "Review the parent process chain and the logon session for remote access, lateral movement or other persistence changes.",
+        "Search for the same DLL hash, path or provider subkey name on other endpoints and for earlier alerts on this host or user."
+      ],
+      "false_positives": [
+        "Hardware or virtualization vendor software (for example precision time or GPS clock agents) that installs its own signed time provider DLL.",
+        "Legitimate DllName values written with a different path format or casing not covered by the filter, such as a full C:\\Windows\\System32\\w32time.dll path.",
+        "Authorized red team or Atomic Red Team T1547.003 testing."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change records whether a custom time provider was expected; verify the DLL signature and publisher.",
+        "If malicious, isolate the endpoint and collect the DLL, registry key export and memory of the w32time svchost process.",
+        "Remove the rogue provider subkey or restore the original DllName, delete the DLL, and restart the W32Time service after verification.",
+        "Hunt across the fleet for the same hash and provider name, reset credentials used in the session, and monitor the host for re-creation."
+      ],
+      "severity_rationale": "High is appropriate because unexpected time provider DLLs are rarely legitimate and give SYSTEM-level boot persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers a new time provider pointing to a DLL in C:\\Users\\Public (Atomic Red Team style).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 10:22:41.118",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\AtomicTimeProvider\\DllName",
+          "Details": "C:\\Users\\Public\\AtomicTest.dll"
+        }
+      },
+      {
+        "description": "PowerShell overwrites the NtpClient DllName with a DLL in ProgramData.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 11:03:09.502",
+          "ComputerName": "SRV-FILE-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4388,
+          "User": "ANDES\\svc_backup",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient\\DllName",
+          "Details": "C:\\ProgramData\\timesvc\\ntpsync.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows sets the NtpClient DllName to the standard w32time.dll (excluded by the filter, case-insensitive).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 08:00:12.004",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "ProcessId": 1432,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpClient\\DllName",
+          "Details": "%SystemRoot%\\system32\\w32time.dll"
+        }
+      },
+      {
+        "description": "Change to the Enabled value of a time provider, not DllName, so the selection does not match.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 09:15:33.771",
+          "ComputerName": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\w32tm.exe",
+          "ProcessId": 2980,
+          "User": "ANDES\\admin.mrojas",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\NtpServer\\Enabled",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

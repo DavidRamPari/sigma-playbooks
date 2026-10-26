@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "0b7889b4-5577-4521-a60a-3376ee7f9f7b",
+    "title": "WMI Persistence",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Gleb Sukhodolskiy, Timur Zinniatullin oscd.community",
+    "path": "windows/builtin/wmi/win_wmi_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/wmi/win_wmi_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en el log WMI-Activity un enlace filtro-consumidor con un consumidor de script o de línea de comandos (5861), o un filtro de eventos permanente (5859). Puede indicar persistencia mediante suscripciones WMI.",
+      "what_it_detects": "Eventos 5861 de Microsoft-Windows-WMI-Activity/Operational que mencionan ActiveScriptEventConsumer, CommandLineEventConsumer o CommandLineTemplate, y cualquier evento 5859. Excluye el filtro SCM Event Provider del grupo Administradores (S-1-5-32-544), que es legítimo.",
+      "why_it_matters": "Una suscripción WMI permanente (ATT&CK T1546.003) ejecuta un comando o script, a menudo como SYSTEM, cuando ocurre un evento, por ejemplo al arrancar o cada cierto tiempo. Sobrevive a reinicios y no aparece en las claves Run ni en las tareas programadas.",
+      "triage_steps": [
+        "Lea el texto del evento 5861: anote el nombre del Eventfilter, el Consumer y el valor de CommandLineTemplate o ScriptText. Busque PowerShell codificado, rutas en Users\\Public o Temp, o URLs.",
+        "En el 5859 revise Query, Provider, NamespaceName, User y PossibleCause. Una consulta sobre Win32_PerfFormattedData o __InstanceModificationEvent con WITHIN suele indicar un disparador temporizado.",
+        "Enumere en vivo con Get-CimInstance -Namespace root\\subscription las clases __EventFilter, __EventConsumer y __FilterToConsumerBinding, y confirme que la suscripción sigue presente.",
+        "Identifique el proceso creador: revise los eventos 5857/5860 del mismo host y, si existen, Sysmon 19/20/21 y Security 4688 en +/- 15 minutos.",
+        "Determine qué usuario o cuenta creó la suscripción y si tiene logons recientes inusuales (4624) o movimiento lateral desde otra IP.",
+        "Busque el mismo nombre de filtro o consumidor en otros endpoints, y revise alertas anteriores del host y del usuario."
+      ],
+      "false_positives": [
+        "Agentes de gestión o monitoreo de hardware (por ejemplo drivers de salud de HP o Dell) que registran consumidores permanentes.",
+        "Software de inventario, backup o EDR que usa suscripciones WMI para vigilar servicios o el hardware.",
+        "Scripts de administradores o GPO que crean suscripciones WMI documentadas."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o con el inventario de software si la suscripción es conocida antes de actuar.",
+        "Si es maliciosa, aísle el endpoint y exporte el filtro, el consumidor y el binding, junto con el binario o script referenciado, como evidencia.",
+        "Elimine el binding, el consumidor y el filtro con Remove-CimInstance solo después de documentarlos; elimine el payload asociado.",
+        "Revise y rote las credenciales de la cuenta creadora y busque la misma suscripción en toda la flota.",
+        "Si se confirman consumidores legítimos, documéntelos y agregue una exclusión específica por nombre y ruta."
+      ],
+      "severity_rationale": "Medium es adecuado: la persistencia WMI es una técnica de alto impacto, pero algunos agentes legítimos generan estos eventos y la regla tiene pocas pruebas en entornos reales."
+    },
+    "en": {
+      "summary": "The WMI-Activity log recorded a filter-to-consumer binding with a script or command-line consumer (5861), or a permanent event filter (5859). This may mean someone set up persistence through a WMI subscription.",
+      "what_it_detects": "Event 5861 in Microsoft-Windows-WMI-Activity/Operational that mentions ActiveScriptEventConsumer, CommandLineEventConsumer or CommandLineTemplate, plus any event 5859. The legitimate SCM Event Provider filter owned by Administrators (S-1-5-32-544) is excluded.",
+      "why_it_matters": "A permanent WMI event subscription (ATT&CK T1546.003) runs a command or script, often as SYSTEM, when a trigger fires, such as at startup or on a timer. It survives reboots and stays out of Run keys and scheduled tasks.",
+      "triage_steps": [
+        "Read the 5861 event text. Note the Eventfilter name, the Consumer and the CommandLineTemplate or ScriptText value. Look for encoded PowerShell, Users\\Public or Temp paths, or URLs.",
+        "For 5859, review Query, Provider, NamespaceName, User and PossibleCause. A query on Win32_PerfFormattedData or __InstanceModificationEvent with WITHIN usually means a timed trigger.",
+        "Enumerate root\\subscription live with Get-CimInstance: __EventFilter, __EventConsumer and __FilterToConsumerBinding. Confirm the subscription is still present.",
+        "Find the creating process. Check 5857/5860 on the same host and, if available, Sysmon 19/20/21 and Security 4688 within +/- 15 minutes.",
+        "Identify the account that created the subscription. Check it for unusual recent logons (4624) or lateral movement from another IP.",
+        "Hunt for the same filter or consumer name on other endpoints. Review earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Hardware management or monitoring agents, such as HP or Dell health drivers, that register permanent consumers.",
+        "Inventory, backup or EDR software that uses WMI subscriptions to watch services or hardware.",
+        "Documented admin scripts or GPOs that create WMI subscriptions."
+      ],
+      "response_steps": [
+        "Before acting, check with the system owner or the software inventory whether the subscription is known.",
+        "If it is malicious, isolate the endpoint. Export the filter, consumer and binding, plus the binary or script they reference, as evidence.",
+        "Document the binding, consumer and filter, then remove them with Remove-CimInstance and delete the related payload.",
+        "Review and rotate the creating account's credentials. Hunt for the same subscription across the fleet.",
+        "If the consumers are legitimate, document them and add a narrow exclusion by name and path."
+      ],
+      "severity_rationale": "Medium fits because WMI persistence has high impact, but some legitimate agents produce these events and the rule has had little real-world testing."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Event 5861 binding a filter to a CommandLineEventConsumer that starts a binary from Users\\Public",
+        "event": {
+          "EventID": 5861,
+          "Channel": "Microsoft-Windows-WMI-Activity/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "message": "Namespace = //./root/subscription; Eventfilter = SysUpdater (refer to its activate eventid:5859); Consumer = CommandLineEventConsumer=\"SysUpdater\"; PossibleCause = Binding EventFilter: instance of __EventFilter { EventNamespace = \"root\\\\cimv2\"; Name = \"SysUpdater\"; Query = \"SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfFormattedData_PerfOS_System'\"; QueryLanguage = \"WQL\"; }; Perm. Consumer: instance of CommandLineEventConsumer { CommandLineTemplate = \"C:\\\\Users\\\\Public\\\\updater.exe\"; Name = \"SysUpdater\"; };"
+        }
+      },
+      {
+        "description": "Event 5859 for a permanent filter registered by a non-SCM provider",
+        "event": {
+          "EventID": 5859,
+          "Channel": "Microsoft-Windows-WMI-Activity/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "NamespaceName": "//./root/CIMV2",
+          "Query": "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfFormattedData_PerfOS_System'",
+          "User": "S-1-5-18",
+          "processid": 3412,
+          "Provider": "WMI Kernel Trace Event Provider",
+          "queryid": 0,
+          "PossibleCause": "Permanent"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate 5859 for the SCM Event Provider owned by Administrators, removed by the filter",
+        "event": {
+          "EventID": 5859,
+          "Channel": "Microsoft-Windows-WMI-Activity/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "NamespaceName": "//./root/CIMV2",
+          "Query": "select * from MSFT_SCMEventLogEvent",
+          "User": "S-1-5-32-544",
+          "processid": 1260,
+          "Provider": "SCM Event Provider",
+          "queryid": 0,
+          "PossibleCause": "Permanent"
+        }
+      },
+      {
+        "description": "Event 5861 binding to an NTEventLogEventConsumer, with none of the script or command-line consumer keywords",
+        "event": {
+          "EventID": 5861,
+          "Channel": "Microsoft-Windows-WMI-Activity/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "message": "Namespace = //./root/subscription; Eventfilter = HWHealthFilter (refer to its activate eventid:5859); Consumer = NTEventLogEventConsumer=\"HWHealthLogger\"; PossibleCause = Binding EventFilter: instance of __EventFilter { Name = \"HWHealthFilter\"; QueryLanguage = \"WQL\"; }; Perm. Consumer: instance of NTEventLogEventConsumer { Name = \"HWHealthLogger\"; SourceName = \"HWHealth\"; };"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

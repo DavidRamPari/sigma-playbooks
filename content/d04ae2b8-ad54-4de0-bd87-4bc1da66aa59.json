@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "d04ae2b8-ad54-4de0-bd87-4bc1da66aa59",
+    "title": "Kerberoasting Activity - Initial Query",
+    "level": "medium",
+    "status": "test",
+    "author": "@kostastsale",
+    "path": "windows/builtin/security/win_security_kerberoasting_activity.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_kerberoasting_activity.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio emitió con éxito un ticket de servicio Kerberos (TGS) cifrado con RC4 para una cuenta de servicio de usuario. Puede ser una solicitud legítima o el inicio de un ataque de Kerberoasting.",
+      "what_it_detects": "Eventos 4769 con Status 0x0 y TicketEncryptionType 0x17 (RC4-HMAC). Se excluyen los ServiceName que terminan en krbtgt o en $ y los TargetUserName de cuentas de máquina (contienen '$@'). La regla es una consulta base: se recomienda agregar por origen y contar ServiceName distintos en ventanas cortas.",
+      "why_it_matters": "En Kerberoasting (ATT&CK T1558.003), un usuario del dominio pide tickets TGS para cuentas con SPN y los descifra offline para obtener la contraseña de la cuenta de servicio. Con RC4 el descifrado es más fácil, y muchas de estas cuentas tienen privilegios altos.",
+      "triage_steps": [
+        "Identifique al solicitante en TargetUserName y el origen en IpAddress. Luego resuelva qué host y qué usuario corresponden a esa IP.",
+        "Cuente los ServiceName distintos que pidió el mismo IpAddress o TargetUserName en +/- 15 minutos. Muchos SPN en pocos segundos indican Kerberoasting.",
+        "Revise la cuenta ServiceName: privilegios, pertenencia a grupos administrativos, antigüedad de la contraseña y si su atributo msDS-SupportedEncryptionTypes permite AES.",
+        "Compare con la línea base: ¿ese usuario o host suele pedir tickets RC4 para ese servicio? Busque alertas anteriores de la misma entidad.",
+        "En el host de origen, revise los procesos de +/- 15 minutos: PowerShell, Rubeus, scripts de Impacket, consultas LDAP de SPN (setspn -Q, servicePrincipalName=*).",
+        "Revise si hubo inicios de sesión posteriores (4624, 4648) con la cuenta de servicio desde orígenes inusuales; podrían indicar que ya se descifró la contraseña."
+      ],
+      "false_positives": [
+        "Aplicaciones heredadas o servicios que solo admiten RC4 y piden tickets de forma habitual.",
+        "Cuentas de servicio sin AES habilitado en msDS-SupportedEncryptionTypes, por lo que el DC emite RC4 por defecto.",
+        "Herramientas de inventario, monitoreo o auditoría de seguridad autorizadas que enumeran SPN."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del usuario y del host si la actividad era esperada o si era una prueba de penetración autorizada.",
+        "Si hay indicios de abuso, aísle el endpoint de origen y deshabilite o restrinja temporalmente la cuenta solicitante.",
+        "Cambie las contraseñas de las cuentas de servicio afectadas usando contraseñas largas y aleatorias, o migre a gMSA.",
+        "Habilite AES en las cuentas de servicio y planifique deshabilitar RC4. Revise el uso posterior de las cuentas comprometidas."
+      ],
+      "severity_rationale": "Es media porque un solo ticket RC4 suele ser legítimo en entornos con sistemas heredados; el riesgo sube cuando muchos SPN se piden desde un mismo origen en poco tiempo."
+    },
+    "en": {
+      "summary": "A domain controller successfully issued an RC4-encrypted Kerberos service ticket (TGS) for a user-based service account. It may be a legitimate request or the first step of Kerberoasting.",
+      "what_it_detects": "Event 4769 with Status 0x0 and TicketEncryptionType 0x17 (RC4-HMAC). It excludes ServiceName values ending in krbtgt or $, and TargetUserName values containing '$@' (machine accounts). The rule is meant as a base query: aggregate by source and count distinct ServiceName values in short windows.",
+      "why_it_matters": "In Kerberoasting (ATT&CK T1558.003), any domain user requests TGS tickets for accounts with SPNs and cracks them offline to get the service account password. RC4 makes the cracking easier, and service accounts are often highly privileged.",
+      "triage_steps": [
+        "Identify the requester in TargetUserName and the source in IpAddress. Then find which host and user that IP belongs to.",
+        "Count the distinct ServiceName values requested by the same IpAddress or TargetUserName within +/- 15 minutes. Many SPNs in a few seconds points to Kerberoasting.",
+        "Review the ServiceName account: its privileges, admin group membership, password age, and whether msDS-SupportedEncryptionTypes allows AES.",
+        "Compare with the baseline: does this user or host normally request RC4 tickets for this service? Check earlier alerts for the same entity.",
+        "On the source host, review processes within +/- 15 minutes: PowerShell, Rubeus, Impacket scripts, and SPN LDAP queries (setspn -Q, servicePrincipalName=*).",
+        "Look for later logons (4624, 4648) with the service account from unusual sources. These could mean the password was already cracked."
+      ],
+      "false_positives": [
+        "Legacy applications or services that only support RC4 and request tickets routinely.",
+        "Service accounts without AES enabled in msDS-SupportedEncryptionTypes, so the DC issues RC4 by default.",
+        "Authorized inventory, monitoring or security audit tools that enumerate SPNs."
+      ],
+      "response_steps": [
+        "Check with the user and host owners whether the activity was expected or part of an authorized penetration test.",
+        "If abuse is likely, isolate the source endpoint and temporarily disable or restrict the requesting account.",
+        "Reset passwords of the affected service accounts to long, random values, or migrate them to gMSAs.",
+        "Enable AES on service accounts and plan to disable RC4. Monitor later use of the affected accounts."
+      ],
+      "severity_rationale": "Medium, because a single RC4 ticket is often legitimate where legacy systems exist; the risk rises when one source requests many SPNs in a short time."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful RC4 TGS request by a domain user for a user-based SQL service account",
+        "event": {
+          "EventID": 4769,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "jperez@ANDES.EXAMPLE.COM",
+          "TargetDomainName": "ANDES.EXAMPLE.COM",
+          "ServiceName": "svc_sql",
+          "ServiceSid": "S-1-5-21-1111111111-2222222222-3333333333-1605",
+          "TicketOptions": "0x40810000",
+          "TicketEncryptionType": "0x17",
+          "IpAddress": "::ffff:192.0.2.45",
+          "IpPort": "50122",
+          "Status": "0x0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same user requesting a ticket for a computer account service (ServiceName ends with $), excluded by filter",
+        "event": {
+          "EventID": 4769,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "jperez@ANDES.EXAMPLE.COM",
+          "TargetDomainName": "ANDES.EXAMPLE.COM",
+          "ServiceName": "FS-02$",
+          "TicketOptions": "0x40810000",
+          "TicketEncryptionType": "0x17",
+          "IpAddress": "::ffff:192.0.2.45",
+          "IpPort": "50130",
+          "Status": "0x0"
+        }
+      },
+      {
+        "description": "Ticket for the same service account but encrypted with AES256 (0x12), not RC4",
+        "event": {
+          "EventID": 4769,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "mrojas@ANDES.EXAMPLE.COM",
+          "TargetDomainName": "ANDES.EXAMPLE.COM",
+          "ServiceName": "svc_sql",
+          "TicketOptions": "0x40810000",
+          "TicketEncryptionType": "0x12",
+          "IpAddress": "::ffff:192.0.2.77",
+          "IpPort": "51544",
+          "Status": "0x0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

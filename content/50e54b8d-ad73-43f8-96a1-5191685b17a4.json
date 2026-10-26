@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "50e54b8d-ad73-43f8-96a1-5191685b17a4",
+    "title": "Silenttrinity Stager Msbuild Activity",
+    "level": "high",
+    "status": "test",
+    "author": "Kiran kumar s, oscd.community",
+    "path": "windows/network_connection/net_connection_win_silenttrinity_stager_msbuild_activity.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/network_connection/net_connection_win_silenttrinity_stager_msbuild_activity.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1127.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "MSBuild.exe inició una conexión de red saliente a los puertos 80 o 443. Esto puede indicar un stager de SILENTTRINITY u otro payload ejecutado mediante una tarea inline de MSBuild que contacta a su C2.",
+      "what_it_detects": "Eventos de conexión de red en Windows (por ejemplo, Sysmon Event ID 3) donde Image termina en \\msbuild.exe, Initiated es true y DestinationPort es 80 o 443.",
+      "why_it_matters": "MSBuild es un binario firmado por Microsoft que compila y ejecuta código C# incrustado en archivos de proyecto XML. Los atacantes lo usan para ejecutar código como proxy y evadir controles (T1127.001). SILENTTRINITY ofrece stagers de MSBuild que descargan su implante por HTTP/HTTPS.",
+      "triage_steps": [
+        "Revise Image, DestinationIp, DestinationHostname y DestinationPort. Determine si el destino es un feed de paquetes, un repositorio interno conocido o una IP/dominio sin relación con desarrollo.",
+        "Identifique el proceso padre de msbuild.exe. Un padre como Visual Studio, dotnet o un agente de build es esperado; cmd, powershell, wscript, Office o explorer es sospechoso.",
+        "Obtenga la CommandLine del evento de creación de proceso y ubique el archivo de proyecto. Rutas en %TEMP%, Downloads, Public o extensiones inusuales (.xml, .txt) son indicadores fuertes.",
+        "Si es posible, recupere el archivo de proyecto y busque UsingTask, CodeTaskFactory o código C# inline que descargue o cargue ensamblados.",
+        "Verifique si el host es una estación de desarrollo o un servidor de build, y si el usuario normalmente compila código.",
+        "Pivote en el mismo host ±15 minutos: procesos hijos de msbuild.exe, carga de clr.dll o IronPython, archivos creados y otras conexiones al mismo destino.",
+        "Consulte la reputación de la IP/dominio destino y busque otros hosts que se conecten a él. Revise alertas previas para el host y el usuario."
+      ],
+      "false_positives": [
+        "Restauración de paquetes NuGet o descarga de dependencias durante una compilación legítima (msbuild /t:restore).",
+        "Agentes de CI/CD (Azure DevOps, Jenkins, TeamCity) que compilan y publican artefactos por HTTP/HTTPS.",
+        "Tareas de build personalizadas que consultan servidores internos de versiones, firma de código o artefactos."
+      ],
+      "response_steps": [
+        "Valide con el propietario del host o el equipo de desarrollo si la compilación era esperada y si el destino es legítimo.",
+        "Si se confirma actividad maliciosa, aísle el endpoint y bloquee la IP/dominio destino en proxy y firewall.",
+        "Preserve el archivo de proyecto, la memoria del proceso y los logs relevantes antes de terminar msbuild.exe.",
+        "Busque persistencia, credenciales comprometidas y movimiento lateral desde el host; restablezca las credenciales del usuario afectado.",
+        "Considere restringir msbuild.exe mediante WDAC/AppLocker en equipos que no sean de desarrollo."
+      ],
+      "severity_rationale": "Es alta porque las conexiones web salientes de msbuild.exe fuera de contextos de compilación son poco comunes y coinciden con la ejecución de un stager de C2 mediante un binario confiable."
+    },
+    "en": {
+      "summary": "MSBuild.exe initiated an outbound network connection on port 80 or 443. This may be a SILENTTRINITY stager or another MSBuild inline-task payload contacting its C2.",
+      "what_it_detects": "Windows network connection events (for example Sysmon Event ID 3) where Image ends with \\msbuild.exe, Initiated is true and DestinationPort is 80 or 443.",
+      "why_it_matters": "MSBuild is a Microsoft-signed binary that compiles and runs C# code embedded in XML project files. Attackers abuse it for proxy execution and defense evasion (T1127.001). SILENTTRINITY provides MSBuild stagers that fetch its implant over HTTP/HTTPS.",
+      "triage_steps": [
+        "Review Image, DestinationIp, DestinationHostname and DestinationPort. Decide whether the destination is a package feed, a known internal repository or an unrelated IP/domain.",
+        "Identify the parent of msbuild.exe. Visual Studio, dotnet or a build agent is expected; cmd, powershell, wscript, Office or explorer is suspicious.",
+        "Get the CommandLine from the process creation event and locate the project file. Paths in %TEMP%, Downloads, Public or odd extensions (.xml, .txt) are strong indicators.",
+        "If possible, retrieve the project file and look for UsingTask, CodeTaskFactory or inline C# that downloads or loads assemblies.",
+        "Check whether the host is a developer workstation or build server and whether the user normally compiles code.",
+        "Pivot on the same host +/- 15 minutes: msbuild.exe child processes, clr.dll or IronPython loads, created files and other connections to the destination.",
+        "Check destination reputation, find other hosts contacting it, and review earlier alerts for the host and user."
+      ],
+      "false_positives": [
+        "NuGet package restore or dependency downloads during a legitimate build (msbuild /t:restore).",
+        "CI/CD agents (Azure DevOps, Jenkins, TeamCity) building and publishing artifacts over HTTP/HTTPS.",
+        "Custom build tasks that query internal versioning, code-signing or artifact servers."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or development team whether the build was expected and the destination legitimate.",
+        "If malicious, isolate the endpoint and block the destination IP/domain at the proxy and firewall.",
+        "Preserve the project file, process memory and relevant logs before terminating msbuild.exe.",
+        "Hunt for persistence, credential theft and lateral movement from the host; reset the affected user's credentials.",
+        "Consider restricting msbuild.exe with WDAC/AppLocker on non-developer machines."
+      ],
+      "severity_rationale": "High, because outbound web connections from msbuild.exe outside build contexts are uncommon and match C2 stager execution through a trusted binary."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "MSBuild launched from a user temp folder initiates an HTTPS connection to an external IP",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.local",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\MSBuild.exe",
+          "ProcessId": 6120,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.10.4.42",
+          "SourcePort": 51874,
+          "DestinationIp": "203.0.113.45",
+          "DestinationHostname": "cdn-update.example.com",
+          "DestinationPort": 443
+        }
+      },
+      {
+        "description": "MSBuild initiates a plain HTTP connection on port 80",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0207.andes.local",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\msbuild.exe",
+          "ProcessId": 4388,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.10.4.77",
+          "SourcePort": 50211,
+          "DestinationIp": "198.51.100.23",
+          "DestinationPort": 80
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MSBuild connects to an internal artifact server on a non-web port (8081), so the port condition fails",
+        "event": {
+          "EventID": 3,
+          "Computer": "BUILD-02.andes.local",
+          "User": "ANDES\\svc_build",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\MSBuild.exe",
+          "ProcessId": 7012,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.10.8.12",
+          "SourcePort": 53110,
+          "DestinationIp": "192.0.2.15",
+          "DestinationHostname": "artifacts.example.org",
+          "DestinationPort": 8081
+        }
+      },
+      {
+        "description": "A different process (devenv.exe) makes an HTTPS connection, so the Image selection fails",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.local",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\IDE\\devenv.exe",
+          "ProcessId": 9104,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.10.4.42",
+          "SourcePort": 51990,
+          "DestinationIp": "192.0.2.80",
+          "DestinationHostname": "packages.example.org",
+          "DestinationPort": 443
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

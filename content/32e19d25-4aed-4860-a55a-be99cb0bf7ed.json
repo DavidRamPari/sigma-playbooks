@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "32e19d25-4aed-4860-a55a-be99cb0bf7ed",
+    "title": "Possible DC Shadow Attack",
+    "level": "medium",
+    "status": "test",
+    "author": "Ilyas Ochkov, oscd.community, Chakib Gzenayi (@Chak092), Hosni Mribah",
+    "path": "windows/builtin/security/win_security_possible_dc_shadow.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_possible_dc_shadow.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1207"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se agregó un SPN que comienza con GC/ (Global Catalog) a una cuenta de equipo, según los eventos 4742 o 5136. Si el equipo no es un controlador de dominio legítimo, puede tratarse del registro de un DC falso con DCShadow.",
+      "what_it_detects": "Eventos 4742 (cuenta de equipo modificada) cuyo campo ServicePrincipalNames contiene 'GC/', o eventos 5136 (objeto de directorio modificado) con AttributeLDAPDisplayName servicePrincipalName y AttributeValue que comienza con 'GC/'.",
+      "why_it_matters": "Con DCShadow (T1207, Rogue Domain Controller), un atacante con privilegios elevados registra un equipo como DC y replica cambios maliciosos en AD (SIDHistory, grupos, ACL) sin pasar por los registros habituales de modificación.",
+      "triage_steps": [
+        "Identifique la cuenta de equipo afectada (TargetUserName en 4742 u ObjectDN en 5136) y confirme si está en la OU Domain Controllers o en el inventario de DC.",
+        "Revise SubjectUserName y SubjectLogonId: quién hizo el cambio, desde qué host y si la cuenta tiene derechos de Domain Admin o equivalentes.",
+        "Busque una solicitud de cambio o promoción de DC (dcpromo, Install-ADDSDomainController) para ese equipo y esa fecha.",
+        "Verifique si también se agregó el SPN E3514235-4B06-11D1-AB04-00C04FC2DCD2/ (replicación DRS) a la misma cuenta.",
+        "En los DC, busque eventos 5137 y 5141 de objetos nTDSDSA o server bajo CN=Sites,CN=Configuration dentro de +/- 15 minutos; crear y borrar rápido es típico de DCShadow.",
+        "En el equipo origen, revise procesos y línea de comandos (mimikatz, lsadump::dcshadow, ejecución como SYSTEM) y conexiones RPC/DRSUAPI hacia los DC.",
+        "Revise alertas anteriores del mismo usuario y host, y los cambios replicados recientemente en cuentas privilegiadas (SIDHistory, primaryGroupID, AdminSDHolder)."
+      ],
+      "false_positives": [
+        "Promoción legítima de un nuevo controlador de dominio o catálogo global; excluya los DC conocidos.",
+        "Reconstrucción o restauración autorizada de un DC por el equipo de Active Directory."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de AD si el cambio fue autorizado antes de tomar acciones.",
+        "Si no lo fue, aísle el equipo origen y deshabilite o restablezca las credenciales de la cuenta que hizo el cambio.",
+        "Elimine los SPN GC/ y E3514235 agregados y los objetos server/nTDSDSA falsos, después de documentarlos como evidencia.",
+        "Audite y revierta los atributos replicados por el DC falso; evalúe un restablecimiento controlado de krbtgt y escale como incidente de compromiso de dominio."
+      ],
+      "severity_rationale": "Es media porque la promoción legítima de un DC produce el mismo evento, pero un resultado no autorizado implica un compromiso de dominio y debe escalarse de inmediato."
+    },
+    "en": {
+      "summary": "An SPN starting with GC/ (Global Catalog) was added to a computer account, according to Security event 4742 or 5136. If the host is not a legitimate domain controller, this may be DCShadow registering a rogue DC.",
+      "what_it_detects": "Event 4742 (computer account changed) where ServicePrincipalNames contains 'GC/', or event 5136 (directory object modified) where AttributeLDAPDisplayName is servicePrincipalName and AttributeValue starts with 'GC/'.",
+      "why_it_matters": "With DCShadow (T1207, Rogue Domain Controller), an attacker with high privileges registers a host as a DC and replicates malicious AD changes (SIDHistory, group membership, ACLs) without the usual change logging.",
+      "triage_steps": [
+        "Identify the affected computer account (TargetUserName in 4742, ObjectDN in 5136) and check whether it is in the Domain Controllers OU or the DC inventory.",
+        "Review SubjectUserName and SubjectLogonId: who made the change, from which host, and whether the account has Domain Admin or equivalent rights.",
+        "Look for a change request or DC promotion (dcpromo, Install-ADDSDomainController) for that host and time.",
+        "Check whether the E3514235-4B06-11D1-AB04-00C04FC2DCD2/ (DRS replication) SPN was also added to the same account.",
+        "On DCs, search for 5137 and 5141 events on nTDSDSA or server objects under CN=Sites,CN=Configuration within +/- 15 minutes; quick create-then-delete is typical of DCShadow.",
+        "On the source host, review processes and command lines (mimikatz, lsadump::dcshadow, SYSTEM execution) and RPC/DRSUAPI connections to DCs.",
+        "Review earlier alerts for the same user and host, and recently replicated changes on privileged accounts (SIDHistory, primaryGroupID, AdminSDHolder)."
+      ],
+      "false_positives": [
+        "Legitimate promotion of a new domain controller or global catalog; exclude known DCs.",
+        "Authorized rebuild or restore of a DC by the Active Directory team."
+      ],
+      "response_steps": [
+        "Confirm with the AD team whether the change was authorized before acting.",
+        "If not, isolate the source host and disable or reset the credentials of the account that made the change.",
+        "Remove the added GC/ and E3514235 SPNs and rogue server/nTDSDSA objects after documenting them as evidence.",
+        "Audit and revert attributes replicated by the rogue DC; consider a controlled krbtgt reset and escalate as a domain compromise incident."
+      ],
+      "severity_rationale": "Medium because legitimate DC promotion produces the same event, but an unauthorized hit means domain compromise and must be escalated immediately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "4742 on a workstation account gaining GC/ and DRS replication SPNs, made by a domain admin account",
+        "event": {
+          "EventID": 4742,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A1",
+          "TargetUserName": "WS-0142$",
+          "TargetDomainName": "ANDES",
+          "ServicePrincipalNames": "HOST/WS-0142.andes.example.com\n\tRestrictedKrbHost/WS-0142\n\tGC/WS-0142.andes.example.com/andes.example.com\n\tE3514235-4B06-11D1-AB04-00C04FC2DCD2/1b7c3a2e-0f4d-4c11-9a77-2d5e8f6b9c01/andes.example.com"
+        }
+      },
+      {
+        "description": "5136 value added to servicePrincipalName with a GC/ value on a workstation object",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN=WS-0142,CN=Computers,DC=andes,DC=example,DC=com",
+          "ObjectClass": "computer",
+          "AttributeLDAPDisplayName": "servicePrincipalName",
+          "AttributeValue": "GC/WS-0142.andes.example.com/andes.example.com",
+          "OperationType": "%%14674"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "4742 for a normal computer account change with only HOST and RestrictedKrbHost SPNs",
+        "event": {
+          "EventID": 4742,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "WS-0142$",
+          "TargetDomainName": "ANDES",
+          "ServicePrincipalNames": "HOST/WS-0142.andes.example.com\n\tRestrictedKrbHost/WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "5136 adding a regular HTTP SPN to a service account, not a GC/ value",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "admin.ad",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN=svc-web,OU=Services,DC=andes,DC=example,DC=com",
+          "ObjectClass": "user",
+          "AttributeLDAPDisplayName": "servicePrincipalName",
+          "AttributeValue": "HTTP/intranet.andes.example.com",
+          "OperationType": "%%14674"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

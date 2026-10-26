@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "97fbabf8-8e1b-47a2-b7d5-a418d2b95e3d",
+    "title": "AWS New Lambda Layer Attached",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer",
+    "path": "cloud/aws/cloudtrail/aws_new_lambda_layer_attached.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_new_lambda_layer_attached.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS llamó a UpdateFunctionConfiguration en Lambda con el parámetro layers, es decir, agregó o reemplazó capas en una función existente. Hay que confirmar si el cambio fue autorizado y si la capa es de confianza.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource lambda.amazonaws.com, eventName que empieza con UpdateFunctionConfiguration (incluye sufijos de versión como 20150331v2) y un valor en requestParameters.layers.",
+      "why_it_matters": "El código de una capa se ejecuta dentro de la función con su rol IAM. Una capa maliciosa puede robar credenciales, interceptar eventos (como demuestra lambda-spy) y acceder a los recursos del rol. Esto es escalamiento de privilegios.",
+      "triage_steps": [
+        "Identifique userIdentity.arn, el tipo de identidad, sourceIPAddress y userAgent. Confirme si es un pipeline de CI/CD o un administrador conocido.",
+        "Revise requestParameters.functionName y requestParameters.layers. Anote el ARN y la versión de cada capa, y compárelos con la configuración previa de la función.",
+        "Verifique la cuenta dueña del ARN de la capa. Si la capa viene de una cuenta externa o desconocida, aumente la prioridad.",
+        "Busque PublishLayerVersion, AddLayerVersionPermission y GetLayerVersion de la misma identidad o IP en las 24 horas anteriores.",
+        "Examine el rol de ejecución de la función, sus permisos y qué datos o servicios puede alcanzar.",
+        "Pivote por la misma identidad e IP ±15 minutos: UpdateFunctionCode, cambios de variables de entorno, CreateAccessKey, AssumeRole o errores AccessDenied.",
+        "Descargue la versión de la capa con GetLayerVersion en un entorno aislado y revise su contenido, sobre todo extensiones, wrappers y llamadas de red."
+      ],
+      "false_positives": [
+        "Despliegues de Terraform, CloudFormation, SAM o Serverless Framework que actualizan versiones de capas de forma rutinaria.",
+        "Administradores que agregan capas de monitoreo o de seguridad de proveedores aprobados.",
+        "Actualizaciones planificadas de dependencias compartidas publicadas por el equipo de plataforma."
+      ],
+      "response_steps": [
+        "Confirme el cambio con el dueño de la función o con el ticket de cambio antes de actuar.",
+        "Si no está autorizado, restaure la configuración de capas anterior y bloquee la versión sospechosa de la capa revocando sus permisos.",
+        "Revoque las sesiones y rote las credenciales de la identidad que hizo el cambio. Revise el uso del rol de la función desde ese momento.",
+        "Restrinja lambda:UpdateFunctionConfiguration y el uso de capas externas con SCP o condiciones IAM como lambda:Layer."
+      ],
+      "severity_rationale": "Es nivel bajo porque agregar capas es una tarea operativa común, pero se debe escalar si la identidad, la IP o la cuenta de la capa son inusuales."
+    },
+    "en": {
+      "summary": "An AWS identity called Lambda UpdateFunctionConfiguration with a layers parameter, which attaches or replaces layers on an existing function. Confirm the change was authorized and the layer is trusted.",
+      "what_it_detects": "CloudTrail events with eventSource lambda.amazonaws.com, an eventName starting with UpdateFunctionConfiguration (including version suffixes such as 20150331v2) and a populated requestParameters.layers.",
+      "why_it_matters": "Layer code runs inside the function under its IAM role. A malicious layer can steal credentials, intercept invocations (as lambda-spy demonstrates) and reach the role's resources. This is privilege escalation.",
+      "triage_steps": [
+        "Identify userIdentity.arn, the identity type, sourceIPAddress and userAgent. Confirm whether it is a CI/CD pipeline or a known administrator.",
+        "Review requestParameters.functionName and requestParameters.layers. Record each layer ARN and version, and compare them with the function's previous configuration.",
+        "Check which account owns the layer ARN. Raise the priority if the layer comes from an external or unknown account.",
+        "Search for PublishLayerVersion, AddLayerVersionPermission and GetLayerVersion from the same identity or IP in the previous 24 hours.",
+        "Review the function's execution role, its permissions and the data or services it can reach.",
+        "Pivot on the same identity and IP within ±15 minutes: UpdateFunctionCode, environment variable changes, CreateAccessKey, AssumeRole or AccessDenied errors.",
+        "Download the layer version with GetLayerVersion in an isolated environment and inspect its contents, especially extensions, wrappers and network calls."
+      ],
+      "false_positives": [
+        "Terraform, CloudFormation, SAM or Serverless Framework deployments that bump layer versions routinely.",
+        "Administrators adding monitoring or security layers from approved vendors.",
+        "Planned updates of shared dependency layers published by the platform team."
+      ],
+      "response_steps": [
+        "Confirm the change with the function owner or the change ticket before acting.",
+        "If it is unauthorized, restore the previous layer configuration and block the suspicious layer version by revoking its permissions.",
+        "Revoke sessions and rotate credentials for the identity that made the change. Review how the function role has been used since then.",
+        "Restrict lambda:UpdateFunctionConfiguration and the use of external layers with SCPs or IAM conditions such as lambda:Layer."
+      ],
+      "severity_rationale": "Low fits because attaching layers is common operational work, but escalate when the identity, source IP or layer account is unusual."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "IAM user attaches a layer from an unfamiliar account to an existing function via the AWS CLI",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-18T14:03:12Z",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "UpdateFunctionConfiguration20150331v2",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.functionName": "billing-export",
+          "requestParameters.layers": "[\"arn:aws:lambda:us-east-1:444455556666:layer:perf-helper:3\"]",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Deployment role updates the function configuration to a new version of an internal layer",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-18T09:41:05Z",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "UpdateFunctionConfiguration",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.69 Python/3.12.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deployer/pipeline-run",
+          "requestParameters.functionName": "orders-api",
+          "requestParameters.layers": "[\"arn:aws:lambda:us-east-1:111122223333:layer:shared-utils:12\"]",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "UpdateFunctionConfiguration that only changes the timeout and memory, with no layers parameter",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-18T10:15:40Z",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "UpdateFunctionConfiguration20150331v2",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mrodriguez",
+          "requestParameters.functionName": "orders-api",
+          "requestParameters.timeout": 30,
+          "requestParameters.memorySize": 512,
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Publishing a new layer version, which is not an attachment to a function",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-18T09:30:02Z",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "PublishLayerVersion20181031",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.69 Python/3.12.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deployer/pipeline-run",
+          "requestParameters.layerName": "shared-utils",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

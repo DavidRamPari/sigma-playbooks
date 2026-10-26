@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "300bac00-e041-4ee2-9c36-e262656a6ecc",
+    "title": "Active Directory User Backdoors",
+    "level": "high",
+    "status": "test",
+    "author": "@neu5ron",
+    "path": "windows/builtin/security/win_security_alert_ad_user_backdoors.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_alert_ad_user_backdoors.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó un atributo de Active Directory que permite a una cuenta actuar en nombre de otra sin conocer sus credenciales: delegación restringida, delegación restringida basada en recursos (RBCD) o un servicePrincipalName en una cuenta de usuario.",
+      "what_it_detects": "Hay dos casos. El primero es un evento 4738 (cuenta de usuario modificada) con un valor real en AllowedToDelegateTo, es decir, que no está vacío ni es '-'. El segundo es un evento 5136 (cambio en el servicio de directorio) sobre msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity o servicePrincipalName cuando ObjectClass es 'user'.",
+      "why_it_matters": "Corresponde a ATT&CK T1098 (manipulación de cuentas). Con estos atributos un atacante puede suplantar a otros usuarios ante servicios mediante S4U de Kerberos y escalar a administrador de un equipo. Un SPN en una cuenta de usuario la expone a Kerberoasting. Además, el cambio da persistencia aunque se cambien las contraseñas.",
+      "triage_steps": [
+        "Identifique el EventID, el atributo (AttributeLDAPDisplayName o AllowedToDelegateTo), el objeto modificado (ObjectDN o TargetUserName) y el nuevo valor (AttributeValue).",
+        "Revise quién hizo el cambio (SubjectUserName, SubjectLogonId) y si esa cuenta administra AD o delegación según su función.",
+        "En 5136, revise OperationType: %%14674 significa valor agregado y %%14675 valor eliminado. Correlacione ambos por el mismo correlation ID.",
+        "Si el atributo es msDS-AllowedToActOnBehalfOfOtherIdentity, busque cuentas de equipo creadas recientemente (4741) y verifique si la SID del valor pertenece a una de ellas.",
+        "Busque solicitudes 4769 de tickets de servicio hacia el objeto modificado en +/- 15 minutos, sobre todo S4U2Self o S4U2Proxy hechas por cuentas inusuales.",
+        "Revise los inicios de sesión 4624 de SubjectUserName desde la misma IP de origen y las alertas previas sobre ese usuario o ese controlador de dominio.",
+        "Confirme con el dueño del servicio si existe un ticket de cambio que respalde la delegación o el SPN."
+      ],
+      "false_positives": [
+        "Administradores que configuran a propósito la delegación restringida o RBCD para aplicaciones web, SQL Server o servicios de archivos.",
+        "Instaladores o herramientas como setspn que registran SPN en cuentas de servicio de usuario, por ejemplo SQL Server o IIS.",
+        "Limpieza legítima que elimina valores de delegación, porque las eliminaciones en 5136 también disparan la regla."
+      ],
+      "response_steps": [
+        "Verifique con el equipo de AD que el cambio no está autorizado antes de actuar.",
+        "Si es malicioso, quite el valor de delegación o el SPN agregado y documente el valor original.",
+        "Deshabilite o restrinja la cuenta que hizo el cambio y cualquier cuenta de equipo creada para el ataque, como las creadas con MachineAccountQuota.",
+        "Restablezca las contraseñas de las cuentas afectadas y de las que recibieron un SPN. Revise los tickets emitidos y evalúe purgarlos.",
+        "Limite MachineAccountQuota y los permisos de escritura sobre estos atributos, y mantenga la auditoría de DS Access."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque estos cambios permiten suplantar cuentas y escalar privilegios en el dominio, y el cambio legítimo es poco frecuente y suele estar planificado."
+    },
+    "en": {
+      "summary": "An Active Directory attribute was changed that lets one account act on behalf of another without its credentials: constrained delegation, resource-based constrained delegation (RBCD), or a servicePrincipalName on a user account.",
+      "what_it_detects": "There are two cases. The first is event 4738 (user account changed) with a real AllowedToDelegateTo value, meaning not empty and not '-'. The second is event 5136 (directory service change) on msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity, or servicePrincipalName where ObjectClass is 'user'.",
+      "why_it_matters": "This maps to ATT&CK T1098 (Account Manipulation). With these attributes an attacker can impersonate users to services through Kerberos S4U and gain admin on a host. An SPN on a user account exposes it to Kerberoasting. The change also gives persistence that survives password resets.",
+      "triage_steps": [
+        "Note the EventID, the attribute (AttributeLDAPDisplayName or AllowedToDelegateTo), the target object (ObjectDN or TargetUserName) and the new value (AttributeValue).",
+        "Check who made the change (SubjectUserName, SubjectLogonId) and whether that account's role covers AD or delegation administration.",
+        "For 5136, check OperationType: %%14674 means value added and %%14675 means value deleted. Pair them by correlation ID.",
+        "If the attribute is msDS-AllowedToActOnBehalfOfOtherIdentity, look for recently created computer accounts (4741) and check whether the SID in the value belongs to one.",
+        "Look for 4769 service ticket requests to the target object within +/- 15 minutes, especially S4U2Self or S4U2Proxy requests from unusual accounts.",
+        "Review 4624 logons by SubjectUserName from the same source IP, and earlier alerts for that user or domain controller.",
+        "Confirm with the service owner whether a change ticket covers the delegation or SPN."
+      ],
+      "false_positives": [
+        "Admins deliberately configuring constrained delegation or RBCD for web apps, SQL Server or file services.",
+        "Installers or tools such as setspn registering SPNs on user service accounts, for example SQL Server or IIS.",
+        "Legitimate cleanup that removes delegation values, because deletions in 5136 also trigger the rule."
+      ],
+      "response_steps": [
+        "Confirm with the AD team that the change is unauthorized before acting.",
+        "If it is malicious, remove the added delegation value or SPN and record the original value.",
+        "Disable or restrict the account that made the change and any computer account created for the attack, such as one created through MachineAccountQuota.",
+        "Reset passwords for the affected accounts and for any account given an SPN. Review issued tickets and consider purging them.",
+        "Restrict MachineAccountQuota and write permissions on these attributes, and keep DS Access auditing enabled."
+      ],
+      "severity_rationale": "High fits because these changes enable account impersonation and domain privilege escalation, and legitimate changes are rare and usually planned."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "4738 user account change that sets constrained delegation to a file server CIFS service",
+        "event": {
+          "EventID": 4738,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "svc-web",
+          "TargetDomainName": "ANDES",
+          "AllowedToDelegateTo": "cifs/FS-01.andes.example.com"
+        }
+      },
+      {
+        "description": "5136 RBCD write of msDS-AllowedToActOnBehalfOfOtherIdentity on a computer object",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN=WS-0142,OU=Workstations,DC=andes,DC=example,DC=com",
+          "ObjectClass": "computer",
+          "AttributeLDAPDisplayName": "msDS-AllowedToActOnBehalfOfOtherIdentity",
+          "AttributeValue": "O:BAD:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-1111111111-2222222222-3333333333-4120)",
+          "OperationType": "%%14674"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "4738 routine user change where AllowedToDelegateTo is '-' (no delegation set)",
+        "event": {
+          "EventID": 4738,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "helpdesk01",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "AllowedToDelegateTo": "-"
+        }
+      },
+      {
+        "description": "5136 servicePrincipalName update on a computer object, which is not ObjectClass user",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN=WS-0142,OU=Workstations,DC=andes,DC=example,DC=com",
+          "ObjectClass": "computer",
+          "AttributeLDAPDisplayName": "servicePrincipalName",
+          "AttributeValue": "HOST/WS-0142.andes.example.com",
+          "OperationType": "%%14674"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

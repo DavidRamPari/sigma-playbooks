@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "0cf2e1c6-8d10-4273-8059-738778f981ad",
+    "title": "Potential WerFault ReflectDebugger Registry Value Abuse",
+    "level": "high",
+    "status": "test",
+    "author": "X__Junior",
+    "path": "windows/registry/registry_set/registry_set_persistence_reflectdebugger.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_reflectdebugger.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor ReflectDebugger en la clave Hangs de Windows Error Reporting. Si el valor apunta a un ejecutable, WerFault.exe puede lanzarlo, lo que da al atacante persistencia sigilosa mediante un binario confiable de Windows.",
+      "what_it_detects": "Eventos de escritura en el registro donde TargetObject termina en \\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\ReflectDebugger, en cualquier hive o vista WOW6432Node, sin importar el dato escrito ni el proceso que lo escribe.",
+      "why_it_matters": "Cuando WerFault.exe se ejecuta en modo de reflexión (opción -pr), inicia el programa guardado en ReflectDebugger. Los atacantes lo usan para que un binario firmado del sistema ejecute su payload y así ocultar persistencia y ejecución. La regla lo asocia a evasión y suplantación (T1036.003).",
+      "triage_steps": [
+        "Revise el campo Details: registre la ruta y los argumentos guardados en ReflectDebugger. Las rutas en carpetas escribibles por usuarios (Users, ProgramData, Temp) son muy sospechosas.",
+        "Identifique el proceso que escribió el valor en Image y el usuario. Vea si fue reg.exe, powershell.exe o un binario desconocido, y revise su CommandLine y ParentImage.",
+        "Obtenga el hash y la firma del binario indicado en Details. Verifique su reputación y si está firmado por un proveedor conocido.",
+        "Busque en la creación de procesos del mismo host WerFault.exe con -pr en CommandLine y cualquier proceso hijo que coincida con la ruta de Details.",
+        "Revise el host en +/- 15 minutos: descargas, archivos nuevos, cambios en claves Run, servicios o IFEO, e inicios de sesión del mismo usuario.",
+        "Busque alertas previas del host y del usuario, y consulte otros endpoints por el mismo TargetObject o valor de Details."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos; el uso legítimo de ReflectDebugger es poco común.",
+        "Entornos de desarrollo o depuración que configuran a propósito un depurador de reflexión de bloqueos en equipos de prueba.",
+        "Ejercicios autorizados de red team o pruebas de detección que reproducen esta técnica de persistencia."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con los registros de cambios si el valor se configuró de forma intencional.",
+        "Si no hay justificación, aísle el endpoint y exporte la clave Hangs y el binario referenciado como evidencia antes de modificar algo.",
+        "Tras preservar la evidencia, elimine el valor ReflectDebugger y ponga el binario en cuarentena; retire otras persistencias halladas.",
+        "Restablezca las credenciales de la cuenta que escribió el valor si tiene privilegios de administrador y busque el mismo valor en toda la flota.",
+        "Monitoree el host por ejecuciones de WerFault.exe -pr y nuevas escrituras en esta clave."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque la clave casi no tiene uso legítimo y modificarla requiere privilegios de administrador, lo que indica persistencia deliberada en un host comprometido."
+    },
+    "en": {
+      "summary": "A process wrote the ReflectDebugger value under the Windows Error Reporting Hangs key. If the value points to an executable, WerFault.exe can launch it, which gives an attacker stealthy persistence through a trusted Windows binary.",
+      "what_it_detects": "Registry set events where TargetObject ends with \\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\ReflectDebugger, in any hive or WOW6432Node view, regardless of the value data or the writing process.",
+      "why_it_matters": "When WerFault.exe runs in reflection mode (the -pr switch), it starts the program stored in ReflectDebugger. Attackers abuse this so a signed system binary runs their payload, which hides persistence and execution. The rule maps this to stealth and masquerading (T1036.003).",
+      "triage_steps": [
+        "Read the Details field: record the executable path and arguments stored in ReflectDebugger. Paths in user-writable folders (Users, ProgramData, Temp) are highly suspicious.",
+        "Identify the writer from Image and the user. Note whether it was reg.exe, powershell.exe, or an unknown binary, and review its CommandLine and ParentImage in process creation logs.",
+        "Get the hash and signature of the binary in Details. Check reputation and whether it is signed by a known vendor.",
+        "Search process creation on the same host for WerFault.exe with -pr in CommandLine, and for any child process matching the Details path.",
+        "Review the host within +/- 15 minutes for downloads, new files, other Run key, service or IFEO changes, and logons by the same user.",
+        "Look for earlier alerts on this host and user, and query other endpoints for the same TargetObject or Details value."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; legitimate use of ReflectDebugger is rare.",
+        "Developer or debugging setups that deliberately configure a hang reflection debugger on test machines.",
+        "Authorized red team exercises or detection testing that reproduce this persistence technique."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change records whether the value was set intentionally.",
+        "If unexplained, isolate the endpoint and export the Hangs key and the referenced binary as evidence before changing anything.",
+        "After collecting evidence, delete the ReflectDebugger value and quarantine the binary; remove any other persistence found during triage.",
+        "Reset credentials of the account that wrote the value if it holds admin rights, and hunt for the same value across the fleet.",
+        "Monitor the host for WerFault.exe -pr executions and repeated writes to this key."
+      ],
+      "severity_rationale": "High fits because the key has almost no legitimate use and setting it requires administrative rights, which points to deliberate persistence on a compromised host."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets ReflectDebugger in HKLM to a binary in a public user folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\ReflectDebugger",
+          "Details": "C:\\Users\\Public\\Libraries\\wersvc.exe",
+          "ProcessId": 6412
+        }
+      },
+      {
+        "description": "PowerShell writes ReflectDebugger under the WOW6432Node view",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "SRV-FILE-02.andes.example.com",
+          "User": "ANDES\\adm.lrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\ReflectDebugger",
+          "Details": "C:\\ProgramData\\Cache\\helper.exe",
+          "ProcessId": 3388
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate change to the WER Disabled value, not the Hangs ReflectDebugger value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Disabled",
+          "Details": "DWORD (0x00000000)",
+          "ProcessId": 1204
+        }
+      },
+      {
+        "description": "Write to a different value under the Hangs key that does not end with ReflectDebugger",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\ReflectDebuggerTimeout",
+          "Details": "DWORD (0x0000003c)",
+          "ProcessId": 1188
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

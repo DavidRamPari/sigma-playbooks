@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "6309645e-122d-4c5b-bb2b-22e4f9c2fa42",
+    "title": "HackTool - Potential CobaltStrike Process Injection",
+    "level": "high",
+    "status": "test",
+    "author": "Olaf Hartong, Florian Roth (Nextron Systems), Aleksey Potapov, oscd.community",
+    "path": "windows/create_remote_thread/create_remote_thread_win_hktl_cobaltstrike.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_remote_thread/create_remote_thread_win_hktl_cobaltstrike.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un hilo en otro proceso, y la dirección de inicio del hilo termina en 0B80, 0C7C o 0C88. Estos offsets son típicos de la inyección de procesos de los beacons de Cobalt Strike.",
+      "what_it_detects": "Eventos de Sysmon con ID 8 (CreateRemoteThread) cuyo StartAddress termina en 0B80, 0C7C o 0C88. Son los offsets de bajo orden que se observan cuando Cobalt Strike inyecta un beacon en un proceso remoto.",
+      "why_it_matters": "La inyección de procesos (ATT&CK T1055.001, inyección de DLL) permite al atacante ejecutar un beacon dentro de un proceso confiable. Así evade la detección, obtiene los privilegios del proceso destino y mantiene en el equipo el canal de comando y control.",
+      "triage_steps": [
+        "Revise SourceImage y TargetImage. Sospeche si rundll32, powershell, Office o binarios en rutas escribibles por el usuario inyectan en explorer, svchost, lsass o navegadores.",
+        "Verifique StartModule y StartFunction. Si están vacíos o la dirección no corresponde a una DLL cargada, es probable que el código se ejecute desde memoria sin respaldo en disco.",
+        "Obtenga el árbol completo de procesos del SourceProcessId: padre, línea de comandos, firmante y hash. Determine también cómo se inició, por ejemplo con una macro, una tarea programada o un servicio.",
+        "Revise las conexiones de red de los procesos origen y destino en +/- 15 minutos. Busque beaconing periódico hacia dominios o IP poco comunes.",
+        "Busque alertas previas del mismo host y usuario, como creación de named pipes, acceso a LSASS, instalación de servicios sospechosos o PowerShell codificado.",
+        "Si el EDR lo permite, capture la memoria del proceso destino y busque la configuración del beacon o cabeceras PE en regiones privadas RWX."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Aun así, una dirección puede terminar en estos valores por coincidencia, por ejemplo cuando el hilo inicia en una DLL legítima firmada.",
+        "Herramientas de seguridad, EDR, depuración o accesibilidad que crean hilos remotos como parte de su funcionamiento normal, cuando su StartModule es un módulo conocido y firmado."
+      ],
+      "response_steps": [
+        "Verifique si el proceso origen es legítimo: firmante, reputación del hash, ruta y proceso padre. Documente la evidencia antes de tomar cualquier acción.",
+        "Si confirma la actividad maliciosa o hay una sospecha fuerte, aísle el host con el EDR y preserve la memoria de los procesos origen y destino.",
+        "Bloquee los destinos de C2 que identifique. Restablezca las credenciales de los usuarios que tenían sesión iniciada y revise el movimiento lateral desde el equipo.",
+        "Elimine la persistencia y los binarios maliciosos, y luego reinstale o restaure el equipo. Monitoree que no aparezca nuevo beaconing antes de devolverlo a producción."
+      ],
+      "severity_rationale": "El nivel alto corresponde porque la inyección de hilos remotos con offsets propios de Cobalt Strike suele indicar una intrusión activa operada por una persona, y el disparador es poco común."
+    },
+    "en": {
+      "summary": "A process created a thread in another process, and the thread's start address ends in 0B80, 0C7C or 0C88. These offsets are typical of Cobalt Strike beacon process injection.",
+      "what_it_detects": "Sysmon Event ID 8 (CreateRemoteThread) events where StartAddress ends with 0B80, 0C7C or 0C88. These are the low-order offsets seen when Cobalt Strike injects a beacon into a remote process.",
+      "why_it_matters": "Process injection (ATT&CK T1055.001, DLL injection) lets an attacker run a beacon inside a trusted process. That helps it avoid detection, gain the target's privileges, and stay on the host for command and control.",
+      "triage_steps": [
+        "Look at SourceImage and TargetImage. Be suspicious of rundll32, powershell, Office or user-writable binaries injecting into explorer, svchost, lsass or browsers.",
+        "Check StartModule and StartFunction. If they are empty, or the address does not resolve to a loaded DLL, the code is likely running from unbacked memory.",
+        "Pull the full process tree for SourceProcessId: parent, command line, signer and hash. Also check how it started, such as a macro, a scheduled task or a service.",
+        "Review network connections from the source and target processes within +/- 15 minutes. Look for periodic beaconing to rare domains or IPs.",
+        "Look for earlier alerts on the same host and user, such as named pipe creation, LSASS access, suspicious service installs or encoded PowerShell.",
+        "If EDR allows it, capture a memory image of the target process and scan it for beacon configuration or a PE header in private RWX regions."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. An address can still end in these values by chance, for example when the thread starts in a legitimate signed DLL.",
+        "Security, EDR, debugging or accessibility tools that create remote threads as part of normal operation, when their StartModule is a known signed module."
+      ],
+      "response_steps": [
+        "Check whether the source process is legitimate: signer, hash reputation, path and parent. Record the evidence before taking any action.",
+        "If you confirm or strongly suspect malicious activity, isolate the host with EDR and preserve memory of the source and target processes.",
+        "Block the C2 destinations you find. Reset credentials for users who were logged on, and review lateral movement from the host.",
+        "Remove persistence and malicious binaries, then reimage or restore the host. Monitor it for new beaconing before you return it to service."
+      ],
+      "severity_rationale": "High fits because remote thread injection with Cobalt Strike-specific offsets usually means an active, hands-on intrusion, and the trigger is uncommon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rundll32 creates a remote thread in explorer.exe at an unbacked address ending in 0B80",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\rundll32.exe",
+          "SourceProcessId": 6412,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetProcessId": 4120,
+          "NewThreadId": 7788,
+          "StartAddress": "0x00000000025A0B80",
+          "StartModule": "",
+          "StartFunction": "",
+          "SourceUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "powershell.exe injects into svchost.exe with a start address ending in 0C88",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "SourceProcessId": 3304,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "TargetProcessId": 1092,
+          "NewThreadId": 5520,
+          "StartAddress": "0x0000000003F10C88",
+          "StartModule": "",
+          "StartFunction": "",
+          "SourceUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote thread from a security agent starting at an address ending in 0B90, which is not one of the listed offsets",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Program Files\\ExampleAV\\agent.exe",
+          "SourceProcessId": 2210,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetProcessId": 4120,
+          "NewThreadId": 8012,
+          "StartAddress": "0x00007FFB2C1D0B90",
+          "StartModule": "C:\\Windows\\System32\\KERNEL32.DLL",
+          "StartFunction": "LoadLibraryW",
+          "SourceUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Address contains 0C7C in the middle but does not end with it",
+        "event": {
+          "EventID": 8,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\csrss.exe",
+          "SourceProcessId": 604,
+          "TargetImage": "C:\\Windows\\System32\\conhost.exe",
+          "TargetProcessId": 3988,
+          "NewThreadId": 4410,
+          "StartAddress": "0x00007FFB30C7C1A0",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "CtrlRoutine",
+          "SourceUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

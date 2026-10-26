@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "a7f3c891-2e4d-4b6a-9f8c-d5e2a1b04c73",
+    "title": "Registry Hive File Staged Outside Standard User Profile Path",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_susp_registry_hive_file_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_susp_registry_hive_file_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003",
+      "T1548"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un archivo llamado NTUSER.DAT o UsrClass.dat fuera de las rutas normales del perfil de usuario o del sistema. Puede ser una colmena de registro copiada o fabricada para manipulación, escalamiento de privilegios o extracción offline de credenciales.",
+      "what_it_detects": "Eventos de creación de archivos donde TargetFilename termina en \\NTUSER.DAT o \\UsrClass.dat, excluyendo C:\\Users\\<usuario>\\NTUSER.DAT, ...\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat y rutas bajo System32\\config, SYSVOL y ServiceProfiles.",
+      "why_it_matters": "Las colmenas de usuario contienen configuración, registros COM y secretos almacenados. Una copia preparada puede cargarse o sustituirse para abusar del control de elevación (T1548) o analizarse offline para obtener credenciales (T1003).",
+      "triage_steps": [
+        "Revise TargetFilename: identifique la carpeta de preparación (Temp, Public, ProgramData, recursos compartidos) y si coincide con una ruta conocida de respaldo o herramienta forense.",
+        "Identifique el proceso escritor en Image y la cuenta en User; verifique firma, hash y si el binario es esperado en este host.",
+        "Pivote a creación de procesos en el mismo host +/- 15 minutos buscando reg.exe save/load, esentutl, robocopy /b, vssadmin o acceso a shadow copies relacionados con la colmena.",
+        "Verifique si la colmena preparada se cargó después (reg load, RegLoadKey) o reemplazó una colmena real, y busque cambios en HKU o HKCU Classes.",
+        "Busque actividad posterior: creación de archivos comprimidos, transferencia de red del archivo, servicios nuevos, tareas programadas o procesos elevados inesperados del mismo usuario.",
+        "Consulte alertas previas para el mismo host, usuario e Image, y revise si el mismo nombre de archivo aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Software de respaldo o migración de perfiles (por ejemplo USMT o agentes de respaldo) que copia colmenas de usuario a una carpeta temporal.",
+        "Herramientas de adquisición forense o de respuesta a incidentes que recolectan colmenas en un directorio de evidencia.",
+        "Administradores que exportan una colmena con reg save para diagnóstico, con un ticket de cambio documentado."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema o los registros de cambios si hubo un respaldo, migración o recolección forense autorizada en ese momento.",
+        "Si no está autorizado, aísle el endpoint y preserve la colmena preparada, su hash y el proceso escritor para análisis.",
+        "Restablezca contraseñas y revoque sesiones del usuario afectado; revise cambios de elevación o persistencia hechos mediante la colmena.",
+        "Elimine los archivos preparados y artefactos maliciosos solo tras recolectar evidencia; restaure colmenas alteradas desde un respaldo confiable."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque preparar colmenas de usuario fuera de sus rutas normales es poco común y facilita directamente el robo de credenciales o el escalamiento de privilegios."
+    },
+    "en": {
+      "summary": "A process wrote a file named NTUSER.DAT or UsrClass.dat outside the normal user profile or system locations. This may be a copied or crafted user registry hive staged for tampering, privilege escalation or offline credential extraction.",
+      "what_it_detects": "File creation events where TargetFilename ends in \\NTUSER.DAT or \\UsrClass.dat, excluding C:\\Users\\<user>\\NTUSER.DAT, ...\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat, and paths under System32\\config, SYSVOL and ServiceProfiles.",
+      "why_it_matters": "User hives hold per-user settings, COM registrations and stored secrets. Staged copies can be loaded or swapped in to abuse elevation control (T1548) or parsed offline to harvest credentials (T1003).",
+      "triage_steps": [
+        "Review TargetFilename: note the staging folder (Temp, Public, ProgramData, shares) and whether the filename matches a known backup or forensic output path.",
+        "Identify the writing process from Image and the account from User; check signature, hash and whether the binary is expected on this host.",
+        "Pivot to process creation on the same host within +/- 15 minutes for reg.exe save/load, esentutl, robocopy /b, vssadmin or shadow-copy access tied to that hive.",
+        "Check whether the staged hive was later loaded (reg load, RegLoadKey) or copied over a real profile hive, and look for registry changes in HKU or HKCU Classes.",
+        "Look for follow-on activity: archive creation, network transfer of the file, new services, scheduled tasks or unexpected elevated processes from the same user.",
+        "Search earlier alerts for the same host, user and Image, and check whether the same filename appears on other endpoints."
+      ],
+      "false_positives": [
+        "Backup or profile migration software (for example USMT or vendor backup agents) copying user hives to a staging folder.",
+        "Forensic acquisition or incident response tools collecting registry hives to an evidence directory.",
+        "Administrators manually exporting a hive with reg save for troubleshooting, using a documented change ticket."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change records whether a backup, migration or forensic collection was authorized at that time.",
+        "If unauthorized, isolate the endpoint and preserve the staged hive, its hash and the writing process for analysis.",
+        "Reset passwords and revoke sessions for the affected user, and review for elevation or persistence changes made through the hive.",
+        "Remove the staged files and malicious artifacts only after evidence is collected; restore altered profile hives from a known-good backup."
+      ],
+      "severity_rationale": "High fits because staging user hives outside their normal paths is rare in normal use and directly supports credential theft or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a public folder writes an NTUSER.DAT copy into C:\\Users\\Public\\Downloads, a nested path not excluded by the profile-root regex.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\Public\\Downloads\\hivetool.exe",
+          "ProcessId": 6812,
+          "User": "ANDES\\jperez",
+          "TargetFilename": "C:\\Users\\Public\\Downloads\\NTUSER.DAT",
+          "CreationUtcTime": "2026-07-24 13:05:41.112"
+        }
+      },
+      {
+        "description": "reg.exe saves a hive as UsrClass.dat into ProgramData staging folder.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4420,
+          "User": "ANDES\\jperez",
+          "TargetFilename": "C:\\ProgramData\\stage\\UsrClass.dat",
+          "CreationUtcTime": "2026-07-24 13:06:02.480"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal UsrClass.dat in the user's AppData path, excluded by filter_main_usrclass.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "System",
+          "ProcessId": 4,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat",
+          "CreationUtcTime": "2026-07-24 08:01:10.004"
+        }
+      },
+      {
+        "description": "NTUSER.DAT created at the profile root during first logon, excluded by filter_main_ntuser regex.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1288,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Users\\mlopez\\NTUSER.DAT",
+          "CreationUtcTime": "2026-07-24 08:02:33.719"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

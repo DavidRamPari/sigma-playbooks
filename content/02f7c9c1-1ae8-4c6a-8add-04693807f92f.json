@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "02f7c9c1-1ae8-4c6a-8add-04693807f92f",
+    "title": "Potential Access Token Abuse",
+    "level": "medium",
+    "status": "test",
+    "author": "Michaela Adams, Zach Mathis",
+    "path": "windows/builtin/security/account_management/win_security_access_token_abuse.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/account_management/win_security_access_token_abuse.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1134.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un inicio de sesión de tipo NewCredentials (LogonType 9) mediante Advapi/Negotiate con nivel de suplantación Impersonation. Este patrón coincide con la creación de un token con credenciales alternas para impersonar a otro usuario en la red.",
+      "what_it_detects": "Eventos 4624 del registro Security con LogonType 9, LogonProcessName 'Advapi', AuthenticationPackageName 'Negotiate' e ImpersonationLevel %%1833. Corresponde a llamadas a LogonUser con LOGON32_LOGON_NEW_CREDENTIALS seguidas de DuplicateToken(Ex)/ImpersonateLoggedOnUser, como hacen las funciones tipo 'make token'.",
+      "why_it_matters": "Con esta técnica (T1134.001, robo y suplantación de tokens) un atacante usa credenciales robadas solo para el acceso de red y mantiene su identidad local. Así se mueve lateralmente o escala privilegios de forma poco visible.",
+      "triage_steps": [
+        "Identifique ProcessName y ProcessId del evento 4624. Verifique si el binario es conocido, está firmado y su ruta es legítima. Desconfíe de rundll32, powershell o ejecutables en carpetas temporales.",
+        "Compare SubjectUserName (identidad local) con TargetOutboundUserName/TargetOutboundDomainName (credenciales de red). Que difieran, sobre todo si la cuenta de destino es privilegiada, es sospechoso.",
+        "Revise el árbol de procesos (4688 o Sysmon 1): proceso padre, CommandLine y procesos hijos del ProcessId dentro de +/- 15 minutos.",
+        "Busque autenticaciones de red salientes (4648 en el origen, 4624 tipo 3 en servidores) que usen la cuenta de TargetOutboundUserName después del evento.",
+        "Verifique si la cuenta de destino accedió a recursos inusuales, como recursos compartidos administrativos, controladores de dominio o servicios remotos, desde este host.",
+        "Consulte alertas previas del mismo host y del mismo usuario: volcado de LSASS, ejecución de herramientas ofensivas o eventos 4624 tipo 9 repetidos."
+      ],
+      "false_positives": [
+        "Productos antivirus o EDR que crean tokens con credenciales alternas para escanear recursos de red.",
+        "Software de administración, respaldo o despliegue que usa LogonUser con NewCredentials para acceder a recursos compartidos con una cuenta de servicio.",
+        "Scripts o aplicaciones internas documentadas que impersonan una cuenta técnica para tareas de red."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o del software si el proceso y la cuenta de destino corresponden a una actividad autorizada. Si es así, documente una exclusión específica por ProcessName y cuenta.",
+        "Si no hay justificación, aísle el endpoint desde el EDR y conserve memoria y registros antes de terminar procesos.",
+        "Restablezca la contraseña de la cuenta usada en TargetOutboundUserName e invalide sus sesiones y tickets Kerberos.",
+        "Investigue el acceso inicial y el robo de credenciales, elimine los artefactos maliciosos y vigile la cuenta afectada antes de restaurar el host."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el patrón es típico del abuso de tokens, aunque algunos antivirus y herramientas legítimas lo generan, así que se necesita contexto del proceso y de la cuenta."
+    },
+    "en": {
+      "summary": "A process created a NewCredentials logon (LogonType 9) through Advapi/Negotiate with the Impersonation level. This pattern matches building a token with alternate credentials to impersonate another user on the network.",
+      "what_it_detects": "Security event 4624 with LogonType 9, LogonProcessName 'Advapi', AuthenticationPackageName 'Negotiate' and ImpersonationLevel %%1833. This is what LogonUser with LOGON32_LOGON_NEW_CREDENTIALS followed by DuplicateToken(Ex)/ImpersonateLoggedOnUser produces, as 'make token' style functions do.",
+      "why_it_matters": "With token impersonation/theft (T1134.001), an attacker uses stolen credentials only for network access and keeps their local identity. This lets them move laterally or escalate privileges quietly.",
+      "triage_steps": [
+        "Find the ProcessName and ProcessId in the 4624 event. Check that the binary is known, signed and in a legitimate path. Be wary of rundll32, powershell or executables in temp folders.",
+        "Compare SubjectUserName (local identity) with TargetOutboundUserName/TargetOutboundDomainName (network credentials). A mismatch is suspicious, especially when the target account is privileged.",
+        "Review the process tree (4688 or Sysmon 1): parent, CommandLine and child processes of the ProcessId within +/- 15 minutes.",
+        "Look for outbound network authentications (4648 on the source, type 3 4624 on servers) that use the TargetOutboundUserName account after the event.",
+        "Check whether the target account reached unusual resources from this host, such as admin shares, domain controllers or remote services.",
+        "Check earlier alerts for the same host and user: LSASS dumping, offensive tooling or repeated type 9 logons."
+      ],
+      "false_positives": [
+        "Antivirus or EDR products that create tokens with alternate credentials to scan network resources.",
+        "Management, backup or deployment software that calls LogonUser with NewCredentials to reach shares using a service account.",
+        "Documented internal scripts or applications that impersonate a technical account for network tasks."
+      ],
+      "response_steps": [
+        "Ask the system or software owner whether the process and target account match authorized activity. If they do, document a narrow exclusion by ProcessName and account.",
+        "If the activity is unexplained, isolate the endpoint through EDR and preserve memory and logs before you kill any process.",
+        "Reset the password of the TargetOutboundUserName account and revoke its sessions and Kerberos tickets.",
+        "Investigate initial access and credential theft, remove malicious artifacts, and monitor the affected account before you restore the host."
+      ],
+      "severity_rationale": "Medium fits because this pattern is typical of token abuse, but some antivirus and legitimate tools also produce it, so you need context on the process and the account."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unsigned binary in a temp folder creates a NewCredentials token through Advapi/Negotiate for a privileged domain account.",
+        "event": {
+          "EventID": 4624,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "TargetOutboundUserName": "adm-backup",
+          "TargetOutboundDomainName": "ANDES",
+          "LogonType": 9,
+          "LogonProcessName": "Advapi",
+          "AuthenticationPackageName": "Negotiate",
+          "ImpersonationLevel": "%%1833",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupd.exe",
+          "ProcessId": "0x1a3c",
+          "IpAddress": "::1",
+          "IpPort": "0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "runas /netonly produces a type 9 logon, but through the seclogo logon process rather than Advapi, so the rule does not match.",
+        "event": {
+          "EventID": 4624,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetOutboundUserName": "jperez-adm",
+          "TargetOutboundDomainName": "ANDES",
+          "LogonType": 9,
+          "LogonProcessName": "seclogo",
+          "AuthenticationPackageName": "Negotiate",
+          "ImpersonationLevel": "%%1833",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": "0x4f0",
+          "IpAddress": "::1",
+          "IpPort": "0"
+        }
+      },
+      {
+        "description": "An interactive console logon (type 2) with the Impersonation level does not match because LogonType is not 9.",
+        "event": {
+          "EventID": 4624,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "LogonType": 2,
+          "LogonProcessName": "User32",
+          "AuthenticationPackageName": "Negotiate",
+          "ImpersonationLevel": "%%1833",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": "0x3d4",
+          "IpAddress": "127.0.0.1",
+          "IpPort": "0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

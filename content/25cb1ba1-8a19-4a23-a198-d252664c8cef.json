@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "25cb1ba1-8a19-4a23-a198-d252664c8cef",
+    "title": "AWS EFS Fileshare Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_efs_fileshare_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_efs_fileshare_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS llamó a DeleteFileSystem sobre Amazon EFS, es decir, intentó borrar un sistema de archivos compartido. Si la llamada tuvo éxito, los datos se pierden y solo se recuperan desde un respaldo.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource elasticfilesystem.amazonaws.com y eventName DeleteFileSystem. Aunque el título menciona modificación, la regla solo detecta borrados. Coinciden tanto las llamadas exitosas como las fallidas (por ejemplo, con errorCode FileSystemInUse).",
+      "why_it_matters": "Borrar un sistema de archivos EFS destruye datos de aplicaciones y deja sin servicio a las cargas que lo montan. Corresponde a la táctica Impact de ATT&CK (destrucción de datos). Como AWS no permite borrar un EFS con mount targets, suele venir precedido de DeleteMountTarget.",
+      "triage_steps": [
+        "Identifique al actor en userIdentity (arn, type, accessKeyId, sessionContext) y revise sourceIPAddress y userAgent: consola, CLI, SDK, Terraform o CloudFormation.",
+        "Revise errorCode y errorMessage para saber si el borrado se completó; un intento fallido de una identidad inesperada también merece investigarse.",
+        "Ubique el fileSystemId en requestParameters y confirme con el dueño o en el inventario qué aplicación usaba ese EFS y si había un cambio aprobado.",
+        "Busque en CloudTrail eventos de la misma identidad +/- 15 minutos: DeleteMountTarget, DeleteAccessPoint, cambios de backup policy y borrados de recovery points de AWS Backup.",
+        "Busque otras acciones destructivas o de persistencia de la misma identidad o IP: DeleteBucket, DeleteDBInstance, CreateAccessKey, CreateUser, AttachUserPolicy.",
+        "Valide si sourceIPAddress es habitual para esa identidad y si hubo un ConsoleLogin reciente sin MFA o desde una ubicación inusual.",
+        "Revise alertas previas en Centinela para la misma cuenta, identidad o access key."
+      ],
+      "false_positives": [
+        "Bajas planificadas de entornos o aplicaciones por el equipo de infraestructura, con ticket de cambio.",
+        "Pipelines de IaC (terraform destroy, eliminación de stacks de CloudFormation) en cuentas de desarrollo o pruebas.",
+        "Limpieza automatizada de recursos efímeros creados por pruebas de integración o laboratorios."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del recurso y con el responsable de la identidad si el borrado fue legítimo antes de tomar medidas.",
+        "Si no está autorizado, desactive las access keys involucradas o revoque las sesiones activas del rol, y conserve los registros de CloudTrail.",
+        "Restaure el sistema de archivos desde los recovery points de AWS Backup y vuelva a crear los mount targets para recuperar el servicio.",
+        "Revise y revierta la persistencia creada por el actor: usuarios, keys o políticas IAM nuevas.",
+        "Restrinja elasticfilesystem:DeleteFileSystem con políticas IAM o SCP y exija MFA para operaciones destructivas."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el borrado puede ser una tarea operativa legítima, pero si no está autorizado causa pérdida irreversible de datos sin un respaldo."
+    },
+    "en": {
+      "summary": "An AWS identity called DeleteFileSystem on Amazon EFS, which means it tried to delete a shared file system. If the call succeeded, the data is gone unless a backup exists.",
+      "what_it_detects": "CloudTrail events with eventSource elasticfilesystem.amazonaws.com and eventName DeleteFileSystem. The title mentions modification, but the rule only detects deletions. It matches successful and failed calls (for example, errorCode FileSystemInUse).",
+      "why_it_matters": "Deleting an EFS file system destroys application data and breaks every workload that mounts it. This falls under the ATT&CK Impact tactic (data destruction). AWS blocks deletion while mount targets exist, so DeleteMountTarget usually comes first.",
+      "triage_steps": [
+        "Identify the actor from userIdentity (arn, type, accessKeyId, sessionContext). Review sourceIPAddress and userAgent to see whether the call came from the console, CLI, SDK, Terraform or CloudFormation.",
+        "Check errorCode and errorMessage to see if the deletion completed. A failed attempt by an unexpected identity still needs investigation.",
+        "Get the fileSystemId from requestParameters. Confirm with the owner or the inventory which application used it and whether an approved change exists.",
+        "Search CloudTrail for the same identity within +/- 15 minutes: DeleteMountTarget, DeleteAccessPoint, backup policy changes and deleted AWS Backup recovery points.",
+        "Look for other destructive or persistence actions by the same identity or IP: DeleteBucket, DeleteDBInstance, CreateAccessKey, CreateUser, AttachUserPolicy.",
+        "Check whether sourceIPAddress is normal for this identity. Look for a recent ConsoleLogin without MFA or from an unusual location.",
+        "Review earlier Centinela alerts for the same account, identity or access key."
+      ],
+      "false_positives": [
+        "Planned decommissioning of environments or applications by the infrastructure team, with a change ticket.",
+        "IaC pipelines (terraform destroy, CloudFormation stack deletion) in development or test accounts.",
+        "Automated cleanup of short-lived resources created by integration tests or labs."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the resource owner and the identity owner whether the deletion was legitimate.",
+        "If it was not authorized, disable the access keys involved or revoke the role's active sessions, and keep the CloudTrail logs.",
+        "Restore the file system from AWS Backup recovery points and recreate the mount targets to bring the service back.",
+        "Review and roll back any persistence the actor created: new IAM users, keys or policies.",
+        "Restrict elasticfilesystem:DeleteFileSystem with IAM policies or SCPs, and require MFA for destructive operations."
+      ],
+      "severity_rationale": "Medium fits because deletion can be a legitimate operational task, but an unauthorized deletion causes irreversible data loss when no backup exists."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful EFS file system deletion via AWS CLI by an IAM user from an unusual IP",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DeleteFileSystem",
+          "eventTime": "2024-03-12T02:14:37Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE1234567",
+          "requestParameters.fileSystemId": "fs-0a1b2c3d4e5f67890",
+          "errorCode": null,
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Failed deletion attempt because mount targets still exist (FileSystemInUse)",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DeleteFileSystem",
+          "eventTime": "2024-03-12T02:10:05Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ops-admin/mlopez",
+          "requestParameters.fileSystemId": "fs-0a1b2c3d4e5f67890",
+          "errorCode": "FileSystemInUse",
+          "errorMessage": "File system 'fs-0a1b2c3d4e5f67890' has mount targets created in all availability zones the file system is in.",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Deletion of a mount target only (same service, different eventName)",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DeleteMountTarget",
+          "eventTime": "2024-03-12T02:08:51Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.mountTargetId": "fsmt-0123456789abcdef0",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Routine read of file system metadata by a monitoring role",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "elasticfilesystem.amazonaws.com",
+          "eventName": "DescribeFileSystems",
+          "eventTime": "2024-03-12T03:00:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.0 Python/3.11.6",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/monitoring-reader/collector",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

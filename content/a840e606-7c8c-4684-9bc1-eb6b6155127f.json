@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "a840e606-7c8c-4684-9bc1-eb6b6155127f",
+    "title": "PUA - AWS TruffleHog Execution",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_pua_trufflehog.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_pua_trufflehog.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003",
+      "T1555"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en CloudTrail una llamada a la API de AWS con el user agent exacto 'TruffleHog'. Esto indica que alguien usó credenciales de esta cuenta con la herramienta TruffleHog, posiblemente para validar secretos filtrados.",
+      "what_it_detects": "Eventos de AWS CloudTrail cuyo campo userAgent es exactamente 'TruffleHog' (sin distinguir mayúsculas). TruffleHog busca secretos en repositorios y valida las claves de AWS que encuentra con llamadas a la API, normalmente sts:GetCallerIdentity.",
+      "why_it_matters": "Un atacante que obtiene claves de acceso filtradas puede usar TruffleHog para confirmar cuáles siguen activas antes de abusar de ellas. Corresponde a acceso a credenciales (T1555 y T1003). Una validación exitosa suele ser el paso previo al reconocimiento y la escalada de privilegios.",
+      "triage_steps": [
+        "Identifique userIdentity.arn, userIdentity.accessKeyId y userIdentity.type del evento para saber qué credencial se validó y a qué usuario o rol pertenece.",
+        "Revise eventName, eventSource y errorCode: una llamada GetCallerIdentity exitosa confirma que la clave es válida y está activa.",
+        "Analice sourceIPAddress: compruebe si pertenece a rangos corporativos, a un runner de CI/CD o a un VPS o proveedor de hosting desconocido.",
+        "Confirme con el equipo de seguridad o de AppSec si hay un escaneo autorizado de TruffleHog programado desde esa IP y con esa credencial.",
+        "Busque en CloudTrail toda la actividad de la misma accessKeyId y de la misma IP en las 24 horas posteriores, especialmente List*, Describe*, CreateUser, CreateAccessKey o AttachPolicy.",
+        "Determine dónde pudo haberse expuesto la clave: repositorios públicos o internos, imágenes de contenedor, logs o tickets.",
+        "Revise alertas previas de la misma identidad o IP, como inicios de sesión inusuales o llamadas desde regiones atípicas."
+      ],
+      "false_positives": [
+        "Escaneos autorizados de TruffleHog realizados por el equipo de seguridad o red team para detectar credenciales expuestas.",
+        "Pipelines de CI/CD que ejecutan TruffleHog con verificación activa sobre el código antes de publicarlo.",
+        "Pruebas de laboratorio o pentests aprobados que usan claves de cuentas sandbox."
+      ],
+      "response_steps": [
+        "Si el uso no está autorizado, desactive la clave de acceso afectada en IAM tras confirmarlo con el propietario y emita una nueva.",
+        "Revoque las sesiones activas del rol o usuario y aplique una política de denegación temporal si se observa actividad posterior sospechosa.",
+        "Elimine el secreto expuesto del origen (historial de Git, imágenes, archivos) y rote cualquier otra credencial relacionada.",
+        "Revise y revierta los cambios de IAM o recursos creados con la credencial comprometida, documentando la línea de tiempo.",
+        "Si el uso fue legítimo, documente el escaneo y considere una exclusión acotada por IP de origen y principal."
+      ],
+      "severity_rationale": "Es media porque el user agent coincide con una herramienta de doble uso que los equipos de seguridad usan con frecuencia, pero también indica una posible validación de credenciales filtradas."
+    },
+    "en": {
+      "summary": "CloudTrail recorded an AWS API call with the exact user agent 'TruffleHog'. Someone used credentials for this account through TruffleHog, possibly to validate leaked secrets.",
+      "what_it_detects": "AWS CloudTrail events whose userAgent field equals 'TruffleHog' (case-insensitive). TruffleHog scans repositories for secrets and verifies discovered AWS keys with API calls, typically sts:GetCallerIdentity.",
+      "why_it_matters": "An attacker holding leaked access keys can use TruffleHog to confirm which ones still work before abusing them. This maps to credential access (T1555, T1003). Successful validation often precedes reconnaissance and privilege escalation.",
+      "triage_steps": [
+        "Read userIdentity.arn, userIdentity.accessKeyId and userIdentity.type to identify which credential was tested and which user or role owns it.",
+        "Check eventName, eventSource and errorCode: a successful GetCallerIdentity confirms the key is valid and active.",
+        "Assess sourceIPAddress: corporate range, CI/CD runner, or an unknown VPS or hosting provider?",
+        "Confirm with security or AppSec whether an authorized TruffleHog scan was scheduled from that IP with that credential.",
+        "Search CloudTrail for all activity from the same accessKeyId and IP in the next 24 hours, especially List*, Describe*, CreateUser, CreateAccessKey or AttachPolicy.",
+        "Determine where the key may have been exposed: public or internal repositories, container images, logs or tickets.",
+        "Review earlier alerts for the same identity or IP, such as unusual console logins or calls from atypical regions."
+      ],
+      "false_positives": [
+        "Authorized TruffleHog scans by the security or red team looking for exposed credentials.",
+        "CI/CD pipelines running TruffleHog with live verification against code before release.",
+        "Approved lab tests or penetration tests using sandbox account keys."
+      ],
+      "response_steps": [
+        "If unauthorized, deactivate the affected access key in IAM after confirming with the owner, then issue a replacement.",
+        "Revoke active sessions for the role or user and apply a temporary deny policy if suspicious follow-on activity appears.",
+        "Remove the exposed secret from its source (Git history, images, files) and rotate related credentials.",
+        "Review and roll back IAM changes or resources created with the compromised credential, documenting the timeline.",
+        "If legitimate, document the scan and consider a narrow exclusion by source IP and principal."
+      ],
+      "severity_rationale": "Medium fits because the user agent belongs to a dual-use tool security teams commonly run, yet it can also signal validation of leaked credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "TruffleHog verifying a leaked IAM user access key via STS GetCallerIdentity from an external IP.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "TruffleHog",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-deploy",
+          "userIdentity.accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+          "eventTime": "2025-10-25T14:03:12Z",
+          "readOnly": true
+        }
+      },
+      {
+        "description": "Lowercase user agent still matches because Sigma string comparison is case-insensitive.",
+        "event": {
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "trufflehog",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAI44QH8DHBEXAMPLE",
+          "errorCode": null,
+          "eventTime": "2025-10-25T14:05:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same API call made with the AWS CLI; userAgent is not TruffleHog.",
+        "event": {
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0 exe/x86_64.ubuntu.22",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAI44QH8DHBEXAMPLE",
+          "eventTime": "2025-10-25T13:50:02Z"
+        }
+      },
+      {
+        "description": "User agent only contains the word as part of a longer string; the rule requires an exact match, so it does not fire.",
+        "event": {
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.55",
+          "userAgent": "Boto3/1.34.0 Python/3.11 trufflehog-ci-wrapper",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-runner/build-7781",
+          "userIdentity.accessKeyId": "ASIAEXAMPLE7781",
+          "eventTime": "2025-10-25T12:10:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

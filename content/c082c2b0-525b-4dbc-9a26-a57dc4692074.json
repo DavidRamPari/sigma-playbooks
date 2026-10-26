@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "c082c2b0-525b-4dbc-9a26-a57dc4692074",
+    "title": "DNS Query by Finger Utility",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/dns_query/dns_query_win_finger.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/dns_query/dns_query_win_finger.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.003",
+      "T1071.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El binario finger.exe hizo una consulta DNS. Finger casi no se usa en Windows moderno y se ha abusado de él en campañas ClickFix para descargar comandos remotos y ejecutarlos.",
+      "what_it_detects": "Eventos de consulta DNS (por ejemplo Sysmon Event ID 22) donde el campo Image termina en \\finger.exe, es decir, la utilidad Finger resolvió un nombre de host, normalmente antes de conectarse por TCP/79.",
+      "why_it_matters": "Un atacante puede usar Finger como canal de comando y control sobre un protocolo de capa de aplicación (T1071.004) y enviar la salida a cmd.exe para ejecutar comandos (T1059.003). En ClickFix, el usuario pega el comando él mismo, así que la ejecución inicial depende de ingeniería social.",
+      "triage_steps": [
+        "Revise QueryName, QueryResults y Computer del evento. Anote el dominio y las IP resueltas y consulte su reputación y la antigüedad de su registro.",
+        "Busque la creación del proceso finger.exe (mismo ProcessId y host). Revise el CommandLine para ver el usuario@host y si la salida pasa por una tubería a cmd o PowerShell.",
+        "Revise el ParentImage. Si es cmd.exe o powershell.exe lanzado por explorer.exe, apunta a un comando pegado en el cuadro Ejecutar, el patrón típico de ClickFix.",
+        "Revise la clave de registro RunMRU del usuario y el historial del navegador justo antes del evento para encontrar la página falsa de CAPTCHA o verificación.",
+        "Revise los procesos hijos y las conexiones de red del mismo host en una ventana de +/- 15 minutos: tráfico TCP/79, descargas, scripts, nuevos ejecutables o persistencia.",
+        "Busque otros hosts que hayan consultado el mismo QueryName o se hayan conectado a las mismas IP, y alertas previas del mismo usuario o equipo."
+      ],
+      "false_positives": [
+        "La regla considera improbables los falsos positivos.",
+        "Un administrador o una herramienta heredada que consulta un servidor Finger interno documentado. Confírmelo con el dueño del sistema antes de crear una exclusión."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa con el CommandLine, el proceso padre y los procesos hijos antes de actuar.",
+        "Si se confirma, aísle el endpoint y bloquee en DNS, proxy y firewall el dominio y las IP resueltas, además del tráfico saliente TCP/79.",
+        "Recolecte evidencias (árbol de procesos, archivos descargados, hashes) y elimine los payloads y la persistencia que encuentre.",
+        "Restablezca las credenciales del usuario si hubo ejecución posterior, informe al usuario sobre ClickFix y considere bloquear finger.exe con AppLocker o WDAC."
+      ],
+      "severity_rationale": "El nivel high se justifica porque finger.exe casi nunca tiene uso legítimo en Windows y su actividad DNS coincide con una técnica conocida de entrega de comandos y C2."
+    },
+    "en": {
+      "summary": "finger.exe made a DNS query. Finger is rarely used on modern Windows and has been abused in ClickFix campaigns to fetch remote commands and run them.",
+      "what_it_detects": "DNS query events (for example Sysmon Event ID 22) where the Image field ends with \\finger.exe, meaning the Finger utility resolved a hostname, usually right before connecting over TCP/79.",
+      "why_it_matters": "Attackers can use Finger as an application-layer command-and-control channel (T1071.004) and pipe its output into cmd.exe to run commands (T1059.003). In ClickFix the user pastes the command themselves, so initial execution relies on social engineering.",
+      "triage_steps": [
+        "Review QueryName, QueryResults and Computer. Note the domain and resolved IPs, then check their reputation and how recently the domain was registered.",
+        "Find the finger.exe process creation (same ProcessId and host). Check CommandLine for the user@host target and whether the output is piped to cmd or PowerShell.",
+        "Check ParentImage. If it is cmd.exe or powershell.exe spawned by explorer.exe, that points to a command pasted into the Run dialog, the typical ClickFix pattern.",
+        "Check the user's RunMRU registry key and browser history just before the event to find the fake CAPTCHA or verification page.",
+        "Review child processes and network activity on the same host within +/- 15 minutes: TCP/79 traffic, downloads, scripts, new executables or persistence.",
+        "Hunt for other hosts that queried the same QueryName or connected to the same IPs, and for earlier alerts on the same user or host."
+      ],
+      "false_positives": [
+        "The rule rates false positives as unlikely.",
+        "An administrator or legacy tool querying a documented internal Finger server. Confirm with the system owner before you add an exclusion."
+      ],
+      "response_steps": [
+        "Confirm malicious activity from CommandLine, the parent process and child processes before you act.",
+        "If confirmed, isolate the endpoint. Block the domain and resolved IPs at DNS, proxy and firewall, and block outbound TCP/79.",
+        "Collect evidence (process tree, downloaded files, hashes), then remove any payloads and persistence you find.",
+        "Reset the user's credentials if follow-on execution occurred, brief the user on ClickFix, and consider blocking finger.exe with AppLocker or WDAC."
+      ],
+      "severity_rationale": "High fits because finger.exe almost never has a legitimate use on Windows, and its DNS activity matches a known command-delivery and C2 technique."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Sysmon DNS query from System32 finger.exe resolving an attacker-controlled host, as in a ClickFix chain",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\finger.exe",
+          "QueryName": "cmd.example.org",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.45;"
+        }
+      },
+      {
+        "description": "DNS query from the 32-bit SysWOW64 copy of finger.exe, with mixed-case path",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4388,
+          "Image": "C:\\Windows\\SysWOW64\\FINGER.EXE",
+          "QueryName": "verify.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:198.51.100.23;"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "nslookup.exe resolving the same domain during analyst investigation; Image does not end with \\finger.exe",
+        "event": {
+          "EventID": 22,
+          "Computer": "SOC-WS-01.andes.example.com",
+          "User": "ANDES\\analista1",
+          "ProcessId": 7012,
+          "Image": "C:\\Windows\\System32\\nslookup.exe",
+          "QueryName": "cmd.example.org",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.45;"
+        }
+      },
+      {
+        "description": "Similarly named fingerprint tool; '\\fingerprint.exe' does not end with '\\finger.exe'",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 5520,
+          "Image": "C:\\Program Files\\BioAuth\\fingerprint.exe",
+          "QueryName": "updates.example.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:192.0.2.10;"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

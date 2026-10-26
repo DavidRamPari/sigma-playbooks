@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "73e67340-0d25-11eb-adc1-0242ac120002",
+    "title": "Invoke-Obfuscation CLIP+ Launcher - PowerShell",
+    "level": "high",
+    "status": "test",
+    "author": "Jonathan Cheong, oscd.community",
+    "path": "windows/powershell/powershell_script/posh_ps_invoke_obfuscation_clip.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_invoke_obfuscation_clip.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell coincide con el launcher CLIP+ de Invoke-Obfuscation: cmd.exe copia un comando al portapapeles con clip.exe y luego PowerShell lo lee del portapapeles para ejecutarlo. Casi siempre es actividad ofuscada intencional.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene, según una regex sensible a mayúsculas, 'cmd /c' o '/r', una tubería a clip(.exe), '&&' y una llamada a [...clipboard]::( \\\"{N}...\\\" -f ...), que es el patrón del launcher CLIP+.",
+      "why_it_matters": "Al pasar el comando por el portapapeles, el payload real no aparece en la línea de comandos de powershell.exe y se evaden detecciones basadas en CommandLine. Corresponde a ofuscación (T1027) y ejecución con PowerShell (T1059.001).",
+      "triage_steps": [
+        "Reconstruya el script block completo uniendo los fragmentos con el mismo ScriptBlockId (MessageNumber/MessageTotal) en el host afectado.",
+        "Resuelva el operador -f: reordene las cadenas según los índices {N} para obtener el método y el comando reales que se leen del portapapeles.",
+        "Busque en Sysmon 1 o 4688 la cadena cmd.exe → clip.exe → powershell.exe y revise ParentImage, CommandLine y el usuario.",
+        "Identifique qué proceso inició cmd.exe: documento de Office, navegador, tarea programada, servicio o sesión remota.",
+        "Revise el mismo host +/- 15 minutos: otros eventos 4104, conexiones de red, archivos creados, cambios en Run keys o tareas programadas.",
+        "Compruebe si el mismo usuario o el mismo hash del script aparecen en otros equipos y si hay alertas previas para la entidad."
+      ],
+      "false_positives": [
+        "Ejercicios de red team o pentest autorizados que usan Invoke-Obfuscation.",
+        "Analistas o investigadores que prueban Invoke-Obfuscation en laboratorio o capacitación; confirme el host y el ticket del ejercicio."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo y con el equipo de red team si la actividad estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint desde el EDR y conserve los logs de PowerShell, la memoria y los artefactos relevantes.",
+        "Cierre los procesos maliciosos tras la captura de evidencia y elimine los mecanismos de persistencia encontrados.",
+        "Restablezca las credenciales del usuario afectado y bloquee los dominios, IPs o hashes que se identificaron en el payload decodificado.",
+        "Busque el mismo patrón en toda la flota y restaure el equipo desde una imagen limpia si se confirma el compromiso."
+      ],
+      "severity_rationale": "Es alta porque este patrón casi no aparece en uso administrativo legítimo y muestra ejecución ofuscada hecha a propósito para evadir controles."
+    },
+    "en": {
+      "summary": "A PowerShell script block matches the Invoke-Obfuscation CLIP+ launcher: cmd.exe pipes a command into clip.exe, then PowerShell reads it back from the clipboard and runs it. This is almost always deliberate obfuscation.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText matches a case-sensitive regex: 'cmd' with /c or /r, a pipe to clip(.exe), '&&', and a [...clipboard]::( \\\"{N}...\\\" -f ...) call. This is the CLIP+ launcher pattern.",
+      "why_it_matters": "Passing the command through the clipboard keeps the real payload out of the powershell.exe command line, so CommandLine-based detections miss it. This maps to obfuscation (T1027) and PowerShell execution (T1059.001).",
+      "triage_steps": [
+        "Rebuild the full script block by joining fragments that share the same ScriptBlockId (MessageNumber/MessageTotal) on the affected host.",
+        "Resolve the -f operator: put the strings back in the order of the {N} indexes to get the real method and the command pulled from the clipboard.",
+        "In Sysmon 1 or 4688 events, find the cmd.exe → clip.exe → powershell.exe chain and check ParentImage, CommandLine and the user.",
+        "Find out what started cmd.exe: an Office document, a browser, a scheduled task, a service or a remote session.",
+        "Check the same host +/- 15 minutes for other 4104 events, network connections, new files, and Run key or scheduled task changes.",
+        "Check whether the same user or script hash shows up on other hosts, and look for earlier alerts on the entity."
+      ],
+      "false_positives": [
+        "Authorized red team or penetration tests that use Invoke-Obfuscation.",
+        "Researchers or analysts testing Invoke-Obfuscation in a lab or a training session. Confirm the host and the exercise ticket."
+      ],
+      "response_steps": [
+        "Check with the host owner and the red team whether the activity was authorized.",
+        "If it was not, isolate the endpoint through EDR and keep the PowerShell logs, memory and related artifacts.",
+        "After you capture evidence, kill the malicious processes and remove any persistence you found.",
+        "Reset the affected user's credentials. Block the domains, IPs or hashes found in the decoded payload.",
+        "Hunt for the same pattern across the fleet. If compromise is confirmed, reimage the host from a clean image."
+      ],
+      "severity_rationale": "High is right because legitimate admin work almost never uses this pattern, and it shows obfuscated execution built on purpose to get around controls."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CLIP+ launcher using cmd /c, clip.exe and a format-string call to the clipboard GetText method",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserId": "ANDES\\jperez",
+          "ScriptBlockId": "5b1f3c2e-8a4d-4e61-9c7a-2f0d1e9b7a10",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "cmd /c echo Write-Host 'test' | clip.exe&& powershell -NoProfile -c \"Add-Type -Assembly PresentationCore; ([Windows.clipboard]::( \\\"{1}{0}\\\" -f 'Text','Get')()) | iex\""
+        }
+      },
+      {
+        "description": "CLIP+ variant using cmd.exe /r and clip without the .exe extension",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UserId": "ANDES\\mrodriguez",
+          "ScriptBlockId": "c3a9e7d1-1f42-4b8e-a6d0-7e5c2b9f4d33",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "cmd.exe /r echo Get-Process | clip && powershell -c \"Add-Type -Assembly PresentationCore; [Windows.clipboard]::( \\\"{0}{1}\\\" -f 'GetTe','xt').Invoke() | iex\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script copies a report to the clipboard with clip and reads it back without '&&' chaining or a format-string call",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserId": "ANDES\\jperez",
+          "ScriptBlockId": "9e2d4b6a-3c71-4f08-b5e2-6a1c8d0f2e44",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "cmd /c \"type C:\\Reports\\summary.txt | clip\"; Add-Type -AssemblyName System.Windows.Forms; $t = [System.Windows.Forms.Clipboard]::GetText(); Write-Output $t"
+        }
+      },
+      {
+        "description": "Native Set-Clipboard/Get-Clipboard usage with no cmd.exe or clip.exe launcher",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "UserId": "ANDES\\svc_reports",
+          "ScriptBlockId": "1a7f0c3e-6b29-4d5a-8e14-3f9b2c7d6e55",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "Get-Content C:\\Reports\\daily.csv | Set-Clipboard; $data = Get-Clipboard; \"Rows: {0}\" -f $data.Count"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

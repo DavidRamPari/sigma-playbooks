@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "8c1a5675-cb85-452f-a298-b01b22a51856",
+    "title": "Suspicious Invocation of Shell via AWK - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_awk_shell_spawn.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_awk_shell_spawn.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó awk, gawk, mawk o nawk con un bloque BEGIN que llama a system() para abrir un shell (/bin/sh, /bin/bash u otro). Es una técnica conocida de GTFOBins para obtener un shell interactivo o escapar de restricciones.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /awk, /gawk, /mawk o /nawk, el CommandLine contiene 'BEGIN {system' y además incluye la ruta de un shell: /bin/bash, /bin/dash, /bin/fish, /bin/sh o /bin/zsh.",
+      "why_it_matters": "Corresponde a ATT&CK T1059 (Command and Scripting Interpreter). Si awk se puede ejecutar con sudo o tiene SUID, el shell resultante hereda esos privilegios. Esto permite escalar privilegios, escapar de shells restringidos o ejecutar comandos arbitrarios después de un acceso inicial.",
+      "triage_steps": [
+        "Revise el CommandLine completo y confirme qué shell se invoca y si lleva argumentos como -i, -p o redirecciones hacia sockets.",
+        "Identifique el usuario y el ParentImage. Un proceso padre sudo, un servicio web, cron o un intérprete de scripts cambia mucho el nivel de riesgo.",
+        "Compare el usuario efectivo con el real. Verifique si awk corrió como root vía sudo y revise las reglas sudoers que lo permiten.",
+        "Busque los procesos hijos del shell lanzado en el mismo host en una ventana de +/- 15 minutos: descargas, cambios de cuentas, persistencia o conexiones salientes.",
+        "Revise los logs de autenticación (auth.log, secure) para ver cómo inició sesión el usuario y desde qué IP de origen.",
+        "Busque alertas previas del mismo host o usuario, sobre todo otros abusos de GTFOBins o actividad de reconocimiento."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos. Puede activarse con scripts de administración que lanzan un shell desde awk a propósito, aunque es poco común.",
+        "Pruebas de seguridad, ejercicios de red team o laboratorios de capacitación que reproducen las técnicas de GTFOBins."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del usuario si la ejecución estaba autorizada antes de tomar medidas.",
+        "Si no estaba autorizada, aísle el endpoint y termine el shell y sus procesos hijos después de preservar la evidencia.",
+        "Retire de sudoers los permisos que permiten ejecutar awk o sus variantes como root y revise los binarios con SUID.",
+        "Restablezca las credenciales de la cuenta implicada y busque mecanismos de persistencia: cron, claves SSH y servicios systemd.",
+        "Restaure el sistema desde una fuente confiable si se confirma que hubo compromiso con privilegios de root."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque abrir un shell mediante system() en awk casi no tiene usos legítimos y es un método documentado de escalada de privilegios y evasión."
+    },
+    "en": {
+      "summary": "awk, gawk, mawk or nawk ran a BEGIN block that calls system() to start a shell such as /bin/sh or /bin/bash. This is a known GTFOBins technique for getting an interactive shell or breaking out of restrictions.",
+      "what_it_detects": "Linux process creation events where Image ends in /awk, /gawk, /mawk or /nawk, CommandLine contains 'BEGIN {system' and the command line also includes a shell path: /bin/bash, /bin/dash, /bin/fish, /bin/sh or /bin/zsh.",
+      "why_it_matters": "This maps to ATT&CK T1059 (Command and Scripting Interpreter). If awk can run through sudo or with SUID, the spawned shell inherits those privileges. That allows privilege escalation, restricted-shell escape or arbitrary command execution after initial access.",
+      "triage_steps": [
+        "Read the full CommandLine. Confirm which shell is spawned and whether it uses arguments such as -i or -p, or redirections to sockets.",
+        "Identify the user and the ParentImage. A sudo, web server, cron or script interpreter parent changes the risk considerably.",
+        "Check whether awk ran as root through sudo, and review the sudoers entries that allow it.",
+        "Look for child processes of the spawned shell on the same host within +/- 15 minutes: downloads, account changes, persistence or outbound connections.",
+        "Review authentication logs (auth.log, secure) to see how the user logged in and from which source IP.",
+        "Search for earlier alerts on the same host or user, especially other GTFOBins abuse or reconnaissance."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Admin scripts that intentionally drop into a shell from awk can trigger it, but this is rare.",
+        "Penetration tests, red team exercises or training labs that reproduce GTFOBins techniques."
+      ],
+      "response_steps": [
+        "Before acting, ask the host or user owner whether the execution was authorized.",
+        "If it was not authorized, preserve evidence first. Then isolate the endpoint and kill the shell and its child processes.",
+        "Remove sudoers rights that let users run awk or its variants as root, and audit SUID binaries.",
+        "Reset the involved account's credentials and hunt for persistence: cron jobs, SSH keys and systemd units.",
+        "If a root-level compromise is confirmed, rebuild the system from a trusted source."
+      ],
+      "severity_rationale": "High fits because spawning a shell through awk's system() has almost no legitimate use and is a documented privilege escalation and evasion method."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "awk spawns /bin/sh through a BEGIN system() call from an interactive bash session",
+        "event": {
+          "Image": "/usr/bin/awk",
+          "CommandLine": "awk 'BEGIN {system(\"/bin/sh\")}'",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "gawk run through sudo spawns an interactive root bash shell",
+        "event": {
+          "Image": "/usr/bin/gawk",
+          "CommandLine": "gawk 'BEGIN {system(\"/bin/bash -i\")}'",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 50177,
+          "Computer": "app-srv-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "awk BEGIN block calls system() for a harmless command with no shell path",
+        "event": {
+          "Image": "/usr/bin/awk",
+          "CommandLine": "awk 'BEGIN {system(\"hostname\")}'",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48301,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "awk lists accounts whose login shell is /bin/bash, with no BEGIN system() call",
+        "event": {
+          "Image": "/usr/bin/awk",
+          "CommandLine": "awk -F: '$7 == \"/bin/bash\" {print $1}' /etc/passwd",
+          "ParentImage": "/usr/bin/bash",
+          "User": "mrodriguez",
+          "ProcessId": 48355,
+          "Computer": "app-srv-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

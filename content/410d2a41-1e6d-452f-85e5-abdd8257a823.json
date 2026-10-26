@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "410d2a41-1e6d-452f-85e5-abdd8257a823",
+    "title": "Azure Application Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/audit_logs/azure_application_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_application_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1489"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminó una aplicación (registro de aplicación) o una unidad administrativa en Microsoft Entra ID. Puede ser una tarea administrativa normal o un intento de interrumpir servicios o borrar rastros.",
+      "what_it_detects": "Eventos de Azure AuditLogs cuyo operationName es 'Delete application' (borrado temporal), 'Hard Delete application' (borrado permanente) o 'Delete administrative unit'.",
+      "why_it_matters": "Si se borra una aplicación, fallan el inicio de sesión y las integraciones que dependen de ella. Si se borra una unidad administrativa, puede cambiar la delegación de permisos. Corresponde a ATT&CK T1489 (Service Stop, impacto). Un hard delete no se puede recuperar.",
+      "triage_steps": [
+        "Revisa operationName: con 'Delete application' el objeto sigue en Elementos eliminados y se puede restaurar durante 30 días. 'Hard Delete application' es permanente y más urgente.",
+        "Identifica quién lo hizo en initiatedBy (usuario o aplicación/service principal), y la IP y el user agent de origen.",
+        "Revisa targetResources para saber qué aplicación o unidad administrativa se eliminó, su appId y qué servicios o usuarios dependen de ella.",
+        "Busca un ticket o cambio aprobado que justifique el borrado y confírmalo con el dueño de la aplicación.",
+        "Revisa los inicios de sesión del actor (SigninLogs): IP desconocida, país inusual, MFA ausente o riesgo elevado en las últimas 24 horas.",
+        "Busca en un rango de +/- 15 minutos otras acciones del mismo actor: borrados masivos, cambios de roles, nuevas credenciales en aplicaciones o borrado de service principals.",
+        "Busca alertas anteriores del mismo usuario, la misma IP o el mismo service principal."
+      ],
+      "false_positives": [
+        "Un administrador limpia aplicaciones obsoletas o de prueba como parte de un cambio aprobado.",
+        "Pipelines de IaC (Terraform, Bicep) o scripts de automatización que destruyen entornos temporales.",
+        "Reorganización planificada de unidades administrativas.",
+        "Un usuario conocido, con user agent y equipo habituales, que hace cambios rutinarios; documenta la excepción si se repite."
+      ],
+      "response_steps": [
+        "Confirma con el actor y con el dueño de la aplicación si el borrado fue legítimo antes de tomar medidas.",
+        "Si no estaba autorizado, restaura la aplicación desde Elementos eliminados (solo si fue soft delete) y comprueba que las integraciones vuelvan a funcionar.",
+        "Si la cuenta parece comprometida, revoca sus sesiones, restablece las credenciales y retira temporalmente sus roles privilegiados.",
+        "Revisa y revoca credenciales o permisos que el actor haya agregado a otras aplicaciones.",
+        "Documenta el incidente y ajusta los permisos de administración de aplicaciones al mínimo privilegio."
+      ],
+      "severity_rationale": "El nivel medio encaja porque estos borrados suelen ser administrativos, pero pueden interrumpir servicios y, si son hard delete, no tienen vuelta atrás."
+    },
+    "en": {
+      "summary": "An application registration or an administrative unit was deleted in Microsoft Entra ID. This may be routine administration or an attempt to disrupt services or remove traces.",
+      "what_it_detects": "Azure AuditLogs events whose operationName is 'Delete application' (soft delete), 'Hard Delete application' (permanent) or 'Delete administrative unit'.",
+      "why_it_matters": "Deleting an application breaks sign-in and the integrations that rely on it. Deleting an administrative unit can change how permissions are delegated. This maps to ATT&CK T1489 (Service Stop, impact). Hard deletes are unrecoverable.",
+      "triage_steps": [
+        "Check operationName: after 'Delete application' the object stays in Deleted items and can be restored for 30 days. 'Hard Delete application' is permanent and more urgent.",
+        "Identify the actor in initiatedBy (a user or an app/service principal), plus the source IP and user agent.",
+        "Check targetResources for the deleted app or unit, its appId, and which services or users depend on it.",
+        "Look for an approved ticket or change and confirm it with the application owner.",
+        "Review the actor's SigninLogs from the last 24 hours for unfamiliar IPs, unusual countries, missing MFA or elevated risk.",
+        "Pivot +/- 15 minutes on the same actor for other activity: mass deletions, role changes, new app credentials or service principal deletions.",
+        "Check for earlier alerts on the same user, IP or service principal."
+      ],
+      "false_positives": [
+        "An administrator removes stale or test applications under an approved change.",
+        "IaC pipelines (Terraform, Bicep) or automation scripts tearing down temporary environments.",
+        "A planned reorganization of administrative units.",
+        "A known user, on their usual user agent and host, making routine changes. If this recurs, document it as an exemption."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the actor and the application owner whether the deletion was legitimate.",
+        "If it was unauthorized and a soft delete, restore the application from Deleted items, then confirm the integrations work again.",
+        "If the account looks compromised, revoke its sessions, reset its credentials and temporarily remove its privileged roles.",
+        "Review other applications for credentials or permissions the actor added, and revoke them.",
+        "Document the incident and cut application administration permissions down to least privilege."
+      ],
+      "severity_rationale": "Medium fits because these deletions are usually administrative, yet they can disrupt services, and a hard delete cannot be undone."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User soft-deletes an application registration from an unfamiliar IP",
+        "event": {
+          "operationName": "Delete application",
+          "category": "ApplicationManagement",
+          "loggedByService": "Core Directory",
+          "result": "success",
+          "activityDateTime": "2024-10-25T14:03:12Z",
+          "initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "initiatedBy.user.ipAddress": "203.0.113.45",
+          "targetResources.displayName": "Payroll-Integration",
+          "targetResources.type": "Application"
+        }
+      },
+      {
+        "description": "Permanent deletion of an application by a service principal",
+        "event": {
+          "operationName": "Hard Delete application",
+          "category": "ApplicationManagement",
+          "loggedByService": "Core Directory",
+          "result": "success",
+          "activityDateTime": "2024-10-25T14:09:40Z",
+          "initiatedBy.app.displayName": "automation-sp",
+          "initiatedBy.user.ipAddress": "198.51.100.20",
+          "targetResources.displayName": "Payroll-Integration",
+          "targetResources.type": "Application"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Service principal deletion, which this rule does not cover",
+        "event": {
+          "operationName": "Delete service principal",
+          "category": "ApplicationManagement",
+          "loggedByService": "Core Directory",
+          "result": "success",
+          "activityDateTime": "2024-10-25T15:00:00Z",
+          "initiatedBy.user.userPrincipalName": "admin.ops@example.com",
+          "initiatedBy.user.ipAddress": "192.0.2.10",
+          "targetResources.displayName": "Legacy-Reporting",
+          "targetResources.type": "ServicePrincipal"
+        }
+      },
+      {
+        "description": "Routine update of an application, not a deletion",
+        "event": {
+          "operationName": "Update application",
+          "category": "ApplicationManagement",
+          "loggedByService": "Core Directory",
+          "result": "success",
+          "activityDateTime": "2024-10-25T15:05:00Z",
+          "initiatedBy.user.userPrincipalName": "admin.ops@example.com",
+          "initiatedBy.user.ipAddress": "192.0.2.10",
+          "targetResources.displayName": "HR-Portal",
+          "targetResources.type": "Application"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

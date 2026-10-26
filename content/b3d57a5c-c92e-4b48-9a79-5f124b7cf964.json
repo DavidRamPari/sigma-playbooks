@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "b3d57a5c-c92e-4b48-9a79-5f124b7cf964",
+    "title": "MSSQL SPProcoption Set",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/application/mssqlserver/win_mssql_sp_procoption_set.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/mssqlserver/win_mssql_sp_procoption_set.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un principal de SQL Server ejecutó sp_procoption para marcar o desmarcar un stored procedure como de ejecución automática al iniciar la instancia. Se trata de un cambio poco frecuente que se puede usar como mecanismo de persistencia.",
+      "what_it_detects": "Eventos de auditoría de SQL Server (EventID 33205) en el log Application, con un Provider_Name que contiene MSSQL y un campo Data que incluye 'object_name:sp_procoption' y 'statement:EXEC'. Requiere una auditoría de SQL Server configurada para registrar sp_procoption.",
+      "why_it_matters": "Un procedimiento de inicio se ejecuta cada vez que arranca el servicio SQL Server, con el contexto de seguridad de la instancia. Un atacante con privilegios de sysadmin puede usarlo para ejecutar xp_cmdshell, CLR o tareas de reconexión de forma persistente (ATT&CK: Server Software Component, SQL Stored Procedures, T1505.001).",
+      "triage_steps": [
+        "En Data, identifique server_principal_name, session_server_principal_name, client_ip, application_name y host_name. Determine quién ejecutó el cambio y desde dónde.",
+        "Revise el statement completo: anote @ProcName y si @OptionValue es 'on' (activación) o 'off' (posible limpieza de huellas).",
+        "Liste los procedimientos de inicio: SELECT name FROM master.sys.procedures WHERE OBJECTPROPERTY(object_id,'ExecIsStartup')=1.",
+        "Obtenga la definición del procedimiento con sp_helptext o OBJECT_DEFINITION. Busque xp_cmdshell, sp_OACreate, ensamblados CLR, conexiones salientes o la creación de logins.",
+        "Busque otros eventos 33205 del mismo principal y del mismo servidor en una ventana de ±15 minutos: CREATE PROCEDURE, sp_configure o la asignación del rol sysadmin.",
+        "Valide si existe un ticket de cambio o una justificación del equipo DBA para este principal y este procedimiento.",
+        "Revise alertas anteriores del client_ip y del usuario, y los inicios de sesión inusuales en el host de SQL Server."
+      ],
+      "false_positives": [
+        "Administradores o DBA que configuran a propósito un procedimiento de inicio, por ejemplo para limpiar tablas temporales o precargar caché (poco frecuente).",
+        "Instaladores o scripts de despliegue de productos de terceros que registran procedimientos de inicio en master."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la base de datos si el cambio estaba autorizado antes de tomar acciones.",
+        "Si no está autorizado, conserve como evidencia la definición del procedimiento y los eventos de auditoría. Luego desactívelo con sp_procoption @OptionValue='off' y no reinicie la instancia antes de hacerlo.",
+        "Deshabilite o restablezca el login implicado y revise los miembros de sysadmin y los permisos otorgados recientemente.",
+        "Busque otros mecanismos de persistencia: jobs de SQL Agent, triggers, ensamblados CLR y el estado de xp_cmdshell. Investigue el host de origen en client_ip.",
+        "Rote las credenciales de las cuentas de servicio y de los administradores afectados, y mantenga la auditoría de sp_procoption activa."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque los procedimientos de inicio ofrecen persistencia privilegiada en cada arranque del servicio y su uso legítimo es raro."
+    },
+    "en": {
+      "summary": "A SQL Server principal ran sp_procoption to set or clear a stored procedure for automatic execution at instance startup. This is a rare change that can serve as a persistence mechanism.",
+      "what_it_detects": "SQL Server audit events (EventID 33205) in the Application log where Provider_Name contains MSSQL and the Data field includes both 'object_name:sp_procoption' and 'statement:EXEC'. A SQL Server audit that captures sp_procoption is required.",
+      "why_it_matters": "A startup procedure runs every time the SQL Server service starts, in the instance's security context. An attacker with sysadmin rights can use it to run xp_cmdshell, CLR code or callbacks persistently (ATT&CK: Server Software Component, SQL Stored Procedures, T1505.001).",
+      "triage_steps": [
+        "Extract server_principal_name, session_server_principal_name, client_ip, application_name and host_name from Data to see who made the change and from where.",
+        "Read the full statement and note @ProcName and whether @OptionValue is 'on' (enabling) or 'off' (possible cleanup).",
+        "List the startup procedures: SELECT name FROM master.sys.procedures WHERE OBJECTPROPERTY(object_id,'ExecIsStartup')=1.",
+        "Get the procedure body with sp_helptext or OBJECT_DEFINITION. Look for xp_cmdshell, sp_OACreate, CLR assemblies, outbound connections or login creation.",
+        "Pivot to other 33205 events from the same principal and server within +/- 15 minutes: CREATE PROCEDURE, sp_configure or sysadmin role grants.",
+        "Check whether a change ticket or a DBA justification exists for this principal and procedure.",
+        "Review earlier alerts for the client_ip and the user, and any unusual logons to the SQL Server host."
+      ],
+      "false_positives": [
+        "Administrators or DBAs who set a startup procedure on purpose, for example to clean temp tables or warm caches (rare).",
+        "Third-party product installers or deployment scripts that register startup procedures in master."
+      ],
+      "response_steps": [
+        "Confirm with the database owner whether the change was authorized before acting.",
+        "If it was not authorized, preserve the procedure definition and the audit events as evidence. Then disable it with sp_procoption @OptionValue='off' before any instance restart.",
+        "Disable or reset the login involved, and review sysadmin membership and recently granted permissions.",
+        "Hunt for other persistence: SQL Agent jobs, triggers, CLR assemblies and the xp_cmdshell state. Investigate the source host at client_ip.",
+        "Rotate the credentials of affected service and admin accounts, and keep sp_procoption auditing enabled."
+      ],
+      "severity_rationale": "High fits because startup procedures give privileged persistence on every service start, and legitimate use is rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A sysadmin login sets a custom procedure in master to run at startup with sp_procoption",
+        "event": {
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PRD-01.andes.example.com",
+          "Data": "Audit event: event_time:2024-06-27 14:03:12.4410000 sequence_number:1 action_id:EX succeeded:true session_id:57 server_principal_name:ANDES\\jperez session_server_principal_name:ANDES\\jperez server_instance_name:SQL-PRD-01 database_name:master schema_name:sys object_name:sp_procoption statement:EXEC sp_procoption @ProcName = N'usp_sys_maint', @OptionName = 'startup', @OptionValue = 'on' client_ip:192.0.2.45 application_name:Microsoft SQL Server Management Studio - Query host_name:WS-0142"
+        }
+      },
+      {
+        "description": "A named instance with a SQL login clears the startup flag, a possible cleanup after persistence",
+        "event": {
+          "Provider_Name": "MSSQL$INVENTARIO",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-INV-02",
+          "Data": "Audit event: event_time:2024-06-28 02:11:40.1200000 sequence_number:1 action_id:EX succeeded:true session_id:64 server_principal_name:svc_report session_server_principal_name:svc_report server_instance_name:SQL-INV-02\\INVENTARIO database_name:master schema_name:sys object_name:sp_procoption statement:exec sp_procoption 'usp_cb', 'startup', 'off' client_ip:198.51.100.23 application_name:sqlcmd host_name:WS-0377"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The same audit source records a DBA running sp_configure, not sp_procoption",
+        "event": {
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PRD-01.andes.example.com",
+          "Data": "Audit event: event_time:2024-06-27 10:20:05.0000000 sequence_number:1 action_id:EX succeeded:true session_id:61 server_principal_name:ANDES\\mrojas database_name:master schema_name:sys object_name:sp_configure statement:EXEC sp_configure 'max server memory (MB)', 16384 client_ip:192.0.2.60 application_name:Microsoft SQL Server Management Studio host_name:WS-0201"
+        }
+      },
+      {
+        "description": "A metadata SELECT that reads startup procedures, so neither object_name:sp_procoption nor statement:EXEC is present",
+        "event": {
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PRD-01.andes.example.com",
+          "Data": "Audit event: event_time:2024-06-27 11:02:44.0000000 sequence_number:1 action_id:SL succeeded:true session_id:70 server_principal_name:ANDES\\mrojas database_name:master schema_name:sys object_name:procedures statement:SELECT name FROM sys.procedures WHERE OBJECTPROPERTY(object_id,'ExecIsStartup')=1 client_ip:192.0.2.60 application_name:Microsoft SQL Server Management Studio host_name:WS-0201"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

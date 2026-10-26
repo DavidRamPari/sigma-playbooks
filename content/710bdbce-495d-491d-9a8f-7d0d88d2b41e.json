@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "710bdbce-495d-491d-9a8f-7d0d88d2b41e",
+    "title": "Special File Creation via Mknod Syscall",
+    "level": "low",
+    "status": "experimental",
+    "author": "Milad Cheraghi",
+    "path": "linux/auditd/syscall/lnx_auditd_susp_special_file_creation_via_mknod_syscall.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_susp_special_file_creation_via_mknod_syscall.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró una llamada al syscall mknod, que crea un archivo especial (dispositivo de caracteres o de bloques, FIFO o socket). Rara vez lo usan aplicaciones comunes, así que conviene revisar quién lo invocó y qué creó.",
+      "what_it_detects": "Eventos auditd con type SYSCALL y SYSCALL igual a mknod. No cubre mknodat, la variante que usan muchas herramientas modernas, ni campos SYSCALL numéricos sin interpretar.",
+      "why_it_matters": "Con un nodo de dispositivo falso se puede acceder directo a discos o memoria y saltarse permisos del sistema de archivos. Con un FIFO se arman reverse shells. La regla lo etiqueta como T1543.003 (persistencia y escalamiento de privilegios), aunque esa técnica describe servicios de Windows.",
+      "triage_steps": [
+        "Revise exe, comm, uid, auid, pid y ppid del evento SYSCALL. Un auid de un usuario interactivo pesa más que un proceso del sistema.",
+        "Correlacione por el mismo número de serie de audit los registros PATH y CWD para obtener la ruta y el modo del archivo creado.",
+        "Decodifique a1 (modo): S_IFCHR o S_IFBLK indican dispositivos; S_IFIFO indica un named pipe. Revise success y exit.",
+        "Considere sospechosa la ruta si está en /tmp, /dev/shm, /var/tmp o en el home de un usuario, o si imita un dispositivo como /dev/sda o /dev/mem.",
+        "Reconstruya el árbol de procesos con ppid y busque la línea de comandos (EXECVE, historial de shell) en el mismo host, más o menos 15 minutos.",
+        "Busque actividad de red del mismo proceso o usuario, como nc, bash -i o conexiones salientes, que indique una reverse shell con FIFO.",
+        "Revise alertas anteriores del host y del auid, y confirme si el host es un nodo de contenedores o está en aprovisionamiento."
+      ],
+      "false_positives": [
+        "udevadm, MAKEDEV o scripts de inicio que crean nodos en /dev durante el arranque.",
+        "Runtimes de contenedores (containerd, runc, podman) o herramientas de seguridad que preparan /dev durante la inicialización.",
+        "Instaladores, chroot o herramientas de imágenes (debootstrap, mkinitramfs) que generan dispositivos dentro de un rootfs."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema si la creación era esperada antes de tocar nada; documente la ruta, el modo y el major/minor del nodo.",
+        "Si no se justifica, aísle el host o termine el proceso asociado y conserve el archivo especial y los logs de audit como evidencia.",
+        "Una vez confirmado el uso malicioso, elimine el nodo o FIFO ilegítimo, revoque las credenciales o sesiones del usuario y busque mecanismos de persistencia relacionados.",
+        "Restaure desde una configuración confiable y agregue a una lista de exclusión documentada los procesos legítimos recurrentes."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque mknod también aparece en arranques, contenedores e instaladores, y la alerta solo cobra peso con contexto como un usuario interactivo, una ruta inusual o actividad de red asociada."
+    },
+    "en": {
+      "summary": "auditd recorded a mknod syscall, which creates a special file (character or block device, FIFO or socket). Ordinary applications rarely call it, so check who called it and what it created.",
+      "what_it_detects": "auditd events with type SYSCALL and SYSCALL equal to mknod. It does not cover mknodat, the variant many modern tools use, or uninterpreted numeric SYSCALL values.",
+      "why_it_matters": "A rogue device node can give raw access to disks or memory and get around filesystem permissions. A FIFO can be used to build a reverse shell. The rule tags this as T1543.003 (persistence and privilege escalation), although that technique describes Windows services.",
+      "triage_steps": [
+        "Review exe, comm, uid, auid, pid and ppid in the SYSCALL record. An auid belonging to an interactive user matters more than a system daemon.",
+        "Match the audit event serial number to the PATH and CWD records to get the created file's path and mode.",
+        "Decode a1 (mode): S_IFCHR or S_IFBLK means a device, S_IFIFO means a named pipe. Check success and exit.",
+        "Treat paths in /tmp, /dev/shm, /var/tmp or home directories as suspicious, and also names that mimic devices such as /dev/sda or /dev/mem.",
+        "Rebuild the process tree from ppid and find the command line (EXECVE records, shell history) on the same host within +/- 15 minutes.",
+        "Look for network activity from the same process or user, such as nc, bash -i or outbound connections, that would point to a FIFO reverse shell.",
+        "Check earlier alerts for this host and auid, and confirm whether the host is a container node or is being provisioned."
+      ],
+      "false_positives": [
+        "udevadm, MAKEDEV or init scripts creating /dev nodes at boot.",
+        "Container runtimes (containerd, runc, podman) or security tools setting up /dev during initialization.",
+        "Installers, chroot or image builders (debootstrap, mkinitramfs) creating devices inside a rootfs."
+      ],
+      "response_steps": [
+        "Before changing anything, confirm with the system owner whether the creation was expected. Record the node's path, mode and major/minor numbers.",
+        "If nobody can justify it, isolate the host or kill the related process. Keep the special file and the audit logs as evidence.",
+        "Once you confirm malicious use, remove the rogue node or FIFO, revoke the user's credentials or sessions, and hunt for related persistence.",
+        "Restore from a known-good configuration. Add recurring legitimate processes to a documented exclusion list."
+      ],
+      "severity_rationale": "Low fits because mknod also shows up during boot, container startup and installs, so the alert only matters with context such as an interactive user, an unusual path or related network activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user running mknod from a shell to create a FIFO in /tmp, typical of a reverse-shell setup.",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "mknod",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "a0": "7ffd5c1e2a10",
+          "a1": "S_IFIFO|0644",
+          "a2": "0",
+          "comm": "mknod",
+          "exe": "/usr/bin/mknod",
+          "pid": 48211,
+          "ppid": 48190,
+          "uid": "jperez",
+          "auid": "jperez",
+          "host": "bastion-01",
+          "key": "special_files"
+        }
+      },
+      {
+        "description": "Root process creating a character device node in /dev/shm.",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "mknod",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "a1": "S_IFCHR|0666",
+          "comm": "python3",
+          "exe": "/usr/bin/python3.10",
+          "pid": 51007,
+          "ppid": 50992,
+          "uid": "root",
+          "auid": "mrodriguez",
+          "host": "WS-0142",
+          "key": "special_files"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same activity logged as mknodat, which does not match the exact value mknod.",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "mknodat",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "a0": "ffffff9c",
+          "comm": "udevadm",
+          "exe": "/usr/bin/udevadm",
+          "pid": 612,
+          "ppid": 1,
+          "uid": "root",
+          "auid": "unset",
+          "host": "bastion-01",
+          "key": "special_files"
+        }
+      },
+      {
+        "description": "PATH record from a mknod event; type is not SYSCALL.",
+        "event": {
+          "type": "PATH",
+          "SYSCALL": null,
+          "name": "/tmp/p",
+          "nametype": "CREATE",
+          "mode": "fifo,644",
+          "host": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

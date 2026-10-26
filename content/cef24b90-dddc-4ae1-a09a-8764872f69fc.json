@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "cef24b90-dddc-4ae1-a09a-8764872f69fc",
+    "title": "Suspicious Get Local Groups Information",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_module/posh_pm_susp_local_group_reco.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_susp_local_group_reco.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1069.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell ejecutó cmdlets para enumerar grupos locales o sus miembros (Get-LocalGroup, Get-LocalGroupMember o consultas WMI/CIM a Win32_Group). Puede ser reconocimiento de grupos privilegiados como Administradores.",
+      "what_it_detects": "Eventos de PowerShell Module Logging (EventID 4103) cuyo Payload o ContextInfo contiene 'get-localgroup ' o 'get-localgroupmember ', o bien Get-WmiObject/gwmi/Get-CimInstance/gcim junto con 'win32_group' (esto también cubre Win32_GroupUser).",
+      "why_it_matters": "Corresponde a ATT&CK T1069.001 (Permission Groups Discovery: Local Groups). Un atacante identifica qué cuentas son administradoras locales para elegir objetivos de robo de credenciales, escalamiento de privilegios o movimiento lateral.",
+      "triage_steps": [
+        "Revise Payload y ContextInfo: cmdlet exacto, grupo consultado (por ejemplo Administrators) y la línea 'Host Application' con la línea de comandos completa.",
+        "Identifique el usuario y el host en ContextInfo; confirme si la cuenta pertenece a TI o a un servicio de administración conocido.",
+        "Determine el proceso padre de powershell.exe (Sysmon EventID 1 o 4688): explorer, herramientas RMM, Office, wscript o un servicio web.",
+        "Busque en el mismo host, +/- 15 minutos, otros comandos de reconocimiento: whoami /groups, net localgroup, net user, nltest, Get-ADGroupMember.",
+        "Revise eventos 4104 (Script Block) para ver si la consulta forma parte de un script más amplio, ofuscado o descargado.",
+        "Correlacione con alertas previas del mismo usuario o host, inicios de sesión anómalos (4624 tipo 3/10) y conexiones de red salientes inusuales."
+      ],
+      "false_positives": [
+        "Scripts de administradores o de inventario que auditan miembros del grupo Administradores local.",
+        "Herramientas de gestión, RMM o cumplimiento que consultan Win32_Group o Win32_GroupUser periódicamente.",
+        "Personal de soporte que revisa permisos locales durante un ticket."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta o el equipo de TI si la ejecución estaba autorizada; si lo estaba, documente y considere una exclusión acotada por script o cuenta.",
+        "Si no está autorizada, aísle el endpoint mediante el EDR y preserve logs de PowerShell, Sysmon y Seguridad.",
+        "Restablezca las credenciales de la cuenta implicada y revise cambios recientes en grupos locales (eventos 4732/4733).",
+        "Busque persistencia y herramientas adicionales, elimine artefactos confirmados y restaure el equipo antes de reconectarlo."
+      ],
+      "severity_rationale": "Nivel bajo porque la enumeración de grupos locales es frecuente en administración legítima y por sí sola no causa daño, aunque aporta contexto valioso si se combina con otra actividad sospechosa."
+    },
+    "en": {
+      "summary": "PowerShell ran cmdlets that enumerate local groups or their members (Get-LocalGroup, Get-LocalGroupMember, or WMI/CIM queries against Win32_Group). This may be reconnaissance of privileged groups such as Administrators.",
+      "what_it_detects": "PowerShell Module Logging events (EventID 4103) whose Payload or ContextInfo contains 'get-localgroup ' or 'get-localgroupmember ', or Get-WmiObject/gwmi/Get-CimInstance/gcim together with 'win32_group' (which also covers Win32_GroupUser).",
+      "why_it_matters": "Maps to ATT&CK T1069.001 (Permission Groups Discovery: Local Groups). Attackers learn which accounts are local admins to pick targets for credential theft, privilege escalation or lateral movement.",
+      "triage_steps": [
+        "Read Payload and ContextInfo: exact cmdlet, group queried (e.g. Administrators) and the 'Host Application' line showing the full command line.",
+        "Identify the user and host from ContextInfo; confirm whether the account belongs to IT or a known management service.",
+        "Find the parent of powershell.exe (Sysmon EventID 1 or 4688): explorer, RMM agent, Office, wscript or a web service.",
+        "Search the same host within +/- 15 minutes for other discovery: whoami /groups, net localgroup, net user, nltest, Get-ADGroupMember.",
+        "Check 4104 Script Block events to see whether the query is part of a larger, obfuscated or downloaded script.",
+        "Correlate with earlier alerts for the same user or host, unusual logons (4624 type 3/10) and unusual outbound connections."
+      ],
+      "false_positives": [
+        "Administrator or inventory scripts auditing local Administrators membership.",
+        "Management, RMM or compliance tools that periodically query Win32_Group or Win32_GroupUser.",
+        "Help desk staff checking local permissions while working a ticket."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or IT whether the run was authorized; if so, document it and consider a narrow exclusion by script or account.",
+        "If unauthorized, isolate the endpoint via EDR and preserve PowerShell, Sysmon and Security logs.",
+        "Reset the involved account's credentials and review recent local group changes (events 4732/4733).",
+        "Hunt for persistence and additional tooling, remove confirmed artifacts and restore the host before reconnecting it."
+      ],
+      "severity_rationale": "Low because local group enumeration is common in legitimate administration and harmless alone, but it adds useful context when combined with other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Get-LocalGroupMember run interactively to list local Administrators; the command line appears in ContextInfo Host Application.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "Payload": "CommandInvocation(Get-LocalGroupMember): \"Get-LocalGroupMember\"\r\nParameterBinding(Get-LocalGroupMember): name=\"Group\"; value=\"Administrators\"",
+          "ContextInfo": "Severity = Informational\r\nHost Name = ConsoleHost\r\nHost Application = powershell.exe -NoProfile -Command Get-LocalGroupMember -Group Administrators\r\nCommand Name = Get-LocalGroupMember\r\nCommand Type = Cmdlet\r\nUser = ANDES\\jperez\r\nShell ID = Microsoft.PowerShell"
+        }
+      },
+      {
+        "description": "Get-WmiObject query against the Win32_Group class recorded in Payload.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "Payload": "Get-WmiObject -Class Win32_Group -Filter 'LocalAccount=True' | Select-Object Name,SID",
+          "ContextInfo": "Severity = Informational\r\nHost Name = ConsoleHost\r\nHost Application = powershell.exe\r\nCommand Name = Get-WmiObject\r\nCommand Type = Cmdlet\r\nUser = ANDES\\mrojas\r\nShell ID = Microsoft.PowerShell"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Get-WmiObject used for routine OS inventory; WMI cmdlet present but no win32_group class.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-INV-01.andes.example.com",
+          "Payload": "Get-WmiObject -Class Win32_OperatingSystem | Select-Object Caption,Version",
+          "ContextInfo": "Severity = Informational\r\nHost Name = ConsoleHost\r\nHost Application = powershell.exe -File C:\\Scripts\\inventory.ps1\r\nCommand Name = Get-WmiObject\r\nCommand Type = Cmdlet\r\nUser = ANDES\\svc_inventory\r\nShell ID = Microsoft.PowerShell"
+        }
+      },
+      {
+        "description": "Get-LocalUser enumeration of local accounts, not local groups; no local group cmdlet strings.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "Payload": "CommandInvocation(Get-LocalUser): \"Get-LocalUser\"",
+          "ContextInfo": "Severity = Informational\r\nHost Name = ConsoleHost\r\nHost Application = powershell.exe -Command Get-LocalUser\r\nCommand Name = Get-LocalUser\r\nCommand Type = Cmdlet\r\nUser = ANDES\\jperez\r\nShell ID = Microsoft.PowerShell"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

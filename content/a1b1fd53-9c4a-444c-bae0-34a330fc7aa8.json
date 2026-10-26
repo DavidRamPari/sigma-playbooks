@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "a1b1fd53-9c4a-444c-bae0-34a330fc7aa8",
+    "title": "Potential Persistence Via DLLPathOverride",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_natural_language.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_natural_language.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor de override de stemmer o word breaker (DLLPathOverride o Class) bajo la clave ContentIndex\\Language. Esto puede hacer que SearchIndexer.exe cargue una DLL controlada por un atacante.",
+      "what_it_detects": "Eventos registry_set donde TargetObject contiene \\SYSTEM\\CurrentControlSet\\Control\\ContentIndex\\Language\\ y además StemmerDLLPathOverride, WBDLLPathOverride, StemmerClass o WBreakerClass, para cualquier idioma (English_US, Neutral, etc.).",
+      "why_it_matters": "SearchIndexer.exe (Windows Search) se ejecuta como SYSTEM y carga los componentes de idioma configurados. Si se redirigen a una DLL maliciosa, el atacante logra persistencia y ejecución con privilegios altos mediante modificación del registro, una técnica poco vigilada.",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique el idioma, el valor modificado y la ruta de DLL o el CLSID escrito.",
+        "Si Details es un CLSID, consulte HKLM\\SOFTWARE\\Classes\\CLSID\\{CLSID}\\InprocServer32 para obtener la DLL real asociada.",
+        "Valide la DLL: ubicación (System32 o rutas de usuario/Temp), firma digital, hash y reputación en su plataforma de threat intelligence.",
+        "Identifique el proceso que escribió el valor (Image) y su usuario; reg.exe, powershell.exe o binarios desconocidos son más sospechosos que TrustedInstaller.exe o msiexec.exe.",
+        "Revise el árbol de procesos padre e hijo y la línea de comandos del proceso escritor.",
+        "Pivote en el mismo host +/- 15 minutos: creación de archivos DLL, otros cambios de registro de persistencia, servicios nuevos o reinicios de WSearch.",
+        "Busque cargas de imagen (ImageLoaded) de esa DLL por SearchIndexer.exe o SearchProtocolHost.exe y alertas previas del host o usuario."
+      ],
+      "false_positives": [
+        "Instalación o actualización de paquetes de idioma o de Windows Search que restablece StemmerClass o WBreakerClass, normalmente por TrustedInstaller.exe o msiexec.exe.",
+        "Software de búsqueda empresarial o filtros lingüísticos de terceros firmados que registran sus propios componentes.",
+        "Pruebas de equipos de red team o validación de detecciones autorizadas."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del equipo si existe un cambio aprobado; preserve la clave exportada y la DLL antes de modificar nada.",
+        "Si es malicioso, aísle el endpoint y detenga temporalmente el servicio WSearch para evitar nuevas cargas de la DLL.",
+        "Restaure el valor original del registro (compare con un equipo sano del mismo build) y ponga en cuarentena la DLL tras obtener su hash.",
+        "Busque el mismo hash y la misma ruta de registro en toda la flota, investigue el acceso inicial y rote credenciales comprometidas."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque estos valores rara vez cambian fuera de instalaciones del sistema y su abuso otorga persistencia con ejecución como SYSTEM."
+    },
+    "en": {
+      "summary": "A process wrote a stemmer or word breaker override value (DLLPathOverride or Class) under the ContentIndex\\Language key. This can make SearchIndexer.exe load an attacker-controlled DLL.",
+      "what_it_detects": "registry_set events where TargetObject contains \\SYSTEM\\CurrentControlSet\\Control\\ContentIndex\\Language\\ plus StemmerDLLPathOverride, WBDLLPathOverride, StemmerClass or WBreakerClass, for any language subkey (English_US, Neutral, etc.).",
+      "why_it_matters": "SearchIndexer.exe (Windows Search) runs as SYSTEM and loads the configured language components. Redirecting them to a malicious DLL gives the attacker persistence and privileged execution through a rarely monitored registry modification.",
+      "triage_steps": [
+        "Read TargetObject and Details: note the language subkey, the value changed and the DLL path or CLSID written.",
+        "If Details is a CLSID, check HKLM\\SOFTWARE\\Classes\\CLSID\\{CLSID}\\InprocServer32 to find the DLL it actually points to.",
+        "Validate the DLL: location (System32 versus user or Temp paths), signature, hash and reputation in threat intelligence.",
+        "Identify the writing process (Image) and user; reg.exe, powershell.exe or unknown binaries are more suspicious than TrustedInstaller.exe or msiexec.exe.",
+        "Review the parent and child process tree and the writer's command line.",
+        "Pivot on the same host +/- 15 minutes: DLL file creation, other persistence registry changes, new services or WSearch restarts.",
+        "Look for ImageLoaded events of that DLL by SearchIndexer.exe or SearchProtocolHost.exe, and earlier alerts for the host or user."
+      ],
+      "false_positives": [
+        "Language pack or Windows Search installs and updates resetting StemmerClass or WBreakerClass, usually by TrustedInstaller.exe or msiexec.exe.",
+        "Signed enterprise search software or third-party linguistic filters registering their own components.",
+        "Authorized red team exercises or detection validation tests."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether an approved change exists; export the key and preserve the DLL before changing anything.",
+        "If malicious, isolate the endpoint and temporarily stop the WSearch service to prevent further DLL loads.",
+        "Restore the original registry value (compare with a clean host on the same build) and quarantine the DLL after recording its hash.",
+        "Hunt for the same hash and registry path fleet-wide, investigate initial access and rotate compromised credentials."
+      ],
+      "severity_rationale": "High fits because these values rarely change outside system servicing and abuse yields persistence with SYSTEM-level execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets StemmerDLLPathOverride for English_US to a DLL in a public user folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\ContentIndex\\Language\\English_US\\StemmerDLLPathOverride",
+          "Details": "C:\\Users\\Public\\Libraries\\stemhelper.dll"
+        }
+      },
+      {
+        "description": "PowerShell replaces WBreakerClass for the Neutral language with an unknown CLSID",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\ContentIndex\\Language\\Neutral\\WBreakerClass",
+          "Details": "{8C2F1A55-3D7E-4B0A-9E61-0F5D2A7C9B11}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Value under the Language key that is not one of the override or class values",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\ContentIndex\\Language\\English_US\\Locale",
+          "Details": "DWORD (0x00000409)"
+        }
+      },
+      {
+        "description": "StemmerClass written under a different registry path outside SYSTEM\\CurrentControlSet\\Control\\ContentIndex",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\ExampleSearch\\Language\\English_US\\StemmerClass",
+          "Details": "{0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9}"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "80eeab92-0979-4152-942d-96749e11df40",
+    "title": "Azure Keyvault Key Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_keyvault_key_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_keyvault_key_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552",
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en Azure Activity Logs una operación de escritura sobre una clave de Key Vault: creación, importación, actualización, respaldo, restauración, recuperación, eliminación o purga.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es una de nueve operaciones MICROSOFT.KEYVAULT/VAULTS/KEYS/* (UPDATE, CREATE, IMPORT, RECOVER, RESTORE, DELETE, BACKUP, PURGE). El título habla de modificar o eliminar, pero la regla también cubre creación y respaldo.",
+      "why_it_matters": "Las claves de Key Vault protegen cifrado de datos, firmas y credenciales. Un respaldo puede servir para sacar material de claves (T1552, credenciales no protegidas). Eliminar o purgar una clave puede dejar datos cifrados inaccesibles, con impacto en disponibilidad.",
+      "triage_steps": [
+        "Identifique la operación exacta en operationName. Priorice PURGE, DELETE y BACKUP sobre CREATE o UPDATE.",
+        "Revise caller, callerIpAddress y el user agent: ¿es un administrador, un service principal o una managed identity esperada?",
+        "Confirme en resourceId qué bóveda y qué clave se afectaron, y si la clave protege cifrado de almacenamiento, bases de datos o firmas.",
+        "Verifique status/resultType: una operación fallida puede indicar intentos de exploración o permisos insuficientes.",
+        "Busque un ticket de cambio o un pipeline de IaC que explique la operación en ese horario.",
+        "Pivotee por el mismo caller y la misma IP +/- 15 minutos: cambios de RBAC o de access policies, lectura de secretos u otras bóvedas.",
+        "Revise inicios de sesión de Entra ID del caller: ubicación inusual, MFA ausente o alertas previas sobre la misma identidad."
+      ],
+      "false_positives": [
+        "Administradores de seguridad o plataforma que rotan, crean o eliminan claves como parte de su trabajo.",
+        "Pipelines de IaC (Terraform, Bicep, ARM) o automatizaciones de rotación de claves con identidades de servicio conocidas.",
+        "Respaldos programados de claves hechos por herramientas de continuidad del negocio aprobadas."
+      ],
+      "response_steps": [
+        "Valide con el responsable de la bóveda o el dueño de la identidad si la operación fue autorizada.",
+        "Si no lo fue, revoque las sesiones y deshabilite temporalmente al caller o rote las credenciales del service principal.",
+        "Restrinja el acceso a la bóveda (RBAC, access policies, firewall) y revise quién más tiene permisos de escritura sobre claves.",
+        "Si se eliminó una clave, recupérela desde soft-delete antes de que venza el período de retención. Confirme que purge protection esté habilitada.",
+        "Si hubo un BACKUP no autorizado, considere el material de la clave comprometido y planifique la rotación y el re-cifrado.",
+        "Documente el caso y, si es una actividad legítima recurrente, cree una exclusión acotada por identidad y bóveda."
+      ],
+      "severity_rationale": "Nivel medio: la gestión de claves suele ser administración legítima, pero una purga o un respaldo no autorizado puede comprometer datos o credenciales críticos."
+    },
+    "en": {
+      "summary": "Azure Activity Logs recorded a write operation on a Key Vault key: create, import, update, backup, restore, recover, delete or purge.",
+      "what_it_detects": "Azure Activity Log events whose operationName is one of nine MICROSOFT.KEYVAULT/VAULTS/KEYS/* operations (UPDATE, CREATE, IMPORT, RECOVER, RESTORE, DELETE, BACKUP, PURGE). The title says modified or deleted, but the rule also covers create and backup.",
+      "why_it_matters": "Key Vault keys protect data encryption, signing and credentials. A backup can be used to take key material out of the vault (T1552, unsecured credentials). Deleting or purging a key can make encrypted data unreadable, which hurts availability.",
+      "triage_steps": [
+        "Check the exact operation in operationName. Look at PURGE, DELETE and BACKUP before CREATE or UPDATE.",
+        "Review caller, callerIpAddress and the user agent: is it an expected admin, service principal or managed identity?",
+        "Use resourceId to confirm which vault and key were affected, and whether the key protects storage, database or signing workloads.",
+        "Check status/resultType. Failed operations may point to probing or missing permissions.",
+        "Look for a change ticket or IaC pipeline run that explains the operation at that time.",
+        "Pivot on the same caller and IP within +/- 15 minutes: RBAC or access policy changes, secret reads, activity in other vaults.",
+        "Review the caller's Entra ID sign-ins for unusual locations, missing MFA or earlier alerts on the same identity."
+      ],
+      "false_positives": [
+        "Security or platform admins who rotate, create or delete keys as part of their job.",
+        "IaC pipelines (Terraform, Bicep, ARM) or key-rotation automation that run under known service identities.",
+        "Scheduled key backups by approved business-continuity tooling."
+      ],
+      "response_steps": [
+        "Confirm with the vault owner or the identity owner that the operation was authorized.",
+        "If it was not, revoke the caller's sessions and temporarily disable the account, or rotate the service principal's credentials.",
+        "Restrict vault access (RBAC, access policies, firewall) and review who else can write to keys.",
+        "If a key was deleted, recover it from soft-delete before the retention period ends. Confirm purge protection is on.",
+        "If an unauthorized BACKUP happened, treat the key material as compromised and plan rotation and re-encryption.",
+        "Document the case. If this is recurring legitimate activity, add an exclusion limited to that identity and vault."
+      ],
+      "severity_rationale": "Medium fits because key management is often legitimate admin work, but an unauthorized purge or backup can compromise critical data or credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unfamiliar user deletes a key from a production vault.",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/KEYS/DELETE",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01/keys/cmk-storage",
+          "status": "Succeeded",
+          "level": "Informational",
+          "time": "2024-03-12T02:14:07Z"
+        }
+      },
+      {
+        "description": "A service principal runs a key backup, which could be used to take key material out of the vault.",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/KEYS/BACKUP/ACTION",
+          "category": "Administrative",
+          "caller": "a1b2c3d4-0000-4000-8000-000000000001",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01/keys/signing-key",
+          "status": "Succeeded",
+          "level": "Informational",
+          "time": "2024-03-12T02:16:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A secret is deleted, not a key. The operationName is not in the rule's list.",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/SECRETS/DELETE",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01/secrets/db-password",
+          "status": "Succeeded",
+          "level": "Informational",
+          "time": "2024-03-12T02:15:10Z"
+        }
+      },
+      {
+        "description": "A read-only operation on keys, which the rule does not cover.",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/KEYS/READ",
+          "category": "Administrative",
+          "caller": "mrodriguez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-01/keys/cmk-storage",
+          "status": "Succeeded",
+          "level": "Informational",
+          "time": "2024-03-12T09:01:55Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "6b98b92b-4f00-4f62-b4fe-4d1920215771",
+    "title": "Potential DLL Sideloading Of Non-Existent DLLs From System Folders",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems), SBousseaden",
+    "path": "windows/image_load/image_load_side_load_non_existent_dlls.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_side_load_non_existent_dlls.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cargó desde System32 una DLL que normalmente no existe en el sistema (phantom DLL), y la DLL no tiene una firma válida de \"Microsoft Windows\". Puede indicar un intento de phantom DLL hijacking para ejecutar código en un proceso o servicio legítimo.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon ID 7) donde ImageLoaded termina en DLLs conocidas como inexistentes, por ejemplo WptsExtensions.dll, wow64log.dll, cdpsgshims.dll, oci.dll, TSMSISrv.dll o offdmpsvc.dll en C:\\Windows\\System32. Se excluyen los eventos con Signed=true, SignatureStatus=Valid y Signature=Microsoft Windows.",
+      "why_it_matters": "Servicios como Task Scheduler, CDPSvc, MSDTC o wermgr.exe buscan estas DLLs y, si alguien las coloca, las cargan con privilegios de SYSTEM. Esto da persistencia, escalamiento de privilegios y ejecución sigilosa (ATT&CK T1574.001, DLL search order hijacking).",
+      "triage_steps": [
+        "Revise ImageLoaded, Image y User: identifique qué proceso o servicio cargó la DLL y con qué cuenta se ejecuta.",
+        "Valide Signed, SignatureStatus y Signature: una DLL sin firma o firmada por un tercero desconocido es muy sospechosa.",
+        "Obtenga el hash de la DLL y búsquelo en su inventario de software y en fuentes de reputación internas.",
+        "Busque el evento de creación de archivo (Sysmon ID 11) de esa ruta: qué proceso y qué usuario escribieron la DLL y cuándo.",
+        "Revise el mismo host +/- 15 minutos: creación o reinicio de servicios, tareas programadas, uso de sc.exe, wpr.exe o wermgr.exe y conexiones de red del proceso que cargó la DLL.",
+        "Investigue la cuenta que escribió el archivo: escribir en System32 requiere privilegios administrativos; revise inicios de sesión recientes y su origen.",
+        "Consulte alertas previas para el mismo host, usuario y hash, y busque la misma DLL en otros endpoints."
+      ],
+      "false_positives": [
+        "Clientes de Oracle (Instant Client) que instalan oci.dll en System32; verifique firma, ruta de instalación y ticket de cambio.",
+        "Software de terceros, agentes de monitoreo o EDR que colocan legítimamente alguna de estas DLLs con firma de su proveedor.",
+        "DLLs de Microsoft firmadas con un nombre de firma distinto a \"Microsoft Windows\", que el filtro no excluye.",
+        "Herramientas de investigación o pruebas de red team autorizadas sobre DLL hijacking."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema y el inventario si la DLL es legítima antes de actuar.",
+        "Si es maliciosa, aísle el endpoint y preserve la DLL, su hash y la memoria del proceso que la cargó.",
+        "Elimine o ponga en cuarentena la DLL y revierta servicios o tareas modificados; reinicie el servicio afectado de forma controlada.",
+        "Restablezca las credenciales de las cuentas administrativas implicadas y revise el movimiento lateral desde ese host.",
+        "Busque el mismo hash y la misma ruta en toda la flota y agregue exclusiones solo para DLLs verificadas por proveedor."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque colocar una DLL en System32 requiere privilegios administrativos y su carga suele ejecutar código como SYSTEM con muy pocas causas legítimas."
+    },
+    "en": {
+      "summary": "A process loaded a normally non-existent (phantom) DLL from System32, and the DLL lacks a valid \"Microsoft Windows\" signature. This may be phantom DLL hijacking to run code inside a legitimate process or service.",
+      "what_it_detects": "Image load events (Sysmon ID 7) where ImageLoaded ends with known phantom DLLs such as WptsExtensions.dll, wow64log.dll, cdpsgshims.dll, oci.dll, TSMSISrv.dll or offdmpsvc.dll under C:\\Windows\\System32. Events with Signed=true, SignatureStatus=Valid and Signature=Microsoft Windows are excluded.",
+      "why_it_matters": "Services such as Task Scheduler, CDPSvc, MSDTC or wermgr.exe look for these DLLs and load them as SYSTEM if present. This gives persistence, privilege escalation and stealthy execution (ATT&CK T1574.001, DLL search order hijacking).",
+      "triage_steps": [
+        "Review ImageLoaded, Image and User: identify which process or service loaded the DLL and under which account.",
+        "Check Signed, SignatureStatus and Signature: an unsigned DLL or one signed by an unknown third party is highly suspicious.",
+        "Get the DLL hash and check it against software inventory and internal reputation sources.",
+        "Find the file creation event (Sysmon ID 11) for that path: which process and user wrote the DLL, and when.",
+        "Review the same host +/- 15 minutes: service creation or restarts, scheduled tasks, sc.exe, wpr.exe or wermgr.exe use, and network connections from the loading process.",
+        "Investigate the account that wrote the file: writing to System32 needs admin rights; review recent logons and their source.",
+        "Check earlier alerts for the same host, user and hash, and hunt for the same DLL on other endpoints."
+      ],
+      "false_positives": [
+        "Oracle clients (Instant Client) installing oci.dll into System32; verify signature, install path and change ticket.",
+        "Third-party software, monitoring agents or EDR legitimately dropping one of these DLLs signed by their vendor.",
+        "Microsoft DLLs signed with a signature name other than \"Microsoft Windows\", which the filter does not exclude.",
+        "Authorized research or red team testing of DLL hijacking."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and inventory whether the DLL is legitimate before acting.",
+        "If malicious, isolate the endpoint and preserve the DLL, its hash and memory of the loading process.",
+        "Delete or quarantine the DLL, revert modified services or tasks, and restart the affected service in a controlled way.",
+        "Reset credentials of involved admin accounts and review lateral movement from the host.",
+        "Hunt the hash and path fleet-wide; add exclusions only for vendor-verified DLLs."
+      ],
+      "severity_rationale": "High fits because placing a DLL in System32 requires admin rights and loading it usually runs code as SYSTEM, with very few legitimate causes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Task Scheduler svchost.exe loads an unsigned WptsExtensions.dll from System32 (phantom DLL hijack).",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\WptsExtensions.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Signature": "",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "wermgr.exe loads offdmpsvc.dll signed by an unknown third party.",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-APP-03.andes.example.com",
+          "Image": "C:\\Windows\\System32\\wermgr.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\offdmpsvc.dll",
+          "Signed": "true",
+          "SignatureStatus": "Valid",
+          "Signature": "Example Software Ltd",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000002",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate wbemcomn.dll with a valid Microsoft Windows signature; excluded by the filter.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\wbem\\wbemcomn.dll",
+          "Signed": "true",
+          "SignatureStatus": "Valid",
+          "Signature": "Microsoft Windows",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000003",
+          "User": "NT AUTHORITY\\NETWORK SERVICE"
+        }
+      },
+      {
+        "description": "Unsigned oci.dll loaded from an Oracle client folder, not System32; selection path does not match.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\app\\oracle\\product\\client\\bin\\sqlplus.exe",
+          "ImageLoaded": "C:\\app\\oracle\\product\\client\\bin\\oci.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Signature": "",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000004",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

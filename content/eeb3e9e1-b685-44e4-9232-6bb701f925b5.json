@@ -1,0 +1,155 @@
+{
+  "rule": {
+    "id": "eeb3e9e1-b685-44e4-9232-6bb701f925b5",
+    "title": "Kubernetes Secrets Enumeration",
+    "level": "low",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_secrets_enumeration.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_secrets_enumeration.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.007"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El audit log de Kubernetes registró una solicitud 'list' sobre el recurso 'secrets'. Una identidad intentó enumerar los secrets de un namespace o de todo el clúster.",
+      "what_it_detects": "Eventos del audit log de Kubernetes donde verb es 'list' y objectRef.resource es 'secrets'. Esto corresponde a llamadas como 'kubectl get secrets' o a peticiones directas a la API que listan secrets.",
+      "why_it_matters": "Los secrets guardan tokens de service accounts, credenciales de bases de datos, claves de API y certificados TLS. Si alguien los enumera, puede robar credenciales y moverse lateralmente dentro del clúster o hacia la nube (ATT&CK T1552.007, credenciales no protegidas en la API de contenedores).",
+      "triage_steps": [
+        "Identifique quién hizo la petición con user.username y user.groups. Distinga entre un usuario humano, una service account (system:serviceaccount:<ns>:<nombre>) y un controlador del sistema.",
+        "Revise objectRef.namespace. Si está vacío, la enumeración abarcó todo el clúster, lo que es más grave que listar un solo namespace.",
+        "Revise responseStatus.code. Un 200 significa que se devolvieron los secrets y un 403 indica un intento sin permisos que sugiere reconocimiento.",
+        "Valide sourceIPs y userAgent. Un kubectl desde una IP externa o desconocida, curl, o una herramienta de pentesting en un pod son señales de alerta.",
+        "Si la identidad es una service account, ubique el pod que la usa y verifique si el pod o su imagen pueden estar comprometidos.",
+        "Busque eventos de la misma identidad e IP en un rango de +/- 15 minutos: 'get' de secrets puntuales, creación de pods, exec, uso de tokens o cambios de RBAC.",
+        "Busque alertas anteriores de la misma identidad o IP y confirme con el responsable del workload si la actividad era esperada."
+      ],
+      "false_positives": [
+        "El Kubernetes dashboard accede de vez en cuando al secret kubernetes-dashboard-key-holder.",
+        "Operadores, controladores o herramientas de GitOps (por ejemplo Argo CD, cert-manager o external-secrets) que listan secrets como parte de su funcionamiento.",
+        "Administradores del clúster que ejecutan 'kubectl get secrets' durante soporte o depuración.",
+        "Herramientas de backup o de auditoría de seguridad que inventarían los recursos del clúster."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la identidad si la enumeración fue legítima y documente la justificación.",
+        "Si no está autorizada y responseStatus.code fue 200, revoque los tokens o credenciales de la identidad y aísle el pod involucrado con una NetworkPolicy o cordon.",
+        "Rote los secrets expuestos en los namespaces afectados, en especial tokens de service accounts y credenciales de la nube.",
+        "Revise y reduzca los permisos RBAC para que solo las identidades que lo necesitan puedan hacer 'list' sobre secrets.",
+        "Investigue el acceso inicial (imagen comprometida, kubeconfig filtrado) antes de restaurar la operación normal."
+      ],
+      "severity_rationale": "El nivel es bajo porque muchos controladores y administradores listan secrets de forma legítima. Se debe escalar si la identidad es inusual, si el alcance cubre todo el clúster o si la IP es externa."
+    },
+    "en": {
+      "summary": "The Kubernetes audit log recorded a 'list' request on the 'secrets' resource. An identity tried to enumerate the secrets in a namespace or across the whole cluster.",
+      "what_it_detects": "Kubernetes audit events where verb is 'list' and objectRef.resource is 'secrets'. These come from calls such as 'kubectl get secrets' or direct API requests that list secrets.",
+      "why_it_matters": "Secrets hold service account tokens, database passwords, API keys and TLS keys. Enumerating them lets an attacker steal credentials and move laterally within the cluster or into the cloud (ATT&CK T1552.007, unsecured credentials in the container API).",
+      "triage_steps": [
+        "Identify the requester from user.username and user.groups. Tell apart a human user, a service account (system:serviceaccount:<ns>:<name>) and a system controller.",
+        "Check objectRef.namespace. If it is empty, the listing covered the whole cluster, which is more serious than listing one namespace.",
+        "Check responseStatus.code. A 200 means the secrets were returned. A 403 means the attempt was denied, which suggests reconnaissance.",
+        "Validate sourceIPs and userAgent. Watch for kubectl from an unknown or external IP, curl, or offensive tooling running inside a pod.",
+        "If the identity is a service account, find the pod that uses it and assess whether the pod or its image is compromised.",
+        "Look at the same identity and IP within +/- 15 minutes: secret 'get' calls, pod creation, exec, token use or RBAC changes.",
+        "Look for earlier alerts on the same identity or IP, and confirm with the workload owner whether the activity was expected."
+      ],
+      "false_positives": [
+        "The Kubernetes dashboard occasionally accesses the kubernetes-dashboard-key-holder secret.",
+        "Operators, controllers or GitOps tools (for example Argo CD, cert-manager or external-secrets) that list secrets as part of their normal work.",
+        "Cluster administrators running 'kubectl get secrets' while troubleshooting.",
+        "Backup or security posture tools that inventory cluster resources."
+      ],
+      "response_steps": [
+        "Confirm with the identity owner whether the listing was legitimate, and record the justification.",
+        "If it was unauthorized and the response was 200, revoke the identity's tokens or credentials and isolate the pod involved with a NetworkPolicy or cordon.",
+        "Rotate the exposed secrets in the affected namespaces, starting with service account tokens and cloud credentials.",
+        "Tighten RBAC so that only the identities that need it can 'list' secrets.",
+        "Find the initial access path (compromised image, leaked kubeconfig) before returning to normal operations."
+      ],
+      "severity_rationale": "The level is low because many controllers and admins list secrets legitimately. Escalate when the identity is unusual, the scope is cluster-wide or the source IP is external."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A compromised pod's service account lists secrets across the cluster with kubectl and gets a 200 response.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "requestURI": "/api/v1/secrets?limit=500",
+          "objectRef.resource": "secrets",
+          "objectRef.apiVersion": "v1",
+          "objectRef.namespace": null,
+          "user.username": "system:serviceaccount:web:frontend",
+          "user.groups": "system:serviceaccounts",
+          "sourceIPs": "10.244.1.23",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "A user from an external IP tries to list secrets in the payments namespace with curl and is denied with 403.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "requestURI": "/api/v1/namespaces/payments/secrets",
+          "objectRef.resource": "secrets",
+          "objectRef.apiVersion": "v1",
+          "objectRef.namespace": "payments",
+          "user.username": "jperez@example.com",
+          "user.groups": "system:authenticated",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "curl/8.5.0",
+          "responseStatus.code": 403
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The dashboard reads a single secret with 'get' rather than 'list', so the verb does not match.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "get",
+          "requestURI": "/api/v1/namespaces/kubernetes-dashboard/secrets/kubernetes-dashboard-key-holder",
+          "objectRef.resource": "secrets",
+          "objectRef.name": "kubernetes-dashboard-key-holder",
+          "objectRef.namespace": "kubernetes-dashboard",
+          "user.username": "system:serviceaccount:kubernetes-dashboard:kubernetes-dashboard",
+          "sourceIPs": "10.244.0.15",
+          "userAgent": "dashboard/v2.7.0",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "An admin lists configmaps instead of secrets, so the resource does not match.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "requestURI": "/api/v1/namespaces/web/configmaps",
+          "objectRef.resource": "configmaps",
+          "objectRef.namespace": "web",
+          "user.username": "admin@example.com",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kubectl/v1.29.2 (darwin/arm64) kubernetes/4b8e819",
+          "responseStatus.code": 200
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

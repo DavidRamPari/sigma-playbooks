@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "9069ea3c-b213-4c52-be13-86506a227ab1",
+    "title": "Linux Crypto Mining Indicators",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_crypto_mining.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_crypto_mining.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1496"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó en un host Linux un proceso cuya línea de comandos contiene parámetros típicos de mineros de criptomonedas (XMRig y similares), como URLs stratum, opciones de pool o donate-level, incluso codificados en base64.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde CommandLine contiene cadenas como ' --cpu-priority=', '--donate-level=0', ' -o pool.', ' --nicehash', ' --algo=rx/0 ', 'stratum+tcp://', 'stratum+udp://', 'sh -c /sbin/modprobe msr allow_writes=on' o variantes base64 de '--donate-level=' y 'stratum+tcp/udp://'.",
+      "why_it_matters": "El minado no autorizado (ATT&CK T1496, Resource Hijacking) consume CPU, energía y costos de nube, y suele indicar un compromiso previo: credenciales robadas, servicio expuesto explotado o contenedor mal configurado.",
+      "triage_steps": [
+        "Revise CommandLine e Image: identifique el binario, su ruta (/tmp, /dev/shm o directorios ocultos son sospechosos) y el pool o dirección de wallet indicada.",
+        "Identifique el usuario y ParentImage; un padre como un servidor web, cron, bash desde SSH o un runtime de contenedor orienta el vector de entrada.",
+        "Si CommandLine contiene base64, decodifíquelo y busque comandos adicionales de descarga o persistencia.",
+        "Pivotee en el mismo host +/- 15 minutos: descargas con curl/wget, chmod +x, cambios en crontab, systemd, ~/.ssh/authorized_keys y eliminación de logs.",
+        "Verifique conexiones salientes del host hacia el pool (puertos como 3333, 4444, 5555 o 443) y resuelva los dominios contactados.",
+        "Obtenga el hash del binario y compárelo con inteligencia de amenazas; revise uso de CPU sostenido en el host.",
+        "Busque alertas previas del mismo host, usuario o IP de origen de SSH, y la misma línea de comandos en otros hosts."
+      ],
+      "false_positives": [
+        "Uso legítimo y autorizado de mineros, por ejemplo en equipos de laboratorio o investigación aprobados.",
+        "Pruebas de benchmarking o ejercicios de red team documentados que usan XMRig.",
+        "Herramientas de seguridad o analistas que analizan muestras de mineros en un sandbox."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host si el minado está autorizado; si no, trátelo como incidente.",
+        "Aísle el host o el contenedor y bloquee en el perímetro los dominios e IPs del pool identificados.",
+        "Preserve evidencia (binario, hash, crontab, unidades systemd) antes de terminar el proceso y eliminar la persistencia.",
+        "Determine y corrija el vector de entrada: rote credenciales comprometidas, parchee el servicio expuesto y revise claves SSH.",
+        "Restaure el host desde una imagen confiable si hay indicios de rootkit o modificaciones del sistema, y monitoree la reaparición."
+      ],
+      "severity_rationale": "El nivel alto es apropiado porque estas cadenas son muy específicas de mineros y su presencia casi siempre implica un compromiso con abuso activo de recursos."
+    },
+    "en": {
+      "summary": "A Linux process started with a command line containing typical crypto miner parameters (XMRig and similar), such as stratum URLs, pool options or donate-level, possibly base64-encoded.",
+      "what_it_detects": "Linux process creation events where CommandLine contains ' --cpu-priority=', '--donate-level=0', ' -o pool.', ' --nicehash', ' --algo=rx/0 ', 'stratum+tcp://', 'stratum+udp://', 'sh -c /sbin/modprobe msr allow_writes=on', or base64 variants of '--donate-level=' and 'stratum+tcp/udp://'.",
+      "why_it_matters": "Unauthorized mining (ATT&CK T1496, Resource Hijacking) burns CPU, power and cloud spend, and usually signals an earlier compromise: stolen credentials, an exploited exposed service or a misconfigured container.",
+      "triage_steps": [
+        "Review CommandLine and Image: identify the binary, its path (/tmp, /dev/shm or hidden directories are suspicious) and the pool or wallet address.",
+        "Identify the user and ParentImage; a web server, cron, an SSH bash session or a container runtime as parent points to the entry vector.",
+        "If CommandLine contains base64, decode it and look for additional download or persistence commands.",
+        "Pivot on the same host +/- 15 minutes: curl/wget downloads, chmod +x, crontab, systemd and ~/.ssh/authorized_keys changes, log deletion.",
+        "Check outbound connections to the pool (ports such as 3333, 4444, 5555 or 443) and resolve contacted domains.",
+        "Hash the binary and check threat intelligence; confirm sustained high CPU usage on the host.",
+        "Search earlier alerts for the same host, user or SSH source IP, and the same command line on other hosts."
+      ],
+      "false_positives": [
+        "Legitimate, authorized use of crypto miners, e.g. approved lab or research machines.",
+        "Documented benchmarking or red team exercises using XMRig.",
+        "Security staff analyzing miner samples in a sandbox."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether mining is authorized; if not, handle it as an incident.",
+        "Isolate the host or container and block the identified pool domains and IPs at the perimeter.",
+        "Preserve evidence (binary, hash, crontab, systemd units) before killing the process and removing persistence.",
+        "Find and fix the entry vector: rotate compromised credentials, patch the exposed service, review SSH keys.",
+        "Rebuild from a trusted image if rootkit or system tampering is suspected, and monitor for reappearance."
+      ],
+      "severity_rationale": "High fits because these strings are very specific to miners and almost always indicate a compromise with active resource abuse."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "XMRig started from a hidden /tmp directory with donate-level 0 and a pool URL",
+        "event": {
+          "Image": "/tmp/.x/kdevtmpfsi",
+          "CommandLine": "/tmp/.x/kdevtmpfsi --donate-level=0 -o pool.example.com:3333 -u 4ExampleWalletAddress -k --tls",
+          "ParentImage": "/bin/bash",
+          "User": "www-data",
+          "CurrentDirectory": "/tmp/.x",
+          "ProcessId": 48213,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "Subprocess spawned by XMRig to enable MSR writes",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c /sbin/modprobe msr allow_writes=on",
+          "ParentImage": "/dev/shm/.cache/xmrig",
+          "User": "root",
+          "CurrentDirectory": "/dev/shm/.cache",
+          "ProcessId": 48230,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "SSH with a -o option to a host whose user name starts with pool, not ' -o pool.'",
+        "event": {
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "/usr/bin/ssh -o ServerAliveInterval=60 pool-admin@203.0.113.10",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 5120,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Legitimate loading of the msr module by an admin for turbostat, without allow_writes",
+        "event": {
+          "Image": "/usr/sbin/modprobe",
+          "CommandLine": "/usr/sbin/modprobe msr",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 7731,
+          "Computer": "perf-lab-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

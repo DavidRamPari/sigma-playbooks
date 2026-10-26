@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "1b2ae822-6fe1-43ba-aa7c-d1a3b3d1d5f2",
+    "title": "Service Installation with Suspicious Folder Pattern",
+    "level": "high",
+    "status": "test",
+    "author": "pH-T (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_susp_service_installation_folder_pattern.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_susp_service_installation_folder_pattern.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un nuevo servicio de Windows (evento 7045 de System) cuyo binario está directamente bajo C:\\ o C:\\ProgramData con una ruta muy corta. Los atacantes suelen dejar el payload del servicio en ubicaciones así, cortas y con permisos de escritura, para lograr persistencia o ejecutarlo como SYSTEM.",
+      "what_it_detects": "Evento 7045 del Service Control Manager en el que ImagePath empieza con C:\\ProgramData\\ o con C:\\, seguido de 1 a 9 caracteres y .exe, por ejemplo C:\\ProgramData\\svc.exe o C:\\Temp\\a.exe.",
+      "why_it_matters": "Crear un servicio de Windows (ATT&CK T1543.003) da persistencia tras reinicios y suele ejecutar código como LocalSystem, por lo que también implica escalamiento de privilegios. Herramientas de ejecución remota y malware instalan binarios con nombres cortos en carpetas poco profundas.",
+      "triage_steps": [
+        "Revise ImagePath, ServiceName, StartType y AccountName; anote si corre como LocalSystem y si inicia de forma automática o manual.",
+        "Verifique si el binario de ImagePath todavía existe; obtenga hash, firma, tamaño y fecha de creación, y consulte el hash en threat intel.",
+        "Identifique quién creó el servicio: evento 4697 de Security y procesos sc.exe, New-Service de PowerShell o reg.exe en el mismo host +/- 15 minutos.",
+        "Busque inicios de sesión de red (4624 tipo 3) y escrituras SMB a ADMIN$ o C$ justo antes; registre la IP de origen y la cuenta.",
+        "Revise eventos 7036 y 7040 del mismo ServiceName: si inició, se detuvo enseguida o se eliminó, sugiere ejecución remota de un solo uso.",
+        "Busque el mismo ServiceName, ImagePath o hash en otros hosts para detectar movimiento lateral.",
+        "Consulte alertas previas del mismo host y usuario, en especial de acceso a credenciales o ejecución remota."
+      ],
+      "false_positives": [
+        "Instaladores o actualizadores de proveedores que dejan un binario de servicio con nombre corto en C:\\ProgramData.",
+        "Aplicaciones antiguas o internas instaladas en una carpeta raíz corta, como C:\\App\\svc.exe.",
+        "Herramientas de administración que despliegan un servicio temporal para gestión remota, si está documentado y aprobado."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con los registros de cambios si el servicio es esperado antes de actuar.",
+        "Si es malicioso, aísle el host y deshabilite el servicio (sc config start= disabled) en lugar de borrarlo, para conservar evidencia.",
+        "Preserve el binario y la memoria; luego elimine el servicio y el payload, y restablezca las credenciales de la cuenta que lo instaló.",
+        "Busque los mismos indicadores en toda la organización y bloquee el hash; restaure el host desde un estado confiable si se confirma el compromiso."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque un servicio nuevo en una ruta raíz corta y con permisos de escritura rara vez es legítimo y otorga persistencia o ejecución remota con privilegios SYSTEM."
+    },
+    "en": {
+      "summary": "A new Windows service was installed (System event 7045) whose binary sits directly under C:\\ or C:\\ProgramData with a very short path. Attackers often drop service payloads in such writable, short locations for persistence or SYSTEM execution.",
+      "what_it_detects": "Service Control Manager event 7045 where ImagePath starts with C:\\ProgramData\\ or C:\\ followed by 1 to 9 characters and then .exe, for example C:\\ProgramData\\svc.exe or C:\\Temp\\a.exe.",
+      "why_it_matters": "Creating a Windows service (ATT&CK T1543.003) gives persistence across reboots and usually runs code as LocalSystem, which also means privilege escalation. Remote execution tools and malware often install short-named service binaries in shallow, writable folders.",
+      "triage_steps": [
+        "Read ImagePath, ServiceName, StartType and AccountName from the event; note whether it runs as LocalSystem and starts automatically or on demand.",
+        "Check whether the binary in ImagePath still exists; collect its hash, signature, size and creation time, and look up the hash in threat intel.",
+        "Find who created the service: Security 4697, plus sc.exe, PowerShell New-Service or reg.exe process events on the same host within +/- 15 minutes.",
+        "Look for network logons (4624 type 3) and SMB writes to ADMIN$ or C$ just before installation; record the source IP and account.",
+        "Check System events 7036 and 7040 for the same ServiceName to see if it started, stopped quickly or was deleted, which suggests one-shot remote execution.",
+        "Search other hosts for the same ServiceName, ImagePath or hash to find lateral movement.",
+        "Review earlier alerts for the same host and user, especially credential access or remote execution."
+      ],
+      "false_positives": [
+        "Vendor installers or updaters that put a short-named service binary in C:\\ProgramData.",
+        "Legacy or in-house applications installed in a short root folder such as C:\\App\\svc.exe.",
+        "Admin tools that deploy a temporary service for remote management, if documented and approved."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner or change records whether the service is expected before taking action.",
+        "If malicious, isolate the host and disable the service (sc config start= disabled) instead of deleting it, so evidence is kept.",
+        "Preserve the binary and memory, then remove the service and payload; reset credentials of the account used to install it.",
+        "Hunt for the same indicators across the estate and block the hash; restore the host from a known-good state if compromise is confirmed."
+      ],
+      "severity_rationale": "High fits because a new service in a short, writable root path is rarely legitimate and gives SYSTEM-level persistence or remote execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed from a short-named binary directly in C:\\ProgramData (matches the first regex).",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinUpdSvc",
+          "ImagePath": "C:\\ProgramData\\svc32.exe",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service binary in a short root folder C:\\Temp (8 characters before .exe, matches the second regex).",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ServiceName": "xQ7trnBa",
+          "ImagePath": "C:\\Temp\\upd.exe -k run",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Defender service under a deep ProgramData path; the characters after ProgramData\\ exceed 9 before any .exe.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinDefend",
+          "ImagePath": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24010.12-0\\MsMpEng.exe",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Vendor agent service installed under Program Files; path is too long to match either pattern.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-APP-01.andes.example.com",
+          "ServiceName": "ExampleBackupAgent",
+          "ImagePath": "C:\\Program Files\\ExampleCorp\\Backup\\agent.exe",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

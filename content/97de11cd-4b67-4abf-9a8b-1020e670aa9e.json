@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "97de11cd-4b67-4abf-9a8b-1020e670aa9e",
+    "title": "Pnscan Binary Data Transmission Activity",
+    "level": "medium",
+    "status": "test",
+    "author": "David Burkett (@signalblur)",
+    "path": "linux/process_creation/proc_creation_lnx_pnscan_binary_cli_pattern.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_pnscan_binary_cli_pattern.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1046"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en Linux se ejecutó con opciones -W o -R seguidas de bytes en hexadecimal, el patrón que usa Pnscan para enviar y esperar datos binarios al escanear servicios en red.",
+      "what_it_detects": "Eventos process_creation cuyo CommandLine coincide con la expresión regular -(W|R) seguida de entre 2 y 20 pares hexadecimales entre comillas o espacios. Por ejemplo: pnscan -R '6f 73' -W '2a 31 0d 0a' 192.0.2.0/24 6379.",
+      "why_it_matters": "Pnscan es un escáner de puertos rápido. Con -W envía bytes concretos y con -R busca una respuesta concreta, lo que le permite identificar servicios como Redis o Docker para luego explotarlos. Corresponde a T1046 (descubrimiento de servicios de red) y aparece en campañas de criptominería contra Docker, Hadoop, Redis y Confluence.",
+      "triage_steps": [
+        "Revise CommandLine completo: decodifique los bytes hexadecimales de -W/-R (por ejemplo, comandos de Redis como INFO) y anote los rangos IP y puertos objetivo.",
+        "Verifique Image: ruta del binario (pnscan en /tmp, /var/tmp o /dev/shm resulta sospechoso), su hash y su fecha de creación en disco.",
+        "Identifique ParentImage y la cadena de procesos: ¿lo lanzó un shell interactivo, cron, un script descargado o un servicio expuesto como Redis, Docker o Confluence?",
+        "Revise el usuario que ejecuta el proceso y si coincide con una cuenta de servicio que normalmente no ejecuta herramientas de red.",
+        "Busque en el mismo host, +/- 15 minutos, descargas con curl/wget, cambios en crontab, creación de usuarios, claves SSH nuevas o procesos de minería.",
+        "Correlacione con el tráfico de red: muchas conexiones salientes a los puertos 2375, 6379, 8088 u 8090 desde este host.",
+        "Busque alertas anteriores para el mismo host, el mismo hash o los mismos rangos objetivo en otros equipos."
+      ],
+      "false_positives": [
+        "Escaneos autorizados de pentesting o red team con pnscan, documentados y con ventana aprobada.",
+        "Herramientas internas de inventario o monitoreo que usan opciones -W/-R con hexadecimal en su línea de comandos."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host si existe un escaneo autorizado; si no, trate el incidente como compromiso activo.",
+        "Aísle el host de la red y conserve evidencia: binario, scripts, crontab, historial del shell y lista de procesos.",
+        "Detenga los procesos maliciosos y elimine la persistencia identificada solo después de documentarla y respaldarla.",
+        "Revise los objetivos escaneados en busca de explotación y aplique parches o restrinja el acceso a Docker, Redis, Hadoop y Confluence.",
+        "Reinstale o restaure el host desde una imagen confiable y rote las credenciales y claves expuestas."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: el patrón es muy específico de Pnscan y de campañas maliciosas, pero por sí solo indica descubrimiento y no confirma una explotación."
+    },
+    "en": {
+      "summary": "A Linux process ran with -W or -R followed by hex bytes. Pnscan uses this pattern to send and match binary data while it scans network services.",
+      "what_it_detects": "process_creation events where CommandLine matches the regex -(W|R) followed by 2 to 20 hex byte pairs between quotes or spaces. Example: pnscan -R '6f 73' -W '2a 31 0d 0a' 192.0.2.0/24 6379.",
+      "why_it_matters": "Pnscan is a fast port scanner. -W sends chosen bytes and -R waits for a chosen reply, so it can find services like Redis or Docker to exploit next. This is T1046 (Network Service Discovery). The pattern appears in cryptomining campaigns against Docker, Hadoop, Redis and Confluence.",
+      "triage_steps": [
+        "Read the full CommandLine. Decode the hex bytes after -W/-R (for example Redis INFO commands) and note the target IP ranges and ports.",
+        "Check Image: the binary path (pnscan in /tmp, /var/tmp or /dev/shm is suspicious), its hash and when it was written to disk.",
+        "Identify ParentImage and the process tree. Did an interactive shell, cron, a downloaded script or an exposed service such as Redis, Docker or Confluence launch it?",
+        "Check the executing user. Flag service accounts that do not normally run network tools.",
+        "On the same host, +/- 15 minutes, look for curl/wget downloads, crontab changes, new users or SSH keys, and miner processes.",
+        "Correlate with network telemetry: look for bursts of outbound connections to ports 2375, 6379, 8088 or 8090.",
+        "Search for earlier alerts on the same host or hash, and for the same target ranges scanned from other hosts."
+      ],
+      "false_positives": [
+        "Authorized pentest or red team scans using pnscan, documented and inside an approved window.",
+        "Internal inventory or monitoring tools that pass hex values through -W/-R options."
+      ],
+      "response_steps": [
+        "Ask the host owner whether a scan was authorized. If it was not, treat this as an active compromise.",
+        "Isolate the host and keep evidence: the binary, scripts, crontab, shell history and the process list.",
+        "Kill the malicious processes. Remove persistence only after you have documented it and backed it up.",
+        "Check the scanned targets for exploitation. Patch Docker, Redis, Hadoop and Confluence or restrict access to them.",
+        "Rebuild the host from a trusted image and rotate any exposed credentials and keys."
+      ],
+      "severity_rationale": "Medium fits because the pattern is specific to Pnscan and known campaigns, but on its own it shows discovery, not confirmed exploitation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Pnscan run from /tmp sweeping a range for Redis, sending an INFO command in hex and matching the reply in hex",
+        "event": {
+          "Image": "/tmp/.x/pnscan",
+          "CommandLine": "/tmp/.x/pnscan -t512 -R '6f 73 3a 4c 69 6e 75 78' -W '2a 31 0d 0a 24 34 0d 0a 69 6e 66 6f 0d 0a' 192.0.2.0/24 6379",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash /tmp/.x/init.sh",
+          "User": "redis",
+          "ProcessId": 48213,
+          "Computer": "app-redis-03"
+        }
+      },
+      {
+        "description": "Pnscan probing the Docker API port, with the -W hex payload in double quotes",
+        "event": {
+          "Image": "/usr/local/bin/pnscan",
+          "CommandLine": "pnscan -t300 -W \"47 45 54 20 2f\" 198.51.100.0/24 2375",
+          "ParentImage": "/usr/bin/sh",
+          "User": "root",
+          "ProcessId": 9912,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Plain pnscan port scan with no -W/-R hex payload",
+        "event": {
+          "Image": "/usr/bin/pnscan",
+          "CommandLine": "pnscan -t100 203.0.113.0/24 22",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 3021,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Admin running a recursive grep with -R followed by a non-hex string",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -R \"error\" /var/log/nginx",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 7744,
+          "Computer": "web-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

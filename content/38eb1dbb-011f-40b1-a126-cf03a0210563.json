@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "38eb1dbb-011f-40b1-a126-cf03a0210563",
+    "title": "ESXi Syslog Configuration Change Via ESXCLI",
+    "level": "medium",
+    "status": "test",
+    "author": "Cedric Maurugeon",
+    "path": "linux/process_creation/proc_creation_lnx_esxcli_syslog_config_change.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_esxcli_syslog_config_change.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.012",
+      "T1685",
+      "T1690"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó \"esxcli system syslog config set\" en un host ESXi, lo que modifica la configuración de syslog, por ejemplo el loghost remoto, el directorio de logs o la rotación. Puede ser administración legítima o un intento de cegar la recolección de logs.",
+      "what_it_detects": "Procesos cuyo Image termina en /esxcli y cuyo CommandLine contiene 'system', 'syslog', 'config' y ' set'. Es decir, cualquier cambio de la configuración de syslog de ESXi hecho desde la línea de comandos del hipervisor.",
+      "why_it_matters": "Un atacante con acceso al hipervisor puede redirigir o desactivar el reenvío de logs, mandar los logs a un directorio volátil o reducir la retención antes de cifrar o borrar VMs. Así debilita las defensas usando el CLI del hipervisor (T1059.012).",
+      "triage_steps": [
+        "Lea el CommandLine completo e identifique qué parámetro cambió (--loghost, --logdir, --logdir-unique, --default-rotate, --default-size) y cuál es el valor nuevo.",
+        "Compare el loghost nuevo con los colectores aprobados. Si el destino es desconocido, si está vacío o si el logdir apunta a /tmp o /scratch sin justificación, el cambio es sospechoso.",
+        "Identifique al usuario y el origen de la sesión (SSH, ESXi Shell, DCUI o hostd/vCenter) en /var/log/shell.log, /var/log/auth.log y hostd.log.",
+        "Revise el mismo host en una ventana de +/- 15 minutos: busque otros comandos esxcli (firewall, vm process kill, software acceptance), la habilitación de SSH o la descarga de binarios.",
+        "Confirme si el SIEM dejó de recibir eventos de este host después del cambio y busque alertas previas para el mismo host o usuario.",
+        "Busque un ticket de cambio o confirme el cambio con el equipo de virtualización."
+      ],
+      "false_positives": [
+        "Administradores que cambian el loghost o la rotación durante una migración del colector de syslog o del SIEM.",
+        "Scripts de hardening, host profiles o herramientas de automatización que aplican la configuración de syslog estándar.",
+        "Ajustes de soporte del proveedor durante la resolución de incidentes en el host."
+      ],
+      "response_steps": [
+        "Valide el cambio con el responsable de ESXi y el ticket correspondiente antes de actuar.",
+        "Si no está autorizado, restaure el loghost y el logdir aprobados, ejecute 'esxcli system syslog reload' y conserve una copia de los logs locales.",
+        "Contenga el acceso: deshabilite SSH y ESXi Shell, active lockdown mode y rote las credenciales de root y de las cuentas que se usaron.",
+        "Busque cambios similares en otros hosts ESXi y revise la integridad de las VMs y los datastores.",
+        "Documente la línea de tiempo y vigile el host para detectar si el cambio se repite."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el comando se usa con frecuencia en administración legítima, pero un cambio no autorizado afecta directamente la visibilidad sobre el hipervisor."
+    },
+    "en": {
+      "summary": "\"esxcli system syslog config set\" ran on an ESXi host and changed its syslog settings, such as the remote loghost, the log directory or log rotation. This may be routine administration or an attempt to blind log collection.",
+      "what_it_detects": "Processes whose Image ends with /esxcli and whose CommandLine contains 'system', 'syslog', 'config' and ' set'. In other words, any change to ESXi syslog settings made from the hypervisor command line.",
+      "why_it_matters": "An attacker with hypervisor access can redirect or disable log forwarding, move logs to a volatile directory or cut retention before encrypting or deleting VMs. This weakens defenses through the hypervisor CLI (T1059.012).",
+      "triage_steps": [
+        "Read the full CommandLine and find which parameter changed (--loghost, --logdir, --logdir-unique, --default-rotate, --default-size) and its new value.",
+        "Compare the new loghost with the approved collectors. An unknown or empty destination, or a logdir pointing to /tmp or /scratch without a reason, is suspicious.",
+        "Identify the user and where the session came from (SSH, ESXi Shell, DCUI or hostd/vCenter) using /var/log/shell.log, auth.log and hostd.log.",
+        "Check the same host within +/- 15 minutes for other esxcli commands (firewall, vm process kill, software acceptance), SSH being enabled or binaries being downloaded.",
+        "Confirm whether the SIEM stopped receiving events from this host after the change, and look for earlier alerts on the same host or user.",
+        "Look for a change ticket or confirm the change with the virtualization team."
+      ],
+      "false_positives": [
+        "Administrators changing the loghost or rotation during a syslog collector or SIEM migration.",
+        "Hardening scripts, host profiles or automation tools that apply the standard syslog configuration.",
+        "Vendor support adjusting logging while troubleshooting the host."
+      ],
+      "response_steps": [
+        "Check the change against the ESXi owner and the change ticket before acting.",
+        "If it was not authorized, restore the approved loghost and logdir, run 'esxcli system syslog reload' and keep a copy of the local logs.",
+        "Contain access: disable SSH and ESXi Shell, enable lockdown mode and rotate the credentials for root and any accounts used.",
+        "Hunt for similar changes on other ESXi hosts and check the integrity of VMs and datastores.",
+        "Document the timeline and watch the host for the change happening again."
+      ],
+      "severity_rationale": "Medium fits because admins use this command often for legitimate work, but an unauthorized change directly reduces visibility into the hypervisor."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote loghost redirected to an unknown collector over SSH",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system syslog config set --loghost=udp://198.51.100.20:514",
+          "User": "root",
+          "ParentImage": "/bin/sh",
+          "Computer": "esx-prod-03.example.com",
+          "ProcessId": 53211
+        }
+      },
+      {
+        "description": "Log directory moved to a volatile path",
+        "event": {
+          "Image": "/usr/bin/esxcli",
+          "CommandLine": "/usr/bin/esxcli system syslog config set --logdir=/tmp --default-rotate=1",
+          "User": "root",
+          "ParentImage": "/bin/ash",
+          "Computer": "esx-lab-01.example.org",
+          "ProcessId": 40112
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only query of the syslog configuration (get, not set)",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system syslog config get",
+          "User": "root",
+          "ParentImage": "/bin/sh",
+          "Computer": "esx-prod-03.example.com",
+          "ProcessId": 53190
+        }
+      },
+      {
+        "description": "Syslog reload without a configuration change",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system syslog reload",
+          "User": "root",
+          "ParentImage": "/bin/sh",
+          "Computer": "esx-prod-03.example.com",
+          "ProcessId": 53240
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "rule": {
+    "id": "30a8cb77-8eb3-4cfb-8e79-ad457c5a4592",
+    "title": "Renamed Powershell Under Powershell Channel",
+    "level": "low",
+    "status": "test",
+    "author": "Harish Segar, frack113",
+    "path": "windows/powershell/powershell_classic/posh_pc_renamed_powershell.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_classic/posh_pc_renamed_powershell.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036.003",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se inició un motor de consola de Windows PowerShell (HostName=ConsoleHost) desde una aplicación host que no es la ruta estándar de powershell.exe. Puede tratarse de un binario de PowerShell renombrado o reubicado para evadir detecciones basadas en nombres.",
+      "what_it_detects": "Eventos de inicio del motor de PowerShell clásico (ps_classic_start, Event ID 400) cuyo campo Data contiene HostName=ConsoleHost, pero HostApplication existe y no comienza con powershell ni con la ruta WindowsPowerShell de System32/SysWOW64.",
+      "why_it_matters": "Los atacantes copian powershell.exe con otro nombre o en otra carpeta para eludir controles ligados al nombre y la ruta del proceso (Masquerading: Rename System Utilities, T1036.003), sin dejar de ejecutar comandos de PowerShell (T1059.001).",
+      "triage_steps": [
+        "Revise HostApplication en el campo Data: anote la ruta y el nombre del binario y la línea de comandos completa, incluidos -NoProfile, -ExecutionPolicy Bypass, -File o -Enc.",
+        "Verifique si HostApplication es solo la ruta real de powershell.exe entre comillas, en formato corto 8.3 o con variables de entorno; en ese caso probablemente es benigno.",
+        "Correlacione con eventos de creación de procesos (Sysmon 1 o 4688) del mismo host en +/- 15 minutos; compare Image con OriginalFileName PowerShell.EXE y registre el hash.",
+        "Identifique el proceso padre y el usuario que lo ejecutó; busque qué creó el archivo renombrado (eventos de creación de archivos, comandos de copia).",
+        "Revise los logs de Script Block (4104) y Module (4103) del mismo host y periodo para ver qué código se ejecutó.",
+        "Busque conexiones de red, descargas y procesos hijos de ese binario, además de alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "HostApplication escrito entre comillas, con nombres cortos 8.3 o variables como %SystemRoot%, que el filtro no excluye.",
+        "Windows localizado donde la etiqueta HostApplication está traducida, por lo que el filtro no coincide.",
+        "Software legítimo o herramientas administrativas que incluyen o copian un binario host de PowerShell con su propio nombre."
+      ],
+      "response_steps": [
+        "Confirme mediante hash y OriginalFileName que el binario es una copia renombrada de PowerShell y determine quién lo colocó allí.",
+        "Si es malicioso, aísle el endpoint y suspenda las sesiones de la cuenta afectada mientras se investiga.",
+        "Preserve el binario y los scripts relacionados; luego elimínelos junto con cualquier persistencia creada.",
+        "Restablezca las credenciales expuestas en el host y busque el mismo hash o ruta en otros endpoints.",
+        "En casos benignos confirmados, ajuste la regla con una exclusión acotada a la ruta exacta de HostApplication."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque la coincidencia sobre Data en bruto genera falsos positivos por formato de rutas y localización, aunque un PowerShell renombrado confirmado amerita escalamiento inmediato."
+    },
+    "en": {
+      "summary": "A Windows PowerShell console engine (HostName=ConsoleHost) started from a host application that is not the standard powershell.exe path. This may be a renamed or relocated PowerShell binary used to evade name-based detections.",
+      "what_it_detects": "Classic PowerShell engine start events (ps_classic_start, Event ID 400) where the Data field contains HostName=ConsoleHost but HostApplication does not begin with powershell or the System32/SysWOW64 WindowsPowerShell path, and HostApplication is present.",
+      "why_it_matters": "Attackers copy powershell.exe under another name or folder to bypass controls tied to process names and paths (Masquerading: Rename System Utilities, T1036.003) while still running PowerShell commands (T1059.001).",
+      "triage_steps": [
+        "Read HostApplication in the Data field: note the binary path, its name and the full command line, including flags like -NoProfile, -ExecutionPolicy Bypass, -File or -Enc.",
+        "Check whether HostApplication is just a quoted, short (8.3) or environment-variable form of the real powershell.exe path; if so, it is likely benign.",
+        "Pivot to process creation logs (Sysmon 1 or 4688) on the same host within +/- 15 minutes; compare Image with OriginalFileName PowerShell.EXE and record the hash.",
+        "Identify the parent process and the user who launched it; look at what created the renamed file (file creation events, copy commands).",
+        "Review PowerShell Script Block (4104) and Module (4103) logs for the same host and time to see what code ran.",
+        "Check network connections, downloads and child processes from that binary, and earlier alerts for the same host or user."
+      ],
+      "false_positives": [
+        "HostApplication written with quotes, short 8.3 names or variables such as %SystemRoot%, which the filter does not exclude.",
+        "Localized Windows where the HostApplication label is translated, so the filter cannot match.",
+        "Legitimate software or admin tools that ship or copy a PowerShell host binary under their own name."
+      ],
+      "response_steps": [
+        "Confirm the binary is a renamed PowerShell copy via hash and OriginalFileName, and determine who placed it there.",
+        "If malicious, isolate the endpoint and suspend the affected account's sessions pending investigation.",
+        "Preserve the binary and related scripts, then remove them and any persistence they created.",
+        "Reset credentials exposed on the host and hunt for the same hash or path on other endpoints.",
+        "For confirmed benign cases, tune with a narrow exclusion on the exact HostApplication path."
+      ],
+      "severity_rationale": "Low fits because the raw-Data matching produces benign hits from path formatting and localization, though a confirmed renamed PowerShell deserves prompt escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell console engine started from a renamed copy in the user's Temp folder running a script with execution policy bypass.",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "WS-0142.andes.example.com",
+          "Data": "NewEngineState=Available PreviousEngineState=None SequenceNumber=13 HostName=ConsoleHost HostVersion=5.1.19041.3803 HostId=5c2a9e1b-7f3d-4a6e-9b21-0d8c4e7f1a23 HostApplication=C:\\Users\\jperez\\AppData\\Local\\Temp\\winupdate.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\jperez\\AppData\\Local\\Temp\\inv.ps1 EngineVersion=5.1.19041.3803 RunspaceId=8e4b1c7a-2d5f-4f0e-a913-6b7c2d9e0f45 PipelineId= CommandName= CommandType= ScriptName= CommandPath= CommandLine="
+        }
+      },
+      {
+        "description": "Renamed PowerShell binary disguised as notepad.exe in ProgramData running an inline command.",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "SRV-FS02.andes.example.com",
+          "Data": "NewEngineState=Available PreviousEngineState=None SequenceNumber=9 HostName=ConsoleHost HostVersion=5.1.17763.5458 HostId=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d HostApplication=C:\\ProgramData\\notepad.exe -w hidden -c Get-Process EngineVersion=5.1.17763.5458 RunspaceId=0f9e8d7c-6b5a-4c3d-9e2f-1a0b9c8d7e6f PipelineId= CommandName= CommandType= ScriptName= CommandPath= CommandLine="
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate console session launched from the standard System32 powershell.exe path; excluded by filter_main_ps.",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "WS-0142.andes.example.com",
+          "Data": "NewEngineState=Available PreviousEngineState=None SequenceNumber=13 HostName=ConsoleHost HostVersion=5.1.19041.3803 HostId=7d3e2f1a-9b8c-4d6e-a5f4-3c2b1a0e9d8f HostApplication=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile EngineVersion=5.1.19041.3803 RunspaceId=4a5b6c7d-8e9f-4012-b345-6789abcdef01 PipelineId= CommandName= CommandType= ScriptName= CommandPath= CommandLine="
+        }
+      },
+      {
+        "description": "Console host engine start without a HostApplication entry; excluded by filter_main_host_application_null.",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "WS-0207.andes.example.com",
+          "Data": "NewEngineState=Available PreviousEngineState=None SequenceNumber=5 HostName=ConsoleHost HostVersion=5.1.19041.3803 HostId=b9c8d7e6-f5a4-4b3c-8d2e-1f0a9b8c7d6e EngineVersion=5.1.19041.3803 RunspaceId=c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f PipelineId= CommandName= CommandType= ScriptName= CommandPath= CommandLine="
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

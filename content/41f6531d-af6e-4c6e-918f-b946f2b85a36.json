@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "41f6531d-af6e-4c6e-918f-b946f2b85a36",
+    "title": "Potential Persistence Via LSA Extensions",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_lsa_extension.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_lsa_extension.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor de registro LsaExtensionConfig\\LsaSrv\\Extensions, que define las DLL que lsass.exe carga automáticamente. Esto puede indicar que un atacante agregó una DLL propia para obtener persistencia dentro de lsass.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene \\SYSTEM\\CurrentControlSet\\Control\\LsaExtensionConfig\\LsaSrv\\Extensions. Este valor REG_MULTI_SZ lista DLL que lsass.exe carga, y en cada una llama a la función InitializeLsaExtension().",
+      "why_it_matters": "Una DLL que se carga en lsass se ejecuta con privilegios de SYSTEM en cada arranque y puede acceder a credenciales y secretos de autenticación. Es una técnica de persistencia relacionada con el inicio automático (Boot or Logon Autostart Execution, T1547).",
+      "triage_steps": [
+        "Revise Image, User y ProcessId del evento: identifique qué proceso escribió el valor y con qué cuenta. reg.exe, powershell.exe o binarios desconocidos son más sospechosos que TrustedInstaller.",
+        "Lea Details y compare la lista de DLL con un baseline de un equipo de referencia con la misma versión de Windows; identifique entradas nuevas.",
+        "Ubique en disco cada DLL nueva (normalmente en System32), calcule su hash, verifique la firma digital y la fecha de creación.",
+        "Revise el proceso padre y la línea de comandos del proceso que modificó el registro, buscando scripts, herramientas remotas o sesiones interactivas inusuales.",
+        "Busque en el mismo host, +/- 15 minutos, creación de archivos DLL, otros cambios bajo HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa y reinicios programados.",
+        "Pivote por el usuario y el host: alertas previas, inicios de sesión remotos y actividad de acceso a credenciales en los últimos días."
+      ],
+      "false_positives": [
+        "Actualizaciones o instalaciones de características de Windows que reescriben el valor (por ejemplo, desde TrustedInstaller o svchost).",
+        "Software de seguridad o autenticación de terceros que registra legítimamente una extensión LSA; valide el proveedor y la firma de la DLL."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo y el baseline si el cambio estaba autorizado antes de actuar.",
+        "Si no está autorizado, aísle el endpoint de la red y preserve la DLL, el valor del registro exportado y una imagen de memoria de lsass.",
+        "Restaure el valor Extensions al baseline verificado, elimine la DLL maliciosa tras su análisis y reinicie el equipo para descargarla de lsass.",
+        "Asuma la exposición de credenciales: restablezca contraseñas de cuentas que iniciaron sesión en el host y busque el mismo hash o valor en otros equipos."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque este valor rara vez cambia legítimamente y una DLL inyectada en lsass otorga persistencia como SYSTEM y acceso a credenciales."
+    },
+    "en": {
+      "summary": "The LsaExtensionConfig\\LsaSrv\\Extensions registry value, which lists DLLs loaded automatically by lsass.exe, was modified. An attacker may have added a custom DLL to persist inside lsass.",
+      "what_it_detects": "registry_set events where TargetObject contains \\SYSTEM\\CurrentControlSet\\Control\\LsaExtensionConfig\\LsaSrv\\Extensions. This REG_MULTI_SZ value lists DLLs that lsass.exe loads, calling each one's InitializeLsaExtension() function.",
+      "why_it_matters": "A DLL loaded into lsass runs as SYSTEM on every boot and can reach credentials and authentication secrets. This is a persistence technique related to Boot or Logon Autostart Execution (T1547).",
+      "triage_steps": [
+        "Check Image, User and ProcessId: which process wrote the value and under which account. reg.exe, powershell.exe or unknown binaries are more suspicious than TrustedInstaller.",
+        "Read Details and compare the DLL list against a baseline from a reference host on the same Windows build; identify new entries.",
+        "Locate each new DLL on disk (usually System32), hash it, verify its digital signature and creation time.",
+        "Review the parent process and command line of the writing process for scripts, remote admin tools or unusual interactive sessions.",
+        "On the same host within +/- 15 minutes, look for DLL file creation, other changes under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa and scheduled reboots.",
+        "Pivot on the user and host: earlier alerts, remote logons and credential access activity in recent days."
+      ],
+      "false_positives": [
+        "Windows updates or feature installs rewriting the value (for example from TrustedInstaller or svchost).",
+        "Third-party security or authentication software legitimately registering an LSA extension; validate the vendor and the DLL signature."
+      ],
+      "response_steps": [
+        "Confirm with the host owner and the baseline whether the change was authorized before acting.",
+        "If unauthorized, isolate the endpoint and preserve the DLL, an export of the registry value and an lsass memory image.",
+        "Restore Extensions to the verified baseline, remove the malicious DLL after analysis and reboot to unload it from lsass.",
+        "Assume credential exposure: reset passwords for accounts that logged on to the host and hunt for the same hash or value elsewhere."
+      ],
+      "severity_rationale": "High fits because this value rarely changes legitimately and a DLL loaded into lsass gives SYSTEM-level persistence and credential access."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe run by an admin account appends a non-standard DLL to the LSA Extensions value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6412,
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\LsaExtensionConfig\\LsaSrv\\Extensions",
+          "Details": "efslsaext.dll lsaupdsvc.dll"
+        }
+      },
+      {
+        "description": "PowerShell running as SYSTEM writes the Extensions value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "SRV-FS-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 3328,
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\LsaExtensionConfig\\LsaSrv\\Extensions",
+          "Details": "efslsaext.dll C:\\ProgramData\\cache\\ext64.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Change under a sibling LsaExtensionConfig key (Interfaces), not the LsaSrv\\Extensions value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 2140,
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\LsaExtensionConfig\\Interfaces\\1001\\Extensions",
+          "Details": "efslsaext.dll"
+        }
+      },
+      {
+        "description": "Write to a different LSA value (Notification Packages) under Control\\Lsa",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0177.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1188,
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Notification Packages",
+          "Details": "scecli"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

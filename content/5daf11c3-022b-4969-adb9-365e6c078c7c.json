@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "5daf11c3-022b-4969-adb9-365e6c078c7c",
+    "title": "CodeIntegrity - Disallowed File For Protected Processes Has Been Blocked",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/code_integrity/win_codeintegrity_blocked_protected_process_file.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/code_integrity/win_codeintegrity_blocked_protected_process_file.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Code Integrity de Windows bloqueó la carga de un archivo en un proceso protegido (PP/PPL) porque no cumple los requisitos de firma. Puede indicar un intento de inyectar código en LSASS, en el antimalware u otro servicio protegido.",
+      "what_it_detects": "Eventos con EventID 3104 del canal Microsoft-Windows-CodeIntegrity/Operational: \"Windows bloqueó el archivo %2, que no está permitido para procesos protegidos\". El evento indica el archivo bloqueado y, normalmente, el proceso protegido que intentó cargarlo.",
+      "why_it_matters": "Los procesos protegidos, como LSASS con RunAsPPL o los servicios antimalware, solo cargan binarios con una firma adecuada. Cargar una DLL no confiable en ellos permite robar credenciales, desactivar defensas o escalar privilegios (táctica de escalamiento de privilegios). Que el bloqueo funcionara no quiere decir que no hubo un intento.",
+      "triage_steps": [
+        "Extraiga del evento la ruta del archivo bloqueado (%2, FileNameBuffer) y el proceso protegido destino (ProcessNameBuffer). Anote el host, la hora y el usuario activo.",
+        "Obtenga el hash y la firma del archivo. Consulte su reputación y verifique si pertenece a un producto instalado y autorizado.",
+        "Revise quién creó el archivo y cuándo: eventos de creación de archivos y de procesos en el mismo host +/- 15 minutos, incluidos los procesos padre e hijo.",
+        "Si el destino es lsass.exe, revise las claves Security Packages, Authentication Packages y Notification Packages bajo HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa por si hay entradas nuevas.",
+        "Busque eventos relacionados de CodeIntegrity (3033, 3063, 3065, 3089) y alertas de manipulación del EDR o del antivirus en el mismo host.",
+        "Busque el mismo hash o la misma ruta en otros endpoints y revise alertas anteriores del host y del usuario."
+      ],
+      "false_positives": [
+        "Paquetes LSA o filtros de contraseña de terceros (tarjeta inteligente, SSO, sincronización de contraseñas) sin firma compatible con PPL tras activar RunAsPPL.",
+        "Módulos de productos de seguridad o controladores antiguos que se cargan en procesos protegidos tras una actualización incompleta.",
+        "Pruebas de desarrollo o de laboratorio con binarios sin firmar en equipos autorizados."
+      ],
+      "response_steps": [
+        "Valide con el responsable del sistema si el archivo pertenece a software autorizado. Si es así, documéntelo y gestione con el proveedor una versión firmada correctamente.",
+        "Si no se justifica, aísle el endpoint, conserve el archivo y una imagen de memoria, y revise el proceso que lo depositó.",
+        "Elimine el archivo y las claves de persistencia relacionadas solo después de preservar la evidencia y confirmar que son maliciosos.",
+        "Si el objetivo era LSASS o el antimalware, restablezca las credenciales de las cuentas usadas en el host y verifique que las protecciones sigan activas."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque un bloqueo de este tipo rara vez es benigno y suele señalar un intento de comprometer un proceso de seguridad crítico."
+    },
+    "en": {
+      "summary": "Windows Code Integrity blocked a file from loading into a protected process (PP/PPL) because it does not meet the signing requirements. This may be an attempt to inject code into LSASS, the antimalware service or another protected service.",
+      "what_it_detects": "EventID 3104 in the Microsoft-Windows-CodeIntegrity/Operational channel: \"Windows blocked file %2 which has been disallowed for protected processes.\" The event names the blocked file and usually the protected process that tried to load it.",
+      "why_it_matters": "Protected processes, such as LSASS with RunAsPPL or antimalware services, only load properly signed binaries. Loading an untrusted DLL into one would let an attacker steal credentials, disable defenses or escalate privileges (privilege escalation tactic). The block worked, but an attempt still happened.",
+      "triage_steps": [
+        "Take the blocked file path (%2, FileNameBuffer) and the target protected process (ProcessNameBuffer) from the event. Note the host, the time and the logged-on user.",
+        "Get the file's hash and signature. Check its reputation and whether it belongs to an installed, approved product.",
+        "Find out who created the file and when: file and process creation events on the same host within +/- 15 minutes, including parent and child processes.",
+        "If the target is lsass.exe, check the Security Packages, Authentication Packages and Notification Packages keys under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa for new entries.",
+        "Look for related CodeIntegrity events (3033, 3063, 3065, 3089) and for EDR or antivirus tampering alerts on the same host.",
+        "Search for the same hash or path on other endpoints, and review earlier alerts for the host and the user."
+      ],
+      "false_positives": [
+        "Third-party LSA packages or password filters (smart card, SSO, password sync) that lack PPL-compatible signing after RunAsPPL is enabled.",
+        "Security product modules or outdated drivers that load into protected processes after an incomplete update.",
+        "Authorized development or lab testing with unsigned binaries."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the file belongs to approved software. If it does, document it and ask the vendor for a properly signed build.",
+        "If it cannot be explained, isolate the endpoint, preserve the file and a memory image, and investigate the process that dropped it.",
+        "Delete the file and any related persistence keys only after you have preserved evidence and confirmed they are malicious.",
+        "If LSASS or the antimalware service was the target, reset credentials for accounts used on the host and confirm the protections are still active."
+      ],
+      "severity_rationale": "High fits because this kind of block is rarely benign and usually points to an attempt to tamper with a critical security process."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Code Integrity blocks an unsigned DLL from loading into PPL-protected LSASS",
+        "event": {
+          "EventID": 3104,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "WS-0142.andes.example.com",
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Windows\\System32\\secpkg_upd.dll",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume3\\Windows\\System32\\lsass.exe",
+          "TimeCreated": "2024-03-12T14:03:12.000Z"
+        }
+      },
+      {
+        "description": "Untrusted module blocked from loading into the antimalware service process",
+        "event": {
+          "EventID": 3104,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "FileNameBuffer": "\\Device\\HarddiskVolume2\\ProgramData\\Temp\\mpclient_hook.dll",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume2\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24010.12-0\\MsMpEng.exe",
+          "TimeCreated": "2024-03-12T09:41:55.000Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Event 3033 from the same channel (image did not meet signing level requirements), not the protected-process block event",
+        "event": {
+          "EventID": 3033,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "WS-0142.andes.example.com",
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Program Files\\ExampleVendor\\agent.dll",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume3\\Windows\\System32\\svchost.exe",
+          "RequestedSigningLevel": "Microsoft",
+          "ValidatedSigningLevel": "Authenticode",
+          "TimeCreated": "2024-03-12T14:05:00.000Z"
+        }
+      },
+      {
+        "description": "Informational signature event 3089 that accompanies other Code Integrity events",
+        "event": {
+          "EventID": 3089,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "WS-0142.andes.example.com",
+          "PublisherName": "Example Software Ltd",
+          "TimeCreated": "2024-03-12T14:05:01.000Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

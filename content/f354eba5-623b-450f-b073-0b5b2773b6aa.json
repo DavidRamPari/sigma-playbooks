@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "f354eba5-623b-450f-b073-0b5b2773b6aa",
+    "title": "Potential DCOM InternetExplorer.Application DLL Hijack - Image Load",
+    "level": "critical",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g, Open Threat Research (OTR), wagga",
+    "path": "windows/image_load/image_load_iexplore_dcom_iertutil_dll_hijack.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_iexplore_dcom_iertutil_dll_hijack.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002",
+      "T1021.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "iexplore.exe cargó iertutil.dll desde la carpeta de Internet Explorer y no desde System32. Este es el patrón de un DLL hijack usado para movimiento lateral mediante DCOM InternetExplorer.Application.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon 7) en los que Image termina en \\Internet Explorer\\iexplore.exe e ImageLoaded termina en \\Internet Explorer\\iertutil.dll. La copia legítima de iertutil.dll está en System32, así que una copia junto a iexplore.exe se carga primero por el orden de búsqueda de DLL.",
+      "why_it_matters": "Un atacante con credenciales copia una DLL maliciosa por SMB a la carpeta de Internet Explorer (T1021.002) y luego instancia de forma remota InternetExplorer.Application por DCOM (T1021.003). Así ejecuta código en el host destino dentro de un proceso de apariencia legítima.",
+      "triage_steps": [
+        "Confirme la ruta en ImageLoaded y revise Hashes, Signed y SignatureStatus. Una DLL sin firma de Microsoft en esa carpeta es altamente sospechosa.",
+        "Busque la creación de iertutil.dll en la carpeta de Internet Explorer (Sysmon 11). Si el proceso creador es System (PID 4), apunta a una escritura remota por SMB.",
+        "Revise inicios de sesión de red (4624, tipo 3) y accesos a recursos compartidos (5140/5145 a C$) en el host +/- 15 minutos para identificar la IP de origen y la cuenta.",
+        "Verifique que el padre de iexplore.exe sea svchost.exe (DcomLaunch) y que la línea de comandos incluya -Embedding, lo que indica activación por DCOM.",
+        "Examine los procesos hijos, las conexiones de red y los archivos escritos por ese iexplore.exe después de la carga.",
+        "Pivote sobre la IP de origen y la cuenta para buscar el mismo patrón o alertas previas en otros hosts."
+      ],
+      "false_positives": [
+        "Ejercicios autorizados de red team o pruebas de penetración que replican esta técnica de movimiento lateral.",
+        "Laboratorios de investigación o de validación de detecciones que copian iertutil.dll a la carpeta de Internet Explorer de forma intencional.",
+        "Empaquetado de software no estándar que copia DLL del sistema junto a iexplore.exe. Es poco común y debe confirmarse con el hash."
+      ],
+      "response_steps": [
+        "Valide el hash de la DLL contra la versión legítima de System32 y contra inteligencia de amenazas antes de actuar.",
+        "Si es maliciosa, aísle el host destino y el host de origen, y suspenda o restablezca las credenciales de la cuenta usada.",
+        "Preserve la DLL y la memoria del proceso iexplore.exe. Luego elimine la iertutil.dll ilegítima y termine los procesos asociados.",
+        "Revise la persistencia y el alcance en otros hosts alcanzados desde el mismo origen, y restaure los sistemas afectados desde un estado confiable."
+      ],
+      "severity_rationale": "El nivel critical se justifica porque esta carga casi nunca ocurre de forma legítima e indica ejecución remota de código y movimiento lateral activo."
+    },
+    "en": {
+      "summary": "iexplore.exe loaded iertutil.dll from the Internet Explorer folder instead of System32. This is the pattern of a DLL hijack used for lateral movement through DCOM InternetExplorer.Application.",
+      "what_it_detects": "Image load events (Sysmon 7) where Image ends with \\Internet Explorer\\iexplore.exe and ImageLoaded ends with \\Internet Explorer\\iertutil.dll. The legitimate iertutil.dll lives in System32. A copy placed next to iexplore.exe is loaded first because of DLL search order.",
+      "why_it_matters": "An attacker with credentials copies a malicious DLL over SMB into the Internet Explorer folder (T1021.002). They then start InternetExplorer.Application remotely through DCOM (T1021.003). This runs their code on the target inside a legitimate-looking process.",
+      "triage_steps": [
+        "Confirm the ImageLoaded path and check Hashes, Signed and SignatureStatus. A DLL in that folder without a Microsoft signature is highly suspicious.",
+        "Look for creation of iertutil.dll in the Internet Explorer folder (Sysmon 11). If the creator is System (PID 4), the file was likely written remotely over SMB.",
+        "Review network logons (4624 type 3) and share access (5140/5145 to C$) on the host within +/- 15 minutes to find the source IP and account.",
+        "Check that the parent of iexplore.exe is svchost.exe (DcomLaunch) and that the command line contains -Embedding, which shows DCOM activation.",
+        "Inspect the child processes, network connections and file writes of that iexplore.exe after the load.",
+        "Pivot on the source IP and account to find the same pattern or earlier alerts on other hosts."
+      ],
+      "false_positives": [
+        "Authorized red team or penetration tests that reproduce this lateral movement technique.",
+        "Research or detection-validation labs that copy iertutil.dll into the Internet Explorer folder on purpose.",
+        "Non-standard software packaging that places system DLLs next to iexplore.exe. This is rare; confirm it with the hash."
+      ],
+      "response_steps": [
+        "Before acting, check the DLL hash against the legitimate System32 version and against threat intelligence.",
+        "If the DLL is malicious, isolate the target and source hosts, then disable or reset the account that was used.",
+        "Preserve the DLL and the iexplore.exe process memory. Then remove the rogue iertutil.dll and kill the related processes.",
+        "Hunt for persistence and for other hosts reached from the same source, then restore affected systems to a known-good state."
+      ],
+      "severity_rationale": "Critical fits because this load almost never happens legitimately and points to active remote code execution and lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DCOM-activated iexplore.exe loads an unsigned iertutil.dll placed in its own Program Files folder",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 5124,
+          "Image": "C:\\Program Files\\Internet Explorer\\iexplore.exe",
+          "ImageLoaded": "C:\\Program Files\\Internet Explorer\\iertutil.dll",
+          "Hashes": "SHA256=3B1C0E5D2A9F4B7C8D6E5F4A3B2C1D0E9F8A7B6C5D4E3F2A1B0C9D8E7F6A5B4C",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Same hijack on the 32-bit Internet Explorer folder",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-FS-03.andes.example.com",
+          "ProcessId": 7740,
+          "Image": "C:\\Program Files (x86)\\Internet Explorer\\iexplore.exe",
+          "ImageLoaded": "C:\\Program Files (x86)\\Internet Explorer\\iertutil.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "User": "ANDES\\svc_backup"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal Internet Explorer start loading the legitimate iertutil.dll from System32",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 4410,
+          "Image": "C:\\Program Files\\Internet Explorer\\iexplore.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\iertutil.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Explorer loading iertutil.dll from System32; neither field matches",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0158.andes.example.com",
+          "ProcessId": 3020,
+          "Image": "C:\\Windows\\explorer.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\iertutil.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid",
+          "User": "ANDES\\mlopez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "d2d901db-7a75-45a1-bc39-0cbf00812192",
+    "title": "Number Of Resource Creation Or Deployment Activities",
+    "level": "medium",
+    "status": "test",
+    "author": "sawwinnnaung",
+    "path": "cloud/azure/activity_logs/azure_creating_number_of_resources_detection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_creating_number_of_resources_detection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El Azure Activity Log registró la creación o modificación de una máquina virtual o el despliegue de una plantilla ARM. Un volumen inusual de estas operaciones puede indicar abuso de una identidad comprometida.",
+      "what_it_detects": "Eventos de Azure Activity Log que contienen las operaciones Microsoft.Compute/virtualMachines/write o Microsoft.Resources/deployments/write. La regla no agrega por cantidad: cada evento genera una alerta, así que el volumen se evalúa durante el triage.",
+      "why_it_matters": "Un atacante con credenciales o un service principal comprometido puede desplegar VMs para cryptomining, crear infraestructura persistente o usar plantillas para otorgarse permisos. Esto se relaciona con ATT&CK T1098 (Account Manipulation), en las tácticas de persistencia y escalamiento de privilegios.",
+      "triage_steps": [
+        "Identifique caller, callerIpAddress, subscriptionId, resourceGroup y operationName del evento. Determine si el caller es un usuario, una managed identity o un service principal (appid en claims).",
+        "Cuente las operaciones virtualMachines/write y deployments/write del mismo caller en +/- 15 minutos y compárelas con su línea base habitual.",
+        "Revise los recursos creados: tamaño de VM (series GPU o de alto número de vCPU), regiones poco usadas, grupos de recursos nuevos y nombres aleatorios.",
+        "Para deployments, revise la plantilla y sus parámetros. Busque asignaciones de roles, extensiones de VM con scripts personalizados o identidades administradas.",
+        "Pivote a los registros de inicio de sesión de Entra ID del caller: callerIpAddress, ubicación, user agent, MFA y riesgo de sesión.",
+        "Busque cambios previos de la misma identidad: nuevas credenciales de service principal, asignaciones de roles o alertas anteriores.",
+        "Confirme con el propietario de la suscripción o del pipeline de CI/CD si existía un cambio aprobado."
+      ],
+      "false_positives": [
+        "Cambios válidos y planificados por administradores o equipos de plataforma.",
+        "Pipelines de CI/CD o Terraform/Bicep que despliegan con service principals conocidos.",
+        "Escalamiento automático, Azure Policy con efecto deployIfNotExists o servicios administrados que crean recursos."
+      ],
+      "response_steps": [
+        "Valide con el responsable si la actividad estaba autorizada antes de actuar sobre los recursos.",
+        "Si no está autorizada, deshabilite o revoque las sesiones y credenciales del caller y elimine asignaciones de roles sospechosas.",
+        "Detenga (deallocate) las VMs no autorizadas y conserve discos, snapshots y logs como evidencia antes de eliminarlas.",
+        "Revise el historial de deployments y quite los recursos, extensiones y permisos creados por el atacante.",
+        "Restablezca credenciales, aplique MFA y acceso condicional, y ajuste cuotas o políticas para limitar la creación de recursos."
+      ],
+      "severity_rationale": "Medium es adecuado porque estas operaciones son frecuentes y legítimas, pero un volumen anómalo o un caller inesperado puede indicar compromiso con impacto económico y de persistencia."
+    },
+    "en": {
+      "summary": "The Azure Activity Log recorded a virtual machine create/update or an ARM template deployment. An unusual volume of these operations may indicate abuse of a compromised identity.",
+      "what_it_detects": "Azure Activity Log events containing Microsoft.Compute/virtualMachines/write or Microsoft.Resources/deployments/write. The rule does not count events: each one alerts, so volume is assessed during triage.",
+      "why_it_matters": "An attacker with stolen credentials or a compromised service principal can deploy VMs for cryptomining, build persistent infrastructure, or use templates to grant themselves access. Maps to ATT&CK T1098 (Account Manipulation) for persistence and privilege escalation.",
+      "triage_steps": [
+        "Record caller, callerIpAddress, subscriptionId, resourceGroup and operationName. Determine whether the caller is a user, managed identity or service principal (appid in claims).",
+        "Count virtualMachines/write and deployments/write events from the same caller within +/- 15 minutes and compare with its normal baseline.",
+        "Inspect created resources: VM size (GPU or high-vCPU series), rarely used regions, new resource groups, random-looking names.",
+        "For deployments, review the template and parameters for role assignments, custom script VM extensions or managed identities.",
+        "Pivot to Entra ID sign-in logs for the caller: callerIpAddress, location, user agent, MFA result and sign-in risk.",
+        "Look for earlier changes by the same identity: new service principal credentials, role assignments or prior alerts.",
+        "Confirm with the subscription owner or CI/CD pipeline owner whether an approved change existed."
+      ],
+      "false_positives": [
+        "Valid, planned changes by administrators or platform teams.",
+        "CI/CD pipelines or Terraform/Bicep deploying through known service principals.",
+        "Autoscaling, Azure Policy deployIfNotExists remediation or managed services creating resources."
+      ],
+      "response_steps": [
+        "Verify with the owner whether the activity was authorized before touching resources.",
+        "If unauthorized, disable the caller, revoke its sessions and credentials, and remove suspicious role assignments.",
+        "Deallocate unauthorized VMs and preserve disks, snapshots and logs as evidence before deletion.",
+        "Review deployment history and remove attacker-created resources, extensions and permissions.",
+        "Reset credentials, enforce MFA and conditional access, and tighten quotas or policies limiting resource creation."
+      ],
+      "severity_rationale": "Medium fits because these operations are common and legitimate, but unusual volume or an unexpected caller can signal a compromise with cost and persistence impact."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "VM creation in a new resource group by a user from an unfamiliar IP",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T02:17:45.1234567Z\",\"resourceId\":\"/SUBSCRIPTIONS/00000000-0000-0000-0000-000000000000/RESOURCEGROUPS/RG-TMP-7X/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM-GPU-01\",\"operationName\":\"MICROSOFT.COMPUTE/VIRTUALMACHINES/WRITE\",\"category\":\"Administrative\",\"resultType\":\"Start\",\"callerIpAddress\":\"203.0.113.45\",\"caller\":\"jperez@example.com\",\"level\":\"Information\"}",
+          "operationName": "MICROSOFT.COMPUTE/VIRTUALMACHINES/WRITE",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceGroup": "RG-TMP-7X",
+          "category": "Administrative"
+        }
+      },
+      {
+        "description": "ARM template deployment by a service principal",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T02:19:02.5551234Z\",\"resourceId\":\"/SUBSCRIPTIONS/00000000-0000-0000-0000-000000000000/RESOURCEGROUPS/RG-TMP-7X/PROVIDERS/MICROSOFT.RESOURCES/DEPLOYMENTS/MASSDEPLOY-001\",\"operationName\":\"MICROSOFT.RESOURCES/DEPLOYMENTS/WRITE\",\"category\":\"Administrative\",\"resultType\":\"Accept\",\"callerIpAddress\":\"198.51.100.23\",\"caller\":\"11111111-2222-3333-4444-555555555555\",\"level\":\"Information\"}",
+          "operationName": "MICROSOFT.RESOURCES/DEPLOYMENTS/WRITE",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.23",
+          "resourceGroup": "RG-TMP-7X",
+          "category": "Administrative"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "VM deallocation, not a create/update or deployment write",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T18:00:10.0000000Z\",\"resourceId\":\"/SUBSCRIPTIONS/00000000-0000-0000-0000-000000000000/RESOURCEGROUPS/RG-WEB/PROVIDERS/MICROSOFT.COMPUTE/VIRTUALMACHINES/VM-WEB-01\",\"operationName\":\"MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"callerIpAddress\":\"192.0.2.10\",\"caller\":\"ops-automation@example.com\",\"level\":\"Information\"}",
+          "operationName": "MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION",
+          "caller": "ops-automation@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceGroup": "RG-WEB",
+          "category": "Administrative"
+        }
+      },
+      {
+        "description": "Deployment validation only, which does not contain deployments/write",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T09:30:22.0000000Z\",\"resourceId\":\"/SUBSCRIPTIONS/00000000-0000-0000-0000-000000000000/RESOURCEGROUPS/RG-APP/PROVIDERS/MICROSOFT.RESOURCES/DEPLOYMENTS/APP-RELEASE-42\",\"operationName\":\"MICROSOFT.RESOURCES/DEPLOYMENTS/VALIDATE/ACTION\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"callerIpAddress\":\"192.0.2.20\",\"caller\":\"cicd-pipeline@example.com\",\"level\":\"Information\"}",
+          "operationName": "MICROSOFT.RESOURCES/DEPLOYMENTS/VALIDATE/ACTION",
+          "caller": "cicd-pipeline@example.com",
+          "callerIpAddress": "192.0.2.20",
+          "resourceGroup": "RG-APP",
+          "category": "Administrative"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

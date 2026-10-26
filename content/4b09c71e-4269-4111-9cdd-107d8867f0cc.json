@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "4b09c71e-4269-4111-9cdd-107d8867f0cc",
+    "title": "Shell Execution via Flock - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_flock_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_flock_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario flock con la opción -u y una ruta de shell (/bin/sh, /bin/bash, etc.) en la línea de comandos. Es el patrón de GTFOBins para obtener una shell a través de flock.",
+      "what_it_detects": "Eventos process_creation de Linux en los que Image termina en /flock, CommandLine contiene ' -u ' y además incluye /bin/bash, /bin/dash, /bin/fish, /bin/sh o /bin/zsh, por ejemplo 'flock -u / /bin/sh -p'.",
+      "why_it_matters": "flock puede lanzar cualquier comando. Si se ejecuta con sudo, con SUID o desde una shell restringida, la shell resultante hereda esos privilegios o sale de la restricción. La regla está etiquetada como ATT&CK T1083 (descubrimiento de archivos y directorios), pero el riesgo principal es la escalada de privilegios o la ejecución de comandos no autorizada.",
+      "triage_steps": [
+        "Revise CommandLine completo: confirme el uso de -u, la ruta de shell invocada y opciones como -p (conserva privilegios) o -i.",
+        "Identifique el usuario y el UID efectivo del proceso. Compruebe si flock corrió como root mediante sudo o un bit SUID.",
+        "Examine ParentImage y la cadena de procesos padre: sudo, sshd, un servicio web o una shell restringida (rbash, lshell) cambian mucho la gravedad.",
+        "Revise los registros de sudo (/var/log/auth.log o secure) y busque 'COMMAND=/usr/bin/flock' del mismo usuario cerca de la hora de la alerta.",
+        "Verifique si /usr/bin/flock tiene SUID (ls -l, find -perm -4000) y si sudoers permite flock a este usuario.",
+        "Liste los procesos hijos de la shell en el mismo host +/- 15 minutos: lectura de /etc/shadow, creación de usuarios, descargas o persistencia.",
+        "Busque alertas anteriores del mismo usuario, host o IP de origen de SSH, en especial otras técnicas de GTFOBins."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Administradores o pruebas de penetración autorizadas que validan configuraciones de sudo o hardening con técnicas de GTFOBins.",
+        "Scripts internos poco comunes que usan flock -u junto con una invocación explícita de shell; confirme con el responsable."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el responsable del host si la ejecución estaba autorizada antes de actuar.",
+        "Si no está autorizada, termine la shell y aísle el host o bloquee la sesión SSH. Desactive o restablezca las credenciales de la cuenta.",
+        "Elimine flock de las reglas de sudoers, retire el bit SUID si existe y revise otras entradas de sudo abusables.",
+        "Revise la persistencia (cron, systemd, authorized_keys, usuarios nuevos) y restaure desde un estado confiable si hubo cambios."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque este patrón casi no tiene uso legítimo y suele indicar escalada de privilegios o salida de un entorno restringido."
+    },
+    "en": {
+      "summary": "The flock binary ran with the -u option and a shell path (/bin/sh, /bin/bash, etc.) on its command line. This is the GTFOBins pattern for getting a shell through flock.",
+      "what_it_detects": "Linux process_creation events where Image ends with /flock, CommandLine contains ' -u ' and also includes /bin/bash, /bin/dash, /bin/fish, /bin/sh or /bin/zsh, for example 'flock -u / /bin/sh -p'.",
+      "why_it_matters": "flock can launch any command. When it runs via sudo, with SUID or from a restricted shell, the new shell inherits those privileges or escapes the restriction. The rule is tagged ATT&CK T1083 (File and Directory Discovery), but the main risk is privilege escalation or unauthorized command execution.",
+      "triage_steps": [
+        "Review the full CommandLine: confirm -u, the shell path invoked, and flags such as -p (keeps privileges) or -i.",
+        "Identify the user and the process's effective UID. Check whether flock ran as root through sudo or a SUID bit.",
+        "Examine ParentImage and the parent process chain: sudo, sshd, a web service or a restricted shell (rbash, lshell) change the severity a lot.",
+        "Check sudo logs (/var/log/auth.log or secure) for 'COMMAND=/usr/bin/flock' by the same user near the alert time.",
+        "Check whether /usr/bin/flock has SUID (ls -l, find -perm -4000) and whether sudoers allows this user to run flock.",
+        "List the shell's child processes on the same host +/- 15 minutes: reads of /etc/shadow, user creation, downloads or persistence.",
+        "Look for earlier alerts for the same user, host or SSH source IP, especially other GTFOBins techniques."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Administrators or authorized penetration testers checking sudo or hardening configurations with GTFOBins techniques.",
+        "Unusual internal scripts that use flock -u with an explicit shell call; confirm with the owner."
+      ],
+      "response_steps": [
+        "Confirm with the user or the host owner whether the run was authorized before you act.",
+        "If it was not authorized, kill the shell and isolate the host or block the SSH session. Disable the account or reset its credentials.",
+        "Remove flock from sudoers rules, remove any SUID bit, and review other sudo entries that could be abused.",
+        "Check for persistence (cron, systemd, authorized_keys, new users) and restore from a trusted state if anything changed."
+      ],
+      "severity_rationale": "High fits because this pattern has almost no legitimate use and usually points to privilege escalation or a restricted-environment breakout."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GTFOBins shell via flock with privilege preservation, launched from sudo",
+        "event": {
+          "Image": "/usr/bin/flock",
+          "CommandLine": "flock -u / /bin/sh -p",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo flock -u / /bin/sh -p",
+          "User": "root",
+          "LogonId": "1001",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "ParentProcessId": 48210,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Interactive bash spawned through flock from a restricted shell",
+        "event": {
+          "Image": "/usr/bin/flock",
+          "CommandLine": "/usr/bin/flock -u / /bin/bash -i",
+          "ParentImage": "/usr/bin/rbash",
+          "ParentCommandLine": "-rbash",
+          "User": "mlopez",
+          "CurrentDirectory": "/home/mlopez",
+          "ProcessId": 5120,
+          "ParentProcessId": 5098,
+          "Computer": "WS-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate cron job using flock with an exclusive lock and /bin/sh, but no -u option",
+        "event": {
+          "Image": "/usr/bin/flock",
+          "CommandLine": "/usr/bin/flock -x /var/lock/rotate.lock /bin/sh -c /opt/app/rotate.sh",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "appsvc",
+          "CurrentDirectory": "/",
+          "ProcessId": 7731,
+          "ParentProcessId": 7729,
+          "Computer": "app-02"
+        }
+      },
+      {
+        "description": "Script unlocking a file descriptor with flock -u and no shell path",
+        "event": {
+          "Image": "/usr/bin/flock",
+          "CommandLine": "flock -u 9",
+          "ParentImage": "/usr/bin/bash",
+          "User": "deploy",
+          "CurrentDirectory": "/srv/deploy",
+          "ProcessId": 9021,
+          "ParentProcessId": 9015,
+          "Computer": "build-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

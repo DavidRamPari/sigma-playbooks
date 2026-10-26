@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "92dae1ed-1c9d-4eff-a567-33acbd95b00e",
+    "title": "Possible Impacket SecretDump Remote Activity - Zeek",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden, @neu5ron",
+    "path": "network/zeek/zeek_smb_converted_win_impacket_secretdump.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_smb_converted_win_impacket_secretdump.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.002",
+      "T1003.003",
+      "T1003.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek vio acceso por SMB al recurso administrativo ADMIN$ a un archivo .tmp dentro de SYSTEM32. Este es el patrón de Impacket secretsdump, que guarda colmenas del registro de forma remota y luego las lee para extraer credenciales.",
+      "what_it_detects": "Eventos de Zeek smb_files cuyo path contiene '\\' y 'ADMIN$' y cuyo name contiene 'SYSTEM32\\' y termina en '.tmp'. Es la huella típica de secretsdump cuando vuelca SAM, SYSTEM o SECURITY a archivos temporales y los descarga por SMB.",
+      "why_it_matters": "Con estas colmenas un atacante obtiene hashes locales, secretos LSA y credenciales en caché (T1003.002 y T1003.004). Si el destino es un controlador de dominio, puede seguir con NTDS (T1003.003) y comprometer todo el dominio.",
+      "triage_steps": [
+        "Identifique el origen (id.orig_h) y el destino (id.resp_h). Revise si el destino es un controlador de dominio o un servidor crítico.",
+        "Revise action, name y size. Las lecturas de varios archivos .tmp con nombres aleatorios en pocos segundos refuerzan la sospecha.",
+        "Busque en dce_rpc del mismo uid o par de IP, en una ventana de +/- 15 minutos, llamadas a winreg (BaseRegSaveKey), svcctl (RemoteRegistry) o drsuapi (DRSGetNCChanges).",
+        "Use los logs ntlm, kerberos y smb_mapping de Zeek para identificar la cuenta que se autenticó desde el origen.",
+        "En el destino, revise los eventos 4624 tipo 3, 5145 sobre ADMIN$ y 7036/7040 del servicio RemoteRegistry.",
+        "Revise si la misma IP de origen accedió a ADMIN$ o C$ en otros hosts y si tiene alertas previas.",
+        "Confirme con el equipo de TI si existe una tarea administrativa, de respaldo o de escaneo autorizada desde ese origen."
+      ],
+      "false_positives": [
+        "Herramientas de administración o despliegue de software que escriben temporales en System32 a través de ADMIN$.",
+        "Escáneres de vulnerabilidades con credenciales que crean archivos temporales remotos.",
+        "Pruebas de penetración o ejercicios de red team autorizados con Impacket."
+      ],
+      "response_steps": [
+        "Valide la actividad con el dueño del host de origen y con el equipo de TI. Si no está autorizada, aísle el endpoint de origen.",
+        "Deshabilite la cuenta usada o restablezca su contraseña y revise sus sesiones activas.",
+        "Preserve los .tmp en el destino como evidencia y bórrelos solo después de recolectarlos.",
+        "Si el destino es un DC, considere comprometidas las credenciales del dominio: restablezca krbtgt dos veces y las cuentas privilegiadas.",
+        "Restablezca las contraseñas de administrador local del destino y busque movimiento lateral con los hashes extraídos."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque el patrón es muy específico del volcado remoto de credenciales y su impacto puede llegar a todo el dominio."
+    },
+    "en": {
+      "summary": "Zeek saw SMB access through the ADMIN$ share to a .tmp file inside SYSTEM32. This is the pattern Impacket secretsdump leaves when it saves registry hives remotely and reads them back to extract credentials.",
+      "what_it_detects": "Zeek smb_files events where path contains '\\' and 'ADMIN$', and name contains 'SYSTEM32\\' and ends with '.tmp'. secretsdump leaves this trace when it saves SAM, SYSTEM or SECURITY to temp files and downloads them over SMB.",
+      "why_it_matters": "These hives give an attacker local hashes, LSA secrets and cached domain credentials (T1003.002, T1003.004). On a domain controller this can lead to NTDS extraction (T1003.003) and full domain compromise.",
+      "triage_steps": [
+        "Identify the source (id.orig_h) and the target (id.resp_h). Check whether the target is a domain controller or another critical server.",
+        "Review action, name and size. Several randomly named .tmp files read within seconds raise suspicion.",
+        "Pivot to Zeek dce_rpc for the same uid or IP pair, +/- 15 minutes, and look for winreg BaseRegSaveKey, svcctl (RemoteRegistry) or drsuapi DRSGetNCChanges.",
+        "Use the Zeek ntlm, kerberos and smb_mapping logs to find the account that authenticated from the source.",
+        "On the target, check events 4624 type 3, 5145 for ADMIN$, and 7036/7040 for the RemoteRegistry service.",
+        "Check whether the same source IP accessed ADMIN$ or C$ on other hosts, and look for earlier alerts on it.",
+        "Confirm with IT whether an authorized admin, backup or scanning job runs from that source."
+      ],
+      "false_positives": [
+        "Admin or software deployment tools that write temp files into System32 through ADMIN$.",
+        "Credentialed vulnerability scanners that create remote temp files.",
+        "Authorized penetration tests or red team exercises using Impacket."
+      ],
+      "response_steps": [
+        "Confirm the activity with the owner of the source host and with IT. If it is not authorized, isolate the source endpoint.",
+        "Disable the account used or reset its password, and review its active sessions.",
+        "Preserve the .tmp files on the target as evidence, and remove them only after collection.",
+        "If the target is a DC, treat domain credentials as compromised: reset krbtgt twice and reset the privileged accounts.",
+        "Reset local admin passwords on the target and hunt for lateral movement with the dumped hashes."
+      ],
+      "severity_rationale": "High fits because this pattern is very specific to remote credential dumping, and the impact can reach the whole domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "secretsdump reads a saved registry hive from SYSTEM32 on a domain controller through ADMIN$",
+        "event": {
+          "ts": "2024-05-14T10:22:31.512Z",
+          "uid": "CzX1a83kQp7mVd2bLe",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 51544,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "fuid": "FqT9s21XyZk0aBcD3",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\DC-01\\ADMIN$",
+          "name": "SYSTEM32\\kLmQwErT.tmp",
+          "size": 45056
+        }
+      },
+      {
+        "description": "Second hive file read in lowercase from a member server; matching is case-insensitive",
+        "event": {
+          "ts": "2024-05-14T10:22:33.087Z",
+          "uid": "CzX1a83kQp7mVd2bLe",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 51544,
+          "id.resp_h": "198.51.100.22",
+          "id.resp_p": 445,
+          "fuid": "Fh72LpQ0vWnXcR8s1",
+          "action": "SMB::FILE_READ",
+          "path": "\\\\srv-files-02\\admin$",
+          "name": "system32\\ZxCvBnMa.tmp",
+          "size": 12582912
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Software deployment writes a .tmp to Temp through ADMIN$, not to SYSTEM32",
+        "event": {
+          "ts": "2024-05-14T11:05:12.004Z",
+          "uid": "Cb4Rt9mWq2LsYx7Ne",
+          "id.orig_h": "192.0.2.80",
+          "id.orig_p": 49812,
+          "id.resp_h": "198.51.100.31",
+          "id.resp_p": 445,
+          "fuid": "Fp0Ws83KdLm2QaZx9",
+          "action": "SMB::FILE_WRITE",
+          "path": "\\\\WS-0142\\ADMIN$",
+          "name": "Temp\\deploy_agent.tmp",
+          "size": 20480
+        }
+      },
+      {
+        "description": "Admin reads a SYSTEM32 file over ADMIN$, but the file is not a .tmp",
+        "event": {
+          "ts": "2024-05-14T11:40:48.660Z",
+          "uid": "CkP3n7Vb1QwEr5TyU",
+          "id.orig_h": "192.0.2.81",
+          "id.orig_p": 50233,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "fuid": "Fd8Hj21MnBv6CxZa4",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\DC-01\\ADMIN$",
+          "name": "SYSTEM32\\drivers\\etc\\hosts",
+          "size": 824
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

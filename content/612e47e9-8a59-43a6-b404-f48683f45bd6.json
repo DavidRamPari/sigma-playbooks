@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "612e47e9-8a59-43a6-b404-f48683f45bd6",
+    "title": "ServiceDll Hijack",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_servicedll_hijack.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_servicedll_hijack.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso modificó el valor ServiceDll bajo la clave Parameters de un servicio. El proceso no es uno de los instaladores conocidos de Windows y podría estar redirigiendo un servicio alojado en svchost a una DLL controlada por un atacante para lograr persistencia.",
+      "what_it_detects": "Eventos de escritura en el registro cuyo TargetObject termina en \\Services\\<nombre>\\Parameters\\ServiceDll en cualquier ControlSet. Se excluyen las escrituras conocidas de poqexec.exe, de lsass.exe para NTDS, de PrintNotify/PrintConfig.dll y del agente de Safetica.",
+      "why_it_matters": "Los servicios alojados en svchost.exe cargan al iniciar la DLL indicada en ServiceDll, normalmente como SYSTEM. Si un atacante crea o secuestra ese valor, su código se ejecuta de forma persistente y con privilegios altos (ATT&CK T1543.003, servicio de Windows). El servicio W64Time al estilo TinyTurla es un ejemplo conocido.",
+      "triage_steps": [
+        "Obtenga el nombre del servicio desde TargetObject. Luego compare Details (la ruta de la DLL) con el valor esperado para ese servicio en un equipo limpio de la misma versión.",
+        "Revise Image y User. Una escritura hecha por reg.exe, powershell.exe, cmd.exe o un intérprete de scripts desde un usuario interactivo es más sospechosa que una de msiexec.exe o de un instalador firmado.",
+        "Analice la DLL indicada en Details: ubicación (fuera de System32 es sospechoso), firma, reputación del hash, fecha de creación y si se escribió en los últimos minutos.",
+        "Verifique si el servicio es nuevo. Busque su creación (sc.exe create, eventos 7045 o 4697) y cambios en ImagePath o Start en el mismo host en +/- 15 minutos.",
+        "Revise los procesos padre e hijo de Image, y qué svchost.exe cargó la DLL (eventos de carga de imagen) después de reiniciar el servicio o el equipo.",
+        "Busque la misma ruta de Details o el mismo hash en otros hosts, y revise alertas previas del mismo host y usuario."
+      ],
+      "false_positives": [
+        "Instalación legítima de software o de una característica de Windows que registra un servicio alojado en svchost y define ServiceDll.",
+        "Scripts administrativos o de despliegue que reparan o reconfiguran las rutas de DLL de los servicios.",
+        "Agentes de seguridad o de endpoint no cubiertos por los filtros actuales que registran su propia DLL de servicio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema o con los registros de cambios si la modificación estaba autorizada. Preserve la clave de registro y la DLL para su análisis.",
+        "Si es malicioso, aísle el endpoint, detenga y deshabilite el servicio afectado, y restaure el valor ServiceDll original o elimine el servicio falso.",
+        "Ponga la DLL en cuarentena, búsquela por hash en toda la flota y restablezca las credenciales usadas en el host si es probable un compromiso a nivel SYSTEM.",
+        "Agregue una excepción acotada, basada en Image, nombre del servicio y ruta exacta de Details, solo para software legítimo verificado."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque se trata de una técnica de persistencia potente, pero los instaladores y scripts administrativos legítimos también modifican ServiceDll, así que hace falta contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A process set the ServiceDll value under a service's Parameters key. A process other than the known Windows installers did this, and it may be redirecting a svchost-hosted service to an attacker-controlled DLL for persistence.",
+      "what_it_detects": "Registry set events where TargetObject ends with \\Services\\<name>\\Parameters\\ServiceDll in any ControlSet. Known writes by poqexec.exe, lsass.exe for NTDS, PrintNotify/PrintConfig.dll and the Safetica agent are excluded.",
+      "why_it_matters": "Services hosted by svchost.exe load the DLL named in ServiceDll at startup, usually as SYSTEM. If an attacker creates or hijacks this value, their code runs persistently with high privileges (ATT&CK T1543.003, Windows Service). The TinyTurla-style W64Time service is a known example.",
+      "triage_steps": [
+        "Read TargetObject to get the service name. Then compare Details (the DLL path) with the expected default for that service on a clean host of the same build.",
+        "Check Image and User. Writes by reg.exe, powershell.exe, cmd.exe or script hosts from an interactive user are more suspicious than writes by msiexec.exe or a signed installer.",
+        "Look at the DLL in Details: its location (anything outside System32 is suspicious), signature, hash reputation, creation time and whether the file was written in the last few minutes.",
+        "Check whether the service is new. Look for service creation (sc.exe create, event 7045 or 4697) and ImagePath or Start value changes on the same host within +/- 15 minutes.",
+        "Review the parent and child processes of Image, and any svchost.exe that loaded the DLL (image load events) after a service restart or reboot.",
+        "Search other hosts for the same Details path or DLL hash, and check earlier alerts for the same host and user."
+      ],
+      "false_positives": [
+        "Legitimate software or Windows feature installation that registers a svchost-hosted service and sets ServiceDll.",
+        "Administrative or deployment scripts that repair or reconfigure service DLL paths.",
+        "Security or endpoint agents not covered by the existing filters that register their own service DLL."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change records whether the service change was authorized. Preserve the registry key and the DLL for analysis.",
+        "If malicious, isolate the endpoint, stop and disable the affected service, and restore the original ServiceDll value or delete the rogue service.",
+        "Quarantine the DLL, hunt for its hash across the fleet, and reset credentials used on the host if SYSTEM-level compromise is likely.",
+        "Add a narrow tuning exception, keyed on Image, service name and exact Details path, only for verified legitimate software."
+      ],
+      "severity_rationale": "Medium fits because this is a strong persistence technique, but legitimate installers and admin scripts also set ServiceDll, so context is needed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets ServiceDll for a new W64Time service to a DLL in System32, as in the TinyTurla-style persistence.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\W64Time\\Parameters\\ServiceDll",
+          "Details": "C:\\Windows\\System32\\w64time.dll"
+        }
+      },
+      {
+        "description": "PowerShell points an existing service's ServiceDll to a DLL under ProgramData through ControlSet001.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "User": "ANDES\\adm-lgomez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\System\\ControlSet001\\Services\\IKEEXT\\Parameters\\ServiceDll",
+          "Details": "C:\\ProgramData\\Microsoft\\Crypto\\ikeext.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows servicing (poqexec.exe) updates a ServiceDll value during a cumulative update. The filter_main_poqexec filter excludes it.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\poqexec.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Dnscache\\Parameters\\ServiceDll",
+          "Details": "%SystemRoot%\\System32\\dnsrslvr.dll"
+        }
+      },
+      {
+        "description": "A write to the service's ImagePath instead of Parameters\\ServiceDll, so TargetObject does not match the selection.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\W64Time\\ImagePath",
+          "Details": "%SystemRoot%\\system32\\svchost.exe -k TimeService"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

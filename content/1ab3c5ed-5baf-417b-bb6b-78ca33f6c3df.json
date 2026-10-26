@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "1ab3c5ed-5baf-417b-bb6b-78ca33f6c3df",
+    "title": "AWS EC2 Startup Shell Script Change",
+    "level": "high",
+    "status": "test",
+    "author": "faloker",
+    "path": "cloud/aws/cloudtrail/aws_ec2_startup_script_change.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_ec2_startup_script_change.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001",
+      "T1059.003",
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS modificó el atributo userData (script de arranque) de una instancia EC2 mediante ModifyInstanceAttribute. Ese script se ejecuta como root/SYSTEM al arrancar la instancia, por lo que puede servir para ejecutar código o persistir.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ec2.amazonaws.com, eventName ModifyInstanceAttribute y requestParameters.attribute igual a userData, es decir, cualquier cambio en el script de inicio de una instancia.",
+      "why_it_matters": "Un atacante con permisos EC2 puede reemplazar el userData por un script de shell o PowerShell (T1059.004, T1059.001, T1059.003) que corre con máximos privilegios en el siguiente arranque. Pacu incluye un módulo que automatiza esta técnica.",
+      "triage_steps": [
+        "Identifique userIdentity.arn, el tipo de identidad (usuario IAM, rol asumido, sesión federada), sourceIPAddress y userAgent; confirme si corresponden a un pipeline o administrador conocido.",
+        "Revise requestParameters.instanceId para determinar qué instancia fue afectada, su función, rol IAM adjunto y nivel de criticidad.",
+        "Busque en CloudTrail StopInstances y StartInstances sobre la misma instancia en +/- 15 minutos; cambiar userData exige detenerla, y la secuencia detener-modificar-iniciar es típica del abuso.",
+        "Obtenga el userData actual con DescribeInstanceAttribute y decodifíquelo desde base64; busque descargas remotas, reverse shells, creación de usuarios o claves SSH.",
+        "Compare el script con la versión esperada en Terraform, CloudFormation o el repositorio de infraestructura, y verifique si existe un ticket de cambio asociado.",
+        "Revise otras acciones de la misma identidad e IP en las últimas 24 horas: enumeración (Describe*), creación de claves de acceso, cambios en IAM o errores AccessDenied.",
+        "Consulte alertas previas para la misma identidad, instancia o sourceIPAddress, incluyendo inicios de sesión de consola inusuales."
+      ],
+      "false_positives": [
+        "Cambios legítimos del script de inicio realizados por administradores o equipos de plataforma.",
+        "Despliegues de infraestructura como código (Terraform, CloudFormation, CDK) que actualizan el userData de instancias existentes.",
+        "Herramientas de automatización o gestión de configuración que reconfiguran instancias durante mantenimientos planificados."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la instancia o de la identidad si el cambio fue autorizado antes de actuar.",
+        "Si no es legítimo, evite iniciar la instancia o deténgala, tome un snapshot de los volúmenes para análisis forense y restaure el userData conocido.",
+        "Revoque las sesiones activas y rote las credenciales de la identidad implicada; restrinja temporalmente ec2:ModifyInstanceAttribute.",
+        "Si el script malicioso ya se ejecutó, aísle la instancia con un security group restrictivo e investigue persistencia, conexiones salientes y uso del rol IAM de la instancia.",
+        "Busque cambios similares en otras instancias y regiones, y documente los indicadores encontrados."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque el cambio permite ejecución de código como root/SYSTEM y persistencia, aunque también ocurre en operaciones legítimas que requieren confirmación."
+    },
+    "en": {
+      "summary": "An AWS identity changed the userData (startup script) of an EC2 instance via ModifyInstanceAttribute. That script runs as root/SYSTEM at boot, so it can be used for code execution or persistence.",
+      "what_it_detects": "CloudTrail events with eventSource ec2.amazonaws.com, eventName ModifyInstanceAttribute and requestParameters.attribute set to userData, meaning any change to an instance's startup script.",
+      "why_it_matters": "An attacker with EC2 permissions can replace userData with a shell or PowerShell script (T1059.004, T1059.001, T1059.003) that runs with full privileges on next boot. Pacu has a module automating this.",
+      "triage_steps": [
+        "Identify userIdentity.arn, identity type (IAM user, assumed role, federated session), sourceIPAddress and userAgent; confirm whether they match a known pipeline or administrator.",
+        "Check requestParameters.instanceId to find the affected instance, its role, attached IAM instance profile and criticality.",
+        "Search CloudTrail for StopInstances and StartInstances on the same instance within +/- 15 minutes; userData changes require a stopped instance, and stop-modify-start is typical of abuse.",
+        "Retrieve current userData with DescribeInstanceAttribute and base64-decode it; look for remote downloads, reverse shells, new users or SSH keys.",
+        "Compare the script with the expected version in Terraform, CloudFormation or the infrastructure repo, and check for a matching change ticket.",
+        "Review other actions by the same identity and IP over 24 hours: Describe* enumeration, access key creation, IAM changes or AccessDenied errors.",
+        "Check earlier alerts for the same identity, instance or sourceIPAddress, including unusual console logins."
+      ],
+      "false_positives": [
+        "Legitimate startup script changes by administrators or platform teams.",
+        "Infrastructure-as-code deployments (Terraform, CloudFormation, CDK) updating userData on existing instances.",
+        "Automation or configuration management tools reconfiguring instances during planned maintenance."
+      ],
+      "response_steps": [
+        "Confirm with the instance or identity owner whether the change was authorized before acting.",
+        "If unauthorized, keep the instance stopped or stop it, snapshot its volumes for forensics, and restore the known-good userData.",
+        "Revoke active sessions and rotate credentials of the involved identity; temporarily restrict ec2:ModifyInstanceAttribute.",
+        "If the malicious script already ran, isolate the instance with a restrictive security group and investigate persistence, outbound connections and instance role usage.",
+        "Hunt for similar changes on other instances and regions, and record the indicators found."
+      ],
+      "severity_rationale": "High fits because the change enables code execution as root/SYSTEM and persistence, though legitimate operations also trigger it and need confirmation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Assumed-role session from an external IP modifies userData of a stopped instance using the AWS CLI.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-14T02:17:45Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "ModifyInstanceAttribute",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.57",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/6.1.0 botocore/2.4.5",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/dev-ci-role/session-jperez",
+          "requestParameters.instanceId": "i-0a1b2c3d4e5f67890",
+          "requestParameters.attribute": "userData",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "IAM user changes the startup script via the console; attribute value in different case still matches.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-15T10:05:12Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "ModifyInstanceAttribute",
+          "awsRegion": "sa-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "console.ec2.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mgarcia",
+          "requestParameters.instanceId": "i-0fedcba9876543210",
+          "requestParameters.attribute": "UserData",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ModifyInstanceAttribute changing instanceType, not userData.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-14T09:30:00Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "ModifyInstanceAttribute",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.10",
+          "userAgent": "Terraform/1.7.4",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/platform-deploy/terraform",
+          "requestParameters.instanceId": "i-0a1b2c3d4e5f67890",
+          "requestParameters.attribute": "instanceType",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Read-only DescribeInstanceAttribute retrieving userData, which does not change the script.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-14T09:45:00Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DescribeInstanceAttribute",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.44",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/6.1.0 botocore/2.4.5",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/auditor",
+          "requestParameters.instanceId": "i-0a1b2c3d4e5f67890",
+          "requestParameters.attribute": "userData",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

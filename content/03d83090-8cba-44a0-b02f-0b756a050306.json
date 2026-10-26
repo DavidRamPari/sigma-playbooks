@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "03d83090-8cba-44a0-b02f-0b756a050306",
+    "title": "Potential WinAPI Calls Via PowerShell Scripts",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems), Nikita Nazarov, oscd.community",
+    "path": "windows/powershell/powershell_script/posh_ps_win_api_susp_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_win_api_susp_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001",
+      "T1106",
+      "T1620"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado por Script Block Logging (evento 4104) contiene una combinación de funciones WinAPI típica de inyección de procesos, robo de tokens o ejecución de shellcode en memoria.",
+      "what_it_detects": "Bloques de script cuyo ScriptBlockText incluye a la vez todas las funciones de alguna de estas combinaciones: inyección remota (VirtualAlloc, OpenProcess, WriteProcessMemory, CreateRemoteThread), ajuste de privilegios (OpenProcessToken, LookupPrivilegeValue, AdjustTokenPrivileges), duplicación de token (OpenProcessToken, DuplicateTokenEx, CloseHandle), lectura/escritura de memoria ajena o shellcode local (VirtualAlloc, GetDelegateForFunctionPointer, Marshal.Copy).",
+      "why_it_matters": "Llamar a la API nativa desde PowerShell (T1106, T1059.001) permite cargar y ejecutar código directamente en memoria (T1620), inyectar en otros procesos o suplantar tokens con privilegios. Así se evaden las detecciones basadas en archivos. Herramientas como Invoke-Shellcode de PowerSploit y los stagers de Cobalt Strike usan este patrón.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si MessageTotal es mayor que 1, reconstruya el script uniendo todas las partes que comparten el mismo ScriptBlockId.",
+        "Identifique el propósito del script: busque blobs base64 o arreglos de bytes, Add-Type/DllImport, nombres de procesos destino (lsass, explorer) y los privilegios solicitados, como SeDebugPrivilege.",
+        "Revise el campo Path: un script en disco firmado y conocido es menos sospechoso que un bloque sin ruta, que suele provenir de -EncodedCommand o IEX.",
+        "Busque la creación de powershell.exe en 4688 o Sysmon 1 y revise el proceso padre, la línea de comandos y el usuario. Desconfíe de padres como Office, wmiprvse o servicios.",
+        "En el mismo host, dentro de +/- 15 minutos, revise Sysmon 8 (CreateRemoteThread), Sysmon 10 (acceso a lsass), conexiones de red salientes y descargas.",
+        "Busque alertas previas del mismo usuario y host, y el mismo texto o hash del script en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts administrativos que habilitan SeBackupPrivilege o SeDebugPrivilege con AdjustTokenPrivileges para copias de seguridad o gestión de ACL.",
+        "Pruebas de penetración o ejercicios de red team autorizados que usan PowerSploit o frameworks similares.",
+        "Módulos de diagnóstico, depuración o agentes de seguridad y monitoreo que leen la memoria de procesos mediante P/Invoke."
+      ],
+      "response_steps": [
+        "Valide con el responsable del host o del usuario si existe un uso administrativo o un ejercicio autorizado, y documente la evidencia.",
+        "Si se confirma la actividad maliciosa, aísle el endpoint desde el EDR y capture la memoria antes de terminar procesos o reiniciar.",
+        "Termine el proceso de PowerShell y los procesos inyectados identificados. Elimine la persistencia asociada, como tareas programadas, servicios o claves Run.",
+        "Restablezca las credenciales del usuario y de las cuentas privilegiadas expuestas. Revise el uso de esos tokens en otros sistemas.",
+        "Busque el mismo script en toda la flota y bloquee la infraestructura de red relacionada. Restaure el host desde una imagen confiable si fue comprometido."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque estas combinaciones de API rara vez aparecen en scripts legítimos y suelen indicar inyección o escalamiento de privilegios en memoria."
+    },
+    "en": {
+      "summary": "A PowerShell script block captured by Script Block Logging (event 4104) contains a WinAPI call combination typical of process injection, token theft or in-memory shellcode execution.",
+      "what_it_detects": "Script blocks whose ScriptBlockText contains every function of one combination: remote injection (VirtualAlloc, OpenProcess, WriteProcessMemory, CreateRemoteThread), privilege adjustment (OpenProcessToken, LookupPrivilegeValue, AdjustTokenPrivileges), token duplication (OpenProcessToken, DuplicateTokenEx, CloseHandle), foreign memory read/write, or local shellcode (VirtualAlloc, GetDelegateForFunctionPointer, Marshal.Copy).",
+      "why_it_matters": "Calling the native API from PowerShell (T1106, T1059.001) lets an attacker load and run code in memory (T1620), inject into other processes or impersonate privileged tokens. This evades file-based detection. PowerSploit's Invoke-Shellcode and Cobalt Strike stagers use this pattern.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If MessageTotal is greater than 1, rebuild the script from all parts that share the same ScriptBlockId.",
+        "Work out what the script does: look for base64 or byte arrays, Add-Type/DllImport, target process names (lsass, explorer) and requested privileges such as SeDebugPrivilege.",
+        "Check Path: a known, signed script on disk is less suspicious than a pathless block, which usually comes from -EncodedCommand or IEX.",
+        "Find the powershell.exe creation in 4688 or Sysmon 1 and review its parent, command line and user. Treat Office, wmiprvse or service parents as suspicious.",
+        "On the same host within +/- 15 minutes, review Sysmon 8 (CreateRemoteThread), Sysmon 10 (lsass access), outbound connections and downloads.",
+        "Search for earlier alerts for the same user and host, and for the same script text or hash on other endpoints."
+      ],
+      "false_positives": [
+        "Admin scripts that enable SeBackupPrivilege or SeDebugPrivilege through AdjustTokenPrivileges for backups or ACL management.",
+        "Authorized penetration tests or red team exercises using PowerSploit or similar frameworks.",
+        "Diagnostic or debugging modules, or security and monitoring agents, that read process memory through P/Invoke."
+      ],
+      "response_steps": [
+        "Check with the host or user owner whether this is admin use or an authorized exercise, and record the evidence.",
+        "If the activity is malicious, isolate the endpoint through EDR and capture memory before killing processes or rebooting.",
+        "Kill the PowerShell process and any injected processes you identified. Remove related persistence such as scheduled tasks, services or Run keys.",
+        "Reset the credentials of the user and of any exposed privileged accounts. Check whether those tokens were used on other systems.",
+        "Hunt for the same script across the fleet and block related network infrastructure. Reimage the host if it was compromised."
+      ],
+      "severity_rationale": "High fits because these API combinations rarely appear in legitimate scripts and usually point to in-memory injection or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block that declares P/Invoke signatures for remote process injection (matches selection_injection).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "5f1c2a7e-3b9d-4e61-9a0f-2d8c7b6e1a43",
+          "Path": "",
+          "ScriptBlockText": "$sig = @'\n[DllImport(\"kernel32.dll\")] public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);\n[DllImport(\"kernel32.dll\")] public static extern IntPtr VirtualAllocEx(IntPtr h, IntPtr addr, uint size, uint type, uint prot);\n[DllImport(\"kernel32.dll\")] public static extern bool WriteProcessMemory(IntPtr h, IntPtr addr, byte[] buf, uint size, out IntPtr written);\n[DllImport(\"kernel32.dll\")] public static extern IntPtr CreateRemoteThread(IntPtr h, IntPtr attr, uint stack, IntPtr start, IntPtr param, uint flags, IntPtr tid);\n'@\n$k32 = Add-Type -MemberDefinition $sig -Name K32 -Namespace Win32 -PassThru"
+        }
+      },
+      {
+        "description": "Script block that enables a privilege through the token API (matches selection_token_steal).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS01.andes.example.com",
+          "UserID": "ANDES\\mrojas",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "a2d4e6f8-1b3c-4d5e-8f70-9a1b2c3d4e5f",
+          "Path": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\p.ps1",
+          "ScriptBlockText": "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class Tok { [DllImport(\"advapi32.dll\")] public static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t); [DllImport(\"advapi32.dll\")] public static extern bool LookupPrivilegeValue(string s, string n, out long l); [DllImport(\"advapi32.dll\")] public static extern bool AdjustTokenPrivileges(IntPtr t, bool d, ref long n, int l, IntPtr p, IntPtr r); }'\n# enable SeDebugPrivilege"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Elevation check that uses OpenProcessToken, GetTokenInformation and CloseHandle but not DuplicateTokenEx or AdjustTokenPrivileges, so no selection is complete.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "0c9e8d7f-6a5b-4c3d-9e2f-1a0b9c8d7e6f",
+          "Path": "C:\\Program Files\\ITTools\\Test-Elevation.ps1",
+          "ScriptBlockText": "[DllImport(\"advapi32.dll\")] public static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);\n[DllImport(\"advapi32.dll\")] public static extern bool GetTokenInformation(IntPtr t, int c, IntPtr i, int l, out int r);\n[DllImport(\"kernel32.dll\")] public static extern bool CloseHandle(IntPtr h);"
+        }
+      },
+      {
+        "description": "Memory diagnostic that only reads process memory (OpenProcess, ReadProcessMemory, VirtualQueryEx) without VirtualAlloc or WriteProcessMemory.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "DEV-07.andes.example.com",
+          "UserID": "ANDES\\lgomez",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "7b6a5c4d-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+          "Path": "C:\\Tools\\Diag\\Get-ProcMemInfo.ps1",
+          "ScriptBlockText": "[DllImport(\"kernel32.dll\")] public static extern IntPtr OpenProcess(uint a, bool i, int pid);\n[DllImport(\"kernel32.dll\")] public static extern bool ReadProcessMemory(IntPtr h, IntPtr b, byte[] buf, int s, out int r);\n[DllImport(\"kernel32.dll\")] public static extern int VirtualQueryEx(IntPtr h, IntPtr a, out MEMORY_BASIC_INFORMATION m, uint l);"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

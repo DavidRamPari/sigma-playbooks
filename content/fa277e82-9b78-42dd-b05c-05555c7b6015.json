@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "fa277e82-9b78-42dd-b05c-05555c7b6015",
+    "title": "Enable Local Manifest Installation With Winget",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_winget_enable_local_manifest.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_winget_enable_local_manifest.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso configuró en 1 la directiva EnableLocalManifestFiles de AppInstaller (winget). Esto permite que winget instale paquetes desde manifiestos locales personalizados en lugar de usar solo los repositorios confiables.",
+      "what_it_detects": "Eventos registry_set en los que el TargetObject termina en \\AppInstaller\\EnableLocalManifestFiles y Details es 'DWORD (0x00000001)'. Normalmente la clave se encuentra en HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppInstaller.",
+      "why_it_matters": "Con manifiestos locales, un atacante puede usar winget, un binario firmado por Microsoft, para descargar e instalar un instalador que él controla, con lo que mezcla su actividad con la administración legítima de software. Es una modificación del registro que debilita una directiva y favorece la persistencia y la evasión.",
+      "triage_steps": [
+        "Revise Image y User del evento: reg.exe, powershell.exe o regedit.exe bajo una cuenta de usuario es más sospechoso que un svchost.exe que aplica una GPO.",
+        "Obtenga el proceso padre y su CommandLine para saber si el cambio vino de un script, una herramienta de gestión o una sesión interactiva.",
+        "Confirme si la directiva proviene de una GPO o del MDM (gpresult /h, consola de Intune) o si fue un cambio local aislado.",
+        "Busque ejecuciones de winget.exe en el mismo host dentro de +/- 15 minutos con 'install --manifest' o '-m' que apunten a rutas locales o compartidas.",
+        "Examine los manifiestos YAML usados: revise InstallerUrl, el dominio, el hash y el instalador descargado (reputación del hash, firma).",
+        "Busque cambios relacionados, como EnableHashOverride u otros valores de AppInstaller, y otros procesos o conexiones nuevas creados después de la instalación.",
+        "Revise alertas previas del mismo host y del mismo usuario, y vea si el cambio se repite en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores que habilitan la opción para pruebas o para instalar paquetes privados internos.",
+        "Una GPO o perfil de Intune aprobado que distribuye esta configuración a equipos de desarrollo o de empaquetado.",
+        "Laboratorios o imágenes de compilación en los que se validan manifiestos de winget antes de publicarlos."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con el ticket de cambio si la habilitación fue autorizada; si lo fue, documente la excepción.",
+        "Si no fue autorizada, revierta el valor a 0 o quite la directiva mediante GPO o MDM, y conserve los eventos y los manifiestos como evidencia.",
+        "Si se instaló software desde un manifiesto sospechoso, aísle el host y obtenga el instalador y su hash para analizarlos.",
+        "Desinstale el paquete malicioso, elimine la persistencia asociada y restablezca las credenciales de la cuenta implicada.",
+        "Busque el mismo cambio y el mismo instalador en otros endpoints y bloquee los dominios o hashes identificados."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el cambio debilita un control de instalación y puede facilitar abusos, aunque por sí solo no prueba actividad maliciosa y tiene usos administrativos legítimos."
+    },
+    "en": {
+      "summary": "A process set the AppInstaller (winget) policy EnableLocalManifestFiles to 1. This lets winget install packages from custom local manifests instead of only from trusted sources.",
+      "what_it_detects": "registry_set events where TargetObject ends with \\AppInstaller\\EnableLocalManifestFiles and Details is 'DWORD (0x00000001)'. The key usually lives under HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppInstaller.",
+      "why_it_matters": "Local manifests let an attacker use winget, a Microsoft-signed binary, to fetch and install an installer they control, which blends in with legitimate software management. This is a registry change that weakens a policy, supporting persistence and stealth.",
+      "triage_steps": [
+        "Check the event's Image and User. reg.exe, powershell.exe or regedit.exe under a user account is more suspicious than svchost.exe applying a GPO.",
+        "Get the parent process and its CommandLine to tell whether a script, a management tool or an interactive session made the change.",
+        "Confirm whether a GPO or MDM sets the policy (gpresult /h, Intune console) or whether it was a one-off local change.",
+        "Hunt for winget.exe on the same host within +/- 15 minutes running 'install --manifest' or '-m' against local or share paths.",
+        "Inspect the manifest YAML files used: InstallerUrl, domain, hash and the downloaded installer's signature and reputation.",
+        "Look for related changes such as EnableHashOverride or other AppInstaller values, plus new processes or network connections after the install.",
+        "Review earlier alerts for the same host and user, and check whether other endpoints show the same change."
+      ],
+      "false_positives": [
+        "Administrators or developers enabling it for testing or to install custom private packages.",
+        "An approved GPO or Intune profile pushing this setting to developer or packaging machines.",
+        "Lab or build images where winget manifests are validated before they are published."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or the change ticket whether it was authorized. If it was, document the exception.",
+        "If it was unauthorized, set the value back to 0 or remove the policy through GPO or MDM, and keep the events and manifests as evidence.",
+        "If software was installed from a suspicious manifest, isolate the host and collect the installer and its hash for analysis.",
+        "Uninstall the malicious package, remove any related persistence and reset credentials for the account involved.",
+        "Search other endpoints for the same change and installer, and block any domains or hashes you identify."
+      ],
+      "severity_rationale": "Medium fits because the change weakens an installation control and can enable abuse, but on its own it does not prove malice and it has legitimate administrative uses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe started from a PowerShell session enables local manifest installation through the AppInstaller policy key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "CommandLine": "reg.exe add HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppInstaller /v EnableLocalManifestFiles /t REG_DWORD /d 1 /f",
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppInstaller\\EnableLocalManifestFiles",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy disables local manifests by setting the value to 0",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppInstaller\\EnableLocalManifestFiles",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "Another AppInstaller policy value (EnableHashOverride) is set to 1; this rule does not cover that value name",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\AppInstaller\\EnableHashOverride",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

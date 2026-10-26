@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "13f81a90-a69c-4fab-8f07-b5bb55416a9f",
+    "title": "Google Cloud Service Account Disabled or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_service_account_disabled_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_service_account_disabled_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1531"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se deshabilitó o eliminó una cuenta de servicio de Google Cloud. Puede ser mantenimiento legítimo o un intento de interrumpir servicios o borrar rastros.",
+      "what_it_detects": "Eventos de GCP Audit Logs cuyo gcp.audit.method_name termina en .serviceAccounts.disable o .serviceAccounts.delete, es decir, llamadas a la API de IAM que deshabilitan o eliminan una cuenta de servicio.",
+      "why_it_matters": "Quitar cuentas de servicio puede detener aplicaciones, pipelines y cargas de trabajo que dependen de ellas. Corresponde a ATT&CK T1531 (Account Access Removal), una técnica de impacto que busca interrumpir la disponibilidad o el acceso legítimo.",
+      "triage_steps": [
+        "Identifique la cuenta afectada en el nombre del recurso del evento, el proyecto y si la operación fue disable o delete.",
+        "Revise el principal que hizo la llamada (principal_email), la IP de origen y el user agent; compárelos con administradores y herramientas habituales (Terraform, gcloud, consola).",
+        "Busque un ticket o cambio aprobado que justifique la baja de esa cuenta de servicio.",
+        "Pivotee por el mismo principal en +/- 15 minutos: borrado de claves, cambios de políticas IAM, eliminación de recursos o deshabilitación de logs.",
+        "Verifique si otras cuentas de servicio del mismo proyecto u organización fueron deshabilitadas o eliminadas en poco tiempo.",
+        "Determine qué cargas de trabajo usaban la cuenta (Compute Engine, GKE, Cloud Run, Cloud Functions) y si hay fallas de autenticación posteriores.",
+        "Consulte alertas previas del principal o de la IP, como inicios de sesión inusuales o creación de claves."
+      ],
+      "false_positives": [
+        "Administradores que dan de baja cuentas de servicio obsoletas como parte de mantenimiento o limpieza planificada.",
+        "Pipelines de IaC (Terraform, Deployment Manager) que eliminan cuentas al destruir o recrear entornos.",
+        "Procesos automatizados de higiene de identidades que deshabilitan cuentas sin uso.",
+        "Comportamiento conocido y recurrente de un principal específico que puede exceptuarse de la regla."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del proyecto si el cambio fue autorizado antes de actuar.",
+        "Si no fue autorizado, restaure la cuenta: habilítela de nuevo o recupérela con undelete dentro del plazo que permite GCP.",
+        "Suspenda o restrinja las credenciales del principal sospechoso y revoque sus claves y sesiones activas.",
+        "Revise y revierta otros cambios IAM o de recursos realizados por el mismo principal.",
+        "Restrinja el permiso iam.serviceAccounts.delete/disable a roles mínimos y documente las excepciones aprobadas."
+      ],
+      "severity_rationale": "Nivel medio porque la acción suele ser administrativa, pero sin autorización puede causar interrupción del servicio y ser parte de un ataque de impacto."
+    },
+    "en": {
+      "summary": "A Google Cloud service account was disabled or deleted. This may be routine maintenance or an attempt to disrupt services or cover tracks.",
+      "what_it_detects": "GCP Audit Log events whose gcp.audit.method_name ends with .serviceAccounts.disable or .serviceAccounts.delete, meaning an IAM API call that disabled or deleted a service account.",
+      "why_it_matters": "Removing service accounts can break applications, pipelines and workloads that rely on them. It maps to ATT&CK T1531 (Account Access Removal), an impact technique aimed at disrupting availability or legitimate access.",
+      "triage_steps": [
+        "Identify the affected account from the event resource name, the project, and whether the operation was disable or delete.",
+        "Review the calling principal (principal_email), source IP and user agent; compare with usual administrators and tools (Terraform, gcloud, console).",
+        "Look for an approved ticket or change request justifying removal of that service account.",
+        "Pivot on the same principal within +/- 15 minutes: key deletions, IAM policy changes, resource deletions or logging being disabled.",
+        "Check whether other service accounts in the same project or organization were disabled or deleted in a short window.",
+        "Determine which workloads used the account (Compute Engine, GKE, Cloud Run, Cloud Functions) and whether authentication failures followed.",
+        "Check earlier alerts for the principal or source IP, such as unusual sign-ins or key creation."
+      ],
+      "false_positives": [
+        "Administrators retiring obsolete service accounts during planned maintenance or cleanup.",
+        "IaC pipelines (Terraform, Deployment Manager) deleting accounts when destroying or recreating environments.",
+        "Automated identity hygiene jobs disabling unused accounts.",
+        "Known, recurring behavior of a specific principal that can be exempted from the rule."
+      ],
+      "response_steps": [
+        "Confirm with the project owner whether the change was authorized before acting.",
+        "If unauthorized, restore the account: re-enable it or undelete it within the window GCP allows.",
+        "Suspend or restrict the suspicious principal's credentials and revoke its keys and active sessions.",
+        "Review and roll back other IAM or resource changes made by the same principal.",
+        "Limit iam.serviceAccounts.delete/disable permissions to minimal roles and document approved exceptions."
+      ],
+      "severity_rationale": "Medium because the action is usually administrative, but when unauthorized it can cause service outages and be part of an impact-stage attack."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service account deleted via gcloud by an unfamiliar user from a documentation IP",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.delete",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/serviceAccounts/billing-sync@andes-prod.iam.gserviceaccount.com",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0 command/gcloud.iam.service-accounts.delete",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Service account disabled from the Cloud Console",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.disable",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "mrojas@example.org",
+          "gcp.audit.resource_name": "projects/andes-dev/serviceAccounts/ci-runner@andes-dev.iam.gserviceaccount.com",
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0",
+          "cloud.project.id": "andes-dev",
+          "event.outcome": "success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Service account key deleted (not the account itself); method ends with .keys.delete",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.keys.delete",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/serviceAccounts/billing-sync@andes-prod.iam.gserviceaccount.com/keys/0123abcd",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Service account re-enabled, a benign near-miss",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.enable",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "mrojas@example.org",
+          "gcp.audit.resource_name": "projects/andes-dev/serviceAccounts/ci-runner@andes-dev.iam.gserviceaccount.com",
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "Terraform/1.6.0 terraform-provider-google/5.10.0",
+          "cloud.project.id": "andes-dev",
+          "event.outcome": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "cd3a808c-c7b7-4c50-a2f3-f4cfcd436435",
+    "title": "Google Cloud Kubernetes CronJob",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_kubernetes_cronjob.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_kubernetes_cronjob.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Los logs de auditoría de Google Cloud registraron una llamada a la API de Kubernetes sobre un Job o CronJob en un clúster GKE. Alguien creó o modificó una carga batch que puede ejecutar contenedores una vez o de forma programada.",
+      "what_it_detects": "Eventos de auditoría de GCP en los que gcp.audit.method_name coincide con io.k8s.api.batch.v*.Job o io.k8s.api.batch.v*.CronJob, es decir, operaciones sobre Jobs o CronJobs de la API batch de Kubernetes. La descripción de la regla menciona Azure Cloud, pero la fuente de logs es la auditoría de GCP.",
+      "why_it_matters": "Un atacante con acceso al clúster puede usar CronJobs para ejecutar contenedores maliciosos de forma periódica. Así obtiene persistencia, ejecución de código y a veces escalamiento de privilegios mediante pods privilegiados o service accounts con permisos amplios (ATT&CK: Scheduled Task/Job, Container Orchestration Job).",
+      "triage_steps": [
+        "Revise gcp.audit.method_name, el nombre del recurso (namespace y nombre del job), el clúster y el proyecto para saber qué carga se modificó.",
+        "Identifique al llamante con principal_email, la IP de origen y el user agent. Verifique si es un administrador conocido, una service account de CI/CD o un componente de GKE.",
+        "Obtenga el manifiesto del Job o CronJob. Revise la imagen, el registro, el comando y los args, el schedule, serviceAccountName, si es privilegiado, los montajes hostPath y hostNetwork.",
+        "Busque un ticket de cambio, un commit de GitOps o una ejecución de pipeline que coincida con la hora del evento.",
+        "Pivotee sobre el mismo principal en +/- 15 minutos: cambios de RBAC, lectura de secrets, service accounts nuevas o exec en pods.",
+        "Ubique los pods que creó el Job y revise sus logs y conexiones salientes, por ejemplo hacia pools de minería o hosts desconocidos.",
+        "Busque alertas anteriores para el mismo principal, IP de origen, namespace o clúster."
+      ],
+      "false_positives": [
+        "Administradores o equipos de plataforma que crean jobs de mantenimiento programado, como respaldos, limpiezas o generación de reportes.",
+        "Pipelines de CI/CD, releases de Helm o controladores GitOps como Argo CD o Flux que despliegan cargas batch.",
+        "Operators y complementos administrados que crean Jobs como parte de su funcionamiento normal. Después de revisarlos, exceptúe los principals o namespaces conocidos."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la carga o con el registro de cambios si el Job o CronJob es esperado.",
+        "Si es sospechoso, exporte el manifiesto y los logs de los pods como evidencia. Luego suspenda el CronJob (spec.suspend=true) y detenga los Jobs activos.",
+        "Revoque o rote las credenciales del principal llamante y de la service account que usa el Job. Revise sus bindings de RBAC.",
+        "Elimine la carga maliciosa solo después de preservar la evidencia. Bloquee la imagen e inspeccione los nodos donde corrieron sus pods.",
+        "Registre los principals de automatización legítima como excepciones ajustadas para reducir ruido futuro."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque los cambios en Jobs y CronJobs suelen ser automatización legítima, pero dan al atacante una vía directa de ejecución persistente dentro del clúster."
+    },
+    "en": {
+      "summary": "A Kubernetes Job or CronJob API call was recorded in Google Cloud audit logs for a GKE cluster. Someone created or changed a batch workload that can run containers once or on a schedule.",
+      "what_it_detects": "GCP audit log events where gcp.audit.method_name matches io.k8s.api.batch.v*.Job or io.k8s.api.batch.v*.CronJob, meaning a Job or CronJob was handled through the Kubernetes batch API. The rule description says Azure Cloud, but the log source is GCP audit.",
+      "why_it_matters": "Attackers with cluster access can use CronJobs to run malicious containers on a schedule. This gives them persistence, code execution and sometimes privilege escalation through privileged pods or powerful service accounts (ATT&CK: Scheduled Task/Job, Container Orchestration Job).",
+      "triage_steps": [
+        "Read gcp.audit.method_name, the resource name (namespace and job name), the cluster and the project to find out which workload was touched.",
+        "Identify the caller from principal_email, caller IP and user agent. Is this a known admin, CI/CD service account or GKE system component?",
+        "Pull the Job or CronJob manifest. Check the image, registry, command and args, schedule, serviceAccountName, privileged flag, hostPath mounts and hostNetwork.",
+        "Check for a change ticket, a GitOps commit or a pipeline run that matches the timestamp.",
+        "Pivot on the same principal within +/- 15 minutes for RBAC changes, secret reads, new service accounts or pods exec.",
+        "Find the pods the Job created and review their logs and outbound connections, for example to mining pools or unknown hosts.",
+        "Look for earlier alerts on the same principal, source IP, namespace or cluster."
+      ],
+      "false_positives": [
+        "Administrators or platform teams creating scheduled maintenance jobs such as backups, cleanups or report generation.",
+        "CI/CD pipelines, Helm releases or GitOps controllers like Argo CD or Flux deploying batch workloads.",
+        "Operators and managed add-ons that create Jobs as part of normal operation. Exempt known principals or namespaces after review."
+      ],
+      "response_steps": [
+        "Confirm with the workload owner or the change record whether the Job or CronJob is expected.",
+        "If it is suspicious, export the manifest and pod logs as evidence, then suspend the CronJob (spec.suspend=true) and stop any active Jobs.",
+        "Revoke or rotate the credentials of the calling principal and of any service account the Job uses. Review its RBAC bindings.",
+        "Delete the malicious workload only after you have the evidence. Block the image and inspect nodes where its pods ran.",
+        "Record legitimate automation principals as tuned exemptions to cut down future noise."
+      ],
+      "severity_rationale": "Medium fits because Job and CronJob changes are often legitimate automation, yet they give attackers a direct path to persistent execution inside the cluster."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unknown user account creates a CronJob in the default namespace of a GKE cluster.",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.api.batch.v1.CronJob",
+          "gcp.audit.resource_name": "batch/v1/namespaces/default/cronjobs/sys-update",
+          "gcp.audit.authentication_info.principal_email": "jperez@example.com",
+          "gcp.audit.request_metadata.caller_ip": "203.0.113.45",
+          "gcp.audit.request_metadata.caller_supplied_user_agent": "kubectl/v1.27.3 (linux/amd64) kubernetes/25b4e43",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "A CI service account creates a Job through the batch v1 API.",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.api.batch.v1.Job",
+          "gcp.audit.resource_name": "batch/v1/namespaces/payments/jobs/db-migrate-7f9c",
+          "gcp.audit.authentication_info.principal_email": "ci-deployer@andes-prod-01.iam.gserviceaccount.com",
+          "gcp.audit.request_metadata.caller_ip": "198.51.100.20",
+          "gcp.audit.request_metadata.caller_supplied_user_agent": "Helm/3.12.0",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A Deployment is created through the apps API, which is not a batch Job or CronJob method.",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.apps.v1.deployments.create",
+          "gcp.audit.resource_name": "apps/v1/namespaces/default/deployments/web-frontend",
+          "gcp.audit.authentication_info.principal_email": "jperez@example.com",
+          "gcp.audit.request_metadata.caller_ip": "203.0.113.45",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "A CronJob list call whose method name ends in CronJobList, so it does not match the exact pattern ending in CronJob.",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.api.batch.v1.CronJobList",
+          "gcp.audit.resource_name": "batch/v1/namespaces/default/cronjobs",
+          "gcp.audit.authentication_info.principal_email": "monitoring@andes-prod-01.iam.gserviceaccount.com",
+          "gcp.audit.request_metadata.caller_ip": "198.51.100.30",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

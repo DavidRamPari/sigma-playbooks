@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "11d00fff-5dc3-428c-8184-801f292faec0",
+    "title": "Service Registry Key Read Access Request",
+    "level": "low",
+    "status": "test",
+    "author": "Center for Threat Informed Defense (CTID) Summiting the Pyramid Team",
+    "path": "windows/builtin/security/win_security_registry_permissions_weakness_check.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_registry_permissions_weakness_check.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.011"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso solicitó acceso READ_CONTROL (lectura del descriptor de seguridad) sobre una clave de servicio en HKLM\\SYSTEM\\...ControlSet\\Services. Puede ser un reconocimiento de permisos débiles en claves de servicios, previo a un secuestro de la ruta del ejecutable.",
+      "what_it_detects": "Eventos 4663 de Windows Security donde ObjectName contiene \\SYSTEM\\ y ControlSet\\Services\\, y AccessList incluye %%1538 (READ_CONTROL). Requiere SACL de auditoría configurada en esas claves.",
+      "why_it_matters": "Si un atacante encuentra una clave de servicio que puede modificar, cambia ImagePath o Parameters para que el servicio ejecute su payload, a menudo como SYSTEM (T1574.011, Services Registry Permissions Weakness). Leer las ACL es el paso previo de enumeración.",
+      "triage_steps": [
+        "Identifique ProcessName, SubjectUserName y SubjectDomainName del evento; confirme si el proceso es un binario esperado (services.exe, agente EDR, instalador) o una herramienta interactiva como powershell.exe, reg.exe o accesschk.exe.",
+        "Cuente cuántas claves distintas en ObjectName leyó el mismo ProcessId en pocos minutos; muchas claves de Services seguidas sugieren enumeración masiva, por ejemplo Get-Acl sobre todas las claves.",
+        "Revise el evento 4688 o Sysmon 1 del mismo ProcessId para obtener CommandLine y el proceso padre; busque Get-Acl, accesschk, PowerUp o scripts desconocidos.",
+        "Pivotee en el mismo host +/- 15 minutos: busque eventos 4657 o Sysmon 13 que modifiquen ImagePath, FailureCommand o Parameters\\ServiceDll en claves de servicio.",
+        "Busque creación o reinicio de servicios (7045, 7036, 4697) y ejecución de binarios nuevos desde rutas escribibles por usuarios.",
+        "Verifique si el usuario tiene privilegios administrativos y si el mismo usuario o host tiene alertas previas de reconocimiento o escalamiento de privilegios."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas que leen la seguridad de su propia clave de servicio al iniciar o actualizarse.",
+        "Agentes de inventario, EDR, antivirus o herramientas de hardening que auditan ACL de servicios.",
+        "Instaladores, actualizaciones de Windows o herramientas de gestión como SCCM o GPO.",
+        "Administradores que revisan permisos con regedit o Get-Acl durante tareas de soporte."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del usuario si la actividad era esperada; documente y ajuste la regla excluyendo procesos legítimos recurrentes.",
+        "Si es sospechosa, compare ImagePath y Parameters de los servicios leídos contra una línea base y verifique hash y firma de los ejecutables referenciados.",
+        "Ante modificaciones no autorizadas, aísle el endpoint, restaure los valores originales del registro y deshabilite la cuenta o sesión implicada tras validarlo.",
+        "Corrija las ACL débiles en claves de servicio para que solo Administrators y SYSTEM tengan permisos de escritura, y busque el mismo patrón en otros hosts."
+      ],
+      "severity_rationale": "Nivel bajo porque la lectura de descriptores de seguridad es común y legítima; solo gana relevancia con enumeración masiva, herramientas inusuales o modificaciones posteriores."
+    },
+    "en": {
+      "summary": "A process requested READ_CONTROL (read security descriptor) access on a service key under HKLM\\SYSTEM\\...ControlSet\\Services. This may be reconnaissance for weak service key permissions before hijacking a service's executable path.",
+      "what_it_detects": "Windows Security event 4663 where ObjectName contains \\SYSTEM\\ and ControlSet\\Services\\ and AccessList includes %%1538 (READ_CONTROL). Requires an audit SACL on those keys.",
+      "why_it_matters": "If an attacker finds a writable service key, they change ImagePath or Parameters so the service runs their payload, often as SYSTEM (T1574.011, Services Registry Permissions Weakness). Reading ACLs is the enumeration step.",
+      "triage_steps": [
+        "Note ProcessName, SubjectUserName and SubjectDomainName; decide whether the process is expected (services.exe, EDR agent, installer) or interactive tooling like powershell.exe, reg.exe or accesschk.exe.",
+        "Count distinct ObjectName keys read by the same ProcessId within minutes; many Services keys in sequence suggests bulk enumeration such as Get-Acl across all services.",
+        "Pull 4688 or Sysmon 1 for that ProcessId to get CommandLine and parent; look for Get-Acl, accesschk, PowerUp or unknown scripts.",
+        "Pivot on the same host +/- 15 minutes for 4657 or Sysmon 13 changes to ImagePath, FailureCommand or Parameters\\ServiceDll.",
+        "Look for service creation or restarts (7045, 7036, 4697) and new binaries running from user-writable paths.",
+        "Check whether the user is privileged and whether the same user or host has earlier recon or privilege-escalation alerts."
+      ],
+      "false_positives": [
+        "Legitimate applications reading the security of their own service key at start or update.",
+        "Inventory, EDR, antivirus or hardening tools auditing service ACLs.",
+        "Installers, Windows Update or management tooling such as SCCM or GPO processing.",
+        "Administrators reviewing permissions with regedit or Get-Acl during support work."
+      ],
+      "response_steps": [
+        "Confirm with the host or user owner whether the activity was expected; document it and tune out recurring legitimate processes.",
+        "If suspicious, compare ImagePath and Parameters of the read services to a baseline and check hash and signature of referenced executables.",
+        "If unauthorized changes exist, isolate the endpoint, restore original registry values and disable the involved account or session after validation.",
+        "Fix weak service key ACLs so only Administrators and SYSTEM can write, and hunt for the same pattern on other hosts."
+      ],
+      "severity_rationale": "Low because reading security descriptors is common and legitimate; it matters only with bulk enumeration, unusual tooling or follow-on modifications."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell running Get-Acl reads the security descriptor of the Spooler service key (READ_CONTROL).",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Services\\Spooler",
+          "HandleId": "0x2f4",
+          "AccessList": "%%1538",
+          "AccessMask": "0x20000",
+          "ProcessId": "0x1a3c",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      },
+      {
+        "description": "accesschk-style enumeration via CurrentControlSet path requesting READ_CONTROL together with query value.",
+        "event": {
+          "EventID": 4663,
+          "Computer": "SRV-APP-07.andes.example.com",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Services\\wuauserv",
+          "HandleId": "0x31c",
+          "AccessList": "%%1538 %%4432",
+          "AccessMask": "0x20001",
+          "ProcessId": "0x2210",
+          "ProcessName": "C:\\Users\\mrojas\\Downloads\\accesschk64.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Service key read with Query key value only, no READ_CONTROL in AccessList.",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Services\\Spooler",
+          "HandleId": "0x1b0",
+          "AccessList": "%%4432",
+          "AccessMask": "0x1",
+          "ProcessId": "0x2bc",
+          "ProcessName": "C:\\Windows\\System32\\services.exe"
+        }
+      },
+      {
+        "description": "READ_CONTROL on a SOFTWARE key outside the Services hive path.",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+          "HandleId": "0x2a8",
+          "AccessList": "%%1538",
+          "AccessMask": "0x20000",
+          "ProcessId": "0x1a3c",
+          "ProcessName": "C:\\Windows\\regedit.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

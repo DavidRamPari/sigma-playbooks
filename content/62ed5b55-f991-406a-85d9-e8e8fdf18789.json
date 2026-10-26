@@ -1,0 +1,116 @@
+{
+  "rule": {
+    "id": "62ed5b55-f991-406a-85d9-e8e8fdf18789",
+    "title": "UAC Bypass Using Consent and Comctl32 - File",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_uac_bypass_consent_comctl32.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_uac_bypass_consent_comctl32.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un comctl32.dll dentro de una carpeta de System32 cuyo nombre empieza con consent.exe.@. Este patrón corresponde a la técnica 22 de UACMe para evadir UAC mediante consent.exe y es muy raro en actividad legítima.",
+      "what_it_detects": "Eventos de creación de archivos (Sysmon EventID 11 o equivalente) donde TargetFilename empieza con C:\\Windows\\System32\\consent.exe.@ y termina con \\comctl32.dll. Indica que se preparó una ruta de redirección de DLL para que consent.exe cargue una comctl32.dll controlada por el atacante.",
+      "why_it_matters": "consent.exe es el binario que muestra el aviso de UAC y se ejecuta con privilegios elevados. Si carga una DLL maliciosa, el atacante obtiene ejecución con integridad alta sin aprobación del usuario (ATT&CK T1548.002, Bypass User Account Control).",
+      "triage_steps": [
+        "Revise TargetFilename completo y el campo Image para identificar qué proceso escribió la DLL; un proceso de usuario o ubicado en Temp/AppData es muy sospechoso.",
+        "Obtenga el hash de la comctl32.dll creada y verifique su firma; compárela con las versiones legítimas de WinSxS y consulte inteligencia de amenazas.",
+        "Revise el árbol de procesos de Image: proceso padre, línea de comandos y usuario que lo ejecutó.",
+        "Busque en el mismo host, +/- 15 minutos, ejecuciones de consent.exe y procesos hijos con integridad alta o como SYSTEM.",
+        "Verifique si el usuario es administrador local y si hubo otras alertas de evasión de UAC, DLL hijacking o herramientas como UACMe (Akagi).",
+        "Revise conexiones de red, persistencia nueva (servicios, tareas programadas, claves Run) y otros archivos escritos en System32 en esa ventana."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; una carpeta consent.exe.@ en System32 no forma parte de instalaciones normales.",
+        "Pruebas autorizadas de red team o simulaciones de adversario (por ejemplo, ejecución de UACMe en laboratorio) que deben estar registradas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo si existe una prueba autorizada; si no, trate el caso como incidente confirmado.",
+        "Aísle el endpoint de la red y preserve evidencia: la DLL, la carpeta consent.exe.@, memoria y logs relevantes.",
+        "Termine los procesos elevados derivados y elimine la carpeta de redirección solo después de recolectar la evidencia.",
+        "Revise y elimine persistencia, restablezca credenciales del usuario afectado y busque el mismo hash o patrón en otros hosts.",
+        "Considere configurar UAC en 'Notificar siempre' y retirar privilegios de administrador local innecesarios."
+      ],
+      "severity_rationale": "Es alta porque el patrón es específico de una herramienta de evasión de UAC, casi no tiene usos legítimos y conduce a ejecución con privilegios elevados."
+    },
+    "en": {
+      "summary": "A process wrote comctl32.dll into a System32 folder whose name starts with consent.exe.@. This matches UACMe method 22, a UAC bypass that abuses consent.exe, and is very rare in legitimate activity.",
+      "what_it_detects": "File creation events (Sysmon EventID 11 or equivalent) where TargetFilename starts with C:\\Windows\\System32\\consent.exe.@ and ends with \\comctl32.dll. This shows a DLL redirection path being staged so consent.exe loads an attacker-controlled comctl32.dll.",
+      "why_it_matters": "consent.exe displays the UAC prompt and runs elevated. If it loads a malicious DLL, the attacker gains high-integrity code execution without user approval (ATT&CK T1548.002, Bypass User Account Control).",
+      "triage_steps": [
+        "Review the full TargetFilename and the Image field to identify the writing process; a user process or one running from Temp/AppData is highly suspicious.",
+        "Hash the dropped comctl32.dll, check its signature, compare against legitimate WinSxS versions and query threat intelligence.",
+        "Review the Image process tree: parent process, command line and the user account running it.",
+        "On the same host within +/- 15 minutes, look for consent.exe executions and child processes running at high integrity or as SYSTEM.",
+        "Check whether the user is a local admin and whether earlier UAC bypass, DLL hijacking or UACMe (Akagi) alerts exist for this host or user.",
+        "Review network connections, new persistence (services, scheduled tasks, Run keys) and other files written to System32 in that window."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; a consent.exe.@ folder in System32 is not part of normal installations.",
+        "Authorized red team or adversary emulation tests, such as running UACMe in a lab, which should be documented."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner whether an authorized test was running; if not, treat it as a confirmed incident.",
+        "Isolate the endpoint and preserve evidence: the DLL, the consent.exe.@ folder, memory and relevant logs.",
+        "Kill elevated processes spawned through the bypass and remove the redirection folder only after evidence is collected.",
+        "Remove persistence, reset the affected user's credentials and hunt for the same hash or path pattern on other hosts.",
+        "Consider setting UAC to 'Always notify' and removing unnecessary local admin rights."
+      ],
+      "severity_rationale": "High fits because the pattern is specific to a UAC bypass tool, has almost no legitimate use and leads to elevated code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder writes comctl32.dll into a consent.exe.@ redirection folder in System32",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-05-14 10:22:31.418",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\akagi64.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Windows\\System32\\consent.exe.@\\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.19041.1110_none_60b5254171f9507e\\comctl32.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate servicing: TrustedInstaller writes comctl32.dll into the WinSxS component store, not a consent.exe.@ folder",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-05-14 03:10:05.022",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 4412,
+          "TargetFilename": "C:\\Windows\\WinSxS\\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.19041.1110_none_60b5254171f9507e\\comctl32.dll"
+        }
+      },
+      {
+        "description": "File written in a consent.exe.@ folder but it is not comctl32.dll, so the endswith condition fails",
+        "event": {
+          "EventID": 11,
+          "UtcTime": "2024-05-14 11:02:47.903",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\explorer.exe",
+          "ProcessId": 3884,
+          "TargetFilename": "C:\\Windows\\System32\\consent.exe.@\\notes.txt"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

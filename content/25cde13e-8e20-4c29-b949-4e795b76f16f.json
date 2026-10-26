@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "25cde13e-8e20-4c29-b949-4e795b76f16f",
+    "title": "Suspicious Teams Application Related ObjectAcess Event",
+    "level": "high",
+    "status": "test",
+    "author": "@SerkinValery",
+    "path": "windows/builtin/security/win_security_teams_suspicious_objectaccess.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_teams_suspicious_objectaccess.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1528"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto de Teams.exe accedió a los archivos de Cookies o Local Storage\\leveldb de Microsoft Teams clásico, donde se guardan tokens de autenticación. Puede tratarse de un intento de robo de tokens para suplantar la sesión del usuario.",
+      "what_it_detects": "Eventos 4663 (intento de acceso a un objeto) cuyo ObjectName contiene \\Microsoft\\Teams\\Cookies o \\Microsoft\\Teams\\Local Storage\\leveldb, cuando ProcessName no es \\Microsoft\\Teams\\current\\Teams.exe. Para que existan estos eventos, la carpeta debe tener una SACL de auditoría configurada.",
+      "why_it_matters": "Teams clásico guarda tokens de sesión en esos archivos y los protege poco. Un atacante que los copie puede usar Teams, Outlook o Graph como la víctima sin conocer su contraseña ni pasar por MFA (ATT&CK T1528, robo de tokens de acceso de aplicaciones).",
+      "triage_steps": [
+        "Revise ProcessName, ProcessId, SubjectUserName y AccessMask del evento 4663 para identificar qué proceso abrió el archivo, en nombre de qué cuenta y con qué permisos.",
+        "Compruebe si ProcessName es un binario conocido (antivirus, backup, Update.exe de Teams) o algo inusual como powershell.exe, cmd.exe, un intérprete de scripts o un ejecutable en Temp o Downloads.",
+        "Obtenga la línea de comandos y el proceso padre a partir del 4688 o de Sysmon 1 del mismo host y ProcessId, dentro de una ventana de +/- 15 minutos.",
+        "Verifique si SubjectUserName coincide con el dueño del perfil indicado en ObjectName; un acceso a perfiles de otros usuarios es muy sospechoso.",
+        "Busque en el mismo host y ventana accesos a credenciales de navegadores, compresión de archivos o conexiones salientes que indiquen exfiltración.",
+        "En los registros de inicio de sesión de Entra ID, busque usos del token del usuario desde IP, dispositivos o user agents nuevos después del evento.",
+        "Revise alertas previas para el mismo host, usuario y hash del proceso."
+      ],
+      "false_positives": [
+        "Agentes de antivirus o EDR que escanean el perfil del usuario.",
+        "Software de backup o de sincronización de perfiles que copia AppData.",
+        "Update.exe de Teams o scripts de soporte de TI que limpian la caché de Teams.",
+        "Herramientas forenses o de migración de equipos que ejecuta personal autorizado."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con TI si el proceso es legítimo; si es un falso positivo recurrente, documéntelo y ajuste el filtro.",
+        "Si se confirma un acceso malicioso, aísle el endpoint y conserve el binario, su hash y la memoria del proceso.",
+        "Revoque las sesiones y los tokens de actualización del usuario en Entra ID y fuerce un nuevo inicio de sesión.",
+        "Elimine el malware o la persistencia que encuentre y revise la actividad del usuario en Teams, correo y Graph desde el robo.",
+        "Considere migrar al nuevo Teams y mantener la auditoría de estas rutas."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un proceso ajeno que lee tokens de Teams casi siempre indica robo de credenciales, con acceso directo a la nube del usuario."
+    },
+    "en": {
+      "summary": "A process other than Teams.exe accessed the classic Microsoft Teams Cookies or Local Storage\\leveldb files, which hold authentication tokens. This may be an attempt to steal tokens and hijack the user's session.",
+      "what_it_detects": "Event 4663 (an attempt was made to access an object) where ObjectName contains \\Microsoft\\Teams\\Cookies or \\Microsoft\\Teams\\Local Storage\\leveldb and ProcessName is not \\Microsoft\\Teams\\current\\Teams.exe. The folder needs an auditing SACL for these events to exist.",
+      "why_it_matters": "Classic Teams keeps session tokens in these files with weak protection. An attacker who copies them can act as the victim in Teams, Outlook or Graph without the password or MFA (ATT&CK T1528, Steal Application Access Token).",
+      "triage_steps": [
+        "Review ProcessName, ProcessId, SubjectUserName and AccessMask in the 4663 event to see which process opened the file, for which account, and with what access.",
+        "Check whether ProcessName is a known binary (AV, backup, Teams Update.exe) or something unusual like powershell.exe, cmd.exe, a script host, or an executable in Temp or Downloads.",
+        "Get the command line and parent process from 4688 or Sysmon 1 on the same host and ProcessId, within +/- 15 minutes.",
+        "Check whether SubjectUserName matches the profile owner in ObjectName; access to another user's profile is highly suspicious.",
+        "On the same host and time window, look for browser credential access, archiving or outbound connections that suggest exfiltration.",
+        "In Entra ID sign-in logs, look for the user's token being used from new IPs, devices or user agents after the event.",
+        "Review earlier alerts for the same host, user and process hash."
+      ],
+      "false_positives": [
+        "Antivirus or EDR agents scanning the user profile.",
+        "Backup or profile sync software copying AppData.",
+        "Teams Update.exe or IT support scripts clearing the Teams cache.",
+        "Forensic or device migration tools run by authorized staff."
+      ],
+      "response_steps": [
+        "Confirm with the user and IT whether the process is legitimate; if it is a recurring benign case, document it and tune the filter.",
+        "If access is malicious, isolate the endpoint and preserve the binary, its hash and process memory.",
+        "Revoke the user's sessions and refresh tokens in Entra ID and force reauthentication.",
+        "Remove any malware or persistence found and review the user's Teams, mail and Graph activity since the theft.",
+        "Consider moving to new Teams and keep auditing these paths."
+      ],
+      "severity_rationale": "High fits because a foreign process reading Teams tokens almost always means credential theft, with direct access to the user's cloud account."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell reads the Teams Cookies file of user jperez",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\Teams\\Cookies",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": "0x1a2c",
+          "AccessMask": "0x1"
+        }
+      },
+      {
+        "description": "Unknown executable in Temp reads the Teams leveldb store",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\Teams\\Local Storage\\leveldb\\000005.ldb",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.exe",
+          "ProcessId": "0x2f10",
+          "AccessMask": "0x1"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The legitimate Teams client accesses its own Cookies file, excluded by the filter",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\Teams\\Cookies",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Teams\\current\\Teams.exe",
+          "ProcessId": "0x0d84",
+          "AccessMask": "0x3"
+        }
+      },
+      {
+        "description": "PowerShell accesses a non-token Teams file (settings), so ObjectName does not match",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\Teams\\desktop-config.json",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": "0x1a2c",
+          "AccessMask": "0x1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

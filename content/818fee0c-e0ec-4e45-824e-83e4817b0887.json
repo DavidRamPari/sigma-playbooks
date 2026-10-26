@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "818fee0c-e0ec-4e45-824e-83e4817b0887",
+    "title": "Azure Kubernetes Sensitive Role Access",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_role_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_role_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485",
+      "T1489",
+      "T1496"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó, eliminó, vinculó (bind) o escaló (escalate) un Role o ClusterRole de Kubernetes en un clúster conectado con Azure Arc. Puede ser trabajo administrativo normal o un intento de obtener o quitar privilegios.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es una de las ocho operaciones RBAC (write, delete, bind/action, escalate/action) sobre roles o clusterroles en MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS.",
+      "why_it_matters": "Quien controla el RBAC controla el clúster. Puede darse permisos para minar criptomonedas (T1496), borrar cargas de trabajo y datos (T1485) o romper el acceso de cuentas de servicio y detener servicios (T1489).",
+      "triage_steps": [
+        "Revise operationName para saber si fue write, delete, bind o escalate, y si afectó un ClusterRole (todo el clúster) o un Role (un namespace).",
+        "Identifique el caller, la IP de origen (callerIpAddress), el user agent y el tenant; confirme si esa identidad suele administrar este clúster.",
+        "Use resourceId para identificar el clúster, el namespace y el nombre del rol; priorice cluster-admin, admin, roles de system: o roles con comodines '*'.",
+        "Confirme que ActivityStatus/status sea Succeeded; los intentos fallidos repetidos también pueden indicar que alguien está probando permisos.",
+        "Busque otras operaciones del mismo caller en ±15 minutos: rolebindings, secrets, pods, deployments o cambios en la propia conexión de Azure Arc.",
+        "Revise si hay alertas previas del mismo caller o de la misma IP de origen, como inicios de sesión riesgosos o cambios de roles de Azure.",
+        "Valide con el dueño del clúster si existe un ticket de cambio o un despliegue de GitOps/Helm que explique la modificación."
+      ],
+      "false_positives": [
+        "Administradores de la plataforma que ajustan Roles o ClusterRoles durante tareas planificadas.",
+        "Pipelines de CI/CD, Flux o Argo CD, u operadores que instalan charts y gestionan objetos RBAC.",
+        "Extensiones de Azure Arc o actualizaciones del agente que recrean roles del sistema."
+      ],
+      "response_steps": [
+        "Si el cambio no está autorizado, exporte el estado actual del rol y sus bindings antes de modificar nada, para preservar evidencia.",
+        "Revierta el rol desde control de versiones o un respaldo verificado, y elimine los bindings no autorizados.",
+        "Deshabilite o rote las credenciales de la identidad involucrada y revoque sus sesiones y tokens activos.",
+        "Busque pods, cargas de trabajo o cuentas de servicio que se hayan creado usando los nuevos permisos, y elimínelos después de verificarlos.",
+        "Si la actividad es legítima y se repite, documente una exclusión acotada por caller y clúster."
+      ],
+      "severity_rationale": "Medium es adecuado: los cambios de RBAC son frecuentes en la administración diaria, pero un cambio no autorizado puede comprometer todo el clúster."
+    },
+    "en": {
+      "summary": "An identity wrote, deleted, bound or escalated a Kubernetes Role or ClusterRole on an Azure Arc-connected cluster. This can be routine admin work or an attempt to gain or remove privileges.",
+      "what_it_detects": "Azure Activity Log events whose operationName is one of eight RBAC operations (write, delete, bind/action, escalate/action) on roles or clusterroles under MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS.",
+      "why_it_matters": "Whoever controls RBAC controls the cluster. They can grant themselves rights to mine cryptocurrency (T1496), destroy workloads and data (T1485), or break service account access and stop services (T1489).",
+      "triage_steps": [
+        "Check operationName for write, delete, bind or escalate, and whether it hit a ClusterRole (whole cluster) or a Role (one namespace).",
+        "Identify the caller, callerIpAddress, user agent and tenant; confirm whether this identity normally administers this cluster.",
+        "Use resourceId to get the cluster, namespace and role name; prioritize cluster-admin, admin, system: roles or roles with '*' wildcards.",
+        "Confirm that ActivityStatus/status is Succeeded; repeated failures can also mean someone is probing permissions.",
+        "Look for other operations by the same caller within ±15 minutes: rolebindings, secrets, pods, deployments or changes to the Arc connection itself.",
+        "Check for earlier alerts on the same caller or source IP, such as risky sign-ins or Azure role assignment changes.",
+        "Ask the cluster owner whether a change ticket or a GitOps/Helm deployment explains the change."
+      ],
+      "false_positives": [
+        "Platform administrators adjusting Roles or ClusterRoles during planned work.",
+        "CI/CD pipelines, Flux or Argo CD, or operators that install charts and manage RBAC objects.",
+        "Azure Arc extensions or agent upgrades that recreate system roles."
+      ],
+      "response_steps": [
+        "If the change is unauthorized, export the current role and its bindings before you change anything, to preserve evidence.",
+        "Restore the role from version control or a verified backup, and remove any unauthorized bindings.",
+        "Disable or rotate the credentials of the identity involved, and revoke its active sessions and tokens.",
+        "Find pods, workloads or service accounts created with the new permissions, and remove them once verified.",
+        "If the activity is legitimate and recurring, document a narrow exclusion by caller and cluster."
+      ],
+      "severity_rationale": "Medium fits: RBAC changes are common in daily administration, but an unauthorized one can compromise the entire cluster."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user escalates a ClusterRole on an Arc-connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/RBAC.AUTHORIZATION.K8S.IO/CLUSTERROLES/ESCALATE/ACTION",
+          "caller": "mrojas@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "ActivityStatus": "Succeeded",
+          "category": "Administrative",
+          "ResourceGroup": "rg-arc-prod",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/rbac.authorization.k8s.io/clusterroles/cluster-admin",
+          "time": "2024-05-14T02:17:09Z"
+        }
+      },
+      {
+        "description": "Role deleted in a namespace, operation name in lowercase",
+        "event": {
+          "operationName": "microsoft.kubernetes/connectedclusters/rbac.authorization.k8s.io/roles/delete",
+          "caller": "svc-deploy@example.org",
+          "callerIpAddress": "198.51.100.23",
+          "ActivityStatus": "Succeeded",
+          "category": "Administrative",
+          "ResourceGroup": "rg-arc-dev",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-dev/providers/Microsoft.Kubernetes/connectedClusters/arc-dev-02/rbac.authorization.k8s.io/roles/payments/app-reader",
+          "time": "2024-05-14T10:42:51Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of roles; READ is not in the selection",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/RBAC.AUTHORIZATION.K8S.IO/ROLES/READ",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "ActivityStatus": "Succeeded",
+          "category": "Administrative",
+          "ResourceGroup": "rg-arc-prod",
+          "time": "2024-05-14T09:05:33Z"
+        }
+      },
+      {
+        "description": "ClusterRole write on an AKS managed cluster; another resource provider, so the rule does not match",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/RBAC.AUTHORIZATION.K8S.IO/CLUSTERROLES/WRITE",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "ActivityStatus": "Succeeded",
+          "category": "Administrative",
+          "ResourceGroup": "rg-aks-prod",
+          "time": "2024-05-14T09:12:04Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

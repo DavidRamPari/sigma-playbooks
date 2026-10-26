@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "067d8238-7127-451c-a9ec-fa78045b618b",
+    "title": "Linux Doas Tool Execution",
+    "level": "low",
+    "status": "stable",
+    "author": "Sittikorn S, Teoderick Contreras",
+    "path": "linux/process_creation/proc_creation_lnx_doas_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_doas_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario doas en un host Linux. doas permite que un usuario estándar ejecute comandos como root u otro usuario, de forma similar a sudo.",
+      "what_it_detects": "Eventos de creación de procesos cuyo campo Image termina en '/doas' (por ejemplo /usr/bin/doas o /usr/local/bin/doas), sin importar los argumentos ni el usuario.",
+      "why_it_matters": "doas es un mecanismo de elevación de privilegios. Un atacante con acceso a una cuenta autorizada, o a una regla permisiva en /etc/doas.conf, puede obtener root (ATT&CK T1548, abuso de mecanismos de control de elevación).",
+      "triage_steps": [
+        "Revise CommandLine para identificar el comando ejecutado con doas, el usuario destino (-u) y si se abrió un shell interactivo (sh, bash) o un comando puntual.",
+        "Identifique el campo User y confirme si esa cuenta tiene permiso documentado para usar doas en este host y si la actividad coincide con su rol.",
+        "Revise ParentImage y ParentCommandLine: una sesión SSH interactiva es esperable; un servidor web, cron inesperado o un script en /tmp es sospechoso.",
+        "Verifique que el binario Image pertenezca a un paquete legítimo (dpkg -S, rpm -qf o pkg info) y compare su hash con el del paquete.",
+        "Inspeccione /etc/doas.conf: busque reglas 'permit nopass', 'persist' o permisos agregados recientemente y revise quién y cuándo los modificó.",
+        "Revise los procesos hijos y la actividad del mismo host +/- 15 minutos: creación de usuarios, cambios en sudoers, cron, claves SSH o descargas.",
+        "Busque alertas previas para el mismo usuario y host, y si doas se usa en otros equipos donde normalmente no está instalado."
+      ],
+      "false_positives": [
+        "Administradores que usan doas como alternativa a sudo de forma habitual, sobre todo en distribuciones minimalistas como Alpine.",
+        "Scripts de mantenimiento o automatización que invocan doas para tareas programadas aprobadas.",
+        "Pruebas o evaluaciones después de instalar doas en equipos de desarrollo."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del host si la ejecución era esperada y si estaba autorizada.",
+        "Si no está autorizada, bloquee o restablezca la cuenta, cierre sus sesiones activas y aísle el host si hubo acciones como root.",
+        "Elimine las reglas no autorizadas de /etc/doas.conf y cualquier persistencia encontrada, después de preservar la evidencia.",
+        "Si el uso es legítimo y frecuente, documente la excepción por usuario y host para reducir el ruido sin ocultar otros usos."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque doas suele usarse con fines administrativos legítimos y la alerta solo cobra relevancia con contexto sospechoso del usuario, el padre o el comando."
+    },
+    "en": {
+      "summary": "The doas binary was executed on a Linux host. doas lets a standard user run commands as root or another user, much like sudo.",
+      "what_it_detects": "Process creation events whose Image ends with '/doas' (for example /usr/bin/doas or /usr/local/bin/doas), regardless of arguments or user.",
+      "why_it_matters": "doas is a privilege elevation mechanism. An attacker holding an authorized account, or abusing a permissive /etc/doas.conf rule, can gain root (ATT&CK T1548, Abuse Elevation Control Mechanism).",
+      "triage_steps": [
+        "Read CommandLine to identify the command run via doas, the target user (-u) and whether an interactive shell (sh, bash) or a single command was launched.",
+        "Check the User field and confirm the account is documented as allowed to use doas on this host and that the activity fits its role.",
+        "Review ParentImage and ParentCommandLine: an interactive SSH session is expected; a web server, unexpected cron job or script in /tmp is suspicious.",
+        "Verify the Image binary belongs to a legitimate package (dpkg -S, rpm -qf or pkg info) and compare its hash with the packaged one.",
+        "Inspect /etc/doas.conf for 'permit nopass', 'persist' or recently added rules, and check who changed it and when.",
+        "Review child processes and activity on the same host within +/- 15 minutes: new users, sudoers changes, cron, SSH keys or downloads.",
+        "Look for earlier alerts for the same user and host, and for doas use on hosts where it is normally not installed."
+      ],
+      "false_positives": [
+        "Administrators who routinely use doas instead of sudo, especially on minimal distributions such as Alpine.",
+        "Approved maintenance or automation scripts that call doas for scheduled tasks.",
+        "Testing after installing doas on developer workstations."
+      ],
+      "response_steps": [
+        "Confirm with the user or host owner whether the execution was expected and authorized.",
+        "If unauthorized, lock or reset the account, terminate its sessions and isolate the host if root actions occurred.",
+        "Remove unauthorized /etc/doas.conf rules and any persistence found, after preserving evidence.",
+        "If use is legitimate and frequent, document a per-user, per-host exception to reduce noise without hiding other usage."
+      ],
+      "severity_rationale": "Low fits because doas is commonly used for legitimate administration, and the alert only matters when user, parent or command context looks suspicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Standard user spawns a root shell via doas from an SSH session",
+        "event": {
+          "Image": "/usr/bin/doas",
+          "CommandLine": "doas -u root /bin/sh",
+          "User": "jperez",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "doas installed under /usr/local/bin invoked by a script in /tmp",
+        "event": {
+          "Image": "/usr/local/bin/doas",
+          "CommandLine": "doas cat /etc/shadow",
+          "User": "www-data",
+          "ParentImage": "/tmp/.cache/run.sh",
+          "ParentCommandLine": "/bin/sh /tmp/.cache/run.sh",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 51077,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Elevation with sudo instead of doas",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo systemctl restart nginx",
+          "User": "jperez",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48990,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "doasedit helper whose Image does not end with '/doas'",
+        "event": {
+          "Image": "/usr/bin/doasedit",
+          "CommandLine": "doasedit /etc/hosts",
+          "User": "mrojas",
+          "ParentImage": "/usr/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "CurrentDirectory": "/home/mrojas",
+          "ProcessId": 30211,
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

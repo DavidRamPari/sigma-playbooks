@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "8dee7a0d-43fd-4b3c-8cd1-605e189d195e",
+    "title": "User State Changed From Guest To Member",
+    "level": "medium",
+    "status": "test",
+    "author": "MikeDuddington, '@dudders1'",
+    "path": "cloud/azure/audit_logs/azure_guest_to_member.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_guest_to_member.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un evento de auditoría de Entra ID (Azure AD) muestra que el atributo UserType de una cuenta cambió de Guest a Member. Una cuenta externa pasa a tratarse como usuario interno, con más permisos predeterminados en el tenant.",
+      "what_it_detects": "Registros de Azure AD Audit Logs con Category 'UserManagement' y OperationName 'Update user', donde properties.message muestra la propiedad UserType con oldValue [\"Guest\"] y newValue [\"Member\"].",
+      "why_it_matters": "Los miembros pueden enumerar el directorio y reciben accesos predeterminados que los invitados no tienen. Un atacante que controla una cuenta de invitado o una cuenta con privilegios administrativos puede hacer este cambio para elevar privilegios y mantener persistencia con una cuenta cloud válida (ATT&CK T1078.004).",
+      "triage_steps": [
+        "Identifique la cuenta afectada (targetResources) y quién hizo el cambio (initiatedBy: usuario, aplicación o service principal), junto con la IP de origen y el correlationId.",
+        "Confirme con el equipo de identidad o con el responsable de la cuenta si existe un ticket o una aprobación del administrador para la conversión.",
+        "Revise el rol del iniciador: ¿suele administrar usuarios? Busque en los sign-in logs el inicio de sesión que originó el cambio (IP, ubicación, user agent, cumplimiento de MFA).",
+        "Revise otros eventos de auditoría del mismo iniciador y de la misma cuenta en +/- 15 minutos: asignación de roles, alta en grupos, restablecimiento de contraseña, registro de métodos MFA.",
+        "Revise los inicios de sesión de la cuenta convertida después del cambio: accesos nuevos a aplicaciones, SharePoint, Teams o consultas al directorio.",
+        "Busque alertas anteriores relacionadas con el iniciador, la cuenta objetivo o la IP de origen, y conversiones parecidas hechas por el mismo actor."
+      ],
+      "false_positives": [
+        "Conversión aprobada por un administrador, por ejemplo cuando un contratista externo pasa a ser empleado.",
+        "Fusiones, adquisiciones o migraciones entre tenants que convierten invitados en miembros de forma masiva.",
+        "Automatizaciones de aprovisionamiento (HR-driven provisioning, scripts de Graph) que ajustan UserType según políticas documentadas."
+      ],
+      "response_steps": [
+        "Si no hay aprobación, confirme con el responsable y revierta UserType a Guest. Documente el estado previo antes de hacerlo.",
+        "Si el iniciador parece comprometido, revoque sus sesiones, restablezca sus credenciales y revise sus métodos MFA y sus roles.",
+        "Retire de la cuenta convertida los grupos, roles y accesos que obtuvo después del cambio, y revise lo que hizo con ellos.",
+        "Restrinja quién puede modificar UserType mediante roles con privilegio mínimo y PIM, y mantenga el monitoreo de cuentas externas."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el cambio da más privilegios y puede indicar abuso, pero suele tener justificación administrativa y hay que confirmarlo con contexto."
+    },
+    "en": {
+      "summary": "An Entra ID (Azure AD) audit event shows an account's UserType changed from Guest to Member. An external account is now treated as an internal user, with broader default permissions in the tenant.",
+      "what_it_detects": "Azure AD Audit Log entries with Category 'UserManagement' and OperationName 'Update user', where properties.message shows the UserType property going from oldValue [\"Guest\"] to newValue [\"Member\"].",
+      "why_it_matters": "Members can enumerate the directory and get default access that guests lack. An attacker who controls a guest account or an admin-capable identity can flip this attribute to escalate privileges and keep persistence through a valid cloud account (ATT&CK T1078.004).",
+      "triage_steps": [
+        "Identify the target account (targetResources) and who made the change (initiatedBy user, app or service principal), plus the source IP and correlationId.",
+        "Ask the identity team or the account owner whether a ticket or admin approval exists for the conversion.",
+        "Check whether the initiator normally manages users. Find the sign-in behind the change in the sign-in logs: IP, location, user agent, MFA result.",
+        "Review other audit events from the same initiator and for the same target within +/- 15 minutes: role assignments, group additions, password resets, MFA method registration.",
+        "Review the converted account's sign-ins after the change: new application access, SharePoint or Teams activity, directory queries.",
+        "Search for earlier alerts on the initiator, the target account or the source IP, and for similar conversions by the same actor."
+      ],
+      "false_positives": [
+        "An administrator-approved conversion, for example an external contractor who becomes an employee.",
+        "Mergers, acquisitions or cross-tenant migrations that convert guests to members in bulk.",
+        "Provisioning automation (HR-driven provisioning, Graph scripts) that sets UserType according to documented policy."
+      ],
+      "response_steps": [
+        "If there is no approval, confirm with the owner and revert UserType to Guest. Record the prior state first.",
+        "If the initiator looks compromised, revoke its sessions, reset its credentials and review its MFA methods and roles.",
+        "Remove the groups, roles and access the converted account gained after the change, and review what it did with them.",
+        "Limit who can modify UserType with least-privilege roles and PIM, and keep monitoring external identities."
+      ],
+      "severity_rationale": "Medium fits because the change grants extra privileges and may signal abuse, but it often has an administrative reason and needs context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An admin account signing in from a documentation IP converts a guest account from Guest to Member.",
+        "event": {
+          "Category": "UserManagement",
+          "OperationName": "Update user",
+          "properties.message": "\"displayName\":\"UserType\",\"oldValue\":\"[\\\"Guest\\\"]\",\"newValue\":\"[\\\"Member\\\"]\"",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@andes.example.com",
+          "properties.initiatedBy.user.ipAddress": "203.0.113.45",
+          "properties.targetResources.userPrincipalName": "proveedor_example.org#EXT#@andes.example.com",
+          "properties.correlationId": "5f1c2b7e-3a9d-4c11-9e2a-7b8d0f6a1c33",
+          "time": "2024-10-25T14:03:12Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The opposite change, Member to Guest, so the values do not match the selection.",
+        "event": {
+          "Category": "UserManagement",
+          "OperationName": "Update user",
+          "properties.message": "\"displayName\":\"UserType\",\"oldValue\":\"[\\\"Member\\\"]\",\"newValue\":\"[\\\"Guest\\\"]\"",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "admin.identidad@andes.example.com",
+          "properties.initiatedBy.user.ipAddress": "198.51.100.20",
+          "properties.targetResources.userPrincipalName": "mlopez@andes.example.com",
+          "time": "2024-10-25T15:10:44Z"
+        }
+      },
+      {
+        "description": "An ordinary Update user event that changes the Department attribute, not UserType.",
+        "event": {
+          "Category": "UserManagement",
+          "OperationName": "Update user",
+          "properties.message": "\"displayName\":\"Department\",\"oldValue\":\"[\\\"Ventas\\\"]\",\"newValue\":\"[\\\"Finanzas\\\"]\"",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "hr-sync@andes.example.com",
+          "properties.initiatedBy.user.ipAddress": "192.0.2.10",
+          "properties.targetResources.userPrincipalName": "jgomez@andes.example.com",
+          "time": "2024-10-25T16:22:05Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "37222991-11e9-4b6d-8bdf-60fbe48f753e",
+    "title": "Overwriting the File with Dev Zero or Null",
+    "level": "low",
+    "status": "stable",
+    "author": "Jakob Weinzettl, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_dd_delete_file.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_dd_delete_file.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró una ejecución de dd cuyo primer argumento lee de /dev/zero o /dev/null, un patrón típico para sobrescribir o vaciar archivos. Puede ser destrucción de datos o borrado de evidencia, aunque también aparece en tareas administrativas.",
+      "what_it_detects": "Registros EXECVE de auditd donde a0 contiene 'dd' y a1 contiene 'if=/dev/zero' o 'if=/dev/null', es decir, dd usando un dispositivo vacío como origen para escribir sobre un archivo o dispositivo.",
+      "why_it_matters": "Sobrescribir archivos con ceros elimina su contenido de forma irrecuperable (ATT&CK T1485, Data Destruction, táctica Impact). Los atacantes lo usan para destruir datos, inutilizar sistemas o borrar logs y herramientas tras una intrusión.",
+      "triage_steps": [
+        "Revise a2 y los argumentos siguientes para identificar el destino de of= (archivo, partición o disco completo) y los valores de bs y count.",
+        "Correlacione el registro SYSCALL con el mismo ID de evento auditd (msg=audit(...)) para obtener auid, uid, exe, pwd y el PPID.",
+        "Determine si el destino es crítico: logs (/var/log), historiales de shell, binarios, bases de datos o dispositivos de bloque como /dev/sda.",
+        "Reconstruya el árbol de procesos: proceso padre, sesión SSH o sudo asociada y si se ejecutó desde cron, un script o una shell interactiva.",
+        "Busque en el mismo host, +/- 15 minutos, otros comandos destructivos (shred, rm -rf, truncate), detención de servicios o limpieza de historial.",
+        "Verifique si el usuario (auid) tiene alertas previas o inicios de sesión desde IP de origen inusuales.",
+        "Confirme con el responsable del sistema si existe un cambio, mantenimiento o creación de swapfile planificado."
+      ],
+      "false_positives": [
+        "Creación de archivos de swap o imágenes vacías con dd if=/dev/zero of=/swapfile.",
+        "Agregar bytes nulos a archivos o preparar archivos de tamaño fijo para pruebas de rendimiento.",
+        "Sobrescritura legítima de discos o archivos durante el retiro seguro de equipos o datos.",
+        "Scripts de aprovisionamiento o imágenes de VM que inicializan particiones."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema y el usuario si la acción fue autorizada antes de escalar.",
+        "Si no está autorizada, aísle el host de la red y preserve los logs de auditd y la memoria disponibles.",
+        "Suspenda o restablezca las credenciales de la cuenta involucrada y revise el acceso sudo.",
+        "Identifique los datos afectados y restaure desde respaldos verificados.",
+        "Busque persistencia y otras acciones del atacante antes de devolver el host a producción."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque dd con /dev/zero es habitual en administración, pero el contexto del destino puede justificar escalar rápidamente."
+    },
+    "en": {
+      "summary": "auditd recorded a dd execution whose first argument reads from /dev/zero or /dev/null, a common way to overwrite or empty files. This may be data destruction or evidence wiping, but it also appears in routine administration.",
+      "what_it_detects": "auditd EXECVE records where a0 contains 'dd' and a1 contains 'if=/dev/zero' or 'if=/dev/null', meaning dd uses an empty device as input to write over a file or device.",
+      "why_it_matters": "Overwriting files with zeros destroys content irrecoverably (ATT&CK T1485, Data Destruction, Impact tactic). Attackers use it to destroy data, disable systems, or wipe logs and tools after an intrusion.",
+      "triage_steps": [
+        "Read a2 and later arguments to identify the of= target (file, partition or whole disk) and the bs and count values.",
+        "Join the SYSCALL record sharing the same auditd event ID (msg=audit(...)) to get auid, uid, exe, pwd and PPID.",
+        "Judge target criticality: logs (/var/log), shell history, binaries, databases or block devices such as /dev/sda.",
+        "Rebuild the process tree: parent process, related SSH or sudo session, and whether cron, a script or an interactive shell ran it.",
+        "On the same host within +/- 15 minutes, look for other destructive commands (shred, rm -rf, truncate), stopped services or history clearing.",
+        "Check the user (auid) for earlier alerts or logins from unusual source IPs.",
+        "Confirm with the system owner whether a change, maintenance window or swapfile creation was planned."
+      ],
+      "false_positives": [
+        "Creating swap files or blank images with dd if=/dev/zero of=/swapfile.",
+        "Appending null bytes or creating fixed-size files for performance testing.",
+        "Legitimate overwriting of disks or files during secure decommissioning.",
+        "Provisioning scripts or VM image builds that initialize partitions."
+      ],
+      "response_steps": [
+        "Verify with the system owner and the user whether the action was authorized before escalating.",
+        "If unauthorized, isolate the host and preserve auditd logs and available memory.",
+        "Suspend or reset the involved account's credentials and review sudo access.",
+        "Identify affected data and restore from verified backups.",
+        "Hunt for persistence and other attacker activity before returning the host to production."
+      ],
+      "severity_rationale": "Low fits because dd with /dev/zero is common in administration, though a sensitive target can justify fast escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dd overwrites the secure log with zeros from an interactive session",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698242592.123:4521)",
+          "argc": 4,
+          "a0": "dd",
+          "a1": "if=/dev/zero",
+          "a2": "of=/var/log/secure",
+          "a3": "bs=1M",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Full-path dd wiping a database file using /dev/null as input",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698243011.456:4610)",
+          "argc": 4,
+          "a0": "/usr/bin/dd",
+          "a1": "if=/dev/null",
+          "a2": "of=/srv/db/customers.db",
+          "a3": "count=1",
+          "host": "db-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate disk backup with dd reading from a real block device",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698244100.789:4702)",
+          "argc": 4,
+          "a0": "dd",
+          "a1": "if=/dev/sda1",
+          "a2": "of=/backup/sda1.img",
+          "a3": "bs=4M",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "dd reading from /dev/urandom to generate a random key file, so a1 does not match",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698244200.012:4710)",
+          "argc": 4,
+          "a0": "dd",
+          "a1": "if=/dev/urandom",
+          "a2": "of=/etc/keys/luks.key",
+          "a3": "bs=512",
+          "host": "ws-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "e8314f79-564d-4f79-bc13-fbc0bf2660d8",
+    "title": "Potential PowerShell Obfuscation Using Character Join",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_alias_obfscuation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_alias_obfscuation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell creó o modificó un alias cuyo comando de destino se arma en tiempo de ejecución con -join. Es una forma conocida de ocultar comandos como Invoke-Expression o New-Object frente a búsquedas simples de texto.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) donde ScriptBlockText contiene '-Alias' (New-Alias o Set-Alias) y ' -Value (-join(', por ejemplo Set-Alias -Name X -Value (-join(\"Inv\",\"oke\",\"-\",\"Exp\",\"ression\")).",
+      "why_it_matters": "Fragmentar el nombre de un cmdlet y asociarlo a un alias corto es ofuscación (T1027) para ejecutar comandos de PowerShell (T1059.001) evadiendo detecciones por palabra clave. Suele preceder a download cradles o ejecución de payloads en memoria.",
+      "triage_steps": [
+        "Leer el ScriptBlockText completo y reconstruir la cadena unida para saber a qué cmdlet apunta el alias (Invoke-Expression, New-Object, Invoke-WebRequest, etc.).",
+        "Ubicar dónde se usa el alias más adelante en el mismo bloque o en otros bloques con el mismo ScriptBlockId.",
+        "Revisar el campo Path: sesión interactiva, archivo en carpeta escribible por el usuario o script administrativo conocido en un repositorio gestionado.",
+        "Identificar al usuario y el proceso de PowerShell (evento 4103, Sysmon 1 o EDR), su ParentImage y CommandLine completo, en especial -enc o ventanas ocultas.",
+        "Pivotar en el mismo host +/- 15 minutos: conexiones de red, escritura de archivos, servicios o tareas programadas nuevas y otros bloques 4104.",
+        "Buscar el mismo patrón de alias o el hash del script en otros hosts y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos (Unknown).",
+        "Scripts administrativos internos o de terceros con un estilo poco común que arman el destino del alias con -join.",
+        "Ejercicios de red team, capacitaciones de seguridad o herramientas de prueba de ofuscación autorizadas."
+      ],
+      "response_steps": [
+        "Confirmar la intención con el dueño del script o el usuario; tratar destinos como Invoke-Expression con código de descarga como maliciosos hasta demostrar lo contrario.",
+        "Si es malicioso, aislar el endpoint mediante el EDR y preservar los script blocks, el archivo del script y el árbol de procesos.",
+        "Bloquear URLs, dominios o hashes identificados y eliminar persistencia como tareas programadas, claves Run o scripts de perfil.",
+        "Restablecer las credenciales del usuario si se ejecutaron payloads en su contexto y delimitar otros hosts afectados antes de restaurar el servicio."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque el patrón solo evidencia ofuscación, no una acción maliciosa confirmada; el destino decodificado y la actividad posterior definen el riesgo real."
+    },
+    "en": {
+      "summary": "A PowerShell script block created or changed an alias whose target command name is assembled at runtime with -join. This is a known way to hide commands such as Invoke-Expression or New-Object from simple string searches.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains both '-Alias' (New-Alias or Set-Alias) and ' -Value (-join(', for example Set-Alias -Name X -Value (-join(\"Inv\",\"oke\",\"-\",\"Exp\",\"ression\")).",
+      "why_it_matters": "Splitting a cmdlet name into fragments and binding it to a short alias is obfuscation (T1027) to run PowerShell commands (T1059.001) while evading keyword detections. It often precedes download cradles or in-memory payload execution.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and rebuild the joined string to learn which cmdlet the alias points to (Invoke-Expression, New-Object, Invoke-WebRequest, etc.).",
+        "Find where the alias is used later in the same script block or other blocks sharing the same ScriptBlockId.",
+        "Check the Path field: an interactive session, a file in a user-writable folder, or a known admin script in a managed repository.",
+        "Identify the user and the PowerShell process (event 4103, Sysmon 1 or EDR), its ParentImage and full CommandLine, especially -enc or hidden windows.",
+        "Pivot on the same host +/- 15 minutes for network connections, file writes, new services or scheduled tasks, and other 4104 blocks.",
+        "Search for the same alias pattern or script hash on other hosts and for earlier alerts on this user or host."
+      ],
+      "false_positives": [
+        "None documented in the rule (Unknown).",
+        "In-house or third-party admin scripts written in an unusual style that build alias targets with -join.",
+        "Red team exercises, security training or obfuscation testing tools run with authorization."
+      ],
+      "response_steps": [
+        "Confirm intent with the script owner or user; treat decoded targets like Invoke-Expression with download code as malicious until proven otherwise.",
+        "If malicious, isolate the endpoint through EDR and preserve the script blocks, the script file and the process tree.",
+        "Block identified URLs, domains or hashes and remove persistence such as scheduled tasks, Run keys or profile scripts.",
+        "Reset the user's credentials if payloads ran in their context, then scope other affected hosts before restoring service."
+      ],
+      "severity_rationale": "Low fits because the pattern alone shows obfuscation, not a confirmed malicious action, so the decoded target and what happens next decide the real risk."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Set-Alias binding X to Invoke-Expression built with -join, followed by its use",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f1c2a7e-9b4d-4c11-8e2a-5d6f7a8b9c01",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "Set-Alias -Name X -Value (-join(\"Inv\",\"oke\",\"-\",\"Exp\",\"ression\")); X 'Write-Output test'"
+        }
+      },
+      {
+        "description": "New-Alias binding Y to New-Object built with -join",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "a7b8c9d0-1e2f-4a3b-9c4d-5e6f7a8b9c02",
+          "Path": "",
+          "ScriptBlockText": "New-Alias -Name Y -Value (-join('Ne','w-O','bje','ct')); $c = Y Net.WebClient"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Ordinary admin alias with a literal target, no -join",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "0c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e04",
+          "Path": "C:\\Users\\jperez\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1",
+          "ScriptBlockText": "Set-Alias -Name ll -Value Get-ChildItem"
+        }
+      },
+      {
+        "description": "Alias target joined into a variable first, so ' -Value (-join(' does not appear",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ScriptBlockId": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a805",
+          "Path": "C:\\Scripts\\setup-aliases.ps1",
+          "ScriptBlockText": "$target = -join('Get-','Process'); Set-Alias -Name gp2 -Value $target"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

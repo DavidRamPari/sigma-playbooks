@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "9058ca8b-f397-4fd1-a9fa-2b7aad4d6309",
+    "title": "Okta Admin Functions Access Through Proxy",
+    "level": "medium",
+    "status": "test",
+    "author": "Muhammad Faisal @faisalusuf",
+    "path": "identity/okta/okta_admin_activity_from_proxy_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/identity/okta/okta_admin_activity_from_proxy_query.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Okta registró una solicitud a una URI con «admin» desde una IP que Okta clasifica como proxy (securityContext.isProxy = true). Puede indicar uso de una sesión o credenciales de administrador robadas, ocultas tras un anonimizador o VPN.",
+      "what_it_detects": "Eventos del System Log de Okta cuyo debugContext.debugData.requestUri contiene «admin» y cuyo securityContext.isProxy es true, es decir, acceso a la consola o API de administración desde un proxy, VPN o nodo Tor.",
+      "why_it_matters": "Las cuentas de administrador de Okta controlan la identidad de toda la organización. Un atacante con una sesión robada suele pasar por un proxy para ocultar su origen. La regla está etiquetada como acceso a credenciales, y sus referencias tratan el compromiso del sistema de soporte de Okta en 2023.",
+      "triage_steps": [
+        "Identifique actor.alternateId, client.ipAddress, client.userAgent.rawUserAgent, eventType y la URI exacta en debugContext.debugData.requestUri.",
+        "Revise securityContext.asOrg, isp y domain: ¿es la VPN corporativa, un proveedor de VPN comercial, hosting en la nube o Tor?",
+        "Compare la IP, la geolocalización y el user agent con los inicios de sesión habituales de ese administrador en los últimos 30 días.",
+        "Busque el authenticationContext.externalSessionId: ¿la sesión empezó en otra IP o dispositivo? Si la sesión cambió de IP, sospeche robo de cookie o token.",
+        "Revise la actividad del mismo usuario e IP en +/- 15 minutos: cambios de MFA, restablecimientos de contraseña, nuevos tokens de API, cambios de políticas o roles.",
+        "Busque otros usuarios que accedan desde la misma client.ipAddress y revise alertas anteriores de esa cuenta o IP.",
+        "Confirme con el administrador, por un canal fuera de banda, si usaba una VPN o proxy en ese momento."
+      ],
+      "false_positives": [
+        "Administradores que trabajan legítimamente detrás de una VPN comercial o un proxy de privacidad.",
+        "Proxy corporativo o egreso SASE/SWG que Okta clasifica como proxy.",
+        "Herramientas de automatización o integraciones que llaman a la API de administración desde infraestructura en la nube marcada como proxy.",
+        "Personal de soporte de un proveedor autorizado que accede a través de su propia red de salida."
+      ],
+      "response_steps": [
+        "Si el administrador no reconoce la actividad, revoque sus sesiones activas en Okta y los tokens de API que haya emitido.",
+        "Restablezca la contraseña y los factores MFA de la cuenta; exija un factor resistente al phishing para los roles de administrador.",
+        "Revierta los cambios de configuración, de roles o de MFA no autorizados que encontró en el System Log.",
+        "Bloquee la IP o el ASN en una network zone si no hay uso legítimo, y considere exigir acceso de administrador solo desde zonas confiables.",
+        "Si es legítimo, documente el proxy o la VPN y agregue un filtro acotado por usuario y ASN."
+      ],
+      "severity_rationale": "Media porque el acceso de administración a través de un proxy es sospechoso y de alto impacto, pero también ocurre por VPN legítimas y requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "Okta logged a request to a URI containing \"admin\" from an IP that Okta flags as a proxy (securityContext.isProxy = true). This may mean a stolen admin session or stolen credentials are being used behind an anonymizer or VPN.",
+      "what_it_detects": "Okta System Log events where debugContext.debugData.requestUri contains \"admin\" and securityContext.isProxy is true. That is, access to the admin console or admin API from a proxy, VPN or Tor node.",
+      "why_it_matters": "Okta admin accounts control identity for the whole organization. Attackers with a hijacked session often route through proxies to hide where they are. The rule is tagged credential access, and its references cover the 2023 Okta support-system compromise.",
+      "triage_steps": [
+        "Record actor.alternateId, client.ipAddress, client.userAgent.rawUserAgent, eventType and the exact debugContext.debugData.requestUri.",
+        "Check securityContext.asOrg, isp and domain. Is it the corporate VPN, a commercial VPN provider, cloud hosting or Tor?",
+        "Compare the IP, geolocation and user agent with this admin's normal sign-ins over the last 30 days.",
+        "Pivot on authenticationContext.externalSessionId to see whether the session started from another IP or device. A session that changed IP points to cookie or token theft.",
+        "Review the same user and IP within +/- 15 minutes for MFA changes, password resets, new API tokens, and policy or role changes.",
+        "Search for other users coming from the same client.ipAddress, and look for earlier alerts on this account or IP.",
+        "Ask the admin through an out-of-band channel whether they were using a VPN or proxy at that time."
+      ],
+      "false_positives": [
+        "Admins legitimately working behind a commercial VPN or privacy proxy.",
+        "Corporate proxy or SASE/SWG egress that Okta classifies as a proxy.",
+        "Automation or integrations calling the admin API from cloud infrastructure that is flagged as a proxy.",
+        "Authorized vendor support staff connecting through their own egress network."
+      ],
+      "response_steps": [
+        "If the admin does not recognize the activity, revoke their active Okta sessions and any API tokens they issued.",
+        "Reset the account's password and MFA factors. Require phishing-resistant factors for admin roles.",
+        "Roll back any unauthorized configuration, role or MFA changes you found in the System Log.",
+        "Block the IP or ASN with a network zone if it has no legitimate use, and consider allowing admin access only from trusted zones.",
+        "If the activity is legitimate, document the proxy or VPN and add a narrow filter scoped to that user and ASN."
+      ],
+      "severity_rationale": "Medium: admin access through a proxy is suspicious and high-impact, but legitimate VPN use also triggers it, so it needs context before escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Admin console access by an Okta administrator from an IP flagged as a commercial VPN proxy",
+        "event": {
+          "eventType": "user.session.access_admin_app",
+          "displayMessage": "User accessing Okta admin app",
+          "actor.alternateId": "jperez@example.com",
+          "client.ipAddress": "203.0.113.45",
+          "client.userAgent.rawUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0 Safari/537.36",
+          "debugContext.debugData.requestUri": "/admin/sso/request",
+          "securityContext.isProxy": "true",
+          "securityContext.asOrg": "Example VPN Services",
+          "securityContext.isp": "Example Hosting LLC",
+          "authenticationContext.externalSessionId": "102abcDEFexample0001",
+          "outcome.result": "SUCCESS"
+        }
+      },
+      {
+        "description": "Admin API call to the users admin endpoint through an anonymizing proxy",
+        "event": {
+          "eventType": "user.account.reset_password",
+          "actor.alternateId": "mlopez@example.com",
+          "client.ipAddress": "198.51.100.77",
+          "client.userAgent.rawUserAgent": "python-requests/2.31.0",
+          "debugContext.debugData.requestUri": "/api/internal/admin/users/00u1example/reset",
+          "securityContext.isProxy": "true",
+          "securityContext.asOrg": "Example Anonymizer",
+          "outcome.result": "SUCCESS"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same admin console access, but from the corporate network that is not flagged as a proxy",
+        "event": {
+          "eventType": "user.session.access_admin_app",
+          "actor.alternateId": "jperez@example.com",
+          "client.ipAddress": "192.0.2.10",
+          "debugContext.debugData.requestUri": "/admin/sso/request",
+          "securityContext.isProxy": "false",
+          "securityContext.asOrg": "Example Corp",
+          "outcome.result": "SUCCESS"
+        }
+      },
+      {
+        "description": "Regular end-user sign-in through a proxy to a non-admin endpoint",
+        "event": {
+          "eventType": "user.session.start",
+          "actor.alternateId": "asilva@example.com",
+          "client.ipAddress": "203.0.113.88",
+          "debugContext.debugData.requestUri": "/api/v1/authn",
+          "securityContext.isProxy": "true",
+          "securityContext.asOrg": "Example VPN Services",
+          "outcome.result": "SUCCESS"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

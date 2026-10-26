@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "bed26dea-4525-47f4-b24a-76e30e44ffb0",
+    "title": "Audit Rules Deleted Via Auditctl",
+    "level": "high",
+    "status": "experimental",
+    "author": "Mohamed LAKRI",
+    "path": "linux/process_creation/proc_creation_lnx_auditctl_clear_rules.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_auditctl_clear_rules.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó auditctl con la opción -D, que elimina todas las reglas y watches de auditoría cargados en este host Linux. Hasta que se recarguen, auditd registra poco o nada y la actividad posterior puede quedar sin registro.",
+      "what_it_detects": "Un evento process_creation donde Image termina en /auditctl y CommandLine contiene la cadena '-D' (sensible a mayúsculas), la opción que borra todas las reglas. La -d minúscula, que borra una sola regla, no coincide.",
+      "why_it_matters": "Borrar las reglas de auditoría deja ciego el monitoreo basado en el audit de Linux. Es una técnica de debilitamiento de defensas (etiqueta T1685.004; la referencia de Atomic Red Team es T1562.012, deshabilitar o modificar el sistema de auditoría de Linux) usada antes o después de acciones maliciosas.",
+      "triage_steps": [
+        "Revise el CommandLine completo. Busque otras opciones, como -e 0 (desactivar la auditoría) o un -R o -w posterior que recargue reglas, lo que sugiere mantenimiento.",
+        "Analice ParentImage y el árbol de procesos. Un shell interactivo vía sudo, un servidor web, cron o un script en /tmp o /dev/shm es una señal de alerta.",
+        "Identifique al usuario y su origen: revise los logs de sudo (COMMAND=) y los inicios de sesión SSH con IP de origen alrededor de la alerta.",
+        "Revise el mismo host en +/- 15 minutos: cuentas nuevas, descargas, persistencia (cron, unidades systemd, authorized_keys) y borrado de logs o del historial.",
+        "Verifique el estado actual con auditctl -l y auditctl -s. Confirme si las reglas se restauraron y cuánto tiempo estuvo caído el registro.",
+        "Busque tickets de cambio, ejecuciones de Ansible/Puppet o reinicios de auditd que expliquen el comando, y confírmelo con el responsable del sistema.",
+        "Busque alertas previas para este host o usuario, y el mismo comando en otros hosts."
+      ],
+      "false_positives": [
+        "Un administrador que diagnostica o reescribe reglas de auditoría a mano. Aun así, confirme cada caso.",
+        "Herramientas de gestión de configuración o scripts de hardening que limpian las reglas antes de cargar una nueva línea base.",
+        "Scripts de la distribución o del proveedor que vacían las reglas cuando auditd se detiene o se reinicia."
+      ],
+      "response_steps": [
+        "Valide la actividad con el usuario y el registro de cambios antes de tomar cualquier acción disruptiva.",
+        "Si no está autorizada, recargue las reglas aprobadas (augenrules --load o auditctl -R) y evalúe el modo inmutable (-e 2) tras validarlo.",
+        "Aísle el host si hay indicios de compromiso y preserve la memoria, el historial del shell y los logs del período sin auditoría.",
+        "Restablezca o bloquee las credenciales usadas, revise sudoers y elimine cualquier persistencia encontrada.",
+        "Busque en toda la flota el mismo usuario, IP de origen o comando, y cree alertas cuando falten reglas de auditoría."
+      ],
+      "severity_rationale": "El nivel alto corresponde porque borrar todas las reglas de auditoría elimina directamente la visibilidad, rara vez se necesita en la operación normal y suele acompañar a una intrusión."
+    },
+    "en": {
+      "summary": "auditctl was run with the -D option, which deletes every loaded audit rule and watch on this Linux host. Until the rules are reloaded, auditd records little or nothing, so later activity may go unlogged.",
+      "what_it_detects": "A process_creation event where Image ends with /auditctl and CommandLine contains the case-sensitive string '-D', the delete-all-rules flag. Lowercase -d, which removes a single rule, does not match.",
+      "why_it_matters": "Removing audit rules blinds Linux audit-based monitoring. It is a defense impairment technique (rule tag T1685.004; the Atomic Red Team reference is T1562.012, disable or modify the Linux audit system) often used just before or after malicious actions.",
+      "triage_steps": [
+        "Read the full CommandLine. Look for other flags, such as -e 0 (disable auditing) or a later -R or -w that reloads rules, which suggests maintenance.",
+        "Check ParentImage and the process tree. An interactive shell via sudo, a web server, cron or a script in /tmp or /dev/shm is a red flag.",
+        "Identify the user and how they got in: check sudo logs (COMMAND=) and SSH logins with source IPs for the session around the alert.",
+        "Review the same host within +/- 15 minutes: new accounts, downloads, persistence (cron, systemd units, authorized_keys), log deletion or history clearing.",
+        "Check the current rule state with auditctl -l and auditctl -s. Confirm whether the rules were restored and how long logging was down.",
+        "Search for change tickets, Ansible/Puppet runs or auditd restarts that explain the command, and confirm with the system owner.",
+        "Look for earlier alerts on this host or user, and for the same command on other hosts."
+      ],
+      "false_positives": [
+        "An administrator troubleshooting or rewriting audit rules by hand. Each case still needs confirmation.",
+        "Configuration management or hardening scripts that clear rules before loading a new baseline.",
+        "Distribution or vendor scripts that flush rules when auditd stops or restarts."
+      ],
+      "response_steps": [
+        "Verify the activity with the user and the change record before taking any disruptive action.",
+        "If unauthorized, reload the approved rules (augenrules --load or auditctl -R) and consider immutable mode (-e 2) after validation.",
+        "Isolate the host if compromise is likely, and preserve memory, shell history and logs from the blind period.",
+        "Reset or lock the credentials used, review sudoers, and remove any persistence you find.",
+        "Hunt across the fleet for the same user, source IP or command, and alert when audit rules are missing."
+      ],
+      "severity_rationale": "High fits because deleting all audit rules directly removes visibility, is rarely needed in normal operations, and often comes with an intrusion."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user clears all audit rules through sudo from a bash session.",
+        "event": {
+          "Computer": "bastion-01",
+          "Image": "/usr/sbin/auditctl",
+          "CommandLine": "auditctl -D",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo auditctl -D",
+          "User": "root",
+          "LogonId": "1001",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "ParentProcessId": 48210
+        }
+      },
+      {
+        "description": "Script dropped in /tmp disables auditing and deletes all rules in one invocation.",
+        "event": {
+          "Computer": "web-srv-03",
+          "Image": "/sbin/auditctl",
+          "CommandLine": "/sbin/auditctl -e 0 -D",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "/bin/sh /tmp/.cache/upd.sh",
+          "User": "root",
+          "CurrentDirectory": "/tmp/.cache",
+          "ProcessId": 30577,
+          "ParentProcessId": 30561
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator lists the loaded audit rules; no -D flag.",
+        "event": {
+          "Computer": "bastion-01",
+          "Image": "/usr/sbin/auditctl",
+          "CommandLine": "auditctl -l",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo auditctl -l",
+          "User": "root",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48305,
+          "ParentProcessId": 48302
+        }
+      },
+      {
+        "description": "Removal of a single rule with lowercase -d, which does not match the case-sensitive regex '-D'.",
+        "event": {
+          "Computer": "db-02",
+          "Image": "/usr/sbin/auditctl",
+          "CommandLine": "auditctl -d always,exit -F arch=b64 -S execve -k exec_log",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 22140,
+          "ParentProcessId": 22101
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

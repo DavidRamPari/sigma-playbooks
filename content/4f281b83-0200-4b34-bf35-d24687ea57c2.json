@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "4f281b83-0200-4b34-bf35-d24687ea57c2",
+    "title": "ETW Logging Disabled For SCM",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_services_etw_tamper.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_services_etw_tamper.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió DWORD 1 en el valor de registro TracingDisabled de SCM, lo que desactiva el tracing ETW del Service Control Manager (services.exe). Según la regla, 1 ya es el valor por defecto, así que muchas alertas son reescrituras benignas.",
+      "what_it_detects": "Eventos registry_set donde TargetObject termina en Software\\Microsoft\\Windows NT\\CurrentVersion\\Tracing\\SCM\\Regular\\TracingDisabled y Details es igual a DWORD (0x00000001).",
+      "why_it_matters": "Desactivar el tracing de SCM reduce la telemetría sobre la actividad de servicios y puede ocultar la creación o modificación de servicios maliciosos. Corresponde a Modify Registry (T1112) y a defense impairment (T1685).",
+      "triage_steps": [
+        "Identifique el proceso que escribió el valor (Image) y el usuario. Determine si es un instalador, el servicing de Windows, un agente de gestión, o un binario o script inesperado.",
+        "Verifique si el valor antes era 0. Un cambio de 0 a 1 es más sospechoso que reescribir el valor por defecto 1.",
+        "Revise el proceso padre y su CommandLine (reg.exe, powershell.exe, wmic) en el mismo host dentro de +/- 15 minutos.",
+        "Busque cerca del evento la creación de servicios, el Event ID 7045 u otros cambios de registro de Tracing o ETW en el mismo host.",
+        "Pivotee por usuario y host para buscar alertas previas de evasión, acceso a credenciales o movimiento lateral.",
+        "Revise con qué frecuencia se escribe este valor en el parque para definir una línea base y detectar valores atípicos."
+      ],
+      "false_positives": [
+        "La regla indica Unknown. Como 1 es el valor por defecto, la instalación del sistema operativo, las feature updates o las restauraciones pueden reescribirlo.",
+        "Herramientas de hardening o de gestión de configuración, y construcción de imágenes base que fijan claves de Tracing.",
+        "Instaladores de software de terceros que restablecen las claves de registro de Tracing."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o en los registros de cambios si la escritura era esperada.",
+        "Si no tiene explicación, recolecte el árbol de procesos, el hash del binario y los cambios de registro cercanos. Trate el host como posiblemente comprometido.",
+        "Si corresponde, aísle el host y revise los servicios creados o modificados recientemente.",
+        "Restablezca la configuración de tracing que su organización espera y confirme que la telemetría de ETW y de servicios funciona de nuevo."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque el valor escrito coincide con el valor por defecto de Windows, así que la señal es débil por sí sola y pesa sobre todo junto con otra actividad sospechosa."
+    },
+    "en": {
+      "summary": "A process wrote DWORD 1 to the SCM TracingDisabled registry value, which turns off ETW tracing for the Service Control Manager (services.exe). The rule notes that 1 is already the default, so many hits are benign re-writes.",
+      "what_it_detects": "Registry set events where TargetObject ends with Software\\Microsoft\\Windows NT\\CurrentVersion\\Tracing\\SCM\\Regular\\TracingDisabled and Details equals DWORD (0x00000001).",
+      "why_it_matters": "Disabling SCM tracing reduces telemetry about service activity, which can hide malicious service creation or changes. It maps to Modify Registry (T1112) and defense impairment (T1685).",
+      "triage_steps": [
+        "Identify the writing process from Image and the user. Check if it is an installer, Windows servicing, or a management agent, or an unexpected binary or script host.",
+        "Check whether the value was previously 0. A change from 0 to 1 is more suspicious than rewriting the default value 1.",
+        "Review the parent process and its CommandLine (reg.exe, powershell.exe, wmic) on the same host within +/- 15 minutes.",
+        "Look for nearby service creation, Event ID 7045, or other tracing and ETW registry changes on the same host.",
+        "Pivot on the user and host for earlier alerts about defense evasion, credential access, or lateral movement.",
+        "Check how often this value is written across the fleet to set a baseline and spot outliers."
+      ],
+      "false_positives": [
+        "The rule says Unknown. Because 1 is the default, OS setup, feature updates, or system restores may rewrite it.",
+        "Hardening or configuration management tools and golden image builds that set tracing keys.",
+        "Vendor software installers that reset Tracing registry keys."
+      ],
+      "response_steps": [
+        "Verify with the system owner or change records whether the write was expected.",
+        "If it is not explained, collect the process tree, the binary hash and nearby registry changes. Treat the host as possibly compromised.",
+        "If needed, isolate the host and review recently created or modified services.",
+        "Restore the tracing setting your organization expects, then confirm that ETW and service telemetry are working again."
+      ],
+      "severity_rationale": "Low fits because the written value matches the Windows default, so the signal is weak alone and matters mainly when combined with other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe launched from a script sets SCM TracingDisabled to 1",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4312,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Tracing\\SCM\\Regular\\TracingDisabled",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "PowerShell writes the same value on a server",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "User": "ANDES\\svc_backup",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 7720,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Tracing\\SCM\\Regular\\TracingDisabled",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "TracingDisabled set to 0 (tracing enabled), so Details does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\admin.rgomez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 5120,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Tracing\\SCM\\Regular\\TracingDisabled",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "Same value name under a different Tracing component, not SCM",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0187.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 2208,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Tracing\\RASAPI32\\TracingDisabled",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

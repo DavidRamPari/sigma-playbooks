@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "a49fa4d5-11db-418c-8473-1e014a8dd462",
+    "title": "Lsass Memory Dump via Comsvcs DLL",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/process_access/proc_access_win_lsass_dump_comsvcs_dll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_lsass_dump_comsvcs_dll.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "rundll32.exe abrió un handle al proceso lsass.exe y la pila de llamadas incluye comsvcs.dll. Es la firma típica de un volcado de memoria de LSASS con la exportación MiniDump para robar credenciales.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon ID 10) donde SourceImage termina en \\rundll32.exe, TargetImage termina en \\lsass.exe y CallTrace contiene comsvcs.dll. Es lo que deja una ejecución tipo 'rundll32 comsvcs.dll, MiniDump <PID> <archivo> full'.",
+      "why_it_matters": "La memoria de LSASS guarda hashes NTLM, tickets Kerberos y a veces contraseñas en texto claro. Corresponde a MITRE ATT&CK T1003.001 (OS Credential Dumping: LSASS Memory). Usa un binario firmado de Windows, así que puede evadir controles básicos, y suele preceder al movimiento lateral.",
+      "triage_steps": [
+        "Revise SourceProcessId, GrantedAccess y CallTrace del evento. Confirme que comsvcs.dll aparece en la pila junto a dbgcore.dll o MiniDumpWriteDump.",
+        "Busque la creación del proceso rundll32 (Sysmon 1 / 4688) con el mismo PID. Revise el CommandLine en busca de 'MiniDump', '#24', el PID de lsass y la ruta de salida.",
+        "Identifique ParentImage y el usuario de rundll32. Una shell, PowerShell, WMI, PsExec o un proceso web como padre aumenta la sospecha.",
+        "Busque archivos creados (Sysmon 11) en el host en +/- 15 minutos, sobre todo .dmp o archivos grandes en Temp, ProgramData o carpetas públicas.",
+        "Revise la actividad de red y de archivos posterior: copias por SMB, compresión o cargas a destinos externos que puedan indicar exfiltración del volcado.",
+        "Revise los inicios de sesión (4624/4672) del usuario y del host. Determine qué cuentas tenían sesión activa y podrían estar comprometidas.",
+        "Busque alertas anteriores del mismo host, usuario o IP de origen, y la misma técnica en otros endpoints."
+      ],
+      "false_positives": [
+        "Pruebas de penetración o ejercicios de red team autorizados que usan comsvcs.dll para volcar LSASS.",
+        "Equipos de respuesta a incidentes o soporte que recolectan memoria de LSASS para diagnóstico, aunque suelen usar otras herramientas.",
+        "Validaciones de controles de seguridad, como Atomic Red Team o simulaciones BAS, en equipos de laboratorio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del ejercicio si la actividad estaba autorizada. Si no lo estaba, trátela como incidente de robo de credenciales.",
+        "Aísle el endpoint desde el EDR, preserve evidencia (volcado, artefactos, memoria) y termine el proceso rundll32 si sigue activo.",
+        "Elimine el archivo de volcado tras preservarlo y localice cualquier copia transferida a otros sistemas.",
+        "Restablezca las contraseñas y revoque las sesiones de las cuentas que tenían sesión en el host. Priorice las cuentas privilegiadas y de servicio.",
+        "Investigue el vector de acceso inicial, active la protección de LSASS (RunAsPPL o Credential Guard) y vigile el uso de las credenciales afectadas."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el patrón casi no tiene usos legítimos e indica un intento directo de extraer credenciales de LSASS."
+    },
+    "en": {
+      "summary": "rundll32.exe opened a handle to lsass.exe, and the call stack includes comsvcs.dll. This is the typical signature of an LSASS memory dump through the MiniDump export, used to steal credentials.",
+      "what_it_detects": "Process access events (Sysmon ID 10) where SourceImage ends with \\rundll32.exe, TargetImage ends with \\lsass.exe and CallTrace contains comsvcs.dll. This is what a run like 'rundll32 comsvcs.dll, MiniDump <PID> <file> full' leaves behind.",
+      "why_it_matters": "LSASS memory holds NTLM hashes, Kerberos tickets and sometimes cleartext passwords. This maps to MITRE ATT&CK T1003.001 (OS Credential Dumping: LSASS Memory). It uses a signed Windows binary, so it can evade basic controls, and it often comes before lateral movement.",
+      "triage_steps": [
+        "Review SourceProcessId, GrantedAccess and CallTrace in the event. Confirm comsvcs.dll appears in the stack alongside dbgcore.dll or MiniDumpWriteDump.",
+        "Find the rundll32 process creation (Sysmon 1 / 4688) with the same PID. Check its CommandLine for 'MiniDump', '#24', the lsass PID and the output path.",
+        "Identify the rundll32 ParentImage and user. A shell, PowerShell, WMI, PsExec or a web server process as parent raises suspicion.",
+        "Look for file creation (Sysmon 11) on the host within +/- 15 minutes, especially .dmp or large files in Temp, ProgramData or public folders.",
+        "Check later network and file activity, such as SMB copies, archiving or uploads to external destinations, that could mean the dump was exfiltrated.",
+        "Review logons (4624/4672) for the user and host. Work out which accounts had active sessions and may be compromised.",
+        "Search for earlier alerts on the same host, user or source IP, and for the same technique on other endpoints."
+      ],
+      "false_positives": [
+        "Authorized penetration tests or red team exercises that use comsvcs.dll to dump LSASS.",
+        "Incident response or support staff collecting LSASS memory for diagnostics, although they usually use other tools.",
+        "Security control validation, such as Atomic Red Team or BAS simulations, on lab machines."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or exercise lead whether the activity was authorized. If it was not, treat it as a credential theft incident.",
+        "Isolate the endpoint through EDR, preserve evidence (dump file, artifacts, memory) and terminate the rundll32 process if it is still running.",
+        "Delete the dump file after preserving it, and track down any copies transferred to other systems.",
+        "Reset passwords and revoke sessions for accounts that were logged on to the host. Prioritize privileged and service accounts.",
+        "Investigate the initial access vector, enable LSASS protection (RunAsPPL or Credential Guard) and monitor use of the affected credentials."
+      ],
+      "severity_rationale": "High fits because this pattern has almost no legitimate use and shows a direct attempt to extract credentials from LSASS."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rundll32 invoking comsvcs.dll MiniDump against lsass; the call stack shows comsvcs.dll and dbgcore.dll",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6412,
+          "SourceImage": "C:\\Windows\\System32\\rundll32.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\SYSTEM32\\dbgcore.DLL+6a4f|C:\\Windows\\System32\\comsvcs.dll+3c7c1|C:\\Windows\\System32\\rundll32.exe+3bd4",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "rundll32 accessing lsass through a different DLL (no comsvcs.dll in CallTrace)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 5120,
+          "SourceImage": "C:\\Windows\\System32\\rundll32.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+29b5e|C:\\Windows\\System32\\shell32.dll+1a2f0|C:\\Windows\\System32\\rundll32.exe+3bd4",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Task Manager creating an lsass dump: the source is not rundll32 and the stack has no comsvcs.dll",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 7788,
+          "SourceImage": "C:\\Windows\\System32\\Taskmgr.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\SYSTEM32\\dbgcore.DLL+6a4f|C:\\Windows\\System32\\Taskmgr.exe+8f2a1",
+          "SourceUser": "ANDES\\admin.soporte",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

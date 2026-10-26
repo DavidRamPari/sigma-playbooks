@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "fe513c69-734c-4d4a-8548-ac5f609be82b",
+    "title": "Google Cloud Firewall Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_firewall_rule_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_firewall_rule_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó o eliminó una regla de firewall de VPC en Google Cloud. Puede ser un cambio administrativo normal o un intento de abrir acceso o debilitar controles de red.",
+      "what_it_detects": "Eventos de GCP Audit Logs cuyo gcp.audit.method_name coincide con v*.Compute.Firewalls.Delete, Patch, Update o Insert, es decir, llamadas a la API de Compute que eliminan, modifican o crean reglas de firewall.",
+      "why_it_matters": "Un atacante con credenciales válidas puede abrir puertos a Internet (por ejemplo 0.0.0.0/0 en SSH o RDP), borrar reglas de denegación o crear reglas permisivas para mantener acceso o moverse lateralmente. Corresponde a la técnica ATT&CK T1685, que consiste en debilitar las defensas.",
+      "triage_steps": [
+        "Identifique el método exacto en gcp.audit.method_name (delete, patch, update o insert), el proyecto y el nombre de la regla en el resource name.",
+        "Revise el principal (principal email) que hizo la llamada: ¿es un usuario humano, una cuenta de servicio o un pipeline de IaC conocido?",
+        "Compare la regla antes y después del cambio: sourceRanges, puertos permitidos, dirección, prioridad, target tags y si la regla quedó deshabilitada.",
+        "Marque como prioritario cualquier cambio que exponga 0.0.0.0/0 o ::/0 hacia puertos de administración (22, 3389) o bases de datos.",
+        "Verifique la IP de origen y el user agent de la llamada; compare con la ubicación y las herramientas habituales del usuario (gcloud, Terraform, consola).",
+        "Pivote en el mismo principal +/- 15 minutos: cambios de IAM, creación de claves de cuenta de servicio, nuevas VM o eliminación de sinks de logs.",
+        "Busque alertas previas para el mismo principal, proyecto o IP de origen y confirme si existe un ticket de cambio aprobado."
+      ],
+      "false_positives": [
+        "Administradores de red o de plataforma que ajustan reglas de firewall como parte de un cambio planificado.",
+        "Despliegues de Terraform, Deployment Manager o pipelines de CI/CD que crean o actualizan reglas automáticamente.",
+        "Servicios administrados de GCP (por ejemplo GKE) que crean o actualizan reglas de firewall para sus clústeres.",
+        "Si el cambio es esperado y recurrente, agregue una excepción por principal o cuenta de servicio en lugar de deshabilitar la regla."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del proyecto o el dueño del cambio si fue autorizado y si coincide con un ticket.",
+        "Si no fue autorizado, restaure la configuración anterior de la regla o aplique una regla de denegación temporal, documentando el estado previo.",
+        "Suspenda o rote las credenciales del principal involucrado y revoque claves de cuenta de servicio sospechosas.",
+        "Revise los logs de flujo de VPC para detectar conexiones entrantes aprovechando la ventana de exposición.",
+        "Gestione los firewalls mediante IaC con revisión obligatoria y restrinja el permiso compute.firewalls.* a quienes realmente lo necesitan."
+      ],
+      "severity_rationale": "Nivel medio porque los cambios de firewall son frecuentes y suelen ser legítimos, pero uno no autorizado puede exponer directamente recursos críticos."
+    },
+    "en": {
+      "summary": "A VPC firewall rule was created, modified or deleted in Google Cloud. This may be routine administration or an attempt to open access or weaken network controls.",
+      "what_it_detects": "GCP Audit Log events whose gcp.audit.method_name matches v*.Compute.Firewalls.Delete, Patch, Update or Insert, meaning Compute API calls that delete, change or create firewall rules.",
+      "why_it_matters": "An attacker with valid credentials can expose ports to the Internet (for example 0.0.0.0/0 on SSH or RDP), remove deny rules or add permissive rules to keep access or move laterally. This maps to ATT&CK T1685, weakening defenses.",
+      "triage_steps": [
+        "Note the exact method in gcp.audit.method_name (delete, patch, update or insert), the project and the firewall rule name in the resource name.",
+        "Review the calling principal: human user, service account or a known IaC pipeline?",
+        "Compare the rule before and after: sourceRanges, allowed ports, direction, priority, target tags and whether it was disabled.",
+        "Prioritize any change exposing 0.0.0.0/0 or ::/0 to admin ports (22, 3389) or database ports.",
+        "Check the caller's source IP and user agent against the user's usual location and tooling (gcloud, Terraform, console).",
+        "Pivot on the same principal +/- 15 minutes: IAM changes, service account key creation, new VMs or deleted log sinks.",
+        "Search for earlier alerts on the same principal, project or source IP and confirm whether an approved change ticket exists."
+      ],
+      "false_positives": [
+        "Network or platform administrators adjusting firewall rules during planned changes.",
+        "Terraform, Deployment Manager or CI/CD pipelines creating or updating rules automatically.",
+        "Managed GCP services such as GKE creating or updating firewall rules for their clusters.",
+        "For expected recurring changes, add an exception for that principal or service account instead of disabling the rule."
+      ],
+      "response_steps": [
+        "Confirm with the project or change owner whether the change was authorized and matches a ticket.",
+        "If unauthorized, restore the previous rule configuration or apply a temporary deny rule, recording the prior state first.",
+        "Suspend or rotate the principal's credentials and revoke suspicious service account keys.",
+        "Review VPC Flow Logs for inbound connections during the exposure window.",
+        "Manage firewalls through reviewed IaC and limit compute.firewalls.* permissions to those who need them."
+      ],
+      "severity_rationale": "Medium because firewall changes are common and usually legitimate, yet an unauthorized one can directly expose critical resources."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User deletes a deny firewall rule via gcloud",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.firewalls.delete",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/global/firewalls/deny-ssh-external",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0 command/gcloud.compute.firewall-rules.delete",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Service account patches a firewall rule to allow 0.0.0.0/0",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.firewalls.patch",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.principal_email": "deploy-bot@andes-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-prod/global/firewalls/allow-admin",
+          "source.ip": "198.51.100.20",
+          "user_agent.original": "Terraform/1.6.0 terraform-provider-google/5.0.0",
+          "event.outcome": "success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of firewall rules",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.firewalls.list",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.principal_email": "auditor@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/global/firewalls",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0 command/gcloud.compute.firewall-rules.list",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Hierarchical firewall policy rule change, a different API method not covered by this rule",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.firewallPolicies.patchRule",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.principal_email": "netadmin@example.com",
+          "gcp.audit.resource_name": "locations/global/firewallPolicies/123456789",
+          "source.ip": "192.0.2.15",
+          "event.outcome": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

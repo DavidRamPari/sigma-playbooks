@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "472159c5-31b9-4f56-b794-b766faa8b0a7",
+    "title": "Suspicious LSASS Access Via MalSecLogon",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden (original elastic rule), Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_lsass_seclogon_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_lsass_seclogon_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso svchost.exe abrió un handle a lsass.exe con la máscara de acceso 0x14c0, y la pila de llamadas pasa por seclogon.dll. Este patrón corresponde al abuso del servicio de inicio de sesión secundario (MalSecLogon) para obtener un handle de LSASS y volcar credenciales.",
+      "what_it_detects": "Eventos de acceso a procesos de Sysmon (Event ID 10) donde TargetImage termina en \\lsass.exe, SourceImage termina en \\svchost.exe, GrantedAccess es exactamente 0x14c0 (DUP_HANDLE, CREATE_PROCESS, QUERY_INFORMATION, QUERY_LIMITED_INFORMATION) y CallTrace contiene seclogon.dll.",
+      "why_it_matters": "Con MalSecLogon, el atacante engaña al servicio Secondary Logon para que abra LSASS por él, así que el proceso que llama nunca accede a LSASS directamente. El handle filtrado permite volcar la memoria de LSASS y robar credenciales (T1003.001).",
+      "triage_steps": [
+        "Confirme que el SourceProcessId pertenece a la instancia de svchost que aloja el servicio seclogon (línea de comandos con '-s seclogon') y que la ruta es C:\\Windows\\System32.",
+        "Revise eventos de creación de procesos en el host dentro de +/- 15 minutos, buscando procesos lanzados por ese svchost de seclogon, sobre todo con padres falsificados o inusuales.",
+        "Identifique al cliente que llamó a seclogon: binarios sin firma, ubicados en rutas escribibles por el usuario o herramientas que ese mismo usuario ejecutó justo antes de la alerta.",
+        "Busque en los eventos de creación de archivos archivos .dmp nuevos o inusualmente grandes en Temp, ProgramData o perfiles de usuario cerca de la hora de la alerta.",
+        "Revise el log de Security en busca de inicios de sesión tipo 9 (NewCredentials) o con credenciales explícitas (4648) del mismo usuario en esa ventana.",
+        "Busque otras alertas de acceso a LSASS, volcado de credenciales o manipulación del EDR para este host y usuario, y logons posteriores de sus cuentas a otros sistemas."
+      ],
+      "false_positives": [
+        "El autor de la regla no documenta ninguno. El uso legítimo de runas normalmente no genera esta máscara de acceso con seclogon.dll en la pila de llamadas.",
+        "Herramientas de seguridad o forenses que invocan el servicio Secondary Logon durante pruebas autorizadas; valide con el equipo responsable."
+      ],
+      "response_steps": [
+        "Antes de escalar, verifique que no se trate de un ejercicio de red team o una prueba de seguridad aprobada.",
+        "Aísle el host de la red y recolecte evidencia volátil (memoria, lista de procesos, archivos de volcado) antes de reiniciarlo.",
+        "Elimine la herramienta de volcado y los archivos de volcado después de preservarlos como evidencia; bloquee sus hashes.",
+        "Restablezca contraseñas y revoque sesiones de todas las cuentas que iniciaron sesión en el host, empezando por las privilegiadas; escale a respuesta de dominio si hay un controlador de dominio o una cuenta de administrador involucrados."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque este patrón exacto de handle no tiene usos legítimos conocidos y apunta a un robo de credenciales de LSASS que ya está ocurriendo."
+    },
+    "en": {
+      "summary": "An svchost.exe process opened a handle to lsass.exe with access mask 0x14c0, and the call stack passes through seclogon.dll. This pattern matches abuse of the Secondary Logon service (MalSecLogon) to get an LSASS handle for credential dumping.",
+      "what_it_detects": "Sysmon process access events (Event ID 10) where TargetImage ends in \\lsass.exe, SourceImage ends in \\svchost.exe, GrantedAccess is exactly 0x14c0 (DUP_HANDLE, CREATE_PROCESS, QUERY_INFORMATION, QUERY_LIMITED_INFORMATION), and CallTrace contains seclogon.dll.",
+      "why_it_matters": "With MalSecLogon, an attacker tricks the Secondary Logon service into opening LSASS for them, so the caller never touches LSASS directly. The leaked handle can then be used to dump LSASS memory and steal credentials (T1003.001).",
+      "triage_steps": [
+        "Confirm the SourceProcessId belongs to the svchost instance that hosts the seclogon service (command line with '-s seclogon') and that the image path is C:\\Windows\\System32.",
+        "Look at process creation events on the host within +/- 15 minutes for processes spawned by that seclogon svchost, especially ones with spoofed or unusual parents.",
+        "Identify the client that called seclogon: unsigned binaries, binaries in user-writable paths, or tools started by the same user just before the alert.",
+        "Search file creation events for new .dmp or unusually large files in Temp, ProgramData or user profiles around the alert time.",
+        "Review Security logs for logon type 9 (NewCredentials) or explicit-credential logons (4648) by the same user in the same window.",
+        "Check for other LSASS access, credential-dumping or EDR tamper alerts for this host and user, and for logons from this host's accounts to other systems afterwards."
+      ],
+      "false_positives": [
+        "None documented by the rule author. Legitimate runas use does not normally create this access mask with seclogon.dll in the call trace.",
+        "Security or forensic tools that call the Secondary Logon service during authorized testing; check with the owning team."
+      ],
+      "response_steps": [
+        "Verify the activity is not an approved red team or security test before escalating.",
+        "Isolate the host from the network and collect volatile evidence (memory, process list, dump files) before rebooting.",
+        "Remove the dumping tool and any dump files after preserving them as evidence; block their hashes.",
+        "Reset passwords and revoke sessions for every account logged on to the host, starting with privileged ones; escalate to domain-level response if a domain controller or admin account is involved."
+      ],
+      "severity_rationale": "High fits because this exact handle pattern has no known legitimate use and points to credential theft from LSASS that is already happening."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Seclogon svchost opens LSASS with 0x14c0 and seclogon.dll in the call trace (MalSecLogon pattern).",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:03:12.481",
+          "SourceProcessId": 1184,
+          "SourceImage": "C:\\Windows\\system32\\svchost.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x14c0",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\seclogon.dll+1a6b|C:\\Windows\\System32\\RPCRT4.dll+76953|C:\\Windows\\System32\\RPCRT4.dll+da036",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "svchost queries LSASS with limited query rights only, no seclogon.dll in the call trace.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:05:40.102",
+          "SourceProcessId": 1032,
+          "SourceImage": "C:\\Windows\\system32\\svchost.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\wbemcore.dll+4f21|C:\\Windows\\System32\\RPCRT4.dll+76953",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Seclogon svchost accesses a non-LSASS process (runas launching cmd.exe), so TargetImage does not match.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-10-25 14:07:02.913",
+          "SourceProcessId": 1184,
+          "SourceImage": "C:\\Windows\\system32\\svchost.exe",
+          "TargetProcessId": 5520,
+          "TargetImage": "C:\\Windows\\system32\\cmd.exe",
+          "GrantedAccess": "0x14c0",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\seclogon.dll+1a6b|C:\\Windows\\System32\\RPCRT4.dll+76953",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "rule": {
+    "id": "14f3f1c8-02d5-43a2-a191-91ffb52d3015",
+    "title": "RDS Database Security Group Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "jamesc-grafana",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_security_group_change_rds.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_security_group_change_rds.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un principal de AWS creó, eliminó o modificó las reglas de ingreso de un DB security group de RDS. El cambio podría exponer una base de datos a internet o a una red más amplia, o bloquear el acceso de clientes legítimos.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource rds.amazonaws.com y eventName AuthorizeDBSecurityGroupIngress, CreateDBSecurityGroup, DeleteDBSecurityGroup o RevokeDBSecurityGroupIngress.",
+      "why_it_matters": "Abrir el ingreso a una base de datos, por ejemplo a 0.0.0.0/0, deja el almacén de datos al alcance de atacantes que intentan explotar o forzar por fuerza bruta un servicio expuesto (T1190, Exploit Public-Facing Application). Revocar o eliminar reglas puede afectar la disponibilidad. Los DB security groups son una función heredada de RDS, así que cualquier actividad sobre ellos puede ser inusual.",
+      "triage_steps": [
+        "Identifique quién hizo la llamada con userIdentity.arn, userIdentity.type y accessKeyId. ¿Es un administrador esperado, un rol de CI/CD o un usuario o rol desconocido?",
+        "Revise sourceIPAddress y userAgent. Consola, Terraform o CloudFormation desde rangos conocidos sugieren trabajo rutinario. IP desconocidas o llamadas directas por CLI/SDK merecen más escrutinio.",
+        "Examine requestParameters: dBSecurityGroupName, cIDRIP, eC2SecurityGroupName/Id. Marque los CIDR amplios como 0.0.0.0/0 o los rangos externos.",
+        "Verifique errorCode y responseElements para saber si la llamada tuvo éxito o fue denegada.",
+        "Compare el cambio con tickets de cambio, commits de IaC o el despliegue de una base de datos nueva.",
+        "Pivotee sobre el mismo principal y la misma IP en ±15 minutos para buscar ModifyDBInstance (PubliclyAccessible), ModifyDBSnapshotAttribute, CreateAccessKey o cambios de IAM.",
+        "Revise VPC Flow Logs y los logs de la base de datos posteriores al cambio en busca de conexiones externas nuevas o fallos de autenticación.",
+        "Busque alertas previas sobre el mismo principal, access key o DB security group."
+      ],
+      "false_positives": [
+        "Se despliega una base de datos nueva que necesita reglas nuevas en el security group.",
+        "Ejecuciones planificadas de IaC (Terraform, CloudFormation) que recrean o actualizan DB security groups.",
+        "Tareas de desmantelamiento o limpieza que eliminan o revocan DB security groups heredados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del recurso o con el registro de cambios que la modificación fue intencional.",
+        "Si no estaba autorizada, revoque la regla de ingreso demasiado amplia o restaure la configuración anterior, después de documentar el estado actual.",
+        "Si las credenciales parecen comprometidas, deshabilite o rote la access key o la sesión del rol y revise toda la actividad reciente de ese principal en la API.",
+        "Revise la base de datos afectada en busca de accesos no autorizados a la instancia o a sus datos y restablezca el acceso de los servicios legítimos que el cambio haya afectado."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque cambiar las reglas de acceso a una base de datos puede causar exposición o una interrupción, pero suele ser administración legítima y hace falta contexto para evaluarlo."
+    },
+    "en": {
+      "summary": "An AWS principal created, deleted, or changed ingress rules on an RDS DB security group. The change could expose a database to the internet or a wider network, or cut off access for legitimate clients.",
+      "what_it_detects": "CloudTrail events from eventSource rds.amazonaws.com where eventName is AuthorizeDBSecurityGroupIngress, CreateDBSecurityGroup, DeleteDBSecurityGroup or RevokeDBSecurityGroupIngress.",
+      "why_it_matters": "Opening database ingress, for example to 0.0.0.0/0, puts a data store within reach of attackers trying to exploit or brute-force a public-facing service (T1190, Exploit Public-Facing Application). Revoking or deleting rules can disrupt availability. DB security groups are a legacy RDS feature, so any activity on them may be unusual.",
+      "triage_steps": [
+        "Identify the caller from userIdentity.arn, userIdentity.type and accessKeyId. Is this an expected admin, a CI/CD role, or an unfamiliar user or role?",
+        "Review sourceIPAddress and userAgent. Console, Terraform or CloudFormation from known ranges points to routine work. Unknown IPs or raw CLI/SDK calls deserve more scrutiny.",
+        "Inspect requestParameters: dBSecurityGroupName, cIDRIP, eC2SecurityGroupName/Id. Flag broad CIDRs such as 0.0.0.0/0 or external ranges.",
+        "Check errorCode and responseElements to see whether the call succeeded or was denied.",
+        "Match the change against change tickets, IaC commits or the deployment of a new database.",
+        "Pivot on the same principal and source IP within ±15 minutes for ModifyDBInstance (PubliclyAccessible), ModifyDBSnapshotAttribute, CreateAccessKey or IAM changes.",
+        "Review VPC Flow Logs and database logs after the change for new external connections or authentication failures.",
+        "Search for earlier alerts on this principal, access key or DB security group."
+      ],
+      "false_positives": [
+        "A new database is deployed and needs new security group rules.",
+        "Planned IaC runs (Terraform, CloudFormation) that recreate or update DB security groups.",
+        "Decommissioning or cleanup that deletes or revokes legacy DB security groups."
+      ],
+      "response_steps": [
+        "Confirm with the resource owner or change record that the modification was intended.",
+        "If unauthorized, revoke the overly broad ingress rule or restore the previous configuration, after recording the current state.",
+        "If the credentials look compromised, disable or rotate the access key or role session and review all of that principal's recent API activity.",
+        "Check the affected database for unauthorized access or data access, then restore access for any legitimate services the change broke."
+      ],
+      "severity_rationale": "Medium fits because changing database access rules can lead to exposure or an outage, but these changes are often legitimate administration and need context to judge."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unfamiliar IAM user calls the CLI to open a legacy DB security group to 0.0.0.0/0.",
+        "event": {
+          "eventSource": "rds.amazonaws.com",
+          "eventName": "AuthorizeDBSecurityGroupIngress",
+          "eventTime": "2024-07-15T03:12:44Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.57",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-reporting",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.dBSecurityGroupName": "prod-billing-dbsg",
+          "requestParameters.cIDRIP": "0.0.0.0/0",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "A DBA uses the console to delete a DB security group.",
+        "event": {
+          "eventSource": "rds.amazonaws.com",
+          "eventName": "DeleteDBSecurityGroup",
+          "eventTime": "2024-07-16T14:05:09Z",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.24",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/DBAdmin/jperez",
+          "requestParameters.dBSecurityGroupName": "legacy-crm-dbsg",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of RDS DB security groups. The eventName is not in the rule's list.",
+        "event": {
+          "eventSource": "rds.amazonaws.com",
+          "eventName": "DescribeDBSecurityGroups",
+          "eventTime": "2024-07-15T09:30:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.10",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ReadOnly/mlopez",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "An ingress change on an EC2 VPC security group. The event name is similar, but eventSource is ec2.amazonaws.com and the name does not match.",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "AuthorizeSecurityGroupIngress",
+          "eventTime": "2024-07-15T10:02:13Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.24",
+          "userAgent": "Terraform/1.8.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-runner",
+          "requestParameters.groupId": "sg-0abc1234def567890",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

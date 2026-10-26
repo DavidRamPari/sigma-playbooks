@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "1279262f-1464-422f-ac0d-5b545320c526",
+    "title": "AWS KMS Imported Key Material Usage",
+    "level": "high",
+    "status": "experimental",
+    "author": "toopricey",
+    "path": "cloud/aws/cloudtrail/aws_kms_import_key_material.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_kms_import_key_material.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1486",
+      "T1608.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un principal importó o eliminó material de clave en una clave de AWS KMS con material externo (Origin EXTERNAL). Un atacante puede usarlo para cifrar datos con claves propias y luego dejarlos inaccesibles.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource kms.amazonaws.com y eventName ImportKeyMaterial o DeleteImportedKeyMaterial, exitosos o fallidos, desde cualquier principal o región.",
+      "why_it_matters": "En un ransomware sobre AWS (ATT&CK T1486, cifrado de datos con fines de impacto), el atacante importa su propio material de clave, vuelve a cifrar objetos S3 o volúmenes EBS y después elimina el material. Los datos quedan ilegibles hasta que él lo vuelva a importar. La regla también marca la preparación de capacidades (T1608.003).",
+      "triage_steps": [
+        "Identifique quién hizo la llamada: userIdentity.arn, userIdentity.type, accessKeyId, sourceIPAddress y userAgent. Confirme si ese principal suele administrar claves KMS.",
+        "Obtenga requestParameters.keyId y ejecute DescribeKey. Confirme Origin EXTERNAL, la fecha de creación y quién llamó antes a CreateKey y GetParametersForImport.",
+        "En ImportKeyMaterial, revise expirationModel y validTo. Una vigencia corta o KEY_MATERIAL_EXPIRES puede indicar que el material desaparecerá a propósito.",
+        "Busque el keyId en CloudTrail en eventos Encrypt, ReEncrypt, GenerateDataKey, CopyObject/PutObject de S3 con SSE-KMS, CopySnapshot y CreateVolume de EBS.",
+        "Revise PutKeyPolicy, CreateGrant y ScheduleKeyDeletion sobre la clave, y si alguna política de clave bloquea a los administradores de la cuenta.",
+        "Pivotee por el mismo principal y la misma IP de origen en +/- 15 minutos: ConsoleLogin inusual, CreateAccessKey, AssumeRole, cambios en IAM y alertas previas.",
+        "Solicite el ticket de cambio o la confirmación del dueño de la clave o del equipo de BYOK y cumplimiento."
+      ],
+      "false_positives": [
+        "Entornos híbridos o regulados que importan material de clave desde un HSM on-premises para cumplir requisitos normativos (BYOK).",
+        "Rotación o reimportación planificada de material externo por parte del equipo de criptografía.",
+        "Cuentas de desarrollo o pruebas que simulan una gestión externa de claves."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la clave antes de hacer cambios. Conserve los logs de CloudTrail y los metadatos de la clave como evidencia.",
+        "Si la actividad no está autorizada, deshabilite las access keys o sesiones del principal y restrinja su rol. Considere una SCP que deniegue kms:ImportKeyMaterial y kms:DeleteImportedKeyMaterial.",
+        "No programe la eliminación de la clave. Identifique los recursos cifrados con ella y frene nuevos recifrados, por ejemplo con políticas de bucket.",
+        "Recupere los datos desde respaldos cifrados con claves bajo su control. Verifique si la organización conserva una copia del material importado.",
+        "Determine cómo entró el atacante, rote las credenciales afectadas y refuerce los controles de KMS e IAM."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el material de clave importado es poco común en la mayoría de las cuentas y su abuso puede dejar los datos ilegibles de forma permanente."
+    },
+    "en": {
+      "summary": "A principal imported or deleted key material in an AWS KMS key that uses external key material (Origin EXTERNAL). Attackers can use this to encrypt data with keys they control and then remove access to it.",
+      "what_it_detects": "CloudTrail events with eventSource kms.amazonaws.com and eventName ImportKeyMaterial or DeleteImportedKeyMaterial, successful or failed, from any principal or region.",
+      "why_it_matters": "In AWS ransomware (ATT&CK T1486, Data Encrypted for Impact), an attacker imports their own key material, re-encrypts S3 objects or EBS volumes with it, then deletes the material. The data stays unreadable unless the attacker re-imports that material. The rule also tags staging capabilities (T1608.003).",
+      "triage_steps": [
+        "Identify the caller: userIdentity.arn, userIdentity.type, accessKeyId, sourceIPAddress and userAgent. Check whether this principal normally manages KMS keys.",
+        "Get requestParameters.keyId and run DescribeKey. Confirm Origin EXTERNAL, the creation date, and who called CreateKey and GetParametersForImport earlier.",
+        "For ImportKeyMaterial, review expirationModel and validTo. Short expiry or KEY_MATERIAL_EXPIRES can mean the material will disappear on purpose.",
+        "Search CloudTrail for this key ID in Encrypt, ReEncrypt, GenerateDataKey, S3 CopyObject/PutObject with SSE-KMS, EBS CopySnapshot and CreateVolume events.",
+        "Check PutKeyPolicy, CreateGrant and ScheduleKeyDeletion on the key, plus key policies that block account administrators.",
+        "Pivot on the same principal and source IP within +/- 15 minutes: unusual ConsoleLogin, CreateAccessKey, AssumeRole, IAM changes and earlier alerts.",
+        "Ask for a change ticket or confirmation from the key owner or the BYOK and compliance team."
+      ],
+      "false_positives": [
+        "Hybrid or regulated environments that import key material from an on-premises HSM to meet compliance requirements (BYOK).",
+        "Planned rotation or re-import of external key material by the cryptography team.",
+        "Development or test accounts that simulate external key management."
+      ],
+      "response_steps": [
+        "Verify with the key owner before you change anything. Keep the CloudTrail logs and the key metadata as evidence.",
+        "If the activity is unauthorized, disable the access keys or sessions of the principal and limit its role. Consider an SCP that denies kms:ImportKeyMaterial and kms:DeleteImportedKeyMaterial.",
+        "Do not schedule deletion of the key. List the resources encrypted with it and stop more re-encryption, for example with bucket policies.",
+        "Recover the data from backups encrypted with keys you control. Check whether your organization holds a copy of the imported key material.",
+        "Find out how the attacker got in, rotate the affected credentials and review your KMS and IAM guardrails."
+      ],
+      "severity_rationale": "High fits: imported key material is rare in most accounts, and misuse of it can make data permanently unreadable."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Compromised IAM user imports external key material into a KMS key, with an expiring material model",
+        "event": {
+          "eventSource": "kms.amazonaws.com",
+          "eventName": "ImportKeyMaterial",
+          "eventTime": "2025-10-20T03:14:22Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE1234567",
+          "requestParameters.keyId": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+          "requestParameters.expirationModel": "KEY_MATERIAL_EXPIRES",
+          "requestParameters.validTo": "2025-10-21T00:00:00Z",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "The same principal deletes the imported key material after re-encrypting data",
+        "event": {
+          "eventSource": "kms.amazonaws.com",
+          "eventName": "DeleteImportedKeyMaterial",
+          "eventTime": "2025-10-20T05:02:10Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "requestParameters.keyId": "1234abcd-12ab-34cd-56ef-1234567890ab",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Precursor GetParametersForImport call on KMS; the rule does not list this event name",
+        "event": {
+          "eventSource": "kms.amazonaws.com",
+          "eventName": "GetParametersForImport",
+          "eventTime": "2025-10-20T03:10:05Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-cli/2.15.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/CryptoAdmin/jperez",
+          "requestParameters.keyId": "1234abcd-12ab-34cd-56ef-1234567890ab",
+          "requestParameters.wrappingAlgorithm": "RSAES_OAEP_SHA_256",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Routine KMS Decrypt call from an application role; it uses the KMS event source but not a matching event name",
+        "event": {
+          "eventSource": "kms.amazonaws.com",
+          "eventName": "Decrypt",
+          "eventTime": "2025-10-20T09:30:41Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "s3.amazonaws.com",
+          "userAgent": "s3.amazonaws.com",
+          "userIdentity.type": "AWSService",
+          "requestParameters.encryptionAlgorithm": "SYMMETRIC_DEFAULT",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

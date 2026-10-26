@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "6f156c48-3894-4952-baf0-16193e9067d2",
+    "title": "CodeIntegrity - Blocked Image Load With Revoked Certificate",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/code_integrity/win_codeintegrity_revoked_image_blocked.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/code_integrity/win_codeintegrity_revoked_image_blocked.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Code Integrity de Windows bloqueó la carga de un archivo (normalmente un driver de kernel) porque su certificado de firma está revocado. El bloqueo funcionó, pero hay que averiguar quién intentó cargarlo y por qué.",
+      "what_it_detects": "Eventos con EventID 3036 en el log Microsoft-Windows-CodeIntegrity/Operational. Se generan cuando Windows no puede verificar la integridad de un archivo porque el certificado que lo firmó fue revocado, y por eso impide la carga de la imagen.",
+      "why_it_matters": "Los atacantes cargan drivers firmados con certificados robados, filtrados o revocados, o drivers vulnerables, para ejecutar código en el kernel, escalar privilegios o desactivar el EDR. Un intento bloqueado puede indicar una herramienta de ese tipo ya presente en el host.",
+      "triage_steps": [
+        "Lea la ruta del archivo en el evento 3036 (FileNameBuffer o mensaje) y el proceso que intentó cargarlo (ProcessNameBuffer), si aparece.",
+        "Obtenga el hash del archivo bloqueado, revise el firmante y la fecha de firma, y búsquelo en su threat intelligence y en otros endpoints.",
+        "Revise si la ruta es inusual: Temp, AppData, ProgramData, perfiles de usuario o un nombre aleatorio en lugar de System32\\drivers.",
+        "Busque la creación de servicios de kernel (System 7045, Security 4697) y el uso de sc.exe con type= kernel en el mismo host +/- 15 minutos.",
+        "Identifique al usuario y al proceso padre que dejaron caer el archivo; correlacione con alertas de EDR, manipulación de antivirus o volcado de LSASS.",
+        "Determine si el driver pertenece a hardware o software instalado legítimamente (inventario, fabricante, instalaciones recientes de software).",
+        "Busque eventos 3036 anteriores del mismo host y de otros hosts con el mismo archivo o hash."
+      ],
+      "false_positives": [
+        "Drivers antiguos de hardware o software legítimo cuyo fabricante revocó el certificado y aún no actualizó el paquete.",
+        "Software heredado (VPN, anti-cheat, utilidades de hardware) que sigue intentando cargar un driver obsoleto en cada arranque.",
+        "Pruebas autorizadas de seguridad o de control de aplicaciones que usan drivers revocados a propósito."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo y con el inventario si el driver es legítimo; si lo es, actualícelo a una versión firmada vigente y documente la excepción.",
+        "Si no tiene explicación, aísle el host en el EDR y conserve el archivo, su hash y los logs de Code Integrity, System y Security.",
+        "Elimine el servicio y el archivo malicioso solo después de recolectar la evidencia; revise mecanismos de persistencia asociados.",
+        "Verifique la integridad del EDR y del antivirus, rote las credenciales expuestas y bloquee el hash en toda la flota."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un driver con certificado revocado casi nunca es legítimo y suele estar relacionado con ataques a nivel de kernel, aunque esta vez se haya bloqueado."
+    },
+    "en": {
+      "summary": "Windows Code Integrity blocked a file, usually a kernel driver, from loading because its signing certificate is revoked. The block worked, but you still need to find out who tried to load it and why.",
+      "what_it_detects": "EventID 3036 in the Microsoft-Windows-CodeIntegrity/Operational log. Windows writes it when it cannot verify a file's integrity because the signing certificate was revoked, so the image load is blocked.",
+      "why_it_matters": "Attackers load drivers signed with stolen, leaked or revoked certificates, or vulnerable drivers, to run kernel code, escalate privileges or disable EDR. A blocked attempt can mean that kind of tool is already on the host.",
+      "triage_steps": [
+        "Read the file path in the 3036 event (FileNameBuffer or message) and the process that tried to load it (ProcessNameBuffer), if present.",
+        "Hash the blocked file, check the signer and signing date, and look up the hash in threat intel and across other endpoints.",
+        "Flag unusual locations such as Temp, AppData, ProgramData, user profiles or random names instead of System32\\drivers.",
+        "Look for kernel service creation (System 7045, Security 4697) and sc.exe with type= kernel on the same host within +/- 15 minutes.",
+        "Identify the user and parent process that dropped the file; correlate with EDR alerts, antivirus tampering or LSASS access.",
+        "Check whether the driver belongs to legitimately installed hardware or software (asset inventory, vendor, recent installs).",
+        "Search for earlier 3036 events on this host and on other hosts with the same file or hash."
+      ],
+      "false_positives": [
+        "Old drivers from legitimate hardware or software whose vendor revoked the certificate and has not shipped an updated package.",
+        "Legacy software (VPN, anti-cheat, hardware utilities) that keeps trying to load an outdated driver at every boot.",
+        "Authorized security or application-control testing that uses revoked drivers on purpose."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner and inventory whether the driver is legitimate; if so, update it to a currently signed version and document the exception.",
+        "If unexplained, isolate the host via EDR and preserve the file, its hash and the Code Integrity, System and Security logs.",
+        "Remove the malicious service and file only after collecting evidence; review related persistence mechanisms.",
+        "Check EDR and antivirus integrity, rotate exposed credentials and block the hash across the fleet."
+      ],
+      "severity_rationale": "High fits because a driver with a revoked certificate is rarely legitimate and is usually tied to kernel-level attacks, even when this attempt was blocked."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Code Integrity blocks a driver dropped in a user's Temp folder because its signing certificate has been revoked.",
+        "event": {
+          "EventID": 3036,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "WS-0142.andes.example.com",
+          "Level": 2,
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Users\\jperez\\AppData\\Local\\Temp\\kdrv64.sys",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume3\\Windows\\System32\\services.exe",
+          "Message": "Windows is unable to verify the integrity of the file \\Device\\HarddiskVolume3\\Users\\jperez\\AppData\\Local\\Temp\\kdrv64.sys because the signing certificate has been revoked. Check with the publisher to see if a new signed version of the kernel module is available."
+        }
+      },
+      {
+        "description": "Legacy hardware utility driver with a revoked certificate blocked at boot on a server.",
+        "event": {
+          "EventID": 3036,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "Level": 2,
+          "FileNameBuffer": "\\Device\\HarddiskVolume2\\Windows\\System32\\drivers\\oldhwio.sys",
+          "Message": "Windows is unable to verify the integrity of the file \\Device\\HarddiskVolume2\\Windows\\System32\\drivers\\oldhwio.sys because the signing certificate has been revoked."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "EventID 3033 in the same channel: image did not meet signing level requirements, not a revoked certificate.",
+        "event": {
+          "EventID": 3033,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "WS-0142.andes.example.com",
+          "Level": 3,
+          "FileNameBuffer": "\\Device\\HarddiskVolume3\\Program Files\\ExampleApp\\plugin.dll",
+          "ProcessNameBuffer": "\\Device\\HarddiskVolume3\\Program Files\\ExampleApp\\app.exe"
+        }
+      },
+      {
+        "description": "EventID 3089 signature information event that accompanies Code Integrity events but is not a revoked-certificate block.",
+        "event": {
+          "EventID": 3089,
+          "Channel": "Microsoft-Windows-CodeIntegrity/Operational",
+          "Provider_Name": "Microsoft-Windows-CodeIntegrity",
+          "Computer": "WS-0142.andes.example.com",
+          "Level": 4,
+          "PublisherName": "Example Corp",
+          "IssuerName": "Example Code Signing CA"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "352a918a-34d8-4882-8470-44830c507aa3",
+    "title": "Malicious Usage Of IMDS Credentials Outside Of AWS Infrastructure",
+    "level": "high",
+    "status": "test",
+    "author": "jamesc-grafana",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_imds_malicious_usage.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_imds_malicious_usage.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078",
+      "T1078.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una sesión de identidad de instancia EC2 (assumed-role/aws:...) hizo una llamada a la API que no es de registro en SSM y que no provino de orígenes internos de AWS. Es posible que se hayan extraído credenciales de IMDS para usarlas desde otro lugar.",
+      "what_it_detects": "Eventos de CloudTrail cuyo userIdentity.arn coincide con la regex '.+:assumed-role/aws:.+' (por ejemplo assumed-role/aws:ec2-instance/i-...). Se excluyen los eventos con eventSource ssm.amazonaws.com, con eventName RegisterManagedInstance o con sourceIPAddress 'AWS Internal'.",
+      "why_it_matters": "Cualquier proceso de la instancia, o un atacante mediante SSRF, puede leer las credenciales temporales del Instance Metadata Service. Usarlas desde otro lugar es abuso de cuentas válidas en la nube (T1078.002). Permite pivotar, persistir y evadir controles bajo una identidad confiable.",
+      "triage_steps": [
+        "Tome el ID de instancia de userIdentity.arn e identifique la instancia, su responsable, su VPC y la cuenta (recipientAccountId).",
+        "Compare sourceIPAddress con la IP pública, la Elastic IP, el NAT gateway y los VPC endpoints de la instancia. Una IP externa o desconocida indica con fuerza que las credenciales fueron robadas.",
+        "Revise eventSource, eventName y el user agent. Considere sospechosas las llamadas de enumeración (GetCallerIdentity, List*, Describe*) y los user agents de CLI o SDK desde estaciones de trabajo.",
+        "Revise errorCode. Varios AccessDenied seguidos suelen indicar que alguien prueba qué permiten las credenciales.",
+        "Pivote sobre el mismo ARN en +/- 15 minutos y sobre la misma IP de origen en otras identidades y cuentas.",
+        "Revise la configuración de IMDS de la instancia (si HttpTokens es optional, se permite IMDSv1) y los logs de su aplicación web en busca de SSRF hacia 169.254.169.254.",
+        "Busque alertas previas o hallazgos de GuardDuty para esta instancia o esta IP de origen."
+      ],
+      "false_positives": [
+        "Un equipo configuró la instancia para que su identidad de instancia se comunique con otros servicios de AWS, el caso que la regla indica en falsepositives.",
+        "Agentes o servicios de AWS en la instancia llaman a la API desde la IP pública propia de la instancia o a través de un NAT gateway.",
+        "Pruebas autorizadas de red team o de seguridad en la nube."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la instancia si la actividad y la IP de origen son esperadas. Documente la evidencia.",
+        "Si confirma el abuso, restrinja la red de la instancia con un security group de cuarentena y bloquee la IP externa de origen.",
+        "Tome snapshots de los volúmenes EBS y conserve los logs de la instancia antes de detenerla o reemplazarla.",
+        "Exija IMDSv2 (HttpTokens=required), corrija cualquier SSRF y luego reconstruya la instancia desde una imagen confiable.",
+        "Revise todas las llamadas a la API que hizo la sesión y revierta los cambios, como usuarios IAM, claves o políticas nuevas."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el uso de credenciales de instancia fuera de la infraestructura de AWS suele indicar robo de credenciales y pivoteo bajo una identidad confiable."
+    },
+    "en": {
+      "summary": "An EC2 instance identity session (assumed-role/aws:...) made an API call that is not SSM registration and that did not come from AWS internal sources. Instance credentials may have been taken from IMDS and used elsewhere.",
+      "what_it_detects": "CloudTrail events where userIdentity.arn matches the regex '.+:assumed-role/aws:.+' (for example assumed-role/aws:ec2-instance/i-...). Events are excluded when eventSource is ssm.amazonaws.com, eventName is RegisterManagedInstance, or sourceIPAddress is 'AWS Internal'.",
+      "why_it_matters": "Any process on an instance, or an attacker using SSRF against it, can read temporary credentials from the Instance Metadata Service. Using them from another location is a Valid Accounts: Cloud Accounts abuse (T1078.002). It allows pivoting, persistence and evasion under a trusted identity.",
+      "triage_steps": [
+        "Take the instance ID from userIdentity.arn and identify the instance, its owner, its VPC and the account (recipientAccountId).",
+        "Compare sourceIPAddress with the instance's public IP, Elastic IP, NAT gateway and VPC endpoints. An external or unknown IP strongly suggests the credentials were stolen.",
+        "Review eventSource, eventName and userAgent. Treat enumeration calls (GetCallerIdentity, List*, Describe*) and CLI or SDK user agents from workstations as suspicious.",
+        "Check errorCode. Repeated AccessDenied errors usually mean someone is probing what the credentials allow.",
+        "Pivot on the same ARN within +/- 15 minutes and on the same source IP across other identities and accounts.",
+        "Check the instance's IMDS settings (whether HttpTokens is optional, which means IMDSv1 is allowed) and its web application logs for SSRF requests to 169.254.169.254.",
+        "Look for earlier alerts or GuardDuty findings for this instance or this source IP."
+      ],
+      "false_positives": [
+        "A team set up the instance so that its instance identity talks to other AWS services, which is the falsepositives case listed in the rule.",
+        "AWS agents or services on the instance call APIs from the instance's own public IP or through a NAT gateway.",
+        "Authorized red team or cloud security testing."
+      ],
+      "response_steps": [
+        "Confirm with the instance owner whether the activity and source IP are expected. Record the evidence.",
+        "If you confirm misuse, restrict the instance's network with a quarantine security group and block the external source IP.",
+        "Snapshot the EBS volumes and capture the instance's logs before you stop or replace it.",
+        "Require IMDSv2 (HttpTokens=required), fix any SSRF flaw, then rebuild the instance from a trusted image.",
+        "Review every API call the session made and roll back changes, such as new IAM users, keys or policies."
+      ],
+      "severity_rationale": "High fits because instance credentials used outside AWS infrastructure usually mean they were stolen and are being used to pivot under a trusted identity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An EC2 instance identity session lists S3 buckets from an external IP with an AWS CLI user agent.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0 exe/x86_64.ubuntu",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/aws:ec2-instance/i-0a1b2c3d4e5f60718",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "An EC2 instance identity session calls STS GetCallerIdentity from an external IP to check whose credentials it holds.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.69 md/Botocore#1.34.69 Python/3.12.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/aws:ec2-instance/i-0a1b2c3d4e5f60718",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The SSM agent updates instance information with the instance identity. The ssm.amazonaws.com eventSource filter excludes it.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventSource": "ssm.amazonaws.com",
+          "eventName": "UpdateInstanceInformation",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-sdk-go/1.44.260 (go1.20.10; linux; amd64) amazon-ssm-agent/3.3.40.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/aws:ec2-instance/i-0a1b2c3d4e5f60718",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "The same instance identity makes an S3 call, but sourceIPAddress is 'AWS Internal', so the filter excludes it.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "GetObject",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "AWS Internal",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/aws:ec2-instance/i-0a1b2c3d4e5f60718",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

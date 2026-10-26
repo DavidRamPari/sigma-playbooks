@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "2316929c-01aa-438c-970f-099145ab1ee6",
+    "title": "JAMF MDM Potential Suspicious Child Process",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "macos/process_creation/proc_creation_macos_jamf_susp_child.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_jamf_susp_child.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "El binario de administración Jamf de un endpoint macOS lanzó un shell bash o sh. Con frecuencia se trata de un script de política normal, pero también puede indicar abuso de Jamf para ejecutar comandos arbitrarios.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde ParentImage termina en '/jamf' e Image termina en '/bash' o '/sh', es decir, el agente Jamf generó un shell Unix.",
+      "why_it_matters": "Jamf se ejecuta como root en cada Mac administrada. Quien controle Jamf Pro, o herramientas como el agente Typhon de Mythic que usa Jamf como canal de C2, puede ejecutar comandos de shell en toda la flota (Ejecución: intérprete de comandos, shell Unix).",
+      "triage_steps": [
+        "Revise el CommandLine del shell: ¿es un script en /Library/Application Support/JAMF/tmp/ o un comando -c en línea con reconocimiento, descargas o contenido codificado?",
+        "Revise la línea de comandos del padre (jamf policy, jamf runScript, jamf manage) y confirme que ParentImage es el binario firmado /usr/local/jamf/bin/jamf.",
+        "Relacione la ejecución con una política o script esperado de Jamf Pro usando /var/log/jamf.log del equipo y el historial de políticas en Jamf Pro.",
+        "Consulte el registro de auditoría de Jamf Pro para ver creaciones o cambios recientes de esa política o script y la cuenta de administrador o API responsable.",
+        "Liste los procesos hijos del shell y las conexiones de red del mismo equipo en +/- 15 minutos (curl, osascript, python, base64, nuevos LaunchAgents).",
+        "Busque el mismo CommandLine en la flota: un despliegue masivo sugiere administración; uno o pocos equipos sugieren abuso dirigido.",
+        "Revise alertas previas del mismo equipo o usuario y cambios inesperados de inscripción o servidor de Jamf."
+      ],
+      "false_positives": [
+        "Scripts o comandos personalizados legítimos ejecutados por administradores de Jamf mediante políticas, Self Service o extension attributes.",
+        "Scripts de instalación o postinstall de proveedores distribuidos en paquetes de Jamf que invocan sh o bash.",
+        "Actualizaciones de inventario y extension attributes escritos como scripts de shell; filtre por nombres o hashes de scripts conocidos."
+      ],
+      "response_steps": [
+        "Confirme con los administradores de Jamf si la política o el script y su contenido están aprobados.",
+        "Si no está aprobado, aísle el equipo con el EDR y preserve jamf.log, el archivo del script y la telemetría de procesos.",
+        "Deshabilite la política o script malicioso en Jamf Pro, rote las credenciales de administradores y API de Jamf y revise los accesos.",
+        "Determine el alcance en todos los equipos que recibieron la política, elimine persistencia o archivos dejados y restablezca la administración normal.",
+        "Ajuste la regla con filtros para scripts administrativos verificados."
+      ],
+      "severity_rationale": "Medio es adecuado porque Jamf ejecuta shells legítimamente en muchos entornos, pero su abuso otorga ejecución de código como root en toda la flota administrada."
+    },
+    "en": {
+      "summary": "The Jamf management binary on a macOS endpoint launched a bash or sh shell. This is often a normal policy script, but it can also mean someone is abusing Jamf to run arbitrary commands.",
+      "what_it_detects": "Process creation events on macOS where ParentImage ends with '/jamf' and Image ends with '/bash' or '/sh', meaning the Jamf agent spawned a Unix shell.",
+      "why_it_matters": "Jamf runs as root on every managed Mac. Anyone controlling Jamf Pro, or tooling such as the Typhon Mythic agent that uses Jamf as a C2 channel, can run shell commands fleet-wide (Execution: Command and Scripting Interpreter, Unix Shell).",
+      "triage_steps": [
+        "Read the shell's CommandLine: is it a script under /Library/Application Support/JAMF/tmp/ or an inline -c command with recon, download or encoded content?",
+        "Check the parent's command line (jamf policy, jamf runScript, jamf manage) and confirm ParentImage is the signed /usr/local/jamf/bin/jamf binary.",
+        "Match the execution to an expected Jamf Pro policy or script using /var/log/jamf.log on the host and the policy history in Jamf Pro.",
+        "Review the Jamf Pro audit log for recent creation or edits of that policy or script and the admin or API account responsible.",
+        "List child processes of the shell and network connections on the same host within +/- 15 minutes (curl, osascript, python, base64, new LaunchAgents).",
+        "Search the fleet for the same CommandLine: a fleet-wide rollout suggests administration, a single host or few hosts suggests targeted abuse.",
+        "Look for earlier alerts on the same host or user, and for unexpected Jamf enrollment or server changes."
+      ],
+      "false_positives": [
+        "Legitimate custom scripts or commands run by Jamf administrators through policies, Self Service or extension attributes.",
+        "Vendor install or postinstall scripts deployed through Jamf packages that invoke sh or bash.",
+        "Jamf inventory updates and extension attributes written as shell scripts; filter known script names or hashes."
+      ],
+      "response_steps": [
+        "Confirm with the Jamf administrators whether the policy or script and its content are approved.",
+        "If unapproved, isolate the host with the EDR and preserve jamf.log, the script file and process telemetry.",
+        "Disable the malicious policy or script in Jamf Pro, rotate Jamf admin and API credentials, and review account access.",
+        "Scope every computer that received the policy, remove persistence or dropped files, then restore normal management.",
+        "Tune the rule with filters for verified administrative scripts."
+      ],
+      "severity_rationale": "Medium fits because Jamf runs shells legitimately in many environments, but abuse gives root-level code execution across the managed fleet."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Jamf agent spawns /bin/sh with an inline reconnaissance command, consistent with Jamf abused as C2.",
+        "event": {
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "ParentCommandLine": "/usr/local/jamf/bin/jamf runScript -script recon.sh",
+          "Image": "/bin/sh",
+          "CommandLine": "/bin/sh -c whoami; id; dscl . -list /Users",
+          "User": "root",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "Jamf policy runs a bash script from the Jamf temporary directory.",
+        "event": {
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "ParentCommandLine": "/usr/local/jamf/bin/jamf policy -event recurring",
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash /Library/Application Support/JAMF/tmp/install_printer.sh",
+          "User": "root",
+          "ProcessId": 51022,
+          "ParentProcessId": 50977,
+          "Computer": "MBA-0377"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Jamf spawns zsh; '/bin/zsh' does not end with '/sh' or '/bash'.",
+        "event": {
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "ParentCommandLine": "/usr/local/jamf/bin/jamf policy -event login",
+          "Image": "/bin/zsh",
+          "CommandLine": "/bin/zsh /Library/Application Support/JAMF/tmp/set_dock.zsh",
+          "User": "root",
+          "ProcessId": 52310,
+          "ParentProcessId": 52288,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "User opens bash from Terminal; parent is not jamf.",
+        "event": {
+          "ParentImage": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash -l",
+          "User": "jperez",
+          "ProcessId": 60114,
+          "ParentProcessId": 60101,
+          "Computer": "MBA-0377"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "rule": {
+    "id": "eae8ce9f-bde9-47a6-8e79-f20d18419910",
+    "title": "Suspicious History File Operations - Linux",
+    "level": "medium",
+    "status": "test",
+    "author": "Mikhail Larin, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_susp_histfile_operations.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_susp_histfile_operations.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutado en un host Linux incluyó en sus argumentos un archivo de historial de shell (.bash_history, .zsh_history, fish_history u otros). Puede indicar búsqueda de credenciales o borrado de rastros.",
+      "what_it_detects": "Registros auditd de tipo EXECVE cuyos argumentos (a0, a1, …) contienen el nombre de un archivo de historial de shell: .bash_history, .zsh_history, .zhistory, .history, .sh_history o fish_history.",
+      "why_it_matters": "Los historiales de shell suelen guardar contraseñas, tokens y cadenas de conexión que los usuarios escriben en la línea de comandos. Leerlos permite obtener credenciales sin protección (ATT&CK T1552.003, Bash History). Borrarlos, truncarlos o enlazarlos a /dev/null también sirve para ocultar actividad.",
+      "triage_steps": [
+        "Reconstruya el comando completo a partir de a0..aN del registro EXECVE. Decodifique los argumentos en hexadecimal, porque auditd codifica así los valores que contienen espacios.",
+        "Busque el registro SYSCALL con el mismo ID de evento audit(...:serial) para obtener auid, uid, exe, ppid, tty y comm.",
+        "Compare auid con uid: si un usuario lee el historial de otra cuenta o de root, el caso es más sospechoso.",
+        "Clasifique la acción: lectura (cat, grep, less), exfiltración (curl, scp, nc), borrado (rm, shred, truncate) o redirección (ln -sf /dev/null).",
+        "Identifique el proceso padre a partir del ppid y revise si proviene de una sesión SSH interactiva, un cron, un servicio web o un script.",
+        "Revise el mismo host en un rango de +/- 15 minutos: inicios de sesión SSH, sudo, conexiones salientes y otros accesos a archivos de credenciales.",
+        "Busque alertas anteriores para el mismo auid y el mismo host, y verifique si la cuenta que accedió coincide con un administrador conocido."
+      ],
+      "false_positives": [
+        "Administradores que revisan su propio historial durante un soporte o una depuración.",
+        "Software o scripts de limpieza que rotan o vacían archivos de historial de forma programada.",
+        "Herramientas de hardening, cumplimiento o backup que inspeccionan o copian directorios home."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la cuenta o con el equipo de administración si la actividad fue legítima.",
+        "Si hubo lectura o exfiltración no autorizada, revise el historial afectado y rote todas las contraseñas, tokens y llaves que aparezcan en él.",
+        "Si la actividad es maliciosa, aísle el host y suspenda las sesiones y credenciales de la cuenta comprometida.",
+        "Si el historial fue borrado, preserve los logs auditd y la memoria antes de remediar, y reconstruya la actividad con otras fuentes.",
+        "Configure HISTCONTROL/HISTIGNORE y capacite a los usuarios para que no escriban secretos en la línea de comandos."
+      ],
+      "severity_rationale": "Es nivel medio porque leer o limpiar historiales es habitual en administración, pero también permite robar credenciales o borrar evidencia, así que conviene verificarlo."
+    },
+    "en": {
+      "summary": "A process executed on a Linux host referenced a shell history file (.bash_history, .zsh_history, fish_history, etc.) in its arguments. This may indicate credential hunting or trace removal.",
+      "what_it_detects": "auditd EXECVE records whose arguments (a0, a1, …) contain a shell history file name: .bash_history, .zsh_history, .zhistory, .history, .sh_history or fish_history.",
+      "why_it_matters": "Shell histories often hold passwords, tokens and connection strings that users typed on the command line. Reading them gives an attacker unsecured credentials (ATT&CK T1552.003, Bash History). Deleting, truncating or linking them to /dev/null also hides activity.",
+      "triage_steps": [
+        "Rebuild the full command from a0..aN in the EXECVE record. Decode hex-encoded arguments, because auditd hex-encodes values that contain spaces.",
+        "Find the SYSCALL record with the same audit(...:serial) ID to get auid, uid, exe, ppid, tty and comm.",
+        "Compare auid with uid. A user reading another account's or root's history is more suspicious.",
+        "Classify the action: read (cat, grep, less), exfiltration (curl, scp, nc), deletion (rm, shred, truncate) or redirection (ln -sf /dev/null).",
+        "Resolve the parent from ppid and check whether it came from an interactive SSH session, cron, a web service or a script.",
+        "Review the same host within +/- 15 minutes for SSH logins, sudo use, outbound connections and access to other credential files.",
+        "Check earlier alerts for the same auid and host, and confirm whether the account belongs to a known administrator."
+      ],
+      "false_positives": [
+        "Administrators reviewing their own history while troubleshooting.",
+        "Cleanup software or scripts that rotate or clear history files on a schedule.",
+        "Hardening, compliance or backup tools that inspect or copy home directories."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or the admin team whether the activity was legitimate.",
+        "If history was read or exfiltrated without authorization, review that file and rotate every password, token and key that appears in it.",
+        "If the activity is malicious, isolate the host and suspend the compromised account's sessions and credentials.",
+        "If history was wiped, preserve auditd logs and memory before remediating, then reconstruct activity from other sources.",
+        "Set HISTCONTROL/HISTIGNORE and train users not to type secrets on the command line."
+      ],
+      "severity_rationale": "Medium fits because reading or clearing history is common in administration, but it also enables credential theft or evidence removal, so it should be verified."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user reads another account's bash history with cat",
+        "event": {
+          "type": "EXECVE",
+          "host": "web-03",
+          "message": "type=EXECVE msg=audit(1698242592.123:4521): argc=2 a0=\"cat\" a1=\"/home/jperez/.bash_history\""
+        }
+      },
+      {
+        "description": "zsh history wiped with shred to remove traces",
+        "event": {
+          "type": "EXECVE",
+          "host": "bastion-01",
+          "message": "type=EXECVE msg=audit(1698243011.456:4598): argc=3 a0=\"shred\" a1=\"-u\" a2=\"/root/.zsh_history\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PATH record for a history file (the shell writes its own history). The type is not EXECVE",
+        "event": {
+          "type": "PATH",
+          "host": "web-03",
+          "message": "type=PATH msg=audit(1698242600.789:4530): item=0 name=\"/home/jperez/.bash_history\" inode=393921 dev=fd:01 mode=0100600 ouid=1001 ogid=1001 nametype=NORMAL"
+        }
+      },
+      {
+        "description": "EXECVE opening a file whose name includes '_history' but no history-file keyword",
+        "event": {
+          "type": "EXECVE",
+          "host": "WS-0142",
+          "message": "type=EXECVE msg=audit(1698244100.012:4700): argc=2 a0=\"vim\" a1=\"/home/mlopez/notes_history.txt\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

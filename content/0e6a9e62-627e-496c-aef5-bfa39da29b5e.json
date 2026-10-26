@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "0e6a9e62-627e-496c-aef5-bfa39da29b5e",
+    "title": "MaxMpxCt Registry Value Changed",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_optimize_file_sharing_network.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_optimize_file_sharing_network.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor de registro MaxMpxCt del servicio LanmanServer, que define cuántas solicitudes SMB pendientes acepta el servidor por cliente. Operadores de ransomware como BlackCat lo aumentan para soportar más tráfico SMB antes del cifrado masivo.",
+      "what_it_detects": "Eventos registry_set donde TargetObject termina en \\Services\\LanmanServer\\Parameters\\MaxMpxCt, sin importar el proceso que escribe ni el valor asignado (campo Details).",
+      "why_it_matters": "Un MaxMpxCt elevado permite que un equipo comprometido atienda muchas conexiones SMB simultáneas, lo que facilita la propagación y el cifrado de recursos compartidos. La regla se asocia a T1070.005 (eliminación de conexiones a recursos compartidos de red) dentro de la táctica de evasión.",
+      "triage_steps": [
+        "Revise Details para conocer el nuevo valor; valores como 65535 (0xffff) son muy superiores a los habituales y coinciden con lo reportado para BlackCat.",
+        "Identifique Image y el usuario que escribió el valor; reg.exe, powershell.exe o un binario desconocido en rutas temporales son más sospechosos que herramientas de gestión.",
+        "Obtenga el proceso padre y su CommandLine; busque 'reg add ... LanmanServer\\Parameters /v MaxMpxCt' lanzado desde cmd.exe o un ejecutable sin firma.",
+        "En el mismo host, +/- 15 minutos, busque borrado de shadow copies, 'net use' masivo, wevtutil cl, cambios en LanmanServer o detención de servicios.",
+        "Verifique si existe un ticket de cambio o GPO que justifique el ajuste de SMB en ese servidor.",
+        "Busque el mismo cambio en otros hosts y alertas previas para el usuario o la cuenta involucrada."
+      ],
+      "false_positives": [
+        "Ajustes de rendimiento SMB realizados por administradores en servidores de archivos con mucha carga.",
+        "Instaladores o guías de proveedores de aplicaciones (bases de datos, ERP) que recomiendan modificar MaxMpxCt.",
+        "Scripts de hardening o plantillas de configuración aplicadas por GPO o herramientas de gestión."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del servidor si el cambio fue autorizado; si lo fue, documente y considere una exclusión acotada.",
+        "Si no está autorizado, aísle el endpoint de la red y preserve memoria, registro y logs antes de modificar nada.",
+        "Investigue el proceso y la cuenta responsables; deshabilite o restablezca credenciales comprometidas y busque movimiento lateral por SMB.",
+        "Restaure MaxMpxCt al valor previo tras la verificación y elimine binarios o persistencia identificados.",
+        "Revise respaldos y estado de recursos compartidos antes de reincorporar el equipo a producción."
+      ],
+      "severity_rationale": "Nivel bajo porque el cambio puede ser un ajuste administrativo legítimo y no es malicioso por sí solo, pero gana relevancia si se correlaciona con otra actividad de ransomware."
+    },
+    "en": {
+      "summary": "The LanmanServer MaxMpxCt registry value, which sets the maximum outstanding SMB requests per client, was changed. Ransomware operators such as BlackCat raise it so a host can handle more SMB traffic before mass encryption.",
+      "what_it_detects": "registry_set events where TargetObject ends with \\Services\\LanmanServer\\Parameters\\MaxMpxCt, regardless of the writing process or the new value (Details field).",
+      "why_it_matters": "A high MaxMpxCt lets a compromised host serve many concurrent SMB connections, helping ransomware spread and encrypt network shares. The rule maps to T1070.005 (network share connection removal) under stealth/defense evasion.",
+      "triage_steps": [
+        "Check Details for the new value; values like 65535 (0xffff) are far above normal and match what was reported for BlackCat.",
+        "Identify Image and the user who wrote the value; reg.exe, powershell.exe or unknown binaries in temp paths are more suspicious than management agents.",
+        "Get the parent process and its CommandLine; look for 'reg add ... LanmanServer\\Parameters /v MaxMpxCt' launched from cmd.exe or an unsigned executable.",
+        "On the same host within +/- 15 minutes, look for shadow copy deletion, mass 'net use', wevtutil cl, other LanmanServer changes or service stops.",
+        "Check for a change ticket or GPO that justifies SMB tuning on this server.",
+        "Search for the same change on other hosts and earlier alerts for the same user or account."
+      ],
+      "false_positives": [
+        "SMB performance tuning by administrators on busy file servers.",
+        "Vendor installers or guides (databases, ERP) that recommend changing MaxMpxCt.",
+        "Hardening scripts or configuration baselines pushed via GPO or management tools."
+      ],
+      "response_steps": [
+        "Confirm with the server owner whether the change was authorized; if so, document it and consider a narrow exclusion.",
+        "If unauthorized, isolate the endpoint and preserve memory, registry and logs before changing anything.",
+        "Investigate the responsible process and account; disable or reset compromised credentials and hunt for SMB lateral movement.",
+        "After verification, restore MaxMpxCt to its prior value and remove identified binaries or persistence.",
+        "Review backups and share integrity before returning the host to production."
+      ],
+      "severity_rationale": "Low because the change can be legitimate admin tuning and is not malicious alone, but it becomes significant when correlated with other ransomware activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe launched from cmd.exe sets MaxMpxCt to 65535, as seen in BlackCat intrusions",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "FS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters /v MaxMpxCt /d 65535 /t REG_DWORD /f",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\LanmanServer\\Parameters\\MaxMpxCt",
+          "Details": "DWORD (0x0000ffff)",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "PowerShell sets MaxMpxCt through Set-ItemProperty",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\LanmanServer\\Parameters\\MaxMpxCt",
+          "Details": "DWORD (0x00000800)",
+          "User": "ANDES\\admin.local"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A different LanmanServer parameter (AutoShareServer) is changed; the value name does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "FS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\LanmanServer\\Parameters\\AutoShareServer",
+          "Details": "DWORD (0x00000000)",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "SMB client tuning under LanmanWorkstation (MaxCmds), not the server MaxMpxCt value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters\\MaxCmds",
+          "Details": "DWORD (0x00000032)",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

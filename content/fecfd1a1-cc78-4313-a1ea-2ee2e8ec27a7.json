@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "fecfd1a1-cc78-4313-a1ea-2ee2e8ec27a7",
+    "title": "PowerShell Logging Disabled Via Registry Key Tampering",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_powershell_logging_disabled.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_powershell_logging_disabled.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1564.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor 0 en una clave de política de PowerShell que controla el registro de módulos, script block logging, transcripción o la ejecución de scripts. Así se pierde visibilidad sobre la actividad de PowerShell en el endpoint.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene \\Microsoft\\Windows\\PowerShell\\ (PowerShell 5) o \\Microsoft\\PowerShellCore\\ (PowerShell 7), termina en EnableModuleLogging, EnableScriptBlockLogging, EnableScriptBlockInvocationLogging, EnableTranscripting, EnableInvocationHeader o EnableScripts, y Details es 'DWORD (0x00000000)'.",
+      "why_it_matters": "Los atacantes suelen apagar el registro de PowerShell antes de ejecutar payloads, para que los eventos 4103/4104 y las transcripciones no muestren sus comandos. Corresponde a modificación del registro (T1112) y debilitamiento de defensas.",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique qué mecanismo se desactivó, si la clave está en HKLM o HKU\\<SID> y qué usuario se ve afectado.",
+        "Identifique el proceso que escribió el valor (Image, ProcessId, User). Revise su cadena de procesos padre e hijos; preocupan reg.exe, powershell.exe o Set-ItemProperty lanzados por Office o scripts.",
+        "Distinga entre la aplicación de una GPO (svchost.exe con gpsvc) y una escritura directa. Compare el resultado con gpresult y con la configuración esperada de la GPO.",
+        "Busque otras modificaciones de registro en el mismo host dentro de +/- 15 minutos, por ejemplo políticas de Defender, AMSI o ExecutionPolicy.",
+        "Revise la actividad de PowerShell en el mismo host antes y después del cambio: eventos 4103/4104, huecos repentinos en los logs y ConsoleHost_history.txt del usuario.",
+        "Revise si hubo alertas anteriores para el mismo host o usuario y si ese usuario tuvo inicios de sesión inusuales en otros equipos."
+      ],
+      "false_positives": [
+        "Administradores que cambian una GPO o una línea base para reducir el volumen de logs o resolver problemas de rendimiento, con un cambio documentado.",
+        "Pruebas autorizadas de red team o Atomic Red Team (T1112) en equipos de laboratorio.",
+        "Scripts de imagen o de aprovisionamiento que restablecen políticas de PowerShell a valores por defecto."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con gestión de cambios si la modificación estaba autorizada antes de tomar acciones.",
+        "Si no estaba autorizada, aísle el endpoint y preserve evidencia: exportación de las claves, logs de PowerShell, historial de consola y procesos en memoria.",
+        "Restaure los valores a 1 o vuelva a aplicar la GPO con gpupdate /force y verifique que vuelvan a generarse eventos 4104.",
+        "Investigue y elimine el mecanismo que hizo el cambio. Restablezca las credenciales del usuario involucrado si hay indicios de compromiso.",
+        "Busque en otros hosts el mismo cambio de registro y el mismo proceso de origen para conocer el alcance."
+      ],
+      "severity_rationale": "La severidad alta corresponde porque desactivar el registro de PowerShell rara vez es legítimo fuera de un cambio de GPO, y suele ocurrir justo antes de actividad maliciosa."
+    },
+    "en": {
+      "summary": "A PowerShell policy value controlling module logging, script block logging, transcription or script execution was set to 0. This removes visibility into PowerShell activity on the endpoint.",
+      "what_it_detects": "registry_set events where TargetObject contains \\Microsoft\\Windows\\PowerShell\\ (PowerShell 5) or \\Microsoft\\PowerShellCore\\ (PowerShell 7), ends with EnableModuleLogging, EnableScriptBlockLogging, EnableScriptBlockInvocationLogging, EnableTranscripting, EnableInvocationHeader or EnableScripts, and Details is 'DWORD (0x00000000)'.",
+      "why_it_matters": "Attackers often switch off PowerShell logging before running payloads, so 4103/4104 events and transcripts never record their commands. This is registry modification (T1112) used to impair defenses.",
+      "triage_steps": [
+        "Read TargetObject and Details: find which logging feature was disabled, whether the key sits under HKLM or HKU\\<SID>, and which user is affected.",
+        "Identify the writing process (Image, ProcessId, User). Review its parent and child processes; reg.exe, powershell.exe or Set-ItemProperty launched from Office or scripts is suspicious.",
+        "Tell Group Policy application (svchost.exe hosting gpsvc) apart from a direct write. Compare with gpresult output and the intended GPO settings.",
+        "Look for other registry changes on the same host within +/- 15 minutes, such as Defender, AMSI or ExecutionPolicy settings.",
+        "Review PowerShell activity around the change: 4103/4104 events, sudden gaps in logging and the user's ConsoleHost_history.txt.",
+        "Check for earlier alerts on the same host or user, and for unusual logons by that user on other machines."
+      ],
+      "false_positives": [
+        "Administrators changing a GPO or baseline to reduce log volume or fix performance issues, with a documented change.",
+        "Authorized red team or Atomic Red Team (T1112) tests on lab machines.",
+        "Imaging or provisioning scripts that reset PowerShell policies to defaults."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the asset owner or change management whether the change was authorized.",
+        "If unauthorized, isolate the endpoint and preserve evidence: exported keys, PowerShell logs, console history and running processes.",
+        "Set the values back to 1 or reapply the GPO with gpupdate /force, then confirm that 4104 events are generated again.",
+        "Find and remove whatever made the change. Reset the involved user's credentials if there are signs of compromise.",
+        "Hunt for the same registry change and the same source process on other hosts to determine scope."
+      ],
+      "severity_rationale": "High fits because turning off PowerShell logging is rarely legitimate outside a GPO change, and it often comes right before malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe disables PowerShell 5 script block logging under the current user's policy hive",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging\\EnableScriptBlockLogging",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "PowerShell 7 transcription disabled in HKLM via powershell.exe",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\PowerShellCore\\Transcription\\EnableTranscripting",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy enables script block logging (value 1), not disabling it",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "ProcessId": 1312,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging\\EnableScriptBlockLogging",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "ExecutionPolicy value under the PowerShell policy key; the name is not in the monitored list",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "ProcessId": 1312,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ExecutionPolicy",
+          "Details": "RemoteSigned"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

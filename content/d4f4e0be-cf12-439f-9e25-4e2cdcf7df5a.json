@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "d4f4e0be-cf12-439f-9e25-4e2cdcf7df5a",
+    "title": "Potential Persistence Via Disk Cleanup Handler - Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_add/registry_add_persistence_disk_cleanup_handler_entry.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_add/registry_add_persistence_disk_cleanup_handler_entry.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó una nueva subclave en la ruta de registro de los handlers del Liberador de espacio en disco (VolumeCaches) que no corresponde a un handler predeterminado de Windows. Un handler malicioso puede hacer que cleanmgr.exe cargue código del atacante.",
+      "what_it_detects": "Eventos de registro CreateKey donde TargetObject contiene \\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\ y el nombre de la clave no coincide con ninguno de los 32 handlers integrados, como Temporary Files o Recycle Bin.",
+      "why_it_matters": "Los handlers de limpieza de disco son extensibles. Un handler nuevo puede apuntar a un CLSID COM o contener valores con comandos que cleanmgr.exe ejecuta al correr la limpieza, incluida la limpieza programada o silenciosa. Esto da persistencia discreta (táctica ATT&CK: Persistence).",
+      "triage_steps": [
+        "Revise TargetObject para obtener el nombre del nuevo handler y determine si parece una aplicación conocida o si es aleatorio o genérico.",
+        "Identifique el Image y el usuario que crearon la clave. Lo esperable son instaladores o TrustedInstaller, no scripts, Office ni rutas con permisos de escritura del usuario.",
+        "Inspeccione los valores de la clave: el CLSID del valor predeterminado y valores como CleanupString o PreCleanupString que contengan líneas de comando.",
+        "Resuelva el CLSID en HKCR\\CLSID\\{GUID}\\InprocServer32 o LocalServer32 y verifique la ruta, la firma y el hash del DLL o EXE.",
+        "Revise la creación de procesos del Image y de su proceso padre en el mismo host en +/- 15 minutos, en especial reg.exe, PowerShell o rundll32.",
+        "Verifique si cleanmgr.exe cargó después DLL inusuales o generó procesos hijos.",
+        "Busque el mismo nombre de handler o el mismo hash en otros hosts, y revise alertas previas del host o del usuario."
+      ],
+      "false_positives": [
+        "Handler nuevo registrado por actualizaciones de características o acumulativas de Windows que aún no figura en la lista predeterminada.",
+        "Software legítimo de terceros, como navegadores, Office o drivers de GPU, que agrega su propio handler de limpieza durante la instalación."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del software o con los registros de cambios si el handler es esperado.",
+        "Si es malicioso, aísle el endpoint y preserve la clave de registro, sus valores y el binario referenciado.",
+        "Elimine la subclave de VolumeCaches maliciosa y su registro de CLSID asociado, y borre el payload después de recolectarlo.",
+        "Busque otros mecanismos de persistencia en el host, restablezca las credenciales expuestas y agregue los handlers benignos confirmados a un filtro de ajuste."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque los handlers nuevos son poco comunes y permiten persistencia, aunque a veces los crean instaladores legítimos o actualizaciones de Windows."
+    },
+    "en": {
+      "summary": "A process created a new subkey under the Disk Cleanup handler registry path (VolumeCaches) that is not one of the default Windows handlers. A rogue handler can make cleanmgr.exe load attacker code.",
+      "what_it_detects": "Registry CreateKey events where TargetObject contains \\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\ and the key name does not match any of the 32 built-in handlers, such as Temporary Files or Recycle Bin.",
+      "why_it_matters": "Disk Cleanup handlers are extensible. A new handler can point to a COM CLSID or hold command values that cleanmgr.exe runs whenever Disk Cleanup runs, including scheduled or silent cleanup. That gives stealthy persistence (ATT&CK tactic: Persistence).",
+      "triage_steps": [
+        "Read TargetObject to get the new handler name, and check whether it looks like a known application or is random or generic.",
+        "Identify the Image and user that created the key. Expect installers or TrustedInstaller, not scripts, Office or user-writable paths.",
+        "Inspect the key's values: the default value CLSID, plus CleanupString, PreCleanupString or similar values that contain command lines.",
+        "Resolve the CLSID under HKCR\\CLSID\\{GUID}\\InprocServer32 or LocalServer32 and check the DLL or EXE path, signature and hash.",
+        "Review process creation for the creating Image and its parent on the same host within +/- 15 minutes, especially reg.exe, PowerShell or rundll32.",
+        "Check whether cleanmgr.exe has since loaded unusual DLLs or spawned child processes.",
+        "Search for the same handler name or binary hash on other hosts, and look for earlier alerts for this host or user."
+      ],
+      "false_positives": [
+        "New handler registered by Windows feature updates or cumulative updates that is not yet in the default list.",
+        "Legitimate third-party software, such as browsers, Office or GPU drivers, adding its own cleanup handler during installation."
+      ],
+      "response_steps": [
+        "Confirm with the software owner or change records whether the handler is expected.",
+        "If it is malicious, isolate the host and preserve the registry key, its values and the referenced binary.",
+        "Remove the rogue VolumeCaches subkey and its related CLSID registration, and delete the payload after you collect it.",
+        "Hunt for other persistence on the host, reset exposed credentials, and add confirmed benign handler names to a tuning filter."
+      ],
+      "severity_rationale": "Medium fits because new handlers are rare and enable persistence, but legitimate installers and Windows updates sometimes create them."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell creates an unknown Disk Cleanup handler key under HKLM VolumeCaches",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\SysCacheOptimizer",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6412,
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "reg.exe adds a generic-looking handler key",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\Cleanup Helper",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4120,
+          "User": "ANDES\\admin.local",
+          "Computer": "WS-0187.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Default Windows handler 'Temporary Files' key created by TrustedInstaller is excluded by the filter",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\Temporary Files",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 3304,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Value set (not CreateKey) on a VolumeCaches key does not satisfy the EventType selection",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\SysCacheOptimizer\\StateFlags0001",
+          "Details": "DWORD (0x00000002)",
+          "Image": "C:\\Windows\\System32\\cleanmgr.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

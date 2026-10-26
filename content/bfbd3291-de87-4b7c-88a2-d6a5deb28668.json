@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "bfbd3291-de87-4b7c-88a2-d6a5deb28668",
+    "title": "ADCS Certificate Template Configuration Vulnerability with Risky EKU",
+    "level": "high",
+    "status": "test",
+    "author": "Orlinum , BlueDefenZer",
+    "path": "windows/builtin/security/win_security_adcs_certificate_template_configuration_vulnerability_eku.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_adcs_certificate_template_configuration_vulnerability_eku.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una CA de Active Directory cargó o actualizó una plantilla de certificado que permite al solicitante definir el subject e incluye un EKU de autenticación. Es la configuración clásica ESC1, que permite suplantar a cualquier usuario del dominio.",
+      "what_it_detects": "Eventos 4898 (plantilla cargada) o 4899 (plantilla actualizada) cuyo TemplateContent o NewTemplateContent contiene CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT junto con Client Authentication, PKINIT Client Authentication, Smart Card Logon o Any Purpose.",
+      "why_it_matters": "Si usuarios con pocos privilegios pueden inscribirse, un atacante puede pedir un certificado con el SAN de un Domain Admin y autenticarse por PKINIT. Corresponde a escalamiento de privilegios y acceso a credenciales mediante certificados falsificados.",
+      "triage_steps": [
+        "Identifique TemplateName, TemplateInternalName y la CA que generó el evento. Confirme si la plantilla es nueva, conocida o publicada recientemente.",
+        "En un 4899, compare OldTemplateContent con NewTemplateContent para ver si el flag o el EKU riesgoso se agregaron en este cambio.",
+        "Busque eventos 5136 en los controladores de dominio sobre el objeto de la plantilla en CN=Certificate Templates (+/- 15 minutos) para identificar quién la modificó.",
+        "Revise los permisos de inscripción: verifique si Domain Users, Authenticated Users o Domain Computers tienen Enroll y si se exige aprobación del administrador o firmas autorizadas.",
+        "Revise los eventos 4886/4887 de la CA con esta plantilla y busque solicitudes cuyo SAN no coincida con el solicitante, sobre todo cuentas privilegiadas.",
+        "Busque eventos 4768 con información de certificado (PKINIT) de cuentas privilegiadas después del cambio, desde hosts poco habituales.",
+        "Busque en los endpoints del usuario que hizo el cambio herramientas como Certify o Certipy y revise alertas anteriores de esa cuenta."
+      ],
+      "false_positives": [
+        "Administradores de PKI que crean o ajustan plantillas legítimas en una ventana de cambio documentada.",
+        "Plantillas de certificados SSL para proxy o inspección TLS que requieren modificar el subject.",
+        "Inscripción de smart cards con flujo gestionado por agentes de inscripción."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de PKI si el cambio estaba autorizado y documentado.",
+        "Si no lo estaba, despublique la plantilla de la CA o quite el flag ENROLLEE_SUPPLIES_SUBJECT y restrinja los permisos de inscripción.",
+        "Revoque los certificados emitidos con la plantilla cuyo SAN sea sospechoso y restablezca las credenciales de las cuentas suplantadas.",
+        "Investigue y contenga la cuenta que modificó la plantilla. Si hubo uso por PKINIT, aísle los hosts involucrados.",
+        "Para remediar, exija aprobación del administrador en plantillas que deban permitir el subject del solicitante y audítelas periódicamente."
+      ],
+      "severity_rationale": "El nivel high se justifica porque esta configuración permite suplantar a cualquier cuenta del dominio, aunque hay cambios administrativos legítimos que conviene validar."
+    },
+    "en": {
+      "summary": "An AD Certificate Services CA loaded or updated a certificate template that lets the requester supply the subject and also includes an authentication EKU. This is the classic ESC1 setup, which allows impersonation of any domain user.",
+      "what_it_detects": "Event 4898 (template loaded) or 4899 (template updated) where TemplateContent or NewTemplateContent contains CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT plus Client Authentication, PKINIT Client Authentication, Smart Card Logon or Any Purpose.",
+      "why_it_matters": "If low-privileged users can enroll, an attacker can request a certificate with a Domain Admin SAN and authenticate via PKINIT. This is privilege escalation and credential access through forged certificates.",
+      "triage_steps": [
+        "Identify TemplateName, TemplateInternalName and the CA that logged the event. Check whether the template is new, known or recently published.",
+        "For 4899, compare OldTemplateContent with NewTemplateContent to see whether this change added the flag or the risky EKU.",
+        "Search domain controllers for 5136 events on the template object under CN=Certificate Templates (+/- 15 minutes) to find who modified it.",
+        "Review enrollment permissions: check whether Domain Users, Authenticated Users or Domain Computers can Enroll, and whether manager approval or authorized signatures are required.",
+        "Review CA events 4886/4887 for this template and look for requests whose SAN differs from the requester, especially privileged accounts.",
+        "After the change, look for 4768 events with certificate information (PKINIT) for privileged accounts from unusual hosts.",
+        "On the endpoints of the user who made the change, look for tools such as Certify or Certipy, and check earlier alerts for that account."
+      ],
+      "false_positives": [
+        "PKI administrators creating or tuning legitimate templates during a documented change window.",
+        "Proxy or TLS-inspection SSL certificate templates that need subject modification.",
+        "Smart card enrollment handled by enrollment agents."
+      ],
+      "response_steps": [
+        "Confirm with the PKI team whether the change was authorized and documented.",
+        "If it was not, unpublish the template from the CA or remove ENROLLEE_SUPPLIES_SUBJECT, and restrict enrollment permissions.",
+        "Revoke certificates issued from the template that have suspicious SANs, and reset credentials for impersonated accounts.",
+        "Investigate and contain the account that modified the template. If PKINIT abuse occurred, isolate the involved hosts.",
+        "To remediate, require manager approval on templates that must allow a requester-supplied subject, and audit them regularly."
+      ],
+      "severity_rationale": "High fits because this configuration allows impersonation of any domain account, though legitimate admin changes do exist and need validating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CA loads a custom template with enrollee-supplied subject and Client Authentication EKU (ESC1)",
+        "event": {
+          "EventID": 4898,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateName": "UserAuthCustom",
+          "TemplateInternalName": "UserAuthCustom",
+          "TemplateVersion": "100.2",
+          "TemplateSchemaVersion": "2",
+          "TemplateOID": "1.3.6.1.4.1.311.21.8.1111111.2222222.3333333.1.2",
+          "TemplateDSObjectFQDN": "CN=UserAuthCustom,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=andes,DC=example,DC=com",
+          "TemplateContent": "flags = 0x2023a; msPKI-Certificate-Name-Flag = 0x1 CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT; msPKI-Enrollment-Flag = 0x9; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.2 Client Authentication, 1.3.6.1.5.5.7.3.4 Secure Email; msPKI-RA-Signature = 0"
+        }
+      },
+      {
+        "description": "Template updated to add enrollee-supplied subject and Smart Card Logon EKU",
+        "event": {
+          "EventID": 4899,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateName": "VPNUsers",
+          "TemplateInternalName": "VPNUsers",
+          "TemplateVersion": "100.5",
+          "TemplateSchemaVersion": "2",
+          "TemplateDSObjectFQDN": "CN=VPNUsers,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=andes,DC=example,DC=com",
+          "OldTemplateContent": "msPKI-Certificate-Name-Flag = 0x82000000 CT_FLAG_SUBJECT_ALT_REQUIRE_UPN; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.4 Secure Email",
+          "NewTemplateContent": "msPKI-Certificate-Name-Flag = 0x1 CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT; pKIExtendedKeyUsage = 1.3.6.1.4.1.311.20.2.2 Smart Card Logon, 1.3.6.1.5.5.7.3.2 Client Authentication"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Web Server template with enrollee-supplied subject but only the Server Authentication EKU",
+        "event": {
+          "EventID": 4898,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateName": "WebServer",
+          "TemplateInternalName": "WebServer",
+          "TemplateVersion": "4.1",
+          "TemplateSchemaVersion": "1",
+          "TemplateDSObjectFQDN": "CN=WebServer,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=andes,DC=example,DC=com",
+          "TemplateContent": "flags = 0x242c1; msPKI-Certificate-Name-Flag = 0x1 CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.1 Server Authentication"
+        }
+      },
+      {
+        "description": "Template update that removes the enrollee-supplied subject flag; the new content builds the subject from AD",
+        "event": {
+          "EventID": 4899,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateName": "VPNUsers",
+          "TemplateInternalName": "VPNUsers",
+          "TemplateVersion": "100.6",
+          "TemplateSchemaVersion": "2",
+          "OldTemplateContent": "msPKI-Certificate-Name-Flag = 0x1 CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.2 Client Authentication",
+          "NewTemplateContent": "msPKI-Certificate-Name-Flag = 0x82000000 CT_FLAG_SUBJECT_ALT_REQUIRE_UPN, CT_FLAG_SUBJECT_REQUIRE_DIRECTORY_PATH; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.2 Client Authentication"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

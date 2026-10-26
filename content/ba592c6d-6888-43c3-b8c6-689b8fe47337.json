@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "ba592c6d-6888-43c3-b8c6-689b8fe47337",
+    "title": "Linux Base64 Encoded Pipe to Shell",
+    "level": "medium",
+    "status": "test",
+    "author": "pH-T (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_base64_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_base64_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1140"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en Linux ejecutó una línea de comandos que decodifica contenido con base64 y lo envía por pipe a bash o sh. Así se ejecuta código oculto sin dejar un script legible en disco.",
+      "what_it_detects": "Eventos process_creation cuyo CommandLine contiene 'base64 ' y además envía la salida a un shell con un pipe ('| bash ', '|sh ', etc.) o termina en '| bash', '| sh', '|bash' o ' |sh'.",
+      "why_it_matters": "Codificar un payload en base64 y pasarlo directo a un shell oculta los comandos reales y evita guardar archivos en disco (T1140, decodificar archivos o información). Herramientas de ejecución sin archivos como DDexec usan este patrón.",
+      "triage_steps": [
+        "Copie la cadena base64 del CommandLine y decodifíquela en un entorno aislado, sin ejecutarla. Identifique el comando real, las URLs, las IPs y los archivos que menciona.",
+        "Revise el ParentImage y el árbol de procesos. Si el padre es un servidor web, una base de datos, cron o sshd, es mucho más sospechoso que una terminal interactiva.",
+        "Confirme el usuario que ejecutó el proceso y si su sesión es legítima: origen SSH, hora habitual y uso de sudo.",
+        "Busque procesos hijos del shell en el mismo host en una ventana de +/- 15 minutos, como curl, wget, nc, chmod o escrituras en /tmp o /dev/shm.",
+        "Revise si el host abrió conexiones de red salientes a destinos poco comunes justo después de la ejecución.",
+        "Busque alertas anteriores del mismo host o usuario y el mismo patrón base64 en otros endpoints."
+      ],
+      "false_positives": [
+        "Tareas de administración o scripts de aprovisionamiento que transportan configuración codificada en base64 y la ejecutan con bash.",
+        "Instaladores, herramientas de gestión de configuración o pipelines de CI/CD que inyectan scripts codificados.",
+        "Pruebas autorizadas de pentesting o red team."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o del script si la ejecución era esperada. Si lo era, documente el caso y ajuste la regla con una exclusión específica.",
+        "Si no es legítima, aísle el host de la red y preserve la evidencia: lista de procesos, memoria del proceso, historial del shell y logs.",
+        "Bloquee los indicadores que encontró en el payload decodificado (dominios e IPs) y búsquelos en todo el entorno.",
+        "Elimine la persistencia que encuentre (cron, systemd, authorized_keys) después de documentarla, y rote las credenciales expuestas.",
+        "Corrija el vector de entrada, por ejemplo un servicio vulnerable, y restaure el host desde una fuente confiable si se confirma el compromiso."
+      ],
+      "severity_rationale": "La severidad es media porque el patrón es típico de un atacante, pero también aparece en tareas legítimas de administración y automatización."
+    },
+    "en": {
+      "summary": "A Linux process ran a command line that decodes base64 content and pipes it into bash or sh. This runs hidden code without leaving a readable script on disk.",
+      "what_it_detects": "process_creation events whose CommandLine contains 'base64 ' and also pipes into a shell ('| bash ', '|sh ', etc.) or ends with '| bash', '| sh', '|bash' or ' |sh'.",
+      "why_it_matters": "Encoding a payload in base64 and piping it straight into a shell hides the real commands and avoids writing files to disk (T1140, Deobfuscate/Decode Files or Information). Fileless execution tools such as DDexec use this pattern.",
+      "triage_steps": [
+        "Copy the base64 string from CommandLine and decode it in an isolated environment without running it. Identify the real command, URLs, IPs and files it references.",
+        "Review ParentImage and the process tree. A web server, database, cron or sshd parent is far more suspicious than an interactive terminal.",
+        "Confirm which user ran the process and whether the session is legitimate: SSH source, usual working hours, sudo use.",
+        "Look for child processes of the shell on the same host within +/- 15 minutes, such as curl, wget, nc, chmod, or writes to /tmp or /dev/shm.",
+        "Check whether the host made outbound network connections to unusual destinations right after the execution.",
+        "Search for earlier alerts on the same host or user, and for the same base64 pattern on other endpoints."
+      ],
+      "false_positives": [
+        "Admin tasks or provisioning scripts that carry base64-encoded configuration and run it with bash.",
+        "Installers, configuration management tools or CI/CD pipelines that inject encoded scripts.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Check with the system or script owner whether the execution was expected. If it was, document it and tune the rule with a narrow exclusion.",
+        "If it is not legitimate, isolate the host from the network and preserve evidence: process list, process memory, shell history and logs.",
+        "Block the indicators found in the decoded payload (domains and IPs) and search for them across the environment.",
+        "Document and then remove any persistence you find (cron, systemd, authorized_keys), and rotate exposed credentials.",
+        "Fix the entry point, such as a vulnerable service, and rebuild the host from a trusted source if compromise is confirmed."
+      ],
+      "severity_rationale": "Medium fits because the pattern is typical of attackers but also shows up in legitimate administration and automation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A web server worker spawns a shell that decodes a base64 string and pipes it to bash. The CommandLine ends with '| bash'.",
+        "event": {
+          "Image": "/usr/bin/sh",
+          "CommandLine": "sh -c echo aWQ7IHVuYW1lIC1h | base64 -d | bash",
+          "ParentImage": "/usr/sbin/apache2",
+          "ParentCommandLine": "/usr/sbin/apache2 -k start",
+          "User": "www-data",
+          "CurrentDirectory": "/var/www/html",
+          "ProcessId": 48213,
+          "Computer": "web-01.example.com"
+        }
+      },
+      {
+        "description": "An interactive user decodes a base64 string and pipes it to sh with an argument. The CommandLine contains '|sh '.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c echo d2hvYW1p | base64 --decode |sh -s",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 30117,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A backup script decodes a base64 file into a regular file. Nothing is piped to a shell.",
+        "event": {
+          "Image": "/usr/bin/base64",
+          "CommandLine": "base64 -d /opt/backup/config.b64 -o /etc/app/config.yaml",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "CurrentDirectory": "/opt/backup",
+          "ProcessId": 5521,
+          "Computer": "app-02.example.org"
+        }
+      },
+      {
+        "description": "Decoded base64 output is piped to tee instead of a shell, so selection_exec does not match.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c base64 -d /tmp/cert.b64 | tee /etc/ssl/certs/internal.pem",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 7710,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

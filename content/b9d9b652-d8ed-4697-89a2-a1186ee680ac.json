@@ -1,0 +1,121 @@
+{
+  "rule": {
+    "id": "b9d9b652-d8ed-4697-89a2-a1186ee680ac",
+    "title": "OSACompile Run-Only Execution",
+    "level": "high",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r)",
+    "path": "macos/process_creation/proc_creation_macos_osacompile_runonly_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_osacompile_runonly_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutó osacompile con -x (salida run-only) y -e (script en línea). Esto compila un AppleScript que no puede descompilarse ni leerse después, una técnica que los atacantes usan para ocultar scripts maliciosos.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde CommandLine contiene 'osacompile', ' -x ' y ' -e '. El código fuente se pasa en la línea de comandos y se compila como script o applet run-only, sin código legible.",
+      "why_it_matters": "Un AppleScript run-only oculta su lógica a los analistas y a las herramientas de seguridad. Se usa para ejecución, persistencia, solicitud de credenciales o preparación de payloads (ATT&CK T1059.002, intérprete de comandos: AppleScript).",
+      "triage_steps": [
+        "Revise el CommandLine completo: extraiga el texto de -e y la ruta de -o. Busque do shell script, curl, display dialog que pida contraseñas o cadenas base64.",
+        "Identifique ParentImage y el árbol de procesos. Son más sospechosos los padres que sean shells, Terminal, instaladores o binarios sin firma en /tmp, /Users/Shared o Downloads.",
+        "Verifique el contexto del usuario. Confirme si suele crear AppleScripts o hace trabajo de desarrollo.",
+        "Ubique el archivo de salida (.scpt o .app) y registre su hash, firma, atributos de cuarentena y fecha de creación.",
+        "Revise el mismo host en +/- 15 minutos: ejecuciones de osascript, nuevos LaunchAgents o LaunchDaemons, ítems de inicio y conexiones salientes.",
+        "Busque alertas previas o ejecuciones de osacompile del mismo usuario, host o binario padre para detectar patrones o propagación en otros equipos."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores que generan applets run-only a propósito para proteger código de automatización interna.",
+        "Herramientas de gestión o despliegue (scripts de MDM, flujos de empaquetado) que compilan applets AppleScript durante la configuración.",
+        "Pruebas de seguridad o ejercicios de red team que simulan técnicas con AppleScript."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo responsable si la compilación era esperada y documente la evidencia en cualquier caso.",
+        "Si es maliciosa o no tiene explicación, aísle el endpoint desde el EDR y conserve el archivo compilado y los archivos relacionados para análisis.",
+        "Elimine la persistencia creada a partir del archivo (LaunchAgents, ítems de inicio) y borre los archivos maliciosos solo después de recolectarlos.",
+        "Restablezca credenciales si el script pidió contraseñas, bloquee dominios o hashes relacionados y busque la misma línea de comandos en otros Mac."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque compilar en modo run-only desde texto en línea es poco común en el uso normal e impide a propósito inspeccionar el script, lo que apunta con fuerza a una intención maliciosa."
+    },
+    "en": {
+      "summary": "A process ran osacompile with both -x (run-only output) and -e (inline script text). This compiles an AppleScript that cannot be decompiled or read later, a method attackers use to hide malicious scripts.",
+      "what_it_detects": "macOS process creation events where CommandLine contains 'osacompile', ' -x ' and ' -e '. The script source is passed on the command line and compiled into a run-only script or applet with no readable source.",
+      "why_it_matters": "Run-only AppleScript hides the script's logic from analysts and security tools. Attackers use it for execution, persistence, credential prompts or payload staging (ATT&CK T1059.002, Command and Scripting Interpreter: AppleScript).",
+      "triage_steps": [
+        "Read the full CommandLine: pull out the -e script text and the -o output path. Look for do shell script, curl, display dialog password prompts or base64 strings.",
+        "Identify ParentImage and the process tree. Shells, Terminal, installers or unsigned binaries in /tmp, /Users/Shared or Downloads as parents are more suspicious.",
+        "Check the user context. Confirm whether this user normally builds AppleScripts or does development work.",
+        "Locate the output file (.scpt or .app) and record its hash, signature, quarantine attributes and creation time.",
+        "Review the same host within +/- 15 minutes for osascript runs, new LaunchAgents or LaunchDaemons, login items, and outbound network connections.",
+        "Search for earlier alerts or osacompile runs from the same user, host or parent binary to find a pattern or a spread across the fleet."
+      ],
+      "false_positives": [
+        "Administrators or developers who build run-only applets on purpose to protect internal automation code.",
+        "Management or deployment tooling (MDM scripts, packaging workflows) that compiles AppleScript applets during setup.",
+        "Security testing or red team exercises that simulate AppleScript tradecraft."
+      ],
+      "response_steps": [
+        "Verify with the user or owning team whether the compilation was expected; record the evidence either way.",
+        "If it is malicious or unexplained, isolate the endpoint through EDR and keep the compiled output and related files for analysis.",
+        "Remove persistence created from the output (LaunchAgents, login items) and delete malicious files only after collecting them.",
+        "Reset credentials if the script prompted for passwords, block related domains or hashes, and hunt for the same command line on other Macs."
+      ],
+      "severity_rationale": "High fits because run-only compilation from inline text is rare in normal use and deliberately prevents inspection of the script, which strongly suggests malicious intent."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "osacompile launched from a shell compiles an inline script into a run-only applet in /Users/Shared",
+        "event": {
+          "Image": "/usr/bin/osacompile",
+          "CommandLine": "osacompile -x -e 'display dialog \"Software Update required\"' -o /Users/Shared/Update.app",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "/bin/zsh -c osacompile -x -e 'display dialog \"Software Update required\"' -o /Users/Shared/Update.app",
+          "User": "jperez",
+          "Computer": "MAC-0142"
+        }
+      },
+      {
+        "description": "Full-path osacompile writing a run-only .scpt to /tmp, started by bash",
+        "event": {
+          "Image": "/usr/bin/osacompile",
+          "CommandLine": "/usr/bin/osacompile -o /tmp/.helper.scpt -x -e 'do shell script \"echo test\"'",
+          "ParentImage": "/bin/bash",
+          "User": "mrodriguez",
+          "Computer": "MAC-0207"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal compilation of an AppleScript source file into a script with readable source (no -x and no -e)",
+        "event": {
+          "Image": "/usr/bin/osacompile",
+          "CommandLine": "osacompile -o /Users/jperez/Scripts/backup.scpt /Users/jperez/Scripts/backup.applescript",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MAC-0142"
+        }
+      },
+      {
+        "description": "Inline script compiled with -e but not in run-only mode (no -x)",
+        "event": {
+          "Image": "/usr/bin/osacompile",
+          "CommandLine": "osacompile -e 'tell application \"Finder\" to activate' -o /Users/jperez/Desktop/finder.scpt",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MAC-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

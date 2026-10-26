@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "9d779ce8-5256-4b13-8b6f-b91c602b43f4",
+    "title": "Named Pipe Created Via Mkfifo",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_mkfifo_named_pipe_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_mkfifo_named_pipe_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó la utilidad mkfifo en un host Linux para crear un named pipe (FIFO). Es frecuente en uso legítimo, pero también es una pieza común de reverse shells y canales de comunicación entre procesos de un atacante.",
+      "what_it_detects": "Cualquier evento de creación de proceso en Linux cuyo Image termina en '/mkfifo', sin importar los argumentos, el usuario ni el proceso padre.",
+      "why_it_matters": "Los atacantes usan FIFOs para conectar un shell con herramientas de red como nc o openssl y así obtener un reverse shell, o para pasar datos entre procesos maliciosos sin escribir archivos normales. Corresponde a la táctica de Execution de ATT&CK.",
+      "triage_steps": [
+        "Revisa CommandLine: anota la ruta del FIFO. Las rutas en /tmp, /dev/shm o /var/tmp, o los nombres ocultos o cortos como /tmp/f, son más sospechosos.",
+        "Examina ParentImage y ParentCommandLine. Una cadena de comandos con sh -c que incluye nc, ncat, telnet, openssl, bash -i o cat sobre el mismo FIFO indica un reverse shell.",
+        "Busca en el mismo host, en una ventana de +/- 15 minutos, los procesos que abrieron el FIFO y las conexiones de red salientes hacia IPs o puertos inusuales.",
+        "Identifica al usuario. Si es una cuenta de servicio web (www-data, apache, nginx), sospecha de explotación de la aplicación y revisa sus logs de acceso.",
+        "Comprueba si el ejecutable padre es un script, servicio o job de cron conocido y si este patrón ya aparece de forma recurrente en la línea base del host.",
+        "Revisa si hubo alertas previas para el mismo host o usuario, como descargas, webshells o cambios de persistencia."
+      ],
+      "false_positives": [
+        "Scripts de administración, instaladores o entrypoints de contenedores que crean FIFOs para comunicación entre procesos.",
+        "Sistemas de build, pruebas automatizadas o pipelines de CI que usan named pipes.",
+        "Configuraciones de logging o backup que redirigen datos a través de un FIFO.",
+        "Administradores que usan mkfifo de forma manual para tareas puntuales."
+      ],
+      "response_steps": [
+        "Verifica la legitimidad con el dueño del sistema o del script antes de actuar.",
+        "Si se confirma actividad maliciosa, aísla el host y termina los procesos asociados al FIFO y a la conexión de red.",
+        "Bloquea la IP o el dominio remoto involucrado y busca conexiones a ese destino desde otros hosts.",
+        "Identifica y corrige el vector de entrada (aplicación vulnerable, credenciales comprometidas). Elimina la persistencia y los artefactos tras preservar la evidencia.",
+        "Rota las credenciales expuestas y restaura el servicio desde un estado confiable."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque mkfifo tiene muchos usos legítimos y la regla no evalúa argumentos ni contexto, así que necesita correlación para ser concluyente."
+    },
+    "en": {
+      "summary": "The mkfifo utility was run on a Linux host to create a named pipe (FIFO). This is common in legitimate use, but it is also a standard building block of reverse shells and attacker inter-process channels.",
+      "what_it_detects": "Any Linux process creation event whose Image ends with '/mkfifo', whatever the arguments, user or parent process.",
+      "why_it_matters": "Attackers use FIFOs to connect a shell to network tools such as nc or openssl for a reverse shell, or to pass data between malicious processes without writing regular files. Maps to the ATT&CK Execution tactic.",
+      "triage_steps": [
+        "Review CommandLine and note the FIFO path. Paths in /tmp, /dev/shm or /var/tmp, or hidden or very short names like /tmp/f, are more suspicious.",
+        "Inspect ParentImage and ParentCommandLine. A sh -c chain that includes nc, ncat, telnet, openssl, bash -i or cat on the same FIFO points to a reverse shell.",
+        "On the same host, within +/- 15 minutes, look for the processes that opened the FIFO and for outbound connections to unusual IPs or ports.",
+        "Identify the user. If it is a web service account (www-data, apache, nginx), suspect application exploitation and review that application's access logs.",
+        "Check whether the parent is a known script, service or cron job, and whether this pattern recurs in the host baseline.",
+        "Look for earlier alerts on the same host or user, such as downloads, webshells or persistence changes."
+      ],
+      "false_positives": [
+        "Admin scripts, installers or container entrypoints that create FIFOs for inter-process communication.",
+        "Build systems, automated tests or CI pipelines that use named pipes.",
+        "Logging or backup setups that stream data through a FIFO.",
+        "Administrators running mkfifo by hand for one-off tasks."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the system or script owner before acting.",
+        "If you confirm malicious activity, isolate the host and kill the processes tied to the FIFO and the network connection.",
+        "Block the remote IP or domain and hunt for connections to it from other hosts.",
+        "Find and fix the entry vector (vulnerable application, compromised credentials). Preserve evidence first, then remove persistence and artifacts.",
+        "Rotate exposed credentials and restore the service from a trusted state."
+      ],
+      "severity_rationale": "Low fits because mkfifo has many legitimate uses and the rule checks neither arguments nor context, so an alert needs correlation before it means anything."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "mkfifo started by a shell running as www-data creates a short-named FIFO in /tmp",
+        "event": {
+          "Image": "/usr/bin/mkfifo",
+          "CommandLine": "mkfifo /tmp/f",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c rm /tmp/f;mkfifo /tmp/f",
+          "User": "www-data",
+          "ProcessId": 48211,
+          "ParentProcessId": 48209,
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-01.example.com"
+        }
+      },
+      {
+        "description": "An admin creates a FIFO with explicit permissions from an interactive bash session",
+        "event": {
+          "Image": "/bin/mkfifo",
+          "CommandLine": "mkfifo -m 600 /var/run/backup.pipe",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 3120,
+          "ParentProcessId": 2988,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A FIFO created with mknod instead of mkfifo; the Image does not end in /mkfifo",
+        "event": {
+          "Image": "/usr/bin/mknod",
+          "CommandLine": "mknod /tmp/pipe1 p",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 5530,
+          "ParentProcessId": 5401,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "A shell whose command line mentions mkfifo; the Image is bash, not mkfifo",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash /opt/scripts/mkfifo_helper.sh",
+          "ParentImage": "/usr/sbin/cron",
+          "ParentCommandLine": "/usr/sbin/cron -f",
+          "User": "root",
+          "ProcessId": 7702,
+          "ParentProcessId": 812,
+          "Computer": "app-02.example.org"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

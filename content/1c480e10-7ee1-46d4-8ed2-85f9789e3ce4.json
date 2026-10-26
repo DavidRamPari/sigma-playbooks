@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "1c480e10-7ee1-46d4-8ed2-85f9789e3ce4",
+    "title": "Group Policy Abuse for Privilege Addition",
+    "level": "medium",
+    "status": "test",
+    "author": "Elastic, Josh Nickels, Marius Rothenbücher",
+    "path": "windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1484.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el atributo gPCMachineExtensionNames de un objeto de directiva de grupo (GPO) con los GUID de la extensión de Configuración de seguridad. Puede indicar el uso de una GPO para otorgar derechos o agregar administradores locales en todos los equipos donde se aplica.",
+      "what_it_detects": "Evento de seguridad 5136 (modificación de objeto de directorio) con AttributeLDAPDisplayName gPCMachineExtensionNames y AttributeValue que contiene 827D319E-6EAC-11D2-A4EA-00C04F79F83A (extensión de seguridad del lado cliente) o 803E14A0-B4FB-11D0-A0D0-00A0C90F574B (su extensión de herramienta). Requiere la auditoría de cambios del servicio de directorio.",
+      "why_it_matters": "La modificación de directivas de grupo (T1484.001) permite a quien tenga escritura sobre una GPO distribuir privilegios como SeDebugPrivilege o membresías de Grupos restringidos a muchos equipos. Las herramientas de abuso de GPO lo hacen para escalar privilegios y moverse lateralmente.",
+      "triage_steps": [
+        "Obtenga el GUID de la GPO desde ObjectDN, identifique su nombre y las OU o sitios que la vinculan (gPLink).",
+        "Revise SubjectUserName y SubjectDomainName: ¿es un administrador de GPO conocido y existe un ticket de cambio?",
+        "Use SubjectLogonId para ubicar el evento 4624 correspondiente y obtener la estación e IP de origen.",
+        "Revise otros eventos 5136 sobre la misma GPO en +/- 15 minutos: versionNumber, gPCUserExtensionNames y OperationType (valor agregado o eliminado).",
+        "Inspeccione en SYSVOL Policies\\{GUID}\\Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf las secciones [Privilege Rights] o [Group Membership] nuevas.",
+        "Busque eventos 5145 o 4663 de escritura en SYSVOL del mismo usuario y alertas previas para esa cuenta o equipo.",
+        "En equipos de las OU vinculadas, busque eventos 4732 (miembros agregados a Administradores locales) posteriores al cambio."
+      ],
+      "false_positives": [
+        "Administradores autorizados que editan Asignación de derechos de usuario o Grupos restringidos desde GPMC; el usuario figura en SubjectUserName.",
+        "Líneas base de hardening planificadas o importaciones/restauraciones de GPO que incluyen Configuración de seguridad.",
+        "Herramientas de gestión o migración de GPO ejecutadas por cuentas de servicio aprobadas."
+      ],
+      "response_steps": [
+        "Confirme el cambio con el responsable de la GPO o el ticket antes de actuar.",
+        "Si no está autorizado, desvincule la GPO o restáurela desde un respaldo confiable y compare GptTmpl.inf con el respaldo.",
+        "Deshabilite o restablezca la cuenta de SubjectUserName, revoque sus sesiones y revise quién tiene permisos de escritura sobre la GPO.",
+        "En los equipos afectados, elimine administradores y privilegios no autorizados, ejecute gpupdate y busque actividad posterior de las cuentas agregadas."
+      ],
+      "severity_rationale": "Media es adecuada porque las ediciones legítimas generan el mismo evento, pero un cambio no autorizado puede otorgar privilegios en todo el dominio y requiere validación rápida."
+    },
+    "en": {
+      "summary": "A Group Policy Object's gPCMachineExtensionNames attribute was written with the Security Settings extension GUIDs. Someone may be using a GPO to grant user rights or add local administrators on every computer the GPO applies to.",
+      "what_it_detects": "Security event 5136 (directory object modified) where AttributeLDAPDisplayName is gPCMachineExtensionNames and AttributeValue contains 827D319E-6EAC-11D2-A4EA-00C04F79F83A (Security client-side extension) or 803E14A0-B4FB-11D0-A0D0-00A0C90F574B (its tool extension). Requires Audit Directory Service Changes.",
+      "why_it_matters": "Group Policy modification (T1484.001) lets anyone with write access to a GPO push privileges such as SeDebugPrivilege or Restricted Groups membership to many hosts at once. GPO abuse tools commonly do this for privilege escalation and lateral movement.",
+      "triage_steps": [
+        "Read ObjectDN to get the GPO GUID, then find the GPO's display name and the OUs or sites that link it (gPLink).",
+        "Check SubjectUserName and SubjectDomainName: is this account a known GPO administrator, and is a change ticket open?",
+        "Use SubjectLogonId to find the matching 4624 logon and get the source workstation and IP.",
+        "Review other 5136 events for the same GPO within +/- 15 minutes: versionNumber, gPCUserExtensionNames, and OperationType value added or deleted.",
+        "Inspect SYSVOL Policies\\{GUID}\\Machine\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf for new [Privilege Rights] or [Group Membership] entries.",
+        "Check 5145 or 4663 events for SYSVOL writes by the same user, plus earlier alerts for that account or host.",
+        "On computers in linked OUs, look for 4732 events (members added to local Administrators) after the change."
+      ],
+      "false_positives": [
+        "Authorized administrators editing User Rights Assignment or Restricted Groups in a GPO through GPMC; the user appears in SubjectUserName.",
+        "Planned hardening baselines or GPO imports/restores that include Security Settings.",
+        "Automated GPO management or migration tools run by approved service accounts."
+      ],
+      "response_steps": [
+        "Confirm the change with the GPO owner or change ticket before acting.",
+        "If unauthorized, unlink the GPO or restore it from a known-good backup, then compare GptTmpl.inf against the backup.",
+        "Disable or reset the account in SubjectUserName and revoke its sessions; review who has write rights on the GPO.",
+        "On affected hosts, remove unauthorized local admins and privileges, run gpupdate, and hunt for follow-on activity from the added accounts."
+      ],
+      "severity_rationale": "Medium fits because legitimate GPO security edits produce the same event, but an unauthorized change can grant privileges domain-wide, so each alert needs prompt validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Non-admin account adds the Security Settings CSE pair to a GPO linked to workstations, as GPO abuse tooling does.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectDN": "CN={6AC1786C-016F-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=andes,DC=example,DC=com",
+          "ObjectClass": "groupPolicyContainer",
+          "AttributeLDAPDisplayName": "gPCMachineExtensionNames",
+          "AttributeValue": "[{35378EAC-683F-11D2-A89A-00C04FBBCFA2}{D02B1F72-3407-48AE-BA88-E8213C6761F1}][{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]",
+          "OperationType": "%%14674"
+        }
+      },
+      {
+        "description": "Only the Security extension GUID written in lowercase; matching is case-insensitive.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "SubjectUserName": "svc-backup",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN={A1B2C3D4-0000-4000-8000-000000000142},CN=Policies,CN=System,DC=andes,DC=example,DC=com",
+          "ObjectClass": "groupPolicyContainer",
+          "AttributeLDAPDisplayName": "gPCMachineExtensionNames",
+          "AttributeValue": "[{827d319e-6eac-11d2-a4ea-00c04f79f83a}]",
+          "OperationType": "%%14674"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "gPCMachineExtensionNames updated with only the Registry policy extension, no Security Settings GUIDs.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "gpo-admin",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN={A1B2C3D4-0000-4000-8000-000000000142},CN=Policies,CN=System,DC=andes,DC=example,DC=com",
+          "ObjectClass": "groupPolicyContainer",
+          "AttributeLDAPDisplayName": "gPCMachineExtensionNames",
+          "AttributeValue": "[{35378EAC-683F-11D2-A89A-00C04FBBCFA2}{D02B1F72-3407-48AE-BA88-E8213C6761F1}]",
+          "OperationType": "%%14674"
+        }
+      },
+      {
+        "description": "Security GUID present but in gPCUserExtensionNames, not the machine attribute.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "gpo-admin",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN={A1B2C3D4-0000-4000-8000-000000000142},CN=Policies,CN=System,DC=andes,DC=example,DC=com",
+          "ObjectClass": "groupPolicyContainer",
+          "AttributeLDAPDisplayName": "gPCUserExtensionNames",
+          "AttributeValue": "[{827D319E-6EAC-11D2-A4EA-00C04F79F83A}{803E14A0-B4FB-11D0-A0D0-00A0C90F574B}]",
+          "OperationType": "%%14674"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

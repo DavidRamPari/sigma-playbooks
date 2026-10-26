@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "cd185561-4760-45d6-a63e-a51325112cae",
+    "title": "Live Memory Dump Using Powershell",
+    "level": "high",
+    "status": "test",
+    "author": "Max Altgelt (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_memorydump_getstoragediagnosticinfo.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_memorydump_getstoragediagnosticinfo.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell ejecutó Get-StorageDiagnosticInfo con el parámetro -IncludeLiveDump, que genera un volcado de memoria en vivo del equipo. Un atacante puede usar ese volcado para extraer credenciales sin conexión.",
+      "what_it_detects": "Eventos de Script Block Logging (ID 4104) donde ScriptBlockText contiene a la vez 'Get-StorageDiagnosticInfo' y '-IncludeLiveDump'. Este cmdlet del módulo Storage recopila diagnósticos y, con ese parámetro, agrega un volcado de memoria en vivo en DestinationPath.",
+      "why_it_matters": "Un volcado de memoria en vivo puede contener secretos de memoria, como hashes, tickets o contraseñas. Si se copia fuera del equipo y se analiza sin conexión, permite el robo de credenciales (MITRE ATT&CK T1003, OS Credential Dumping) con una herramienta nativa y firmada.",
+      "triage_steps": [
+        "Revisa el ScriptBlockText completo: DestinationPath, StorageSubSystemFriendlyName y si el bloque forma parte de un script más grande (ScriptBlockId, MessageNumber/MessageTotal).",
+        "Identifica el usuario y el host. Confirma si la cuenta pertenece al equipo de soporte de almacenamiento o de infraestructura y si existe un ticket de diagnóstico.",
+        "Busca el proceso padre de powershell.exe en la telemetría de procesos (4688/Sysmon 1): ¿consola interactiva, tarea programada, WinRM o un documento de Office?",
+        "Revisa la carpeta de destino: tamaño de los archivos .dmp/.zip creados y si se copiaron, comprimieron o borraron después.",
+        "Pivota en el mismo host +/- 15 minutos: conexiones de red salientes, transferencias SMB/HTTP grandes, uso de 7z/rar y otros bloques de script.",
+        "Busca alertas previas del mismo usuario o host relacionadas con credenciales, movimiento lateral o elevación de privilegios."
+      ],
+      "false_positives": [
+        "Diagnóstico legítimo de Storage Spaces, clústeres o S2D realizado por administradores o a pedido del soporte de Microsoft.",
+        "Scripts de soporte o recopilación de logs aprobados que incluyen el volcado en vivo para un caso abierto."
+      ],
+      "response_steps": [
+        "Verifica con el usuario y su responsable si la ejecución estaba autorizada y vinculada a un caso de soporte.",
+        "Si no está autorizada, aísla el endpoint y preserva el volcado y los logs de PowerShell como evidencia antes de eliminar nada.",
+        "Determina si el volcado salió del equipo; de ser así, trata como comprometidas las credenciales de las sesiones activas en el host.",
+        "Restablece contraseñas e invalida tickets de las cuentas expuestas, priorizando cuentas privilegiadas y de servicio.",
+        "Restringe el uso del cmdlet a administradores autorizados y documenta las excepciones legítimas."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el volcado en vivo rara vez se usa fuera de un diagnóstico planificado y puede exponer credenciales de todo el equipo."
+    },
+    "en": {
+      "summary": "A PowerShell script ran Get-StorageDiagnosticInfo with -IncludeLiveDump, which creates a live memory dump of the machine. An attacker can use that dump to extract credentials offline.",
+      "what_it_detects": "Script Block Logging events (ID 4104) where ScriptBlockText contains both 'Get-StorageDiagnosticInfo' and '-IncludeLiveDump'. This Storage module cmdlet collects diagnostics and, with that switch, writes a live memory dump to DestinationPath.",
+      "why_it_matters": "A live memory dump can hold in-memory secrets such as hashes, tickets or passwords. Copied off the host and analyzed offline, it enables credential theft (MITRE ATT&CK T1003, OS Credential Dumping) using a native, signed tool.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: DestinationPath, StorageSubSystemFriendlyName, and whether it belongs to a larger script (ScriptBlockId, MessageNumber/MessageTotal).",
+        "Identify the user and host. Confirm whether the account belongs to storage or infrastructure staff and whether a diagnostic ticket exists.",
+        "Find the parent of powershell.exe in process telemetry (4688/Sysmon 1): interactive console, scheduled task, WinRM or an Office document?",
+        "Check the destination folder: size of created .dmp/.zip files and whether they were later copied, compressed or deleted.",
+        "Pivot on the same host +/- 15 minutes: outbound connections, large SMB/HTTP transfers, 7z/rar usage and other script blocks.",
+        "Look for earlier alerts for the same user or host involving credentials, lateral movement or privilege escalation."
+      ],
+      "false_positives": [
+        "Legitimate Storage Spaces, cluster or S2D diagnostics by administrators or requested by Microsoft support.",
+        "Approved support or log-collection scripts that include the live dump for an open case."
+      ],
+      "response_steps": [
+        "Verify with the user and their manager whether the run was authorized and tied to a support case.",
+        "If unauthorized, isolate the endpoint and preserve the dump and PowerShell logs as evidence before deleting anything.",
+        "Determine whether the dump left the host; if so, treat credentials of sessions active on the host as compromised.",
+        "Reset passwords and invalidate tickets for exposed accounts, prioritizing privileged and service accounts.",
+        "Restrict use of the cmdlet to authorized administrators and document legitimate exceptions."
+      ],
+      "severity_rationale": "High fits because live dumps are rarely taken outside planned diagnostics and can expose credentials for the whole machine."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Live memory dump written to a temp folder by a user session",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName \"Windows Storage on WS-0142\" -IncludeLiveDump -DestinationPath C:\\Users\\Public\\diag",
+          "ScriptBlockId": "5b1f2c3a-8d4e-4f6a-9b0c-1d2e3f4a5b6c",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "UserID": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Lowercase variant inside a larger script that compresses the output",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS01.andes.example.com",
+          "ScriptBlockText": "$ss = (Get-StorageSubSystem)[0].FriendlyName; get-storagediagnosticinfo -StorageSubSystemFriendlyName $ss -includelivedump -DestinationPath C:\\ProgramData\\t; Compress-Archive C:\\ProgramData\\t C:\\ProgramData\\t.zip",
+          "ScriptBlockId": "a7c9e1f3-2b4d-4c6e-8f0a-1b3c5d7e9f20",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "UserID": "ANDES\\svc-backup"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine storage diagnostics collection without the live dump switch",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-S2D02.andes.example.com",
+          "ScriptBlockText": "Get-StorageDiagnosticInfo -StorageSubSystemFriendlyName \"Clustered Windows Storage on S2D-CL01\" -DestinationPath D:\\Diag\\Case1234",
+          "ScriptBlockId": "0d2f4b6a-1c3e-4a5b-8c7d-9e0f1a2b3c4d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "UserID": "ANDES\\mrodriguez"
+        }
+      },
+      {
+        "description": "Help lookup for the cmdlet, no dump parameter",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockText": "Get-Help Get-StorageDiagnosticInfo -Detailed",
+          "ScriptBlockId": "3e5a7c9b-4d6f-4b8a-9c1e-2f3a4b5c6d7e",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "UserID": "ANDES\\lgomez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "c649a6c7-cd8c-4a78-9c04-000fc76df954",
+    "title": "Potentially Suspicious Wuauclt Network Connection",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/network_connection/net_connection_win_wuauclt_network_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/network_connection/net_connection_win_wuauclt_network_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "wuauclt.exe, ejecutado con /RunHandlerComServer, abrió una conexión de red hacia una IP pública que no pertenece a los rangos de Microsoft excluidos. Puede indicar que se usa el cliente de Windows Update para cargar una DLL arbitraria y comunicarse con infraestructura externa.",
+      "what_it_detects": "Eventos de conexión de red (Sysmon EventID 3 enriquecido con CommandLine) donde Image contiene 'wuauclt' y CommandLine contiene ' /RunHandlerComServer'. Excluye destinos privados, loopback, link-local, rangos de Microsoft y líneas de comando que cargan UpdateDeploy.dll legítimo desde C:\\Windows\\UUS o WinSxS.",
+      "why_it_matters": "wuauclt.exe es un binario firmado por Microsoft. Un atacante puede pasarle /UpdateDeploymentProvider con una DLL propia y ejecutar código bajo un proceso confiable (T1218, ejecución de proxy mediante binarios del sistema). Así evade controles y puede lograr comando y control o exfiltración.",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique la DLL pasada en /UpdateDeploymentProvider o /DeploymentHandlerFullPath y confirme si está fuera de C:\\Windows\\UUS o WinSxS.",
+        "Obtenga el hash de esa DLL, su firma digital, fecha de creación y quién la escribió; consulte reputación en sus fuentes de inteligencia.",
+        "Investigue DestinationIp, DestinationPort y DestinationHostname: reputación, ASN, geolocalización y si otros endpoints se conectan al mismo destino.",
+        "Revise ParentImage y el árbol de procesos: wuauclt lanzado por cmd, PowerShell, Office o scripts es muy sospechoso.",
+        "Busque en el mismo host, +/- 15 minutos, procesos hijos de wuauclt, inyección de procesos, creación de archivos DLL y otras conexiones salientes.",
+        "Verifique el User del proceso y su actividad reciente de inicio de sesión en otros equipos.",
+        "Consulte alertas anteriores del mismo host, usuario o IP de destino."
+      ],
+      "false_positives": [
+        "Actualizaciones legítimas de Windows que usan rutas de UpdateDeploy.dll no cubiertas por los filtros (por ejemplo, nuevas rutas de paquetes UUS).",
+        "Conexiones a CDN o rangos de Microsoft no incluidos en la lista de exclusión.",
+        "Herramientas de gestión de parches de terceros que invocan wuauclt con parámetros poco comunes."
+      ],
+      "response_steps": [
+        "Valide la DLL y el destino; si son legítimos de Microsoft, documente y proponga ajustar el filtro.",
+        "Si se confirma actividad maliciosa, aísle el endpoint de la red y bloquee la IP o dominio de destino en el perímetro.",
+        "Preserve evidencia: DLL, memoria del proceso y registros antes de terminar el proceso.",
+        "Elimine la DLL y cualquier mecanismo de persistencia asociado tras la verificación.",
+        "Restablezca credenciales del usuario afectado y busque el mismo hash o comando en toda la flota."
+      ],
+      "severity_rationale": "Nivel medio: el patrón es poco común y de alto valor, pero hay actualizaciones legítimas con rutas o destinos no filtrados que pueden generarlo."
+    },
+    "en": {
+      "summary": "wuauclt.exe running with /RunHandlerComServer connected to a public IP outside the excluded Microsoft ranges. The Windows Update client may be loading an arbitrary DLL and talking to external infrastructure.",
+      "what_it_detects": "Network connection events (Sysmon EventID 3 enriched with CommandLine) where Image contains 'wuauclt' and CommandLine contains ' /RunHandlerComServer'. Private, loopback, link-local and listed Microsoft ranges are excluded, as are command lines loading the genuine UpdateDeploy.dll from C:\\Windows\\UUS or WinSxS.",
+      "why_it_matters": "wuauclt.exe is Microsoft-signed. An attacker can pass /UpdateDeploymentProvider with their own DLL to run code inside a trusted process (T1218, system binary proxy execution), evading controls and enabling command and control or exfiltration.",
+      "triage_steps": [
+        "Read the full CommandLine: identify the DLL passed via /UpdateDeploymentProvider or /DeploymentHandlerFullPath and check whether it lives outside C:\\Windows\\UUS or WinSxS.",
+        "Collect the DLL hash, signature, creation time and writing process; check reputation in threat intelligence.",
+        "Investigate DestinationIp, DestinationPort and DestinationHostname: reputation, ASN, geolocation and whether other endpoints contact it.",
+        "Review ParentImage and the process tree; wuauclt started by cmd, PowerShell, Office or scripts is highly suspicious.",
+        "On the same host within +/- 15 minutes, look for wuauclt child processes, injection, new DLL files and other outbound connections.",
+        "Check the process User and their recent logons to other systems.",
+        "Review earlier alerts for the same host, user or destination IP."
+      ],
+      "false_positives": [
+        "Legitimate Windows updates using UpdateDeploy.dll paths not covered by the filters, such as new UUS package paths.",
+        "Connections to Microsoft CDN or ranges missing from the exclusion list.",
+        "Third-party patch management tools invoking wuauclt with unusual parameters."
+      ],
+      "response_steps": [
+        "Validate the DLL and destination; if genuinely Microsoft, document it and propose a filter tuning.",
+        "If malicious, isolate the endpoint and block the destination IP or domain at the perimeter.",
+        "Preserve evidence (DLL, process memory, logs) before killing the process.",
+        "After verification, remove the DLL and any related persistence.",
+        "Reset the affected user's credentials and hunt for the same hash or command line fleet-wide."
+      ],
+      "severity_rationale": "Medium: the pattern is rare and valuable, but legitimate updates with unfiltered paths or destinations can still trigger it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "wuauclt loads a DLL from a user-writable folder via /UpdateDeploymentProvider and connects to a public non-Microsoft IP",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\wuauclt.exe",
+          "CommandLine": "\"C:\\Windows\\System32\\wuauclt.exe\" /UpdateDeploymentProvider C:\\Users\\Public\\Downloads\\updhelper.dll /RunHandlerComServer",
+          "ProcessId": 6120,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.4.142",
+          "SourcePort": 51544,
+          "DestinationIp": "203.0.113.50",
+          "DestinationPort": 443,
+          "DestinationHostname": "cdn-update.example.org"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Windows Update deployment handler loading UpdateDeploy.dll from C:\\Windows\\UUS (excluded by filter_main_uus)",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\WINDOWS\\uus\\AMD64\\wuauclt.exe",
+          "CommandLine": "\"C:\\WINDOWS\\uus\\AMD64\\wuauclt.exe\" /DeploymentHandlerFullPath \\\\?\\C:\\Windows\\UUS\\AMD64\\UpdateDeploy.dll /ClassId aaa256e1-5b21-4993-9188-18f07ccb3b98 /RunHandlerComServer",
+          "ProcessId": 4388,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.4.142",
+          "SourcePort": 51610,
+          "DestinationIp": "198.51.100.25",
+          "DestinationPort": 443
+        }
+      },
+      {
+        "description": "Suspicious wuauclt command line but connection goes to an internal WSUS server in 10.0.0.0/8 (excluded by filter_main_ip)",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\wuauclt.exe",
+          "CommandLine": "\"C:\\Windows\\System32\\wuauclt.exe\" /UpdateDeploymentProvider C:\\Users\\Public\\Downloads\\updhelper.dll /RunHandlerComServer",
+          "ProcessId": 6120,
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "10.20.4.142",
+          "SourcePort": 51545,
+          "DestinationIp": "10.20.1.15",
+          "DestinationPort": 8530
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

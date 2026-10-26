@@ -1,0 +1,117 @@
+{
+  "rule": {
+    "id": "e4f93c99-396f-47c8-bb0f-201b1fa69034",
+    "title": "Potential Data Exfiltration Via Audio File",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_audio_exfiltration.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_audio_exfiltration.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell construyó un archivo WAV a mano con BinaryWriter y bytes de cabecera RIFF/WAVE. Puede ser un intento de disfrazar datos arbitrarios como audio para evadir controles DLP y exfiltrarlos.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene '[System.Math]::', '[IO.FileMode]::' y 'BinaryWriter', junto con los bytes hexadecimales de una cabecera WAV ('RIFF', 'WAVE' y 0xAC de la frecuencia de muestreo), como en la PoC bin2wav.ps1.",
+      "why_it_matters": "Convertir documentos o binarios en archivos de audio permite sacarlos de la organización por canales que suelen confiar en multimedia (correo, nube, mensajería), sin que los controles DLP inspeccionen el contenido real. Corresponde a la táctica de exfiltración de ATT&CK.",
+      "triage_steps": [
+        "Lee el ScriptBlockText completo; si MessageTotal es mayor que 1, reconstruye todas las partes con el mismo ScriptBlockId.",
+        "Identifica el archivo de origen leído (ReadAllBytes, Get-Content) y la ruta del .wav generado; valora la sensibilidad del archivo de origen.",
+        "Identifica el proceso PowerShell y su ParentImage (Sysmon 1 o 4688): ¿fue interactivo, desde una macro, una tarea programada o un acceso remoto?",
+        "Revisa la creación de archivos .wav en el mismo host (Sysmon 11) dentro de +/- 15 minutos, su tamaño y ubicación.",
+        "Busca actividad de red o subidas en ese intervalo: conexiones de powershell.exe, navegadores, clientes de nube o correo con adjuntos .wav.",
+        "Valida con el usuario o su jefe si existe una razón de negocio; revisa alertas previas del mismo usuario y host."
+      ],
+      "false_positives": [
+        "Desarrolladores o ingenieros de audio que generan archivos WAV de prueba o tonos sintéticos con PowerShell.",
+        "Pruebas autorizadas de DLP o ejercicios de red team usando herramientas como bin2wav.ps1 de PSBits.",
+        "Scripts internos de conversión de formatos multimedia que escriben cabeceras WAV manualmente."
+      ],
+      "response_steps": [
+        "Preserva el script, el archivo .wav y el archivo de origen; calcula su hash y decodifica el WAV para confirmar si contiene datos no audio.",
+        "Si se confirma exfiltración, aísla el endpoint y bloquea los destinos de red o cuentas de nube usados para la subida.",
+        "Suspende o restablece las credenciales del usuario implicado y revisa otros hosts con el mismo script o hash.",
+        "Determina qué datos salieron, notifica a los responsables de datos y elimina el script o persistencia tras documentar la evidencia."
+      ],
+      "severity_rationale": "Es nivel medio porque la técnica es poco común en uso legítimo pero solo indica preparación de datos; la exfiltración real debe confirmarse con otros eventos."
+    },
+    "en": {
+      "summary": "A PowerShell script hand-built a WAV file using BinaryWriter and RIFF/WAVE header bytes. This may be an attempt to disguise arbitrary data as audio to bypass DLP and exfiltrate it.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains '[System.Math]::', '[IO.FileMode]::' and 'BinaryWriter' plus the hex bytes of a WAV header ('RIFF', 'WAVE' and 0xAC from the sample rate), as in the bin2wav.ps1 PoC.",
+      "why_it_matters": "Wrapping documents or binaries in audio files lets attackers move them out through channels that trust media (email, cloud, chat) while DLP never inspects the real content. This maps to the ATT&CK Exfiltration tactic.",
+      "triage_steps": [
+        "Read the full ScriptBlockText; if MessageTotal is above 1, rebuild all parts sharing the same ScriptBlockId.",
+        "Identify the source file read (ReadAllBytes, Get-Content) and the output .wav path; assess how sensitive the source is.",
+        "Identify the PowerShell process and its ParentImage (Sysmon 1 or 4688): interactive, macro, scheduled task or remote session?",
+        "Check .wav file creation on the same host (Sysmon 11) within +/- 15 minutes, including size and location.",
+        "Look for network activity or uploads in that window: powershell.exe connections, browsers, cloud sync or mail clients sending .wav attachments.",
+        "Confirm a business reason with the user or manager; review earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Developers or audio engineers generating test WAV files or synthetic tones with PowerShell.",
+        "Authorized DLP tests or red team exercises using tools such as PSBits bin2wav.ps1.",
+        "Internal media conversion scripts that write WAV headers manually."
+      ],
+      "response_steps": [
+        "Preserve the script, the .wav and the source file; hash them and decode the WAV to confirm it holds non-audio data.",
+        "If exfiltration is confirmed, isolate the endpoint and block the network destinations or cloud accounts used for upload.",
+        "Suspend or reset the user's credentials and hunt other hosts for the same script or hash.",
+        "Determine what data left, notify data owners, and remove the script or persistence after evidence is documented."
+      ],
+      "severity_rationale": "Medium fits because this technique is rare in legitimate use but only shows data staging; actual exfiltration must be confirmed with other events."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "bin2wav-style script wrapping a spreadsheet in a WAV file with BinaryWriter and RIFF/WAVE header bytes",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "7f3c2a10-5b4e-4d2a-9c61-0e8b1d2f4a77",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\conv.ps1",
+          "ScriptBlockText": "$in = [IO.File]::ReadAllBytes('C:\\Users\\jperez\\Documents\\finanzas.xlsx'); $fs = New-Object IO.FileStream('C:\\Users\\Public\\Music\\track01.wav', [IO.FileMode]::Create); $bw = New-Object IO.BinaryWriter($fs); $len = [System.Math]::Ceiling($in.Length / 4) * 4; $bw.Write([byte[]](0x52,0x49,0x46,0x46)); $bw.Write([uint32]($len + 36)); $bw.Write([byte[]](0x57,0x41,0x56,0x45)); $bw.Write([uint32]0xAC44); $bw.Write($in); $bw.Close()"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Log archiving script using BinaryWriter and System.Math but no WAV header bytes",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-LOG-01.andes.example.com",
+          "ScriptBlockId": "b1d9e4c2-3a7f-4e10-8f2b-6c5d0a9e1b33",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Pack-Logs.ps1",
+          "ScriptBlockText": "$fs = New-Object IO.FileStream('D:\\Archive\\logs.bin', [IO.FileMode]::Append); $bw = New-Object IO.BinaryWriter($fs); $chunks = [System.Math]::Floor($data.Length / 1024); $bw.Write([int]$chunks); $bw.Write($data); $bw.Close()"
+        }
+      },
+      {
+        "description": "Test-tone generator with WAV header bytes written via WriteAllBytes, without BinaryWriter or IO.FileMode",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "4e6a8c01-9d2b-4f7e-a3c5-2b1f0d7e9a64",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\mrojas\\Tools\\tone.ps1",
+          "ScriptBlockText": "$hdr = [byte[]](0x52,0x49,0x46,0x46,0,0,0,0,0x57,0x41,0x56,0x45); $rate = 0xAC44; $samples = 0..44099 | ForEach-Object { [byte](128 + 100 * [System.Math]::Sin(2 * [System.Math]::PI * 440 * $_ / $rate)) }; [System.IO.File]::WriteAllBytes('C:\\Users\\mrojas\\tone.wav', $hdr + $samples)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

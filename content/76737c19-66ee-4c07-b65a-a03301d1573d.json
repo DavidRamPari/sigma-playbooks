@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "76737c19-66ee-4c07-b65a-a03301d1573d",
+    "title": "GCP Break-glass Container Workload Deployed",
+    "level": "medium",
+    "status": "test",
+    "author": "Bryan Lim",
+    "path": "cloud/gcp/audit/gcp_breakglass_container_workload_deployed.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_breakglass_container_workload_deployed.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un pod en un clúster GKE con la anotación break-glass, que omite la validación de Binary Authorization. Puede ser un despliegue de emergencia autorizado o un intento de ejecutar una imagen no confiable.",
+      "what_it_detects": "Eventos de Admin Activity de Cloud Audit Logs con methodName io.k8s.core.v1.pods.create sobre recursos k8s_cluster, cuya solicitud contiene la anotación image-policy.k8s.io/break-glass.",
+      "why_it_matters": "Binary Authorization impide que se ejecuten imágenes sin firma o sin atestación. Si se usa break-glass sin autorización, se salta ese control de la cadena de suministro y se pueden ejecutar contenedores maliciosos. Esto corresponde a abuso de mecanismos de control de elevación (T1548).",
+      "triage_steps": [
+        "Identifique al principal (authenticationInfo.principalEmail), el callerIp, el user agent, el clúster, el namespace y el nombre del pod del evento.",
+        "Extraiga la imagen y el digest de la especificación del pod y confirme si cuentan con atestaciones válidas o si están en un registro aprobado.",
+        "Pregunte al equipo dueño del clúster si existe un incidente o ticket de cambio que justifique el uso de break-glass.",
+        "Revise los eventos del mismo principal y del mismo callerIp en +/- 15 minutos: cambios de RBAC, de políticas de Binary Authorization, creación de service accounts o de secrets.",
+        "Revise la configuración del pod: privileged, hostPath, hostNetwork, la service account montada y los comandos de arranque.",
+        "Busque en los logs de Binary Authorization y del contenedor señales de rechazo previo, conexiones salientes o ejecución inesperada.",
+        "Consulte alertas anteriores de break-glass para el mismo principal, clúster o imagen."
+      ],
+      "false_positives": [
+        "Despliegues de emergencia documentados durante un incidente en producción, cuando el pipeline de atestación no está disponible.",
+        "Pruebas planificadas del procedimiento break-glass o ejercicios de recuperación ante desastres.",
+        "Clústeres de desarrollo o de laboratorio donde los ingenieros usan break-glass de forma habitual, aunque no deberían."
+      ],
+      "response_steps": [
+        "Confirme con el principal y su responsable si el despliegue estaba autorizado; si lo estaba, documente la justificación y cierre la alerta.",
+        "Si no estaba autorizado, preserve la evidencia (spec del pod, logs, digest de la imagen) y luego elimine o escale a cero la carga de trabajo.",
+        "Revoque o rote las credenciales del principal y revise sus permisos de RBAC e IAM sobre el clúster.",
+        "Analice la imagen en un entorno aislado y busque otros pods en la organización que usen la misma imagen o la misma anotación.",
+        "Restrinja quién puede usar break-glass y refuerce la política de Binary Authorization en modo enforce."
+      ],
+      "severity_rationale": "Es medium porque break-glass es un mecanismo legítimo de emergencia, pero cada uso omite un control de seguridad y debe justificarse."
+    },
+    "en": {
+      "summary": "A pod was created in a GKE cluster with the break-glass annotation, which bypasses Binary Authorization. It may be an authorized emergency deployment or an attempt to run an untrusted image.",
+      "what_it_detects": "Cloud Audit Logs Admin Activity events with methodName io.k8s.core.v1.pods.create on k8s_cluster resources whose request contains the image-policy.k8s.io/break-glass annotation.",
+      "why_it_matters": "Binary Authorization stops unsigned or unattested images from running. Unauthorized use of break-glass skips this supply-chain control and lets malicious containers run. This maps to abuse of elevation control mechanisms (T1548).",
+      "triage_steps": [
+        "Identify the principal (authenticationInfo.principalEmail), callerIp, user agent, cluster, namespace and pod name from the event.",
+        "Extract the image and digest from the pod spec and check whether they have valid attestations or come from an approved registry.",
+        "Ask the cluster owners whether an incident or change ticket justifies the break-glass use.",
+        "Review events from the same principal and callerIp within +/- 15 minutes: RBAC changes, Binary Authorization policy edits, new service accounts or secrets.",
+        "Inspect the pod spec: privileged, hostPath, hostNetwork, mounted service account and startup commands.",
+        "Check Binary Authorization and container logs for earlier rejections, outbound connections or unexpected execution.",
+        "Look for earlier break-glass alerts for the same principal, cluster or image."
+      ],
+      "false_positives": [
+        "Documented emergency deployments during a production incident while the attestation pipeline is down.",
+        "Planned tests of the break-glass procedure or disaster-recovery drills.",
+        "Development or lab clusters where engineers use break-glass routinely, even though they should not."
+      ],
+      "response_steps": [
+        "Confirm with the principal and their manager whether the deployment was authorized. If it was, record the justification and close the alert.",
+        "If it was not, preserve the evidence (pod spec, logs, image digest), then delete the workload or scale it to zero.",
+        "Revoke or rotate the principal's credentials and review their RBAC and IAM permissions on the cluster.",
+        "Analyze the image in isolation and hunt for other pods using the same image or annotation.",
+        "Restrict who can use break-glass and keep the Binary Authorization policy in enforce mode."
+      ],
+      "severity_rationale": "Medium fits because break-glass is a legitimate emergency mechanism, but each use bypasses a security control and needs a justification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Pod created with the alpha.image-policy.k8s.io/break-glass annotation by a user account, with logName in slash form",
+        "event": {
+          "data.protoPayload.resource.type": "k8s_cluster",
+          "data.protoPayload.logName": "cloudaudit.googleapis.com/activity",
+          "data.protoPayload.methodName": "io.k8s.core.v1.pods.create",
+          "data.protoPayload.authenticationInfo.principalEmail": "jperez@example.com",
+          "data.protoPayload.requestMetadata.callerIp": "203.0.113.45",
+          "data.protoPayload.resourceName": "core/v1/namespaces/payments/pods/debug-shell",
+          "data.protoPayload.request.metadata.annotations": "{\"alpha.image-policy.k8s.io/break-glass\":\"true\"}",
+          "message": "{\"protoPayload\":{\"methodName\":\"io.k8s.core.v1.pods.create\",\"resourceName\":\"core/v1/namespaces/payments/pods/debug-shell\",\"request\":{\"metadata\":{\"name\":\"debug-shell\",\"annotations\":{\"alpha.image-policy.k8s.io/break-glass\":\"true\"}},\"spec\":{\"containers\":[{\"image\":\"registry.example.org/tools/shell:latest\"}]}}}}"
+        }
+      },
+      {
+        "description": "Break-glass pod created by a service account, with logName URL-encoded (%2F)",
+        "event": {
+          "data.protoPayload.resource.type": "k8s_cluster",
+          "data.protoPayload.logName": "cloudaudit.googleapis.com%2Factivity",
+          "data.protoPayload.methodName": "io.k8s.core.v1.pods.create",
+          "data.protoPayload.authenticationInfo.principalEmail": "ci-deployer@example-project.iam.gserviceaccount.com",
+          "data.protoPayload.requestMetadata.callerIp": "198.51.100.20",
+          "data.protoPayload.resourceName": "core/v1/namespaces/default/pods/hotfix-api-7c9f",
+          "message": "{\"protoPayload\":{\"methodName\":\"io.k8s.core.v1.pods.create\",\"request\":{\"metadata\":{\"annotations\":{\"alpha.image-policy.k8s.io/break-glass\":\"true\"}}}}}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal pod creation in the same cluster with no break-glass annotation",
+        "event": {
+          "data.protoPayload.resource.type": "k8s_cluster",
+          "data.protoPayload.logName": "cloudaudit.googleapis.com/activity",
+          "data.protoPayload.methodName": "io.k8s.core.v1.pods.create",
+          "data.protoPayload.authenticationInfo.principalEmail": "ci-deployer@example-project.iam.gserviceaccount.com",
+          "data.protoPayload.requestMetadata.callerIp": "198.51.100.20",
+          "data.protoPayload.resourceName": "core/v1/namespaces/default/pods/api-5d8b",
+          "message": "{\"protoPayload\":{\"methodName\":\"io.k8s.core.v1.pods.create\",\"request\":{\"metadata\":{\"name\":\"api-5d8b\",\"annotations\":{\"app.kubernetes.io/version\":\"1.4.2\"}},\"spec\":{\"containers\":[{\"image\":\"registry.example.org/apps/api@sha256:0000000000000000000000000000000000000000000000000000000000000000\"}]}}}}"
+        }
+      },
+      {
+        "description": "Break-glass annotation present, but the method is a pod deletion, not a creation",
+        "event": {
+          "data.protoPayload.resource.type": "k8s_cluster",
+          "data.protoPayload.logName": "cloudaudit.googleapis.com/activity",
+          "data.protoPayload.methodName": "io.k8s.core.v1.pods.delete",
+          "data.protoPayload.authenticationInfo.principalEmail": "jperez@example.com",
+          "data.protoPayload.requestMetadata.callerIp": "203.0.113.45",
+          "data.protoPayload.resourceName": "core/v1/namespaces/payments/pods/debug-shell",
+          "message": "{\"protoPayload\":{\"methodName\":\"io.k8s.core.v1.pods.delete\",\"response\":{\"metadata\":{\"annotations\":{\"alpha.image-policy.k8s.io/break-glass\":\"true\"}}}}}"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

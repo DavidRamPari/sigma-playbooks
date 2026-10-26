@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "a61a3c56-4ce2-4351-a079-88ae4cbd2b58",
+    "title": "Azure Kubernetes Admission Controller",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_admission_controller.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_admission_controller.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078",
+      "T1552",
+      "T1552.007"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó o modificó una configuración de admission webhook (mutating o validating) en un clúster AKS o Kubernetes conectado con Azure Arc. Puede ser un cambio administrativo legítimo o un mecanismo de persistencia o de robo de credenciales.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName empieza por MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/ o MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/ADMISSIONREGISTRATION.K8S.IO y termina en MUTATINGWEBHOOKCONFIGURATIONS/WRITE o VALIDATINGWEBHOOKCONFIGURATIONS/WRITE.",
+      "why_it_matters": "Un webhook recibe las solicitudes al API server antes de que se apliquen. Uno mutating puede inyectar un contenedor malicioso en cada pod (persistencia) y uno validating puede registrar secrets y tokens (T1552.007, credenciales en la API de contenedores; T1078).",
+      "triage_steps": [
+        "Identifique en el evento el caller (usuario, service principal o managed identity), callerIpAddress, resourceId del clúster y status de la operación.",
+        "Obtenga la configuración: kubectl get mutatingwebhookconfigurations/validatingwebhookconfigurations -o yaml. Revise clientConfig (URL externa o service desconocido), rules, namespaceSelector y failurePolicy.",
+        "Compare el nombre y el backend con componentes conocidos: cert-manager, Gatekeeper/Azure Policy, Kyverno, Istio, Linkerd. Verifique si hay un release de Helm o despliegue GitOps asociado.",
+        "Revise los logs kube-audit del clúster para ver la identidad Kubernetes, el user agent y el contenido exacto del cambio.",
+        "Pivotee sobre el mismo caller y clúster +/- 15 minutos: listClusterAdminCredential, asignaciones de roles, creación de pods, deployments o secrets.",
+        "Busque alertas anteriores del mismo caller o callerIpAddress y confirme si la IP pertenece a rangos corporativos o de CI/CD.",
+        "Valide con el dueño del clúster o con el ticket de cambio si la modificación estaba planificada."
+      ],
+      "false_positives": [
+        "Administradores que despliegan o actualizan controladores de admisión de forma planificada.",
+        "Instalación o actualización con Helm de operadores como cert-manager, Kyverno o Gatekeeper; cert-manager puede reescribir el caBundle periódicamente.",
+        "Add-ons administrados por Azure (Azure Policy, malla de servicios basada en Istio) o pipelines GitOps (Flux, Argo CD)."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del clúster; si es legítimo, documente y considere una exclusión acotada por caller y nombre de webhook.",
+        "Si no está autorizado, exporte el YAML del webhook como evidencia y elimínelo o deshabilítelo tras confirmar que no es crítico para el clúster.",
+        "Revise los pods creados desde el cambio en busca de contenedores inyectados y elimine las cargas comprometidas.",
+        "Rote secrets, tokens de service account y credenciales que pudieron ser interceptados; revoque o deshabilite las credenciales del caller.",
+        "Revise RBAC de Azure y de Kubernetes, limite quién puede escribir admission webhooks y monitoree recurrencias."
+      ],
+      "severity_rationale": "Nivel medio: los cambios de webhooks son comunes en la administración normal, pero un webhook malicioso otorga persistencia y acceso a credenciales en todo el clúster."
+    },
+    "en": {
+      "summary": "A mutating or validating admission webhook configuration was created or changed on an AKS or Azure Arc-connected Kubernetes cluster. This may be routine administration, or it may be persistence or credential theft.",
+      "what_it_detects": "Azure Activity Log events whose operationName starts with MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/ or MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/ADMISSIONREGISTRATION.K8S.IO and ends with MUTATINGWEBHOOKCONFIGURATIONS/WRITE or VALIDATINGWEBHOOKCONFIGURATIONS/WRITE.",
+      "why_it_matters": "Webhooks see API server requests before they are applied. A mutating webhook can inject a malicious container into every pod for persistence. A validating webhook can record secrets and tokens (T1552.007, container API credentials; T1078).",
+      "triage_steps": [
+        "From the event, note the caller (user, service principal or managed identity), callerIpAddress, the cluster resourceId and the operation status.",
+        "Pull the config with kubectl get mutatingwebhookconfigurations or validatingwebhookconfigurations -o yaml. Review clientConfig (external URL or unknown service), rules, namespaceSelector and failurePolicy.",
+        "Compare the name and backend with known components such as cert-manager, Gatekeeper/Azure Policy, Kyverno, Istio and Linkerd. Look for a matching Helm release or GitOps deployment.",
+        "Check the cluster's kube-audit logs for the Kubernetes identity, the user agent and the exact object change.",
+        "For the same caller and cluster within +/- 15 minutes, look for listClusterAdminCredential, role assignments, and new pods, deployments or secrets.",
+        "Search for earlier alerts on the same caller or callerIpAddress, and check whether the IP belongs to corporate or CI/CD ranges.",
+        "Ask the cluster owner, or check the change ticket, to confirm the change was planned."
+      ],
+      "false_positives": [
+        "Administrators deploying or updating admission controllers as planned work.",
+        "Helm installs or upgrades of operators like cert-manager, Kyverno or Gatekeeper. cert-manager may rewrite the caBundle periodically.",
+        "Azure-managed add-ons (Azure Policy, Istio-based service mesh) or GitOps pipelines (Flux, Argo CD)."
+      ],
+      "response_steps": [
+        "Confirm with the cluster owner. If the change is legitimate, document it and consider a narrow exclusion by caller and webhook name.",
+        "If it is unauthorized, export the webhook YAML as evidence. Then delete or disable the webhook once you confirm the cluster does not depend on it.",
+        "Check pods created since the change for injected containers, and remove compromised workloads.",
+        "Rotate any secrets, service account tokens and credentials that may have been intercepted. Revoke or disable the caller's credentials.",
+        "Review Azure and Kubernetes RBAC, restrict who can write admission webhooks, and watch for the change happening again."
+      ],
+      "severity_rationale": "Medium: webhook changes are common in normal administration, but a malicious webhook gives cluster-wide persistence and access to credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user writes a mutating webhook configuration on an AKS managed cluster",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/ADMISSIONREGISTRATION.K8S.IO/MUTATINGWEBHOOKCONFIGURATIONS/WRITE",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-01",
+          "status": "Succeeded",
+          "category": "Administrative",
+          "eventTimestamp": "2024-05-14T10:22:31Z"
+        }
+      },
+      {
+        "description": "Service principal writes a validating webhook configuration on an Azure Arc connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/ADMISSIONREGISTRATION.K8S.IO/VALIDATINGWEBHOOKCONFIGURATIONS/WRITE",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-edge/providers/Microsoft.Kubernetes/connectedClusters/arc-edge-02",
+          "status": "Succeeded",
+          "category": "Administrative",
+          "eventTimestamp": "2024-05-14T11:05:12Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read of mutating webhook configurations; the suffix is not /WRITE",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/ADMISSIONREGISTRATION.K8S.IO/MUTATINGWEBHOOKCONFIGURATIONS/READ",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-01",
+          "status": "Succeeded",
+          "category": "Administrative"
+        }
+      },
+      {
+        "description": "Write of a different admissionregistration object (ValidatingAdmissionPolicies); the suffix does not match",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/ADMISSIONREGISTRATION.K8S.IO/VALIDATINGADMISSIONPOLICIES/WRITE",
+          "caller": "ops-pipeline@example.com",
+          "callerIpAddress": "198.51.100.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-01",
+          "status": "Succeeded",
+          "category": "Administrative"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "rule": {
+    "id": "b140afd9-474b-4072-958e-2ebb435abd68",
+    "title": "Suspicious Get-ADDBAccount Usage",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/powershell/powershell_module/posh_pm_get_addbaccount.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_get_addbaccount.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell registró en module logging una llamada a Get-ADDBAccount (DSInternals) con los parámetros -DatabasePath y -BootKey. Esto indica que alguien intenta extraer los hashes de cuentas de una copia de ntds.dit sin usar un credential dumper clásico.",
+      "what_it_detects": "Eventos de PowerShell module logging (4103) cuyo campo Payload contiene a la vez 'Get-ADDBAccount', 'BootKey ' y 'DatabasePath '. Esa combinación descifra los secretos de una base ntds.dit usando la boot key del hive SYSTEM.",
+      "why_it_matters": "Con ntds.dit y la boot key se obtienen los hashes NTLM y las claves Kerberos de todas las cuentas del dominio, incluida krbtgt. Corresponde a ATT&CK T1003.003 (OS Credential Dumping: NTDS) y permite pass-the-hash o Golden Tickets.",
+      "triage_steps": [
+        "Revise el Payload completo: ruta de -DatabasePath, valor de -BootKey y uso de -All o -SamAccountName para saber cuántas cuentas se consultaron.",
+        "Identifique en ContextInfo el usuario, el host y la Host Application. Determine si el equipo es un controlador de dominio o una estación con una copia de ntds.dit.",
+        "En el mismo host, +/- 15 minutos, busque cómo se obtuvo la base: ntdsutil 'ifm', vssadmin o wmic shadowcopy, esentutl, copia desde \\\\?\\GLOBALROOT o reg save HKLM\\SYSTEM.",
+        "Verifique cómo se instaló DSInternals: Install-Module, descargas desde PowerShell Gallery o GitHub, o carpetas del módulo copiadas a mano.",
+        "Busque la salida generada (exportaciones a archivos, Format-Custom -View HashcatNT) y posibles transferencias de archivos ntds.dit, SYSTEM o hashes hacia fuera del host.",
+        "Revise alertas previas del mismo usuario y host, y después del evento busque autenticaciones anómalas: NTLM desde orígenes inusuales, uso de cuentas privilegiadas, tickets Kerberos raros."
+      ],
+      "false_positives": [
+        "Auditorías de contraseñas autorizadas con DSInternals (por ejemplo Test-PasswordQuality) hechas por el equipo de identidad sobre una copia IFM.",
+        "Pruebas de penetración o ejercicios de red team con alcance aprobado.",
+        "Trabajos forenses o de recuperación ante desastres sobre copias de ntds.dit."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del activo y con el equipo de identidad si existe un cambio, una auditoría o una prueba autorizada que cubra la actividad.",
+        "Si no está autorizada, aísle el host, preserve la memoria y los artefactos, y localice todas las copias de ntds.dit, del hive SYSTEM y de los hashes extraídos.",
+        "Trate todas las credenciales del dominio como comprometidas: restablezca krbtgt dos veces, de forma controlada, y luego las cuentas privilegiadas y de servicio.",
+        "Bloquee o deshabilite la cuenta que ejecutó el comando, busque persistencia y uso de hashes (pass-the-hash, Golden Ticket) y restaure con monitoreo reforzado."
+      ],
+      "severity_rationale": "El nivel high es adecuado: la combinación de parámetros solo sirve para descifrar los secretos de ntds.dit, lo que expone las credenciales de todo el dominio."
+    },
+    "en": {
+      "summary": "PowerShell module logging recorded a Get-ADDBAccount (DSInternals) call with -DatabasePath and -BootKey. Someone is likely extracting account hashes from an ntds.dit copy without a classic credential dumper.",
+      "what_it_detects": "PowerShell module logging events (4103) where Payload contains 'Get-ADDBAccount', 'BootKey ' and 'DatabasePath ' together. That combination decrypts secrets from an ntds.dit database using the SYSTEM hive boot key.",
+      "why_it_matters": "ntds.dit plus the boot key gives NTLM hashes and Kerberos keys for every domain account, including krbtgt. This is ATT&CK T1003.003 (OS Credential Dumping: NTDS) and enables pass-the-hash or Golden Tickets.",
+      "triage_steps": [
+        "Read the full Payload: the -DatabasePath location, the -BootKey value, and whether -All or -SamAccountName shows how many accounts were read.",
+        "From ContextInfo, identify the user, host and Host Application. Determine whether the host is a domain controller or a machine holding a copied ntds.dit.",
+        "On the same host, +/- 15 minutes, find how the database was obtained: ntdsutil 'ifm', vssadmin or wmic shadowcopy, esentutl, GLOBALROOT copies, or reg save HKLM\\SYSTEM.",
+        "Check how DSInternals got there: Install-Module, PowerShell Gallery or GitHub downloads, or manually copied module folders.",
+        "Look for output (exported files, Format-Custom -View HashcatNT) and transfers of ntds.dit, SYSTEM or hash files off the host.",
+        "Review earlier alerts for the same user and host, then hunt for anomalous authentication: NTLM from unusual sources, privileged account use, odd Kerberos tickets."
+      ],
+      "false_positives": [
+        "Authorized password audits with DSInternals (for example Test-PasswordQuality) run by the identity team on an IFM copy.",
+        "Penetration tests or red team exercises with approved scope.",
+        "Forensic or disaster recovery work on ntds.dit copies."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner and identity team whether an approved change, audit or test covers this activity.",
+        "If unauthorized, isolate the host, preserve memory and artifacts, and locate every copy of ntds.dit, the SYSTEM hive and extracted hashes.",
+        "Treat all domain credentials as compromised: reset krbtgt twice in a controlled way, then privileged and service accounts.",
+        "Disable the executing account, hunt for persistence and hash reuse (pass-the-hash, Golden Ticket), and recover under heightened monitoring."
+      ],
+      "severity_rationale": "High fits because this parameter combination only serves to decrypt ntds.dit secrets, which exposes credentials for the whole domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DSInternals Get-ADDBAccount dumping all accounts from a copied ntds.dit with the boot key",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe Command Name = Get-ADDBAccount Command Type = Cmdlet User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Get-ADDBAccount): \"Get-ADDBAccount\" Get-ADDBAccount -All -DatabasePath C:\\Temp\\ifm\\Active Directory\\ntds.dit -BootKey 0123456789abcdef0123456789abcdef ParameterBinding(Get-ADDBAccount): name=\"All\"; value=\"True\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Get-ADDBAccount reading account metadata without a boot key (no secrets decrypted)",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe Command Name = Get-ADDBAccount Command Type = Cmdlet User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Get-ADDBAccount): \"Get-ADDBAccount\" Get-ADDBAccount -All -DatabasePath C:\\Temp\\ifm\\Active Directory\\ntds.dit ParameterBinding(Get-ADDBAccount): name=\"All\"; value=\"True\""
+        }
+      },
+      {
+        "description": "Only Get-BootKey run against a SYSTEM hive, no Get-ADDBAccount or DatabasePath",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = powershell.exe Command Name = Get-BootKey Command Type = Cmdlet User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Get-BootKey): \"Get-BootKey\" Get-BootKey -SystemHivePath C:\\Temp\\ifm\\registry\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

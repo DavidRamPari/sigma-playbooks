@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "d22b4df4-5a67-4859-a578-8c9a0b5af9df",
+    "title": "Azure Network Security Configuration Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_network_security_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_network_security_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó, eliminó o asoció un Network Security Group (NSG) o una de sus reglas en Azure, o se cambió su configuración de diagnóstico. Confirme si el cambio estaba autorizado y si expone recursos o reduce la visibilidad.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es una escritura, eliminación o asociación (JOIN/ACTION) de NSG o de sus security rules, o una escritura de diagnosticSettings sobre un NSG.",
+      "why_it_matters": "Los NSG filtran el tráfico hacia VMs y subredes. Un atacante puede abrir puertos de administración a Internet, borrar reglas de bloqueo o desactivar el registro del NSG. La regla está etiquetada en la táctica Impact de ATT&CK.",
+      "triage_steps": [
+        "Identifique operationName, resourceId (suscripción, grupo de recursos, NSG), caller, callerIpAddress, status y correlationId del evento.",
+        "Revise properties/requestbody: busque reglas Allow inbound con origen Any, 0.0.0.0/0 o Internet, sobre todo hacia los puertos 22, 3389 o de bases de datos.",
+        "En DELETE o JOIN/ACTION, determine qué subredes o NIC quedaron sin protección o fueron asociadas a otro NSG.",
+        "En diagnosticSettings/write, compruebe si se desactivaron logs o se cambió el destino de Log Analytics o Storage.",
+        "Valide si el caller es un administrador conocido, un pipeline de IaC o un service principal esperado, y busque un ticket de cambio asociado.",
+        "Revise los sign-in logs del caller: IP de origen, user agent, ubicación, MFA y si la IP es inusual para esa identidad.",
+        "Pivote sobre el mismo caller y la misma suscripción en +/- 15 minutos: asignaciones de roles, creación de VMs, claves nuevas o eliminación de otros logs.",
+        "Busque alertas anteriores para el mismo caller, callerIpAddress o NSG."
+      ],
+      "false_positives": [
+        "Administradores de red que aplican cambios planificados desde el portal, la CLI o PowerShell.",
+        "Despliegues de Terraform, Bicep, ARM o pipelines de CI/CD que recrean NSG o reglas.",
+        "Servicios administrados de Azure (AKS, Databricks, App Gateway) que actualizan sus propios NSG.",
+        "Políticas de Azure o herramientas de gobernanza que ajustan la configuración de diagnóstico."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del recurso o del cambio si la operación estaba autorizada antes de revertir nada.",
+        "Si no estaba autorizada, restaure la regla o el NSG desde IaC o desde una configuración documentada y vuelva a habilitar los diagnósticos.",
+        "Contenga la identidad: revoque sesiones, restablezca credenciales o rote los secretos del service principal y revise sus roles.",
+        "Revise los NSG flow logs y los recursos expuestos para detectar conexiones entrantes durante la ventana de exposición.",
+        "Documente el incidente y cree exclusiones acotadas para los pipelines legítimos que generen ruido."
+      ],
+      "severity_rationale": "Nivel medio porque estos cambios suelen ser administración legítima, pero uno no autorizado puede exponer servicios o eliminar visibilidad de inmediato."
+    },
+    "en": {
+      "summary": "An Azure Network Security Group (NSG) or one of its rules was written, deleted or joined, or its diagnostic settings were changed. Confirm the change was authorized and whether it exposes resources or reduces visibility.",
+      "what_it_detects": "Azure Activity Log events whose operationName is an NSG or security rule write, delete, join action, or an NSG diagnosticSettings write.",
+      "why_it_matters": "NSGs filter traffic to VMs and subnets. An attacker can open management ports to the Internet, remove deny rules or disable NSG logging. The rule is tagged with the ATT&CK Impact tactic.",
+      "triage_steps": [
+        "Record operationName, resourceId (subscription, resource group, NSG), caller, callerIpAddress, status and correlationId.",
+        "Inspect properties/requestbody for inbound Allow rules from Any, 0.0.0.0/0 or Internet, especially to ports 22, 3389 or database ports.",
+        "For DELETE or JOIN/ACTION, determine which subnets or NICs lost protection or were bound to a different NSG.",
+        "For diagnosticSettings/write, check whether logs were disabled or the Log Analytics or Storage destination changed.",
+        "Check whether the caller is a known admin, IaC pipeline or expected service principal, and look for a matching change ticket.",
+        "Review the caller's sign-in logs: source IP, user agent, location, MFA, and whether the IP is unusual for that identity.",
+        "Pivot on the same caller and subscription within +/- 15 minutes: role assignments, VM creation, new keys or other log deletions.",
+        "Search for earlier alerts on the same caller, callerIpAddress or NSG."
+      ],
+      "false_positives": [
+        "Network administrators applying planned changes from the portal, CLI or PowerShell.",
+        "Terraform, Bicep, ARM or CI/CD pipelines that recreate NSGs or rules.",
+        "Azure managed services (AKS, Databricks, App Gateway) updating their own NSGs.",
+        "Azure Policy or governance tooling adjusting diagnostic settings."
+      ],
+      "response_steps": [
+        "Confirm with the resource or change owner that the operation was authorized before reverting anything.",
+        "If unauthorized, restore the rule or NSG from IaC or a documented baseline and re-enable diagnostics.",
+        "Contain the identity: revoke sessions, reset credentials or rotate service principal secrets, and review its role assignments.",
+        "Review NSG flow logs and exposed resources for inbound connections during the exposure window.",
+        "Document the incident and add narrow exclusions for legitimate pipelines that cause noise."
+      ],
+      "severity_rationale": "Medium because these changes are often legitimate administration, yet an unauthorized one can immediately expose services or remove visibility."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User adds an inbound security rule to an NSG via the Azure portal",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/SECURITYRULES/WRITE",
+          "category": "Administrative",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod-web/providers/Microsoft.Network/networkSecurityGroups/nsg-web-01/securityRules/allow-rdp-any",
+          "resourceGroupName": "rg-prod-web",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "status": "Succeeded",
+          "correlationId": "6f1c2a9e-1111-4c2b-9d7e-0a1b2c3d4e5f"
+        }
+      },
+      {
+        "description": "Service principal deletes an NSG (mixed-case operationName, matches case-insensitively)",
+        "event": {
+          "operationName": "Microsoft.Network/networkSecurityGroups/delete",
+          "category": "Administrative",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod-db/providers/Microsoft.Network/networkSecurityGroups/nsg-db-01",
+          "resourceGroupName": "rg-prod-db",
+          "caller": "a1b2c3d4-0000-4000-8000-123456789abc",
+          "callerIpAddress": "198.51.100.20",
+          "status": "Succeeded",
+          "correlationId": "9a8b7c6d-2222-4e3f-8a1b-5c6d7e8f9a0b"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of an NSG, not a write, delete or join",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/NETWORKSECURITYGROUPS/READ",
+          "category": "Administrative",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod-web/providers/Microsoft.Network/networkSecurityGroups/nsg-web-01",
+          "resourceGroupName": "rg-prod-web",
+          "caller": "mlopez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "status": "Succeeded"
+        }
+      },
+      {
+        "description": "Virtual network write, a different network resource not covered by the rule",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/VIRTUALNETWORKS/WRITE",
+          "category": "Administrative",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod-web/providers/Microsoft.Network/virtualNetworks/vnet-prod",
+          "resourceGroupName": "rg-prod-web",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "status": "Succeeded"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

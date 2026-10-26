@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "071d5e5a-9cef-47ec-bc4e-a42e34d8d0ed",
+    "title": "Possible Coin Miner CPU Priority Param",
+    "level": "critical",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/auditd/execve/lnx_auditd_coinminer.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_coinminer.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un proceso ejecutado con un argumento que empieza por --cpu-priority, una opción que usan con frecuencia mineros de criptomonedas como XMRig. Trátelo como un minero no autorizado hasta demostrar lo contrario.",
+      "what_it_detects": "Un registro EXECVE de auditd en el que alguno de los argumentos a1 a a7 empieza por '--cpu-priority', por ejemplo '--cpu-priority=5'. La regla no revisa el binario en a0, así que también detecta mineros renombrados.",
+      "why_it_matters": "Un minero no autorizado consume CPU y energía, degrada servicios y suele indicar que el host ya está comprometido. La regla está etiquetada como T1068 (explotación para escalar privilegios), aunque esta conducta suele ser secuestro de recursos.",
+      "triage_steps": [
+        "Revise el registro EXECVE completo: a0 (binario) y todos los argumentos. Busque URL de pool (-o, --url), wallet o usuario (-u), --threads, --donate-level o --background.",
+        "Con el ID del evento de auditoría, ubique los registros SYSCALL y CWD asociados. Anote exe, uid, auid, ppid y el directorio de trabajo, en especial /tmp, /dev/shm o /var/tmp.",
+        "Reconstruya el árbol de procesos desde ppid: ¿lo lanzó un servidor web, cron, systemd, una sesión SSH o un runtime de contenedores?",
+        "En el host, verifique si el proceso sigue activo, su uso de CPU y si tiene conexiones salientes hacia pools o puertos stratum.",
+        "Calcule el hash del binario y consúltelo en threat intel. Anote propietario, fechas y cómo llegó el archivo (curl o wget en registros cercanos).",
+        "Pivotee en el mismo host +/- 15 minutos: descargas, chmod +x, nuevas tareas cron, unidades systemd o cambios en llaves SSH.",
+        "Busque el mismo hash, wallet o pool en otros hosts, y alertas previas para el mismo auid o IP de origen."
+      ],
+      "false_positives": [
+        "Otras herramientas legítimas que aceptan un flag --cpu-priority, como algunas utilidades de benchmark, renderizado o planificación.",
+        "Minería o investigación blockchain autorizada en equipos de laboratorio, que debería estar documentada y en lista de excepciones por host."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del activo si la actividad está autorizada. Si lo está, documéntela y cree una excepción acotada al host.",
+        "Si no está autorizada, aísle el host o bloquee los destinos del pool en el egress, y preserve el binario, la memoria del proceso y los logs de auditoría.",
+        "Termine el proceso y elimine la persistencia (cron, unidades systemd, perfiles de shell, authorized_keys) solo después de recolectar la evidencia.",
+        "Identifique el vector de acceso inicial, corríjalo y rote las credenciales de las cuentas afectadas.",
+        "Reconstruya el host si se comprometió root y vigile si el minero vuelve a aparecer."
+      ],
+      "severity_rationale": "Critical es adecuado porque este parámetro está muy ligado a mineros, que casi siempre implican un compromiso del host y abuso de sus recursos."
+    },
+    "en": {
+      "summary": "auditd recorded a process launched with an argument starting with --cpu-priority, an option that cryptocurrency miners such as XMRig commonly use. Treat it as a likely unauthorized miner until shown otherwise.",
+      "what_it_detects": "An auditd EXECVE record where any of the arguments a1 to a7 starts with '--cpu-priority', for example '--cpu-priority=5'. The rule does not check the binary name in a0, so renamed miners still match.",
+      "why_it_matters": "Unauthorized miners consume CPU and power, slow down workloads and usually mean the host is already compromised. The rule is tagged T1068 (exploitation for privilege escalation), but the behavior itself is usually resource hijacking.",
+      "triage_steps": [
+        "Read the full EXECVE record: a0 (binary) and all arguments. Look for pool URLs (-o, --url), wallet or user values (-u), --threads, --donate-level or --background.",
+        "Use the audit event ID to find the matching SYSCALL and CWD records. Note exe, uid, auid, ppid and the working directory, especially /tmp, /dev/shm or /var/tmp.",
+        "Rebuild the process tree from ppid: was it started by a web server, cron, systemd, an SSH session or a container runtime?",
+        "On the host, check whether the process is still running, its CPU usage, and outbound connections to mining pool or stratum ports.",
+        "Hash the binary and check it against threat intel. Note file owner, timestamps and how the file got there (curl or wget in nearby records).",
+        "Pivot on the same host within +/- 15 minutes for downloads, chmod +x, new cron entries, systemd units, or SSH key changes.",
+        "Search for the same binary hash, wallet or pool on other hosts, and for earlier alerts on the same auid or source IP."
+      ],
+      "false_positives": [
+        "Other legitimate tools that accept a --cpu-priority flag, such as some benchmarking, rendering or scheduling utilities.",
+        "Approved mining or blockchain research on lab hosts, which should be documented and allow-listed by host."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner whether the activity is authorized. If it is, document it and add a narrow host-level exception.",
+        "If unauthorized, isolate the host or block the pool destinations at egress, then preserve the binary, process memory and audit logs.",
+        "Kill the process and remove persistence (cron, systemd units, shell profiles, authorized_keys) only after collecting evidence.",
+        "Find the initial access path, patch it, and rotate credentials for the affected accounts.",
+        "Rebuild the host if root was compromised, then watch for the miner coming back."
+      ],
+      "severity_rationale": "Critical fits because this flag is closely tied to miners, which almost always mean the host was compromised and its resources are being abused."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "XMRig-style miner dropped in /tmp, with --cpu-priority as the fourth argument (a3).",
+        "event": {
+          "type": "EXECVE",
+          "host": "web-03",
+          "msg": "audit(1729865012.331:48211)",
+          "argc": 6,
+          "a0": "/tmp/.x/kswapd0",
+          "a1": "-o",
+          "a2": "pool.example.com:3333",
+          "a3": "--cpu-priority=5",
+          "a4": "--threads=4",
+          "a5": "--background"
+        }
+      },
+      {
+        "description": "Renamed miner with --cpu-priority as the first argument (a1).",
+        "event": {
+          "type": "EXECVE",
+          "host": "bastion-01",
+          "msg": "audit(1729865390.112:48977)",
+          "argc": 4,
+          "a0": "/dev/shm/systemd-helper",
+          "a1": "--cpu-priority",
+          "a2": "3",
+          "a3": "--donate-level=0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate taskset run pinning a render job to specific CPUs. --cpu-list does not start with --cpu-priority.",
+        "event": {
+          "type": "EXECVE",
+          "host": "render-02",
+          "msg": "audit(1729866001.004:50012)",
+          "argc": 4,
+          "a0": "taskset",
+          "a1": "--cpu-list",
+          "a2": "0-3",
+          "a3": "/opt/render/bin/render"
+        }
+      },
+      {
+        "description": "Admin lowering a build's priority with nice. No argument starts with --cpu-priority.",
+        "event": {
+          "type": "EXECVE",
+          "host": "build-01",
+          "msg": "audit(1729866420.550:50440)",
+          "argc": 5,
+          "a0": "nice",
+          "a1": "-n",
+          "a2": "19",
+          "a3": "make",
+          "a4": "-j4"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

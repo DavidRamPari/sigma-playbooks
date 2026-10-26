@@ -1,0 +1,156 @@
+{
+  "rule": {
+    "id": "a5ffb6ea-c784-4e01-b30a-deb6e58ca2ab",
+    "title": "AWS EnableRegion Command Monitoring",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Ivan Saakov, Sergey Zelenskiy",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_region_enabled.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_region_enabled.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un principal de AWS ejecutó EnableRegion (account.amazonaws.com) y habilitó una región opcional en una cuenta. Puede ser un cambio administrativo legítimo o un intento de operar en una región sin monitoreo.",
+      "what_it_detects": "Eventos de CloudTrail con eventName EnableRegion y eventSource account.amazonaws.com. Esto incluye llamadas desde la consola, la AWS CLI (aws account enable-region) o el SDK, sobre la cuenta propia o sobre una cuenta miembro de la organización.",
+      "why_it_matters": "Las regiones opcionales vienen deshabilitadas, y es común que CloudTrail, GuardDuty o Config no las cubran. Un atacante puede habilitarlas para crear recursos o credenciales fuera de la vista del SOC y mantener persistencia (relacionado con el uso de regiones de nube no utilizadas).",
+      "triage_steps": [
+        "Identifique al principal con userIdentity.arn, userIdentity.type y accessKeyId. Verifique si es root, un rol asumido o un usuario IAM, y si usó MFA.",
+        "Revise requestParameters.regionName y requestParameters.accountId para saber qué región se habilitó y en qué cuenta.",
+        "Valide sourceIPAddress y userAgent. Compárelos con las IP, la geolocalización y las herramientas que ese principal usa normalmente.",
+        "Busque un ticket de cambio o una solicitud aprobada que justifique habilitar esa región.",
+        "Revise la actividad del mismo principal en +/- 15 minutos: ConsoleLogin, AssumeRole, CreateAccessKey, CreateUser, AttachUserPolicy, StopLogging.",
+        "Busque en la región habilitada eventos posteriores como RunInstances, CreateUser, ImportKeyPair o CreateFunction.",
+        "Confirme que el trail multirregión, GuardDuty y Config cubren la nueva región. Revise alertas anteriores del mismo principal o de la misma IP."
+      ],
+      "false_positives": [
+        "Administradores autorizados que habilitan una región para nuevas cargas de trabajo, requisitos de residencia de datos o latencia.",
+        "Automatización de la organización (Control Tower, Account Factory, pipelines de IaC) que habilita regiones en cuentas nuevas.",
+        "Pruebas de equipos de plataforma o de seguridad en cuentas sandbox."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la cuenta o con el principal si el cambio fue intencional y está autorizado.",
+        "Si no está autorizado, deshabilite o rote las credenciales del principal, revoque sus sesiones activas y revise sus permisos.",
+        "Inventaríe los recursos creados en la región y, tras validarlo, elimínelos. Luego ejecute DisableRegion si no hay cargas legítimas.",
+        "Aplique un SCP que restrinja account:EnableRegion y aws:RequestedRegion a las regiones aprobadas.",
+        "Extienda CloudTrail, GuardDuty y Config a todas las regiones habilitadas y documente el incidente."
+      ],
+      "severity_rationale": "Es nivel medio porque habilitar regiones es poco frecuente y a menudo legítimo, pero un uso no autorizado abre un punto ciego para la persistencia, lo que justifica revisarlo pronto."
+    },
+    "en": {
+      "summary": "An AWS principal called EnableRegion (account.amazonaws.com) and turned on an opt-in region for an account. This may be a legitimate admin change or an attempt to work in an unmonitored region.",
+      "what_it_detects": "CloudTrail events with eventName EnableRegion and eventSource account.amazonaws.com. This covers calls from the console, the AWS CLI (aws account enable-region) or the SDK, on the caller's own account or a member account in the organization.",
+      "why_it_matters": "Opt-in regions are off by default and are often not covered by CloudTrail, GuardDuty or Config. An attacker can enable one to create resources or credentials out of SOC view and keep persistence (related to using unused cloud regions).",
+      "triage_steps": [
+        "Identify the principal from userIdentity.arn, userIdentity.type and accessKeyId. Check whether it is root, an assumed role or an IAM user, and whether MFA was used.",
+        "Check requestParameters.regionName and requestParameters.accountId to see which region was enabled and in which account.",
+        "Check sourceIPAddress and userAgent against the IPs, geolocation and tools this principal normally uses.",
+        "Look for a change ticket or an approved request for enabling that region.",
+        "Review the same principal's activity within +/- 15 minutes: ConsoleLogin, AssumeRole, CreateAccessKey, CreateUser, AttachUserPolicy, StopLogging.",
+        "Search the newly enabled region for later events such as RunInstances, CreateUser, ImportKeyPair or CreateFunction.",
+        "Confirm that the multi-region trail, GuardDuty and Config cover the new region. Check for earlier alerts on the same principal or source IP."
+      ],
+      "false_positives": [
+        "Authorized administrators enabling a region for new workloads, data-residency or latency needs.",
+        "Organization automation (Control Tower, Account Factory, IaC pipelines) enabling regions in new accounts.",
+        "Platform or security team testing in sandbox accounts."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or the principal that the change was intended and authorized.",
+        "If it was not authorized, disable or rotate the principal's credentials, revoke active sessions and review its permissions.",
+        "List the resources created in the region and remove them once verified. Then run DisableRegion if no legitimate workloads depend on it.",
+        "Apply an SCP that limits account:EnableRegion and aws:RequestedRegion to approved regions.",
+        "Extend CloudTrail, GuardDuty and Config to all enabled regions and document the incident."
+      ],
+      "severity_rationale": "Medium fits because enabling regions is rare and often legitimate, but unauthorized use creates a monitoring blind spot for persistence and should be reviewed promptly."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "IAM user enables the opt-in region ap-southeast-5 via AWS CLI from an unfamiliar IP",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2025-10-25T14:03:12Z",
+          "eventSource": "account.amazonaws.com",
+          "eventName": "EnableRegion",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.1 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000JPEREZ",
+          "requestParameters.regionName": "ap-southeast-5",
+          "recipientAccountId": "111122223333",
+          "readOnly": false,
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "Assumed role enables me-central-1 for a member account through the console",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2025-10-26T09:41:07Z",
+          "eventSource": "account.amazonaws.com",
+          "eventName": "EnableRegion",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OrgAdmin/mgarcia",
+          "requestParameters.regionName": "me-central-1",
+          "requestParameters.accountId": "444455556666",
+          "recipientAccountId": "111122223333",
+          "readOnly": false,
+          "eventType": "AwsApiCall"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only check of a region's opt-in status from the same service",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2025-10-25T14:01:55Z",
+          "eventSource": "account.amazonaws.com",
+          "eventName": "GetRegionOptStatus",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.1 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.regionName": "ap-southeast-5",
+          "recipientAccountId": "111122223333",
+          "readOnly": true,
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "Administrator disables an opt-in region (DisableRegion, not EnableRegion)",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2025-10-27T16:20:44Z",
+          "eventSource": "account.amazonaws.com",
+          "eventName": "DisableRegion",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OrgAdmin/mgarcia",
+          "requestParameters.regionName": "me-central-1",
+          "recipientAccountId": "111122223333",
+          "readOnly": false,
+          "eventType": "AwsApiCall"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

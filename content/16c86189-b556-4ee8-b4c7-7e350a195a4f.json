@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "16c86189-b556-4ee8-b4c7-7e350a195a4f",
+    "title": "Potential Server Side Template Injection In Velocity",
+    "level": "high",
+    "status": "test",
+    "author": "Moti Harmats",
+    "path": "application/velocity/velocity_ssti_injection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/velocity/velocity_ssti_injection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El motor de plantillas Apache Velocity registró una excepción de parseo, de inicialización o genérica. Puede indicar que la aplicación renderiza entrada del usuario como plantilla y que alguien está probando una inyección de plantillas del lado del servidor (SSTI).",
+      "what_it_detects": "Líneas del log de errores de la aplicación que contienen las palabras clave ParseErrorException, VelocityException o TemplateInitException, generadas por el renderizador de Velocity. La regla requiere recolectar logs con nivel ERROR o superior.",
+      "why_it_matters": "Si la entrada del usuario se evalúa como plantilla Velocity, un atacante puede acceder a objetos Java y llegar a ejecutar código remoto en el servidor. Corresponde a T1190, explotación de una aplicación expuesta a Internet para obtener acceso inicial.",
+      "triage_steps": [
+        "Lea el mensaje completo y el stack trace: identifique la plantilla (.vm), línea, columna y el token inesperado que reporta la excepción.",
+        "Correlacione por timestamp e hilo (por ejemplo http-nio-8080-exec-N) con los logs de acceso web para encontrar la petición, URI, parámetros, IP de origen y user agent.",
+        "Revise si los parámetros o el body contienen sintaxis de Velocity como #set, #foreach, $class, ${...} o referencias a getClass/forName.",
+        "Pivote por la IP de origen y el usuario: busque otras peticiones con errores similares, escaneo o alertas previas en los últimos días.",
+        "En el mismo host, dentro de +/- 15 minutos, busque procesos hijos del servidor de aplicaciones Java (sh, bash, cmd, powershell, curl, wget) y conexiones salientes inusuales.",
+        "Confirme con el equipo de desarrollo si esa funcionalidad permite plantillas editables por usuarios o si el error coincide con un despliegue reciente."
+      ],
+      "false_positives": [
+        "Bugs de la aplicación, como plantillas con sintaxis inválida introducidas en un despliegue reciente.",
+        "Archivos .vm faltantes o mal referenciados tras un cambio de configuración o de rutas.",
+        "Usuarios legítimos de un CMS o editor de correos que guardan plantillas con errores de sintaxis.",
+        "Escaneos de seguridad autorizados (DAST o pentest) contra la aplicación."
+      ],
+      "response_steps": [
+        "Verifique si la excepción proviene de entrada del usuario o de un error interno antes de escalar.",
+        "Si hay indicios de SSTI, bloquee la IP de origen en el WAF o balanceador y escale a respuesta a incidentes.",
+        "Si hay evidencia de ejecución de comandos, aísle el host, preserve logs y memoria, y revise persistencia y credenciales expuestas.",
+        "Corrija el código para no evaluar entrada del usuario como plantilla y habilite SecureUberspector o una lista blanca de clases en Velocity.",
+        "Tras la corrección, rote secretos del servidor afectado y monitoree nuevas excepciones de Velocity."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque una SSTI en Velocity puede derivar en ejecución remota de código, aunque los errores de plantilla benignos obligan a verificar el contexto."
+    },
+    "en": {
+      "summary": "The Apache Velocity template engine logged a parse, initialization or generic exception. This may mean the application renders user input as a template and someone is probing for server-side template injection (SSTI).",
+      "what_it_detects": "Application error log lines containing the keywords ParseErrorException, VelocityException or TemplateInitException, raised by the Velocity renderer. Requires collecting logs at ERROR level and above.",
+      "why_it_matters": "If user input is evaluated as a Velocity template, an attacker can reach Java objects and potentially execute code on the server. This maps to T1190, exploiting a public-facing application for initial access.",
+      "triage_steps": [
+        "Read the full message and stack trace: note the template (.vm), line, column and unexpected token reported by the exception.",
+        "Correlate by timestamp and thread (e.g. http-nio-8080-exec-N) with web access logs to find the request, URI, parameters, source IP and user agent.",
+        "Check whether parameters or body contain Velocity syntax such as #set, #foreach, $class, ${...} or getClass/forName references.",
+        "Pivot on source IP and user: look for other requests with similar errors, scanning, or earlier alerts in recent days.",
+        "On the same host within +/- 15 minutes, look for child processes of the Java app server (sh, bash, cmd, powershell, curl, wget) and unusual outbound connections.",
+        "Ask the development team whether the feature allows user-editable templates or whether the error matches a recent deployment."
+      ],
+      "false_positives": [
+        "Application bugs, such as templates with invalid syntax shipped in a recent deployment.",
+        "Missing or wrongly referenced .vm files after a configuration or path change.",
+        "Legitimate CMS or email-editor users saving templates with syntax errors.",
+        "Authorized security scans (DAST or pentest) against the application."
+      ],
+      "response_steps": [
+        "Verify whether the exception came from user input or an internal error before escalating.",
+        "If SSTI is indicated, block the source IP at the WAF or load balancer and escalate to incident response.",
+        "If command execution is evident, isolate the host, preserve logs and memory, and check for persistence and exposed credentials.",
+        "Fix the code so user input is never evaluated as a template; enable SecureUberspector or a class allowlist in Velocity.",
+        "After remediation, rotate secrets on the affected server and monitor for new Velocity exceptions."
+      ],
+      "severity_rationale": "High fits because Velocity SSTI can lead to remote code execution, though benign template errors mean context must be verified."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Velocity ParseErrorException logged while rendering a profile template from a request parameter",
+        "event": {
+          "message": "2024-10-25 14:03:12,481 ERROR [http-nio-8080-exec-7] org.apache.velocity.runtime.RuntimeInstance - org.apache.velocity.exception.ParseErrorException: Encountered \"<EOF>\" at /templates/profile.vm[line 3, column 18] Was expecting one of: \"(\" ...",
+          "host": "app-web-03",
+          "level": "ERROR",
+          "logger": "org.apache.velocity.runtime.RuntimeInstance"
+        }
+      },
+      {
+        "description": "TemplateInitException raised during template initialization",
+        "event": {
+          "message": "2024-10-25 14:03:15,102 ERROR [http-nio-8080-exec-9] com.example.portal.render.TemplateService - Rendering failed: org.apache.velocity.exception.TemplateInitException: Invalid arg #0 in directive #foreach at greeting.vm[line 1, column 10]",
+          "host": "app-web-03",
+          "level": "ERROR",
+          "logger": "com.example.portal.render.TemplateService"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Missing template logged as ResourceNotFoundException, which does not contain any of the keywords",
+        "event": {
+          "message": "2024-10-25 14:10:44,317 ERROR [http-nio-8080-exec-2] org.apache.velocity.runtime.RuntimeInstance - org.apache.velocity.exception.ResourceNotFoundException: Unable to find resource 'emails/welcome.vm'",
+          "host": "app-web-03",
+          "level": "ERROR",
+          "logger": "org.apache.velocity.runtime.RuntimeInstance"
+        }
+      },
+      {
+        "description": "Normal Velocity initialization message at INFO level",
+        "event": {
+          "message": "2024-10-25 08:00:01,005 INFO [main] org.apache.velocity - Velocity engine initialized; loaded templates from /opt/portal/templates",
+          "host": "app-web-03",
+          "level": "INFO",
+          "logger": "org.apache.velocity"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "63e4f530-65dc-49cc-8f80-ccfa95c69d43",
+    "title": "UAC Bypass Using EventVwr",
+    "level": "high",
+    "status": "test",
+    "author": "Antonio Cocomazzi (idea), Florian Roth (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_uac_bypass_eventvwr.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_uac_bypass_eventvwr.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de C:\\Windows\\System32 y SysWOW64 escribió el archivo RecentViews de Event Viewer. Este patrón coincide con una evasión de UAC que abusa de eventvwr.exe, un binario que se eleva automáticamente.",
+      "what_it_detects": "Eventos de creación o modificación de archivos cuyo TargetFilename termina en \\Microsoft\\Event Viewer\\RecentViews o \\Microsoft\\EventV~1\\RecentViews, siempre que el Image que escribe no empiece con C:\\Windows\\System32\\ ni con C:\\Windows\\SysWOW64\\.",
+      "why_it_matters": "eventvwr.exe se eleva sin mostrar el aviso de UAC y deserializa RecentViews al abrirse. Si un atacante coloca un payload .NET serializado en ese archivo, logra ejecutar código con integridad alta sin interacción del usuario. Corresponde a ATT&CK T1548.002 (Bypass User Account Control).",
+      "triage_steps": [
+        "Revise Image, User y TargetFilename. Verifique si el binario está en rutas escribibles por el usuario, como Temp, Downloads, AppData o Public.",
+        "Obtenga el hash, la firma y la línea de comandos del Image. Consulte la reputación del hash y busque el binario en otros endpoints.",
+        "Busque la ejecución de eventvwr.exe o mmc.exe en el mismo host dentro de +/- 15 minutos, junto con sus procesos hijo.",
+        "Identifique procesos hijo de mmc.exe con integridad alta, como cmd.exe, powershell.exe o binarios desconocidos, que hayan aparecido después de la escritura.",
+        "Si el archivo sigue presente, recupere RecentViews y revise su contenido. Un objeto .NET serializado o un tamaño anómalo indican explotación.",
+        "Reconstruya el árbol de procesos padre del Image para ubicar el vector inicial, como un documento, un script o una descarga.",
+        "Revise alertas anteriores del mismo host y del mismo usuario, en especial de persistencia, credenciales o movimiento lateral."
+      ],
+      "false_positives": [
+        "La regla declara falsos positivos desconocidos. Una escritura legítima casi siempre proviene de mmc.exe en System32, que queda excluido por el filtro.",
+        "Herramientas de backup, perfiles móviles o sincronización de perfiles que copian AppData\\Local desde rutas fuera de System32. Valide el proceso y si el comportamiento es recurrente."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa revisando el binario, el contenido de RecentViews y los procesos elevados que se lanzaron después.",
+        "Si se confirma, aísle el endpoint y suspenda o restablezca las credenciales del usuario afectado.",
+        "Preserve el archivo RecentViews y el binario como evidencia. Luego elimínelos, junto con cualquier persistencia creada con privilegios elevados.",
+        "Busque el hash y el mismo patrón en toda la flota. Evalúe configurar UAC en \"Notificar siempre\" y retirar los privilegios de administrador local."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque casi ningún proceso legítimo fuera de System32 escribe este archivo, y la técnica entrega ejecución elevada sin aviso de UAC."
+    },
+    "en": {
+      "summary": "A process outside C:\\Windows\\System32 and SysWOW64 wrote the Event Viewer RecentViews file. This pattern matches a UAC bypass that abuses the auto-elevating eventvwr.exe.",
+      "what_it_detects": "File creation or modification events where TargetFilename ends with \\Microsoft\\Event Viewer\\RecentViews or \\Microsoft\\EventV~1\\RecentViews, and the writing Image does not start with C:\\Windows\\System32\\ or C:\\Windows\\SysWOW64\\.",
+      "why_it_matters": "eventvwr.exe auto-elevates without a UAC prompt and deserializes RecentViews when it opens. If an attacker plants a serialized .NET payload in that file, it runs with high integrity and needs no user interaction. This maps to ATT&CK T1548.002 (Bypass User Account Control).",
+      "triage_steps": [
+        "Review Image, User and TargetFilename. Check whether the binary sits in a user-writable path such as Temp, Downloads, AppData or Public.",
+        "Collect the Image's hash, signature and command line. Check the hash's reputation and search for the binary on other endpoints.",
+        "Look for eventvwr.exe or mmc.exe running on the same host within +/- 15 minutes, along with their child processes.",
+        "Find high-integrity child processes of mmc.exe that appeared after the write, such as cmd.exe, powershell.exe or unknown binaries.",
+        "If the file still exists, retrieve RecentViews and inspect it. A serialized .NET object or an unusual size points to exploitation.",
+        "Rebuild the Image's parent process tree to find the initial vector, such as a document, a script or a download.",
+        "Check earlier alerts for the same host and user, especially persistence, credential access or lateral movement."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unknown. Legitimate writes almost always come from mmc.exe in System32, which the filter excludes.",
+        "Backup, roaming-profile or profile-sync tools that copy AppData\\Local from paths outside System32. Check the process and whether the behavior recurs."
+      ],
+      "response_steps": [
+        "Confirm malicious activity by reviewing the binary, the RecentViews content and any elevated processes launched afterward.",
+        "If confirmed, isolate the endpoint and suspend or reset the affected user's credentials.",
+        "Preserve RecentViews and the binary as evidence. Then remove them, along with any persistence created with elevated privileges.",
+        "Hunt fleet-wide for the hash and this pattern. Consider setting UAC to \"Always notify\" and removing local admin rights."
+      ],
+      "severity_rationale": "High fits because almost no legitimate process outside System32 writes this file, and the technique gives elevated execution without a UAC prompt."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unsigned binary in the user's Temp folder writes a crafted RecentViews file to the Event Viewer profile folder.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6412,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd4te.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Event Viewer\\RecentViews",
+          "CreationUtcTime": "2024-03-14 10:22:05.118"
+        }
+      },
+      {
+        "description": "A tool in C:\\Users\\Public writes RecentViews through the 8.3 short path EventV~1.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 3188,
+          "Image": "C:\\Users\\Public\\svchelper.exe",
+          "TargetFilename": "C:\\Users\\mrojas\\AppData\\Local\\Microsoft\\EventV~1\\RecentViews",
+          "CreationUtcTime": "2024-03-14 11:47:31.402"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A legitimate Event Viewer session: mmc.exe from System32 updates RecentViews, so the filter excludes it.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 5020,
+          "Image": "C:\\Windows\\System32\\mmc.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Event Viewer\\RecentViews",
+          "CreationUtcTime": "2024-03-14 09:05:12.774"
+        }
+      },
+      {
+        "description": "A backup agent writes a file in the Event Viewer folder, but the name does not end with RecentViews.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2244,
+          "Image": "C:\\Program Files\\ExampleBackup\\agent.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Event Viewer\\RecentViews.bak",
+          "CreationUtcTime": "2024-03-14 02:00:03.551"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

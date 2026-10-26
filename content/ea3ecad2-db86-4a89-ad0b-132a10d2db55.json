@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "ea3ecad2-db86-4a89-ad0b-132a10d2db55",
+    "title": "Interactive Bash Suspicious Children",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_interactive_bash.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_interactive_bash.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036",
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso bash interactivo lanzado exactamente como 'bash -i' creó un proceso hijo poco común: whoami, iptables, netcat/ncat, o una línea de comandos con base64, pty.spawn o '-c import '. Este patrón suele aparecer cuando alguien usa una reverse shell o mejora una shell obtenida.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde ParentCommandLine es exactamente 'bash -i' y, además, el Image termina en whoami, iptables, /nc, /ncat o /netcat, o el CommandLine contiene '-c import ', 'base64' o 'pty.spawn'.",
+      "why_it_matters": "'bash -i' es la forma habitual de abrir una shell interactiva en reverse shells. Los hijos detectados indican reconocimiento, cambios al firewall, conexiones con netcat o la mejora de la TTY con Python pty.spawn, actividad propia de T1059.004 (Unix Shell) y T1036 (Masquerading).",
+      "triage_steps": [
+        "Revise Image, CommandLine, User y ParentCommandLine del evento para identificar qué patrón coincidió y bajo qué cuenta se ejecutó.",
+        "Identifique el proceso abuelo de 'bash -i': un servidor web, un servicio o un intérprete (sh -c, python, perl) como ancestro es una señal fuerte de reverse shell.",
+        "Revise las conexiones de red del proceso bash y de sus hijos, por ejemplo con ss, netstat o la telemetría del EDR, y busque sockets salientes hacia IP externas.",
+        "Si aparece base64, decodifique el contenido de CommandLine en un entorno aislado y evalúe si descarga o ejecuta un payload.",
+        "Busque en el mismo host otros procesos creados por el mismo bash o usuario en +/- 15 minutos: descargas, cambios de crontab, claves SSH o escalamiento de privilegios.",
+        "Para iptables, compare las reglas actuales con la configuración esperada y busque reglas que abran puertos o desactiven el filtrado.",
+        "Revise alertas anteriores del mismo host y usuario, y los logs de autenticación (auth.log, journal) para encontrar el acceso inicial."
+      ],
+      "false_positives": [
+        "Software o scripts legítimos que usan estos patrones, como herramientas de despliegue que llaman a whoami o base64 desde una shell interactiva.",
+        "Administradores que ejecutan iptables o netcat de forma manual al diagnosticar problemas de red.",
+        "Ejercicios autorizados de pentesting o red team; confirme con el equipo responsable y revise la ventana aprobada."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema y el usuario si la actividad estaba autorizada antes de tomar medidas.",
+        "Si no estaba autorizada, aísle el host desde el EDR o con controles de red, y conserve la memoria y la lista de procesos.",
+        "Termine la reverse shell y bloquee la IP remota identificada en el firewall perimetral.",
+        "Identifique y corrija el vector de acceso (aplicación vulnerable, credenciales comprometidas), rote las credenciales y elimine los mecanismos de persistencia.",
+        "Restaure las reglas de firewall alteradas y mantenga monitoreo reforzado del host y de la cuenta."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el patrón es típico de reverse shells, pero también aparece en tareas administrativas legítimas y requiere contexto para confirmarlo."
+    },
+    "en": {
+      "summary": "An interactive bash process launched exactly as 'bash -i' spawned an uncommon child: whoami, iptables, netcat/ncat, or a command line containing base64, pty.spawn or '-c import '. This pattern often shows up when someone is using a reverse shell or upgrading a shell they obtained.",
+      "what_it_detects": "Linux process creation events where ParentCommandLine is exactly 'bash -i' and either Image ends with whoami, iptables, /nc, /ncat or /netcat, or CommandLine contains '-c import ', 'base64' or 'pty.spawn'.",
+      "why_it_matters": "'bash -i' is the usual way reverse shells open an interactive shell. These children point to reconnaissance, firewall tampering, netcat connections or a TTY upgrade with Python pty.spawn, which maps to T1059.004 (Unix Shell) and T1036 (Masquerading).",
+      "triage_steps": [
+        "Review Image, CommandLine, User and ParentCommandLine to see which pattern matched and which account ran it.",
+        "Find the grandparent of 'bash -i'. A web server, a service or an interpreter (sh -c, python, perl) as ancestor strongly suggests a reverse shell.",
+        "Check network connections of the bash process and its children (ss, netstat, EDR telemetry) for outbound sockets to external IPs.",
+        "If base64 appears, decode the CommandLine content in a sandbox and assess whether it fetches or runs a payload.",
+        "On the same host within +/- 15 minutes, list other processes from the same bash or user: downloads, crontab edits, SSH keys, privilege escalation.",
+        "For iptables, compare the current rules against the expected baseline and look for rules that open ports or disable filtering.",
+        "Check earlier alerts for the same host and user, and authentication logs (auth.log, journal), to find the initial access."
+      ],
+      "false_positives": [
+        "Legitimate software or scripts that use these patterns, for example deployment tooling that calls whoami or base64 from an interactive shell.",
+        "Administrators running iptables or netcat by hand while troubleshooting the network.",
+        "Authorized penetration tests or red team exercises; confirm with the owning team and check the approved window."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and the user whether the activity was authorized before acting.",
+        "If it was not authorized, isolate the host through the EDR or network controls, and preserve memory and the process list.",
+        "Kill the reverse shell and block the identified remote IP at the perimeter firewall.",
+        "Find and fix the access vector (vulnerable app, compromised credentials), rotate credentials and remove persistence.",
+        "Restore any altered firewall rules and keep heightened monitoring on the host and account."
+      ],
+      "severity_rationale": "Medium fits because the pattern is typical of reverse shells, but it also appears in legitimate admin work and needs context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Reverse shell TTY upgrade: python3 pty.spawn executed from an interactive 'bash -i' parent",
+        "event": {
+          "Image": "/usr/bin/python3.10",
+          "CommandLine": "python3 -c import pty; pty.spawn('/bin/bash')",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash -i",
+          "User": "www-data",
+          "Computer": "web-01",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190
+        }
+      },
+      {
+        "description": "Reconnaissance: whoami run from an interactive 'bash -i' shell",
+        "event": {
+          "Image": "/usr/bin/whoami",
+          "CommandLine": "whoami",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash -i",
+          "User": "www-data",
+          "Computer": "web-01",
+          "ProcessId": 48250,
+          "ParentProcessId": 48190
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Ordinary command (ls) from a 'bash -i' parent; no anomaly selection matches",
+        "event": {
+          "Image": "/usr/bin/ls",
+          "CommandLine": "ls -la /var/www",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash -i",
+          "User": "jperez",
+          "Computer": "bastion-01",
+          "ProcessId": 5120,
+          "ParentProcessId": 5101
+        }
+      },
+      {
+        "description": "whoami from a login shell whose ParentCommandLine is '-bash' rather than exactly 'bash -i'",
+        "event": {
+          "Image": "/usr/bin/whoami",
+          "CommandLine": "whoami",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "Computer": "bastion-01",
+          "ProcessId": 5133,
+          "ParentProcessId": 5101
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

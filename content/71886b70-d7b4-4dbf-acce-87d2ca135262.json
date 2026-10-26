@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "71886b70-d7b4-4dbf-acce-87d2ca135262",
+    "title": "Suspicious Rejected SMB Guest Logon From IP",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), KevTheHermit, fuzzyf10w",
+    "path": "windows/builtin/smbclient/security/win_smbclient_security_susp_failed_guest_logon.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/smbclient/security/win_smbclient_security_susp_failed_guest_logon.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1110.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El cliente SMB de este equipo intentó un inicio de sesión como invitado (sin usuario) en un servidor SMB indicado por dirección IP, y Windows lo rechazó por inseguro (evento 31017).",
+      "what_it_detects": "Eventos 31017 del canal Microsoft-Windows-SmbClient/Security con UserName vacío y ServerName que empieza con '\\1', es decir, un destino SMB escrito como IP. La regla lo asocia con intentos de PrintNightmare (CVE-2021-1675).",
+      "why_it_matters": "En PrintNightmare, el servicio Spooler de la víctima intenta cargar una DLL desde un recurso SMB anónimo del atacante; si el acceso de invitado está bloqueado, queda este rechazo. Está etiquetada como acceso a credenciales (T1110.001, adivinación de contraseñas).",
+      "triage_steps": [
+        "Identifique el equipo (Computer) y la IP en ServerName. Determine si es un servidor interno conocido, un NAS o una dirección externa o desconocida.",
+        "En el mismo equipo, revise la actividad de spoolsv.exe en una ventana de +/- 15 minutos: procesos hijos, cargas de DLL y conexiones SMB salientes hacia la IP de ServerName.",
+        "Revise los registros PrintService (Admin/Operational), por ejemplo los eventos 316 y 808, y busque archivos DLL nuevos en C:\\Windows\\System32\\spool\\drivers.",
+        "Busque conexiones RPC entrantes al Spooler, o autenticaciones, provenientes de la IP de ServerName o de hosts relacionados.",
+        "Consulte si otros equipos registraron eventos 31017 hacia la misma IP; varios equipos afectados apuntan a un ataque en curso o a un recurso compartido mal configurado.",
+        "Revise alertas anteriores del equipo y de la IP, y verifique si hubo un intento de logon con cuenta justo antes del intento como invitado."
+      ],
+      "false_positives": [
+        "Fallback a invitado tras fallar el logon con una cuenta específica, según indica la regla.",
+        "NAS, impresoras multifunción o equipos antiguos que solo admiten acceso de invitado y a los que se accede por IP.",
+        "Scripts o usuarios que mapean recursos compartidos tipo \\\\IP\\recurso sin credenciales."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del activo si la IP en ServerName corresponde a un servicio legítimo.",
+        "Si no lo es, bloquee la IP en el firewall perimetral y en el del host, y aísle el equipo si hay indicios de carga de DLL por spoolsv.exe.",
+        "Deshabilite el servicio Print Spooler donde no se necesite y confirme que las actualizaciones de seguridad para CVE-2021-1675 estén aplicadas.",
+        "Elimine las DLL maliciosas confirmadas, rote las credenciales expuestas y mantenga bloqueados los logons de invitado inseguros."
+      ],
+      "severity_rationale": "Medium es adecuado: el rechazo indica que el ataque no tuvo éxito y existen causas legítimas, pero un destino SMB por IP sin usuario requiere revisión."
+    },
+    "en": {
+      "summary": "This host's SMB client tried a guest (no username) logon to an SMB server addressed by IP, and Windows rejected it as insecure (event 31017).",
+      "what_it_detects": "Microsoft-Windows-SmbClient/Security event 31017 with an empty UserName and a ServerName starting with '\\1', meaning an IP-addressed SMB target. The rule links this to PrintNightmare (CVE-2021-1675) attempts.",
+      "why_it_matters": "In PrintNightmare, the victim's Spooler service tries to load a DLL from an attacker's anonymous SMB share. If guest access is blocked, this rejection is what gets logged. The rule is tagged credential access (T1110.001, password guessing).",
+      "triage_steps": [
+        "Note the host (Computer) and the IP in ServerName. Check whether that IP is a known internal server, a NAS, or an external or unknown address.",
+        "On the same host, review spoolsv.exe activity within +/- 15 minutes: child processes, DLL loads and outbound SMB to the ServerName IP.",
+        "Review the PrintService Admin/Operational logs (for example events 316 and 808) and look for new DLLs under C:\\Windows\\System32\\spool\\drivers.",
+        "Look for inbound RPC connections to the Spooler, or logons, coming from the ServerName IP or related hosts.",
+        "Search for 31017 events from other hosts to the same IP. Several hosts hit points to an active campaign or a misconfigured share.",
+        "Check earlier alerts for the host and the IP, and whether a logon with a named account failed right before the guest attempt."
+      ],
+      "false_positives": [
+        "Guest fallback after a failed logon with a specific account, as the rule notes.",
+        "NAS devices, multifunction printers or legacy systems that only support guest access and are reached by IP.",
+        "Scripts or users mapping \\\\IP\\share paths without credentials."
+      ],
+      "response_steps": [
+        "Ask the asset owner whether the ServerName IP is a legitimate service.",
+        "If it is not, block the IP at the perimeter and host firewalls. Isolate the host if spoolsv.exe loaded a suspicious DLL.",
+        "Disable Print Spooler where it is not needed and confirm the security updates for CVE-2021-1675 are installed.",
+        "Remove DLLs you have confirmed as malicious, rotate any exposed credentials and keep insecure guest logons blocked."
+      ],
+      "severity_rationale": "Medium fits: the rejection means the attempt failed and benign causes exist, but an IP-addressed SMB target with no username needs review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Spooler host rejected an insecure guest logon to an SMB share on an unknown IP, which matches the PrintNightmare DLL staging pattern.",
+        "event": {
+          "EventID": 31017,
+          "Channel": "Microsoft-Windows-SmbClient/Security",
+          "Provider_Name": "Microsoft-Windows-SMBClient",
+          "Computer": "WS-0142.andes.example.com",
+          "UserName": "",
+          "ServerName": "\\192.0.2.45",
+          "ShareName": "\\\\192.0.2.45\\share"
+        }
+      },
+      {
+        "description": "Workstation rejected a guest logon to an SMB server addressed by IP in the 198.51.100.0/24 range.",
+        "event": {
+          "EventID": 31017,
+          "Channel": "Microsoft-Windows-SmbClient/Security",
+          "Provider_Name": "Microsoft-Windows-SMBClient",
+          "Computer": "SRV-PRINT-02.andes.example.com",
+          "UserName": "",
+          "ServerName": "\\198.51.100.23"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Guest logon rejected for a server addressed by hostname, not IP, so ServerName does not start with '\\1'.",
+        "event": {
+          "EventID": 31017,
+          "Channel": "Microsoft-Windows-SmbClient/Security",
+          "Provider_Name": "Microsoft-Windows-SMBClient",
+          "Computer": "WS-0142.andes.example.com",
+          "UserName": "",
+          "ServerName": "\\nas-legacy01"
+        }
+      },
+      {
+        "description": "Rejected logon to an IP-addressed server that includes a username, so the empty UserName condition fails.",
+        "event": {
+          "EventID": 31017,
+          "Channel": "Microsoft-Windows-SmbClient/Security",
+          "Provider_Name": "Microsoft-Windows-SMBClient",
+          "Computer": "WS-0142.andes.example.com",
+          "UserName": "ANDES\\jperez",
+          "ServerName": "\\192.0.2.45"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

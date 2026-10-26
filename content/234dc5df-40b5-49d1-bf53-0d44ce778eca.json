@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "234dc5df-40b5-49d1-bf53-0d44ce778eca",
+    "title": "Payload Decoded and Decrypted via Built-in Utilities",
+    "level": "medium",
+    "status": "test",
+    "author": "Tim Rauch (rule), Elastic (idea)",
+    "path": "macos/process_creation/proc_creation_macos_payload_decoded_and_decrypted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_payload_decoded_and_decrypted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059",
+      "T1140",
+      "T1204"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó openssl para decodificar Base64 y descifrar un archivo ubicado en un volumen montado (/Volumes/), algo típico de una imagen de disco (DMG) que oculta un payload cifrado.",
+      "what_it_detects": "Procesos cuyo Image termina en /openssl y cuyo CommandLine contiene '/Volumes/', 'enc', '-base64' y ' -d '. Es decir, el subcomando enc de openssl usado en modo decodificación/descifrado sobre un archivo dentro de un DMG o de otro volumen montado.",
+      "why_it_matters": "Familias de adware y malware como Shlayer y Bundlore engañan al usuario para que abra un DMG cuyo script descifra un payload con openssl y lo ejecuta. Corresponde a Deobfuscate/Decode Files or Information (T1140), User Execution (T1204) y Command and Scripting Interpreter (T1059).",
+      "triage_steps": [
+        "Revise el CommandLine completo: cifrado (-aes-256-cbc), contraseña (-pass/-k), archivo de entrada (-in) dentro de /Volumes/ y destino (-out o pipe hacia sh/bash).",
+        "Identifique el ParentImage y el árbol de procesos: un sh, bash o binario dentro de /Volumes/<nombre>.app sugiere un instalador malicioso.",
+        "Determine qué DMG se montó: nombre del volumen, origen de la descarga (atributo com.apple.quarantine, historial del navegador) y usuario que lo abrió.",
+        "Busque procesos hijos y ejecuciones en el mismo host en +/- 15 minutos: curl, chmod +x, ejecución desde /tmp o /private/var/folders, nuevos LaunchAgents.",
+        "Obtenga el hash del DMG y de los archivos descifrados y compárelos con inteligencia de amenazas interna.",
+        "Revise alertas previas del mismo host y usuario, especialmente de adware, extensiones de navegador o persistencia.",
+        "Verifique si el usuario esperaba instalar software (reproductor, actualización de Flash, crack) y de dónde lo obtuvo."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Instaladores internos o scripts de TI que distribuyen recursos cifrados en un DMG y los descifran con openssl durante la instalación.",
+        "Administradores o desarrolladores que prueban manualmente el descifrado de archivos en un disco externo montado en /Volumes/."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y el árbol de procesos si la instalación era legítima antes de actuar.",
+        "Si es sospechosa, aísle el endpoint de la red y desmonte el DMG preservando una copia para análisis.",
+        "Elimine el payload descifrado, LaunchAgents/LaunchDaemons, perfiles y extensiones de navegador creados, tras documentarlos.",
+        "Bloquee el hash del DMG y los dominios de descarga en el EDR y el proxy, y busque el mismo hash en otros hosts.",
+        "Restablezca credenciales del usuario si hubo robo de datos del navegador y refuerce la formación sobre descargas falsas."
+      ],
+      "severity_rationale": "El nivel medium es adecuado: el patrón es muy característico de instaladores maliciosos tipo Shlayer, pero puede haber usos administrativos legítimos y suele tratarse de adware y no de un compromiso dirigido."
+    },
+    "en": {
+      "summary": "openssl was run to Base64-decode and decrypt a file on a mounted volume (/Volumes/), typical of a disk image (DMG) hiding an encrypted payload.",
+      "what_it_detects": "Processes whose Image ends with /openssl and whose CommandLine contains '/Volumes/', 'enc', '-base64' and ' -d ': the openssl enc subcommand in decode/decrypt mode against a file inside a DMG or other mounted volume.",
+      "why_it_matters": "Adware and malware families such as Shlayer and Bundlore trick users into opening a DMG whose script decrypts a payload with openssl and runs it. Maps to Deobfuscate/Decode Files or Information (T1140), User Execution (T1204) and Command and Scripting Interpreter (T1059).",
+      "triage_steps": [
+        "Read the full CommandLine: cipher (-aes-256-cbc), password (-pass/-k), input file (-in) under /Volumes/, and output (-out or a pipe into sh/bash).",
+        "Identify ParentImage and the process tree; sh, bash or a binary inside /Volumes/<name>.app points to a malicious installer.",
+        "Determine which DMG was mounted: volume name, download origin (com.apple.quarantine attribute, browser history) and the user who opened it.",
+        "Look for child processes and activity on the same host within +/- 15 minutes: curl, chmod +x, execution from /tmp or /private/var/folders, new LaunchAgents.",
+        "Hash the DMG and decrypted files and check them against internal threat intelligence.",
+        "Review earlier alerts for the same host and user, especially adware, browser extensions or persistence.",
+        "Ask whether the user expected to install software (player, Flash update, crack) and where they got it."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Internal installers or IT scripts that ship encrypted resources in a DMG and decrypt them with openssl during setup.",
+        "Admins or developers manually testing decryption of files on an external disk mounted under /Volumes/."
+      ],
+      "response_steps": [
+        "Confirm with the user and the process tree whether the install was legitimate before acting.",
+        "If suspicious, isolate the endpoint and unmount the DMG, keeping a copy for analysis.",
+        "After documenting them, remove the decrypted payload, created LaunchAgents/LaunchDaemons, profiles and browser extensions.",
+        "Block the DMG hash and download domains in EDR and proxy; hunt for the same hash on other hosts.",
+        "Reset the user's credentials if browser data may have been stolen, and reinforce awareness about fake downloads."
+      ],
+      "severity_rationale": "Medium fits: the pattern is highly characteristic of Shlayer-style malicious installers, yet legitimate admin use exists and impact is usually adware rather than a targeted compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Shlayer-style DMG script decrypting a hidden Base64 AES payload from the mounted volume",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl enc -base64 -d -aes-256-cbc -nosalt -pass pass:placeholder123 -in /Volumes/Player/.hidden/payload.enc -out /tmp/.player_bin",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /Volumes/Player/Install.command",
+          "User": "jperez",
+          "ProcessId": 4821,
+          "ParentProcessId": 4810,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "Installer app inside a DMG piping decrypted output to sh",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "/usr/bin/openssl enc -aes-256-cbc -d -A -base64 -k placeholderkey -in /Volumes/FlashUpdate/FlashUpdate.app/Contents/Resources/enc",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c /Volumes/FlashUpdate/FlashUpdate.app/Contents/MacOS/run",
+          "User": "mrodriguez",
+          "ProcessId": 5310,
+          "ParentProcessId": 5302,
+          "Computer": "MBA-0277"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Developer decoding a Base64 certificate in the home directory, not on a mounted volume",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl enc -base64 -d -in /Users/jperez/Downloads/cert.b64 -out /Users/jperez/Downloads/cert.der",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 6120,
+          "ParentProcessId": 6001,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "Admin encrypting a backup onto an external drive (encrypt mode, no ' -d ')",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl enc -aes-256-cbc -e -base64 -pbkdf2 -in /Users/admin/backup.tar -out /Volumes/BackupDisk/backup.tar.enc",
+          "ParentImage": "/bin/zsh",
+          "User": "admin",
+          "ProcessId": 7044,
+          "ParentProcessId": 7001,
+          "Computer": "MBP-0099"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

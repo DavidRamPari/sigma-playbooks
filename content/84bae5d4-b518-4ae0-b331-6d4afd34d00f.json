@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "84bae5d4-b518-4ae0-b331-6d4afd34d00f",
+    "title": "MacOS Network Service Scanning",
+    "level": "low",
+    "status": "test",
+    "author": "Alejandro Ortuno, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_network_service_scanning.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_network_service_scanning.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1046"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó en un equipo macOS nmap, telnet, o nc/netcat sin modo de escucha. Esto puede indicar un reconocimiento de servicios de red locales o remotos.",
+      "what_it_detects": "Eventos process_creation de macOS cuyo Image termina en /nmap o /telnet, o en /nc o /netcat. Para netcat se excluyen los casos en que CommandLine contiene la opción de escucha (-l, --listen o combinaciones como -lk, -lvn). Solo quedan los usos como cliente o escáner, por ejemplo nc -zv.",
+      "why_it_matters": "Corresponde a ATT&CK T1046 (Network Service Discovery). Después de un acceso inicial, un atacante enumera puertos y servicios para elegir objetivos de movimiento lateral o de explotación.",
+      "triage_steps": [
+        "Revise CommandLine: identifique destinos (IP, rangos CIDR, hostnames), puertos o rangos de puertos y opciones de escaneo como -z, -sS, -sT, -p- o -sV.",
+        "Identifique al usuario y el proceso padre (ParentImage): una shell interactiva de un administrador no es lo mismo que un proceso lanzado por un script, un LaunchAgent o una aplicación inesperada.",
+        "Compruebe si los destinos son internos o externos y si coinciden con las funciones del usuario o del equipo.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, otros procesos de descubrimiento (arp, ifconfig, dscacheutil, system_profiler), descargas con curl y ejecución de scripts.",
+        "Verifique la ruta del binario: un nmap o nc en /tmp, /Users/Shared o un directorio oculto es más sospechoso que uno instalado con Homebrew.",
+        "Busque alertas anteriores del mismo usuario o host y conexiones salientes posteriores hacia los puertos descubiertos."
+      ],
+      "false_positives": [
+        "Tareas legítimas de administración o de soporte de red que comprueban la conectividad con nc -zv o telnet.",
+        "Escaneos autorizados del equipo de seguridad o pruebas de penetración con nmap.",
+        "Scripts de monitoreo, health checks o herramientas de desarrollo que verifican puertos de servicios."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o su responsable si la actividad estaba autorizada y documente el ticket o cambio correspondiente.",
+        "Si no está justificada, aísle el endpoint de la red mediante el EDR y conserve la evidencia: lista de procesos, historial de shell y binarios.",
+        "Investigue cómo se obtuvo el acceso: revise inicios de sesión, persistencia (LaunchAgents, LaunchDaemons) y credenciales usadas en el host.",
+        "Elimine herramientas y persistencia no autorizadas solo después de verificarlas, restablezca las credenciales afectadas y revise los sistemas escaneados."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estas herramientas son comunes en la administración de macOS, aunque la alerta merece revisión cuando se combina con otra actividad sospechosa."
+    },
+    "en": {
+      "summary": "A macOS host ran nmap, telnet, or nc/netcat outside listen mode. This may indicate reconnaissance of local or remote network services.",
+      "what_it_detects": "macOS process_creation events where Image ends with /nmap or /telnet, or with /nc or /netcat. For netcat, events whose CommandLine includes a listen option (-l, --listen, or combined flags like -lk, -lvn) are excluded. Only client or scanning use remains, such as nc -zv.",
+      "why_it_matters": "Maps to ATT&CK T1046 (Network Service Discovery). After gaining access, attackers enumerate ports and services to pick targets for lateral movement or exploitation.",
+      "triage_steps": [
+        "Read CommandLine: find the targets (IPs, CIDR ranges, hostnames), the ports or port ranges, and scan flags such as -z, -sS, -sT, -p- or -sV.",
+        "Identify the user and ParentImage. An admin's interactive shell is different from a process launched by a script, a LaunchAgent or an unexpected application.",
+        "Check whether the targets are internal or external, and whether they fit the user's or the host's role.",
+        "On the same host within +/- 15 minutes, look for other discovery commands (arp, ifconfig, dscacheutil, system_profiler), curl downloads and script execution.",
+        "Check the binary path. An nmap or nc in /tmp, /Users/Shared or a hidden directory is more suspicious than a Homebrew install.",
+        "Look for earlier alerts on the same user or host, and for later outbound connections to the ports the scan found."
+      ],
+      "false_positives": [
+        "Legitimate administration or network support work that checks connectivity with nc -zv or telnet.",
+        "Authorized security team scans or penetration tests using nmap.",
+        "Monitoring scripts, health checks or developer tooling that test service ports."
+      ],
+      "response_steps": [
+        "Confirm with the user or their manager that the activity was authorized, and record the related ticket or change.",
+        "If it is not justified, isolate the endpoint with the EDR and preserve evidence: process list, shell history and binaries.",
+        "Find out how access was gained: review logins, persistence (LaunchAgents, LaunchDaemons) and credentials used on the host.",
+        "Remove unauthorized tools and persistence only after verifying them, reset affected credentials and review the scanned systems."
+      ],
+      "severity_rationale": "Low fits because these tools are common in macOS administration, but the alert needs a closer look when it appears alongside other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "netcat used as a port scanner in zero-I/O mode against an internal host (no listen flag, so the filter does not apply)",
+        "event": {
+          "Image": "/usr/bin/nc",
+          "CommandLine": "nc -zv -w 2 192.0.2.25 20-445",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "nmap TCP connect scan of a documentation subnet",
+        "event": {
+          "Image": "/opt/homebrew/bin/nmap",
+          "CommandLine": "nmap -sT -p 22,80,443,3389 198.51.100.0/24",
+          "ParentImage": "/bin/bash",
+          "User": "mrodriguez",
+          "Computer": "MBP-0217",
+          "ProcessId": 7310
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "netcat started as a listener with combined flags -lk, excluded by filter_main_nc_listen",
+        "event": {
+          "Image": "/usr/bin/nc",
+          "CommandLine": "nc -lk 8080",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5102
+        }
+      },
+      {
+        "description": "Legitimate curl connectivity check; the Image is not nc, netcat, nmap or telnet",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -sI https://intranet.example.com:443",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5230
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "092af964-4233-4373-b4ba-d86ea2890288",
+    "title": "Add Debugger Entry To AeDebug For Persistence",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_aedebug_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_aedebug_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso configuró el valor de registro \"Debugger\" de AeDebug con algo que termina en .dll. Windows ejecuta ese valor cuando cualquier aplicación falla, por lo que sirve para persistencia.",
+      "what_it_detects": "Eventos de registro donde TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger y Details termina en .dll. Se excluye el valor estándar del depurador JIT de Visual Studio (vsjitdebugger.exe).",
+      "why_it_matters": "AeDebug guarda la línea de comandos del depurador postmortem que Windows lanza cuando una aplicación falla. Si un atacante la apunta a una DLL, por ejemplo con rundll32, su código se ejecuta cada vez que un proceso falla, y el fallo puede provocarse a propósito. Es persistencia mediante ejecución disparada por eventos.",
+      "triage_steps": [
+        "Revise Details completo: ruta de la DLL, cargador usado (rundll32, regsvr32) y si la ruta es escribible por usuarios (Users, ProgramData, Temp).",
+        "Identifique el proceso que escribió (Image) y el usuario. Revise su proceso padre y su línea de comandos en el mismo host +/- 15 minutos.",
+        "Verifique si en esa misma ventana se configuró AeDebug\\Auto=1, que hace que el depurador se lance sin preguntar.",
+        "Obtenga la DLL: hash, firma, fecha de compilación y evento de creación del archivo. Consulte el hash en threat intel.",
+        "Busque procesos lanzados con la línea de AeDebug tras fallos, y eventos posteriores de WerFault o de fallos de aplicaciones.",
+        "Busque el mismo valor de Details o el mismo hash en otros hosts, y revise alertas previas de este host y usuario."
+      ],
+      "false_positives": [
+        "Desarrolladores o personal de TI que configuran un depurador postmortem en equipos de desarrollo, como indica la regla.",
+        "Herramientas de depuración o de volcado de memoria instaladas que registran un manejador basado en DLL. Verifique proveedor, firma y ticket de cambio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con el registro de cambios si la configuración del depurador fue intencional.",
+        "Si es maliciosa, aísle el endpoint, exporte la clave AeDebug como evidencia y restaure el valor Debugger anterior o elimínelo.",
+        "Ponga la DLL en cuarentena después de calcular su hash y preservarla. Elimine la persistencia y los archivos relacionados.",
+        "Restablezca las credenciales del usuario si pudieran estar comprometidas, bloquee el hash en toda la flota y siga vigilando los cambios en AeDebug."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el cambio es poco común y da persistencia sigilosa, pero los desarrolladores configuran depuradores legítimamente y hay que validar el contexto."
+    },
+    "en": {
+      "summary": "A process set the AeDebug \"Debugger\" registry value to something ending in .dll. Windows runs this value when any application crashes, so it can be used for persistence.",
+      "what_it_detects": "Registry set events where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger and Details ends with .dll. The standard Visual Studio JIT debugger value (vsjitdebugger.exe) is excluded.",
+      "why_it_matters": "AeDebug holds the postmortem debugger command line that Windows launches when an application crashes. If an attacker points it at a DLL, for example through rundll32, their code runs whenever a process crashes. A crash can also be forced on purpose. This is persistence through event-triggered execution.",
+      "triage_steps": [
+        "Read Details in full. Note the DLL path, any loader such as rundll32 or regsvr32, and whether the path is user-writable (Users, ProgramData, Temp).",
+        "Identify the writing process (Image) and the user. Check its parent process and command line on the same host within +/- 15 minutes.",
+        "Check whether AeDebug\\Auto was set to 1 in the same window. That value makes the debugger launch silently with no prompt.",
+        "Collect the DLL: get its hash, signature, compile time and file creation event. Check the hash against threat intel.",
+        "Look for processes launched with the AeDebug command line after crashes, and for WerFault or application crash events afterward.",
+        "Search for the same Details value or DLL hash on other hosts, and check earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Developers or IT staff setting up a postmortem debugger on development machines, as the rule notes.",
+        "Debugging or crash-dump tools from installers that register a DLL-based handler. Verify the vendor, signature and change ticket."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or the change records whether the debugger setting was intended.",
+        "If it is malicious, isolate the endpoint, export the AeDebug key as evidence, then restore the previous Debugger value or delete it.",
+        "Quarantine the DLL after you hash and preserve it. Remove any related persistence and dropped files.",
+        "Reset the affected user's credentials if they may be compromised. Block the hash across the fleet and keep watching for AeDebug changes."
+      ],
+      "severity_rationale": "Medium fits because the change is rare and gives stealthy persistence, but developers legitimately configure debuggers, so the context must be verified."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A PowerShell process sets the AeDebug Debugger value to run a DLL from ProgramData through rundll32.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger",
+          "Details": "C:\\Windows\\System32\\rundll32.exe C:\\ProgramData\\CrashSvc\\crashhelper.dll"
+        }
+      },
+      {
+        "description": "reg.exe sets the Debugger value directly to a DLL path in the user's Temp folder.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger",
+          "Details": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\dbgsvc.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The Visual Studio installer registers the standard JIT debugger. The value matches the filter and does not end in .dll.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\setup.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger",
+          "Details": "\"C:\\WINDOWS\\system32\\vsjitdebugger.exe\" -p %ld -e %ld -j 0x%p"
+        }
+      },
+      {
+        "description": "An administrator sets a WinDbg executable as the postmortem debugger. The value ends in .exe-style arguments, not .dll.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DEV-0045.andes.example.com",
+          "User": "ANDES\\admin.lgomez",
+          "Image": "C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\windbg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger",
+          "Details": "\"C:\\Program Files (x86)\\Windows Kits\\10\\Debuggers\\x64\\windbg.exe\" -p %ld -e %ld -g"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

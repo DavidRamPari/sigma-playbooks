@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "16124c2d-e40b-4fcc-8f2c-5ab7870a2223",
+    "title": "AWS EC2 Disable EBS Encryption",
+    "level": "medium",
+    "status": "stable",
+    "author": "Sittikorn S",
+    "path": "cloud/aws/cloudtrail/aws_ec2_disable_encryption.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_ec2_disable_encryption.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1486",
+      "T1565"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS ejecutó DisableEbsEncryptionByDefault en EC2, lo que apaga el cifrado predeterminado de EBS en una región. Los volúmenes nuevos de esa región podrían crearse sin cifrar a partir de ahora.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource igual a ec2.amazonaws.com y eventName igual a DisableEbsEncryptionByDefault. La regla no revisa errorCode, así que también alerta los intentos fallidos.",
+      "why_it_matters": "El cifrado predeterminado garantiza que los volúmenes y snapshots nuevos queden cifrados en reposo. Desactivarlo debilita la protección de datos y puede anteceder al robo o la manipulación de información. La regla lo asocia a Impacto: Data Encrypted for Impact (T1486) y Data Manipulation (T1565). Los volúmenes existentes conservan su cifrado actual.",
+      "triage_steps": [
+        "Revise errorCode y errorMessage. Si es AccessDenied, la llamada falló, pero igual hay que averiguar por qué esa identidad lo intentó.",
+        "Identifique a quien hizo la llamada con userIdentity.arn, userIdentity.type, accessKeyId y sessionContext. Anote si se asumió un rol y quién lo asumió.",
+        "Analice sourceIPAddress y userAgent. Consola, CLI, Terraform o un SDK desconocido desde una IP inesperada apuntan a explicaciones muy distintas.",
+        "Confirme recipientAccountId y awsRegion. Verifique si es una cuenta de producción y si algún ticket de cambio cubre la acción.",
+        "Pivotee sobre la misma identidad en +/- 15 minutos: CreateVolume, CreateSnapshot, CopySnapshot, ModifySnapshotAttribute, ModifyEbsDefaultKmsKeyId, ScheduleKeyDeletion o DisableKey.",
+        "Busque la misma llamada en otras regiones y alertas previas de esa identidad o IP de origen, como ConsoleLogin sin MFA o CreateAccessKey.",
+        "Liste los volúmenes y snapshots creados en la región desde el evento y revise si alguno está sin cifrar o compartido fuera de la cuenta."
+      ],
+      "false_positives": [
+        "Cambios planificados de administradores, por ejemplo para resolver incompatibilidades con tipos de instancia o AMI que requieren volúmenes sin cifrar.",
+        "Cuentas DEV, UAT o SAT donde los valores predeterminados de cifrado cambian con frecuencia. Limite la regla a las cuentas de producción.",
+        "Pipelines de infraestructura como código (Terraform, CloudFormation) que aplican una línea base de cuenta aprobada."
+      ],
+      "response_steps": [
+        "Antes de contener, confirme con el responsable de la identidad o en el registro de cambios que la acción estaba autorizada.",
+        "Si no estaba autorizada, vuelva a activar el cifrado en la región con EnableEbsEncryptionByDefault y verifique la llave KMS predeterminada.",
+        "Contenga las credenciales comprometidas: desactive access keys, revoque las sesiones activas del rol y restablezca contraseñas de consola, después de preservar la evidencia de CloudTrail.",
+        "Ubique los volúmenes o snapshots sin cifrar creados en ese intervalo. Cífrelos mediante una copia cifrada del snapshot y elimine cualquier compartición externa inesperada.",
+        "Evite que se repita con una SCP que niegue ec2:DisableEbsEncryptionByDefault y con controles de AWS Config o Security Hub sobre el cifrado predeterminado de EBS."
+      ],
+      "severity_rationale": "Media es adecuada porque el cambio debilita un control clave de protección de datos, pero no descifra ni expone los datos existentes y con frecuencia lo hacen administradores legítimos."
+    },
+    "en": {
+      "summary": "An AWS identity called DisableEbsEncryptionByDefault on EC2, which switches off default EBS encryption in one region. New volumes created there may be unencrypted from now on.",
+      "what_it_detects": "CloudTrail events where eventSource is ec2.amazonaws.com and eventName is DisableEbsEncryptionByDefault. The rule does not check errorCode, so failed attempts also trigger it.",
+      "why_it_matters": "Default encryption makes sure new volumes and snapshots are encrypted at rest. Turning it off weakens data protection and can come before data theft or tampering. The rule maps it to Impact: Data Encrypted for Impact (T1486) and Data Manipulation (T1565). Existing volumes keep their current encryption.",
+      "triage_steps": [
+        "Check errorCode and errorMessage. If AccessDenied, the call failed, but you should still find out why that identity tried it.",
+        "Identify the caller from userIdentity.arn, userIdentity.type, accessKeyId and sessionContext. Note whether the role was assumed, and by whom.",
+        "Review sourceIPAddress and userAgent. Console, CLI, Terraform or an unknown SDK from an unexpected IP point to very different explanations.",
+        "Confirm recipientAccountId and awsRegion. Find out whether this is a production account and whether a change ticket covers the action.",
+        "Pivot on the same identity within +/- 15 minutes: CreateVolume, CreateSnapshot, CopySnapshot, ModifySnapshotAttribute, ModifyEbsDefaultKmsKeyId, ScheduleKeyDeletion or DisableKey.",
+        "Search for the same call in other regions and for earlier alerts on this identity or source IP, such as ConsoleLogin without MFA or CreateAccessKey.",
+        "List volumes and snapshots created in the region since the event and check whether any are unencrypted or shared outside the account."
+      ],
+      "false_positives": [
+        "Planned administrator changes, such as troubleshooting compatibility with instance types or AMIs that need unencrypted volumes.",
+        "DEV, UAT or SAT accounts where encryption defaults change often. Scope the rule to production accounts.",
+        "Infrastructure-as-code pipelines (Terraform, CloudFormation) applying an approved account baseline."
+      ],
+      "response_steps": [
+        "Check with the identity owner or change records that the action was authorized before you take containment steps.",
+        "If it was not authorized, turn default encryption back on in the region with EnableEbsEncryptionByDefault and confirm the default KMS key.",
+        "Contain compromised credentials: deactivate access keys, revoke active role sessions and reset console passwords, after preserving the CloudTrail evidence.",
+        "Find unencrypted volumes or snapshots created during the gap. Encrypt them through an encrypted snapshot copy and remove any unexpected external sharing.",
+        "Prevent recurrence with an SCP that denies ec2:DisableEbsEncryptionByDefault, and with AWS Config or Security Hub checks for EBS default encryption."
+      ],
+      "severity_rationale": "Medium fits because the change weakens a key data-protection control, but it does not decrypt or expose existing data and is often done by legitimate administrators."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful DisableEbsEncryptionByDefault call from the AWS CLI by an IAM user in a production account",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T03:12:45Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DisableEbsEncryptionByDefault",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.47",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.1.0 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "recipientAccountId": "111122223333",
+          "errorCode": null,
+          "responseElements.DisableEbsEncryptionByDefaultResponse.ebsEncryptionByDefault": false
+        }
+      },
+      {
+        "description": "Failed attempt (AccessDenied) through an assumed role; the rule still matches because it does not filter errorCode",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T03:20:02Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DisableEbsEncryptionByDefault",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.0 Python/3.10.12",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deployer/session-4821",
+          "recipientAccountId": "111122223333",
+          "errorCode": "Client.UnauthorizedOperation",
+          "errorMessage": "You are not authorized to perform this operation."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator re-enables default EBS encryption (EnableEbsEncryptionByDefault), which the rule does not match",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T04:01:10Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "EnableEbsEncryptionByDefault",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.15",
+          "userAgent": "console.ec2.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mgomez",
+          "recipientAccountId": "111122223333",
+          "errorCode": null
+        }
+      },
+      {
+        "description": "Read-only GetEbsEncryptionByDefault check from a compliance scanner",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T05:30:00Z",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "GetEbsEncryptionByDefault",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "config.amazonaws.com",
+          "userAgent": "config.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/AWSServiceRoleForConfig/ConfigSession",
+          "recipientAccountId": "111122223333",
+          "errorCode": null
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

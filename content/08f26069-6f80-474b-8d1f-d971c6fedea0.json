@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "08f26069-6f80-474b-8d1f-d971c6fedea0",
+    "title": "User Has Been Deleted Via Userdel",
+    "level": "medium",
+    "status": "test",
+    "author": "Tuan Le (NCSGroup)",
+    "path": "linux/process_creation/proc_creation_lnx_userdel.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_userdel.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1531"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario userdel en un host Linux, lo que normalmente elimina una cuenta de usuario y, con -r, su directorio home y su buzón de correo.",
+      "what_it_detects": "Eventos de creación de procesos en Linux cuyo Image termina en '/userdel', sin importar los argumentos ni el usuario que lo ejecuta.",
+      "why_it_matters": "Un atacante puede borrar cuentas para cortar el acceso de usuarios legítimos (T1531, Account Access Removal) o para eliminar cuentas temporales o de backdoor que él mismo creó y así ocultar sus huellas.",
+      "triage_steps": [
+        "Revise CommandLine: identifique la cuenta eliminada y opciones como -r (borra el home) o -f (fuerza la eliminación aunque la cuenta tenga sesión activa).",
+        "Identifique quién lo ejecutó (User, LogonId o sesión sudo) y desde qué ParentImage: una shell interactiva, sudo, cron, Ansible u otra herramienta de gestión.",
+        "Confirme si existe un ticket de cambio o una baja de personal que justifique eliminar esa cuenta en ese host.",
+        "Busque en el mismo host, +/- 15 minutos, useradd, usermod, passwd, chpasswd, cambios en sudoers o authorized_keys y borrado de logs o del historial.",
+        "Determine si la cuenta eliminada se había creado poco antes; un ciclo crear-usar-borrar sugiere una cuenta temporal del atacante.",
+        "Revise los inicios de sesión SSH del usuario ejecutor y de la cuenta eliminada: IP de origen, horario y sesiones inusuales.",
+        "Busque alertas previas del mismo host o usuario y ejecuciones de userdel en otros servidores en el mismo periodo."
+      ],
+      "false_positives": [
+        "Bajas de empleados o depuración de cuentas realizadas por administradores autorizados.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) o scripts de aprovisionamiento que eliminan cuentas obsoletas.",
+        "Desinstalación de paquetes que retiran sus cuentas de servicio.",
+        "Construcción de imágenes, contenedores o pipelines de CI que crean y eliminan usuarios temporales."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o el equipo de identidades si la eliminación estaba autorizada antes de actuar.",
+        "Si no está autorizada, restrinja la cuenta que ejecutó userdel: rote sus credenciales, revoque llaves SSH y privilegios sudo, y considere aislar el host.",
+        "Recupere la cuenta eliminada y sus datos desde respaldos o snapshots si un usuario legítimo perdió el acceso.",
+        "Preserve evidencia (auth.log, journal, historial de shell, /etc/passwd y /etc/shadow) y busque persistencia o cuentas adicionales creadas por el atacante."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque userdel es una tarea administrativa habitual, pero eliminar cuentas sin autorización afecta la disponibilidad y puede encubrir una intrusión."
+    },
+    "en": {
+      "summary": "The userdel binary ran on a Linux host. It normally deletes a user account and, with -r, removes the home directory and mail spool too.",
+      "what_it_detects": "Linux process creation events whose Image ends with '/userdel', regardless of arguments or the executing user.",
+      "why_it_matters": "Attackers delete accounts to lock out legitimate users (T1531, Account Access Removal) or to remove temporary or backdoor accounts they created, covering their tracks.",
+      "triage_steps": [
+        "Review CommandLine: identify the deleted account and options such as -r (remove home) or -f (force removal even when the account is logged in).",
+        "Identify who ran it (User, LogonId or sudo session) and the ParentImage: interactive shell, sudo, cron, Ansible or another management tool.",
+        "Confirm a change ticket or offboarding request justifies deleting that account on that host.",
+        "On the same host within +/- 15 minutes, look for useradd, usermod, passwd, chpasswd, sudoers or authorized_keys changes, and log or history deletion.",
+        "Check whether the deleted account was created recently; a create-use-delete cycle suggests a temporary attacker account.",
+        "Review SSH logins for the executing user and the deleted account: source IP, timing and unusual sessions.",
+        "Search for earlier alerts on the same host or user and userdel runs on other servers in the same window."
+      ],
+      "false_positives": [
+        "Employee offboarding or account cleanup by authorized administrators.",
+        "Configuration management tools (Ansible, Puppet, Chef) or provisioning scripts removing obsolete accounts.",
+        "Package removal that deletes its service accounts.",
+        "Image builds, containers or CI pipelines that create and delete temporary users."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or identity team whether the deletion was authorized before acting.",
+        "If unauthorized, restrict the account that ran userdel: rotate credentials, revoke SSH keys and sudo rights, and consider isolating the host.",
+        "Restore the deleted account and its data from backups or snapshots if a legitimate user lost access.",
+        "Preserve evidence (auth.log, journal, shell history, /etc/passwd, /etc/shadow) and hunt for persistence or other attacker-created accounts."
+      ],
+      "severity_rationale": "Medium fits because userdel is routine administration, yet unauthorized account deletion hurts availability and can hide an intrusion."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Root removes a recently created account and its home directory via sudo from an interactive shell",
+        "event": {
+          "Image": "/usr/sbin/userdel",
+          "CommandLine": "userdel -r -f svc_tmp",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo userdel -r -f svc_tmp",
+          "User": "root",
+          "LogonId": 1001,
+          "ProcessId": 48213,
+          "ParentProcessId": 48210,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "userdel launched by a bash script without removing the home directory",
+        "event": {
+          "Image": "/sbin/userdel",
+          "CommandLine": "/sbin/userdel backup2",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /tmp/.c.sh",
+          "User": "root",
+          "ProcessId": 5120,
+          "ParentProcessId": 5098,
+          "CurrentDirectory": "/tmp",
+          "Computer": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator uses the Debian deluser wrapper; the Image ends with /deluser, not /userdel",
+        "event": {
+          "Image": "/usr/sbin/deluser",
+          "CommandLine": "deluser --remove-home mlopez",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 30211,
+          "ParentProcessId": 30209,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Group deletion with groupdel; the Image ends with groupdel, not /userdel",
+        "event": {
+          "Image": "/usr/sbin/groupdel",
+          "CommandLine": "groupdel developers_old",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 30455,
+          "ParentProcessId": 30450,
+          "Computer": "app-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

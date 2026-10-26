@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "de46c52b-0bf8-4936-a327-aace94f94ac6",
+    "title": "Process Explorer Driver Creation By Non-Sysinternals Binary",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_sysinternals_procexp_driver_susp_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_sysinternals_procexp_driver_susp_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que no es Process Explorer escribió en disco un driver de Process Explorer (PROCEXP*.sys). Puede indicar que una herramienta como Backstab o AuKill carga ese driver firmado para terminar procesos protegidos, como el EDR.",
+      "what_it_detects": "Eventos file_event en los que TargetFilename contiene '\\PROCEXP' y termina en '.sys', y el Image que crea el archivo no termina en procexp.exe, procexp64.exe ni procexp64a.exe.",
+      "why_it_matters": "El driver de Process Explorer está firmado y permite manipular procesos desde el kernel. Hay malware que lo deja en disco unos instantes, lo carga como servicio, termina el EDR y lo borra. Corresponde a ATT&CK T1068 (explotación para escalar privilegios).",
+      "triage_steps": [
+        "Revise Image, su ruta, hash y firma. Un ejecutable sin firmar en Temp, ProgramData, Users\\Public o Downloads es altamente sospechoso.",
+        "Confirme si Image es Process Explorer renombrado: compare hash, OriginalFileName y firmante (Sysinternals/Microsoft).",
+        "Revise TargetFilename: confirme si el .sys quedó fuera de la ruta habitual de drivers o con un nombre de versión inesperado.",
+        "Busque en el mismo host, ±15 minutos, la creación o el inicio de un servicio de kernel (Sysmon 6, evento 7045 del System) que apunte al .sys.",
+        "Determine si el agente EDR o antivirus dejó de reportar, o si sus procesos terminaron justo después del evento.",
+        "Revise el proceso padre, la línea de comandos y el usuario de Image. Verifique si el archivo .sys fue borrado poco después.",
+        "Busque alertas previas del mismo host y usuario, y el mismo hash en otros endpoints."
+      ],
+      "false_positives": [
+        "Binarios legítimos de Process Explorer renombrados por administradores o herramientas de despliegue.",
+        "Suites de soporte o herramientas de diagnóstico que incluyen Process Explorer bajo otro nombre de ejecutable, con firma válida de Microsoft."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo si hubo uso legítimo de Sysinternals. Si no lo hubo, escale como incidente.",
+        "Aísle el endpoint si el EDR se detuvo o si Image no es de confianza.",
+        "Conserve el ejecutable y el .sys (si aún existen), los hashes y la memoria antes de eliminarlos.",
+        "Detenga y elimine el servicio malicioso, restaure el agente de seguridad y busque persistencia o movimiento lateral.",
+        "Bloquee el hash, considere aplicar la lista de bloqueo de drivers vulnerables y restablezca las credenciales expuestas."
+      ],
+      "severity_rationale": "Es alta porque crear el driver fuera de Process Explorer rara vez es legítimo y suele preceder a la desactivación del EDR con privilegios de kernel."
+    },
+    "en": {
+      "summary": "A process other than Process Explorer wrote a Process Explorer driver (PROCEXP*.sys) to disk. This may mean a tool such as Backstab or AuKill is loading that signed driver to kill protected processes like EDR.",
+      "what_it_detects": "file_event records where TargetFilename contains '\\PROCEXP' and ends with '.sys', and the creating Image does not end in procexp.exe, procexp64.exe or procexp64a.exe.",
+      "why_it_matters": "The Process Explorer driver is signed and allows kernel-level process manipulation. Malware drops it briefly, loads it as a service, terminates security tools and deletes it. This maps to ATT&CK T1068 (exploitation for privilege escalation).",
+      "triage_steps": [
+        "Check the Image path, hash and signature. An unsigned binary in Temp, ProgramData, Users\\Public or Downloads is highly suspicious.",
+        "Check whether Image is a renamed Process Explorer: compare the hash, OriginalFileName and signer (Sysinternals/Microsoft).",
+        "Check TargetFilename: see whether the .sys sits outside the usual driver path or has an unexpected version name.",
+        "On the same host within ±15 minutes, look for kernel service creation or start (Sysmon 6, System 7045) that references the .sys.",
+        "Check whether the EDR or AV agent stopped reporting, or its processes ended, right after the event.",
+        "Review the parent process, command line and user of Image. Check whether the .sys was deleted shortly afterwards.",
+        "Search for earlier alerts on the same host and user, and for the same hash on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate Process Explorer binaries renamed by administrators or deployment tooling.",
+        "Support suites or diagnostic tools that bundle Process Explorer under a different executable name with a valid Microsoft signature."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether Sysinternals was used legitimately. If it was not, escalate as an incident.",
+        "Isolate the endpoint if the EDR stopped or Image is untrusted.",
+        "Preserve the executable, the .sys (if it still exists), the hashes and memory before removing anything.",
+        "Stop and delete the malicious service, restore the security agent, and hunt for persistence and lateral movement.",
+        "Block the hash, consider enforcing the vulnerable driver blocklist, and reset any exposed credentials."
+      ],
+      "severity_rationale": "High fits because dropping this driver outside Process Explorer is rarely legitimate and usually comes before the EDR is disabled with kernel privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in Users\\Public drops PROCEXP152.SYS into the drivers folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\Public\\svchelper.exe",
+          "ProcessId": 6620,
+          "TargetFilename": "C:\\Windows\\System32\\drivers\\PROCEXP152.SYS",
+          "CreationUtcTime": "2024-10-25 14:03:12.511"
+        }
+      },
+      {
+        "description": "Tool in Temp writes the Process Explorer driver to its own folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0188.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\bs.exe",
+          "ProcessId": 4410,
+          "TargetFilename": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\procexp.sys",
+          "CreationUtcTime": "2024-10-25 15:20:44.102"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Process Explorer 64-bit extracts its own driver (filtered by Image)",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\admin.soporte",
+          "Image": "C:\\Tools\\Sysinternals\\procexp64.exe",
+          "ProcessId": 5120,
+          "TargetFilename": "C:\\Windows\\System32\\drivers\\PROCEXP152.SYS",
+          "CreationUtcTime": "2024-10-25 09:12:03.870"
+        }
+      },
+      {
+        "description": "Non-Sysinternals process writes a PROCEXP file that is not a .sys driver",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\explorer.exe",
+          "ProcessId": 3304,
+          "TargetFilename": "C:\\Users\\jperez\\Downloads\\ProcessExplorer\\procexp.chm",
+          "CreationUtcTime": "2024-10-25 10:01:55.300"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

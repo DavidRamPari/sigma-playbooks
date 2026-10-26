@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "9ace0707-b560-49b8-b6ca-5148b42f39fb",
+    "title": "Potential Persistence Via Logon Scripts - Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Tom Ueltschi (@c_APT_ure)",
+    "path": "windows/registry/registry_set/registry_set_persistence_logon_scripts_userinitmprlogonscript.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_logon_scripts_userinitmprlogonscript.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1037.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó o modificó el valor de registro UserInitMprLogonScript, que hace que Windows ejecute un script cada vez que el usuario inicia sesión. Es un mecanismo de persistencia conocido y poco usado de forma legítima.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene 'UserInitMprLogonScript', normalmente HKU\\<SID>\\Environment\\UserInitMprLogonScript (HKCU\\Environment). El campo Details contiene la ruta o el comando que se ejecutará.",
+      "why_it_matters": "MITRE ATT&CK T1037.001 (Logon Script, Windows): userinit.exe ejecuta el script en cada inicio de sesión con los privilegios del usuario. Un atacante lo usa para persistir sin privilegios de administrador y para volver a ejecutar su payload.",
+      "triage_steps": [
+        "Revise Details: ruta del script o comando. Considere sospechosas las rutas en AppData, Temp, ProgramData, rutas UNC externas o líneas con powershell, cmd, mshta o rundll32.",
+        "Identifique el proceso que escribió el valor (Image) y obtenga su CommandLine y ParentImage de los eventos de creación de procesos del mismo host en un rango de +/- 15 minutos.",
+        "Relacione el SID de TargetObject con la cuenta afectada y compárelo con el campo User. Si son distintos, otra cuenta modificó el hive.",
+        "Obtenga el archivo referenciado: hash, firma, fecha de creación, contenido y proceso que lo creó. Busque el hash en inteligencia de amenazas.",
+        "Busque ejecuciones posteriores con ParentImage userinit.exe y conexiones de red del host después del siguiente inicio de sesión del usuario.",
+        "Revise otras formas de persistencia en el host (claves Run, tareas programadas, servicios) y alertas previas para el mismo usuario y host.",
+        "Confirme con TI si existe un despliegue autorizado; los scripts corporativos suelen asignarse por GPO o por el atributo scriptPath de AD, no con este valor."
+      ],
+      "false_positives": [
+        "Script de inicio de sesión legítimo configurado por TI mediante herramientas de gestión de endpoints o scripts de aprovisionamiento.",
+        "Aplicaciones heredadas o instaladores que registran un script de inicio por usuario.",
+        "Pruebas autorizadas de red team o Atomic Red Team (T1037.001)."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad del script con el dueño del equipo y con TI antes de actuar.",
+        "Si es malicioso, aísle el endpoint y preserve evidencia: exporte la clave Environment y copie el script referenciado.",
+        "Elimine el valor UserInitMprLogonScript y el script, y termine los procesos relacionados.",
+        "Restablezca las credenciales del usuario si hubo ejecución, y busque el mismo valor y hash en toda la flota.",
+        "Restaure el equipo a un estado confiable y monitoree inicios de sesión posteriores."
+      ],
+      "severity_rationale": "Nivel medio: el valor rara vez se usa legítimamente y da persistencia, pero hay que revisar su contenido para confirmar que es malicioso."
+    },
+    "en": {
+      "summary": "A process created or changed the UserInitMprLogonScript registry value, which makes Windows run a script every time the user logs on. This is a known persistence method with little legitimate use.",
+      "what_it_detects": "registry_set events where TargetObject contains 'UserInitMprLogonScript', usually HKU\\<SID>\\Environment\\UserInitMprLogonScript (HKCU\\Environment). The Details field holds the path or command that will run.",
+      "why_it_matters": "MITRE ATT&CK T1037.001 (Logon Script, Windows): userinit.exe runs the script at each logon with the user's privileges. Attackers use it to persist without admin rights and to relaunch their payload.",
+      "triage_steps": [
+        "Review Details for the script path or command. Treat AppData, Temp, ProgramData, external UNC paths, or powershell, cmd, mshta or rundll32 command lines as suspicious.",
+        "Identify the writing process (Image), then pull its CommandLine and ParentImage from process creation events on the same host within +/- 15 minutes.",
+        "Map the SID in TargetObject to the affected account and compare it with the User field. If they differ, another account modified the hive.",
+        "Collect the referenced file: hash, signature, creation time, contents and the process that created it. Check the hash against threat intelligence.",
+        "Look for later processes with ParentImage userinit.exe and for network connections from the host after the user's next logon.",
+        "Check the host for other persistence (Run keys, scheduled tasks, services) and for earlier alerts on the same user and host.",
+        "Ask IT whether this was an approved deployment. Corporate logon scripts are usually set by GPO or the AD scriptPath attribute, not this value."
+      ],
+      "false_positives": [
+        "A legitimate logon script set by IT through endpoint management tools or provisioning scripts.",
+        "Legacy applications or installers that register a per-user logon script.",
+        "Authorized red team or Atomic Red Team tests (T1037.001)."
+      ],
+      "response_steps": [
+        "Check with the device owner and IT that the script is legitimate before acting.",
+        "If it is malicious, isolate the endpoint and preserve evidence: export the Environment key and copy the referenced script.",
+        "Delete the UserInitMprLogonScript value and the script, and stop related processes.",
+        "If the script ran, reset the user's credentials and hunt for the same value and hash across the fleet.",
+        "Restore the host to a known-good state and monitor later logons."
+      ],
+      "severity_rationale": "Medium: the value is rarely used legitimately and gives persistence, but you need to review its contents to confirm malicious intent."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe adds UserInitMprLogonScript to HKCU\\Environment, pointing to a batch file in Temp (Atomic Red Team T1037.001 style)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2025-03-11 14:03:12.481",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-3623811015-3361044348-30300820-1104\\Environment\\UserInitMprLogonScript",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Temp\\art.bat",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "PowerShell sets UserInitMprLogonScript to a command that launches a hidden script from ProgramData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2025-03-12 09:41:55.102",
+          "Computer": "WS-0177.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4488,
+          "TargetObject": "HKU\\S-1-5-21-3623811015-3361044348-30300820-1210\\Environment\\UserInitMprLogonScript",
+          "Details": "powershell.exe -w hidden -f C:\\ProgramData\\upd\\logon.ps1",
+          "User": "ANDES\\mrodriguez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Change to the Winlogon Userinit value (similar name, different value) does not contain UserInitMprLogonScript",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2025-03-11 10:15:03.220",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "ProcessId": 1324,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Userinit",
+          "Details": "C:\\Windows\\system32\\userinit.exe,",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Legitimate update of a user environment variable under HKCU\\Environment",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2025-03-11 11:22:47.915",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\SystemPropertiesAdvanced.exe",
+          "ProcessId": 5032,
+          "TargetObject": "HKU\\S-1-5-21-3623811015-3361044348-30300820-1104\\Environment\\Path",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\WindowsApps;",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "78b3756a-7804-4ef7-8555-7b9024a02e2d",
+    "title": "AWS S3 Data Management Tampering",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_s3_data_management_tampering.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_s3_data_management_tampering.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1537"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS cambió la configuración de gestión de datos de un bucket S3 (logging, sitio web, cifrado, ciclo de vida o replicación) o replicó o restauró objetos. Puede ser administración legítima o un paso previo a la exfiltración o a la destrucción de datos.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource s3.amazonaws.com y eventName PutBucketLogging, PutBucketWebsite, PutEncryptionConfiguration, PutLifecycleConfiguration, PutReplicationConfiguration, ReplicateObject o RestoreObject.",
+      "why_it_matters": "Un atacante puede replicar un bucket a una cuenta propia, publicarlo como sitio web, desactivar el logging de acceso, cambiar la llave de cifrado o fijar reglas de ciclo de vida que borren datos. Corresponde a ATT&CK T1537, transferencia de datos a otra cuenta cloud.",
+      "triage_steps": [
+        "Identifique eventName, userIdentity.arn, el tipo de identidad (IAMUser, AssumedRole, Root), sourceIPAddress y userAgent. Compruebe si la identidad administra S3 habitualmente.",
+        "Revise requestParameters: en replicación, el bucket de destino y su cuenta; en logging, si se eliminó el destino; en ciclo de vida, la expiración; en cifrado, la llave KMS.",
+        "Verifique si el bucket o la cuenta de destino de la replicación pertenecen a su organización. Una cuenta externa es una señal fuerte de exfiltración.",
+        "Compare sourceIPAddress y userAgent con el historial de la identidad: IP nuevas, regiones inusuales o herramientas como CLI o SDK fuera del pipeline de IaC.",
+        "Busque otros eventos de la misma identidad en +/- 15 minutos: PutBucketPolicy, PutBucketAcl, DeletePublicAccessBlock, StopLogging, CreateAccessKey o GetObject en volumen.",
+        "Si la identidad es un rol asumido, rastree el AssumeRole de origen y la sesión. Correlacione con tickets de cambio y alertas previas de la misma entidad."
+      ],
+      "false_positives": [
+        "Administradores de nube o de red que ajustan logging, cifrado o ciclo de vida de buckets como parte de cambios aprobados.",
+        "Pipelines de IaC (Terraform, CloudFormation, CDK) que aplican configuración de S3 desde roles de despliegue conocidos.",
+        "Replicación entre regiones o cuentas propias configurada para respaldo o recuperación ante desastres, y RestoreObject de archivos en Glacier."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del bucket o el equipo de nube si el cambio estaba autorizado y documentado.",
+        "Si no está autorizado, revierta la configuración: elimine la replicación hacia destinos externos, restaure logging, cifrado y ciclo de vida, previa copia de la configuración actual como evidencia.",
+        "Contenga la identidad: desactive llaves de acceso o revoque sesiones del rol, y revise sus permisos IAM.",
+        "Evalúe si hubo exfiltración revisando eventos de datos de S3 y el volumen replicado; escale a respuesta a incidentes si se confirma.",
+        "Documente las exclusiones para roles de automatización legítimos y ajuste la regla."
+      ],
+      "severity_rationale": "Nivel bajo porque estos cambios son frecuentes en la administración normal, aunque escalan cuando el destino es externo o la identidad es inusual."
+    },
+    "en": {
+      "summary": "An AWS identity changed a bucket's data management settings (logging, website, encryption, lifecycle or replication) or replicated or restored objects. This may be routine administration or a step toward exfiltration or data destruction.",
+      "what_it_detects": "CloudTrail events with eventSource s3.amazonaws.com and eventName PutBucketLogging, PutBucketWebsite, PutEncryptionConfiguration, PutLifecycleConfiguration, PutReplicationConfiguration, ReplicateObject or RestoreObject.",
+      "why_it_matters": "An attacker can replicate a bucket to their own account, expose it as a website, disable access logging, swap the encryption key or set lifecycle rules that delete data. Maps to ATT&CK T1537, transfer data to cloud account.",
+      "triage_steps": [
+        "Identify eventName, userIdentity.arn, identity type (IAMUser, AssumedRole, Root), sourceIPAddress and userAgent. Check whether this identity normally administers S3.",
+        "Review requestParameters: replication destination bucket and account; logging target removed; lifecycle expiration rules; encryption KMS key.",
+        "Confirm whether the replication destination bucket or account belongs to your organization. An external account strongly suggests exfiltration.",
+        "Compare sourceIPAddress and userAgent with the identity's history: new IPs, unusual regions, or CLI/SDK use outside the IaC pipeline.",
+        "Search the same identity within +/- 15 minutes for PutBucketPolicy, PutBucketAcl, DeletePublicAccessBlock, StopLogging, CreateAccessKey or bulk GetObject.",
+        "For assumed roles, trace the originating AssumeRole and session. Correlate with change tickets and earlier alerts for the same entity."
+      ],
+      "false_positives": [
+        "Cloud or network administrators adjusting bucket logging, encryption or lifecycle as part of approved changes.",
+        "IaC pipelines (Terraform, CloudFormation, CDK) applying S3 configuration from known deployment roles.",
+        "Replication to owned regions or accounts for backup or disaster recovery, and RestoreObject of Glacier archives."
+      ],
+      "response_steps": [
+        "Confirm with the bucket owner or cloud team whether the change was authorized and documented.",
+        "If unauthorized, save the current configuration as evidence, then revert: remove external replication, restore logging, encryption and lifecycle settings.",
+        "Contain the identity: deactivate access keys or revoke role sessions and review its IAM permissions.",
+        "Assess exfiltration using S3 data events and replicated volume; escalate to incident response if confirmed.",
+        "Document exclusions for legitimate automation roles and tune the rule."
+      ],
+      "severity_rationale": "Low because these changes are common in normal administration, but it escalates when the destination is external or the identity is unusual."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Replication configuration added to a bucket from an unfamiliar IP using the AWS CLI",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "PutReplicationConfiguration",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.bucketName": "andes-finance-reports",
+          "eventTime": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "Bucket access logging changed by an assumed role",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "PutBucketLogging",
+          "awsRegion": "us-west-2",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.0 Python/3.12.1",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAdmin/mgarcia",
+          "requestParameters.bucketName": "andes-app-data",
+          "eventTime": "2024-10-25T14:10:47Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only query of the replication configuration, not a change",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "GetBucketReplication",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.15",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.bucketName": "andes-finance-reports",
+          "eventTime": "2024-10-25T14:01:00Z"
+        }
+      },
+      {
+        "description": "Encryption-related change on a different service (KMS), not S3",
+        "event": {
+          "eventSource": "kms.amazonaws.com",
+          "eventName": "PutKeyPolicy",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.30",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-runner",
+          "eventTime": "2024-10-25T15:22:09Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

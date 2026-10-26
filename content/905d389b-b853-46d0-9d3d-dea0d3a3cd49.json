@@ -1,0 +1,162 @@
+{
+  "rule": {
+    "id": "905d389b-b853-46d0-9d3d-dea0d3a3cd49",
+    "title": "AWS STS AssumeRole Misuse",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_sts_assumerole_misuse.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_sts_assumerole_misuse.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548",
+      "T1550",
+      "T1550.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en CloudTrail una llamada a la API hecha con credenciales temporales de un rol asumido vía STS. Por sí sola es actividad muy común; la alerta tiene valor como contexto o cuando el rol, el origen o la acción no son los habituales.",
+      "what_it_detects": "Cualquier evento de CloudTrail donde userIdentity.type es AssumedRole y userIdentity.sessionContext.sessionIssuer.type es Role. No filtra por eventName, así que coincide con cualquier acción ejecutada desde una sesión de rol asumido, no solo con la llamada AssumeRole.",
+      "why_it_matters": "Un atacante con credenciales robadas puede asumir roles para moverse lateralmente entre cuentas o elevar privilegios (T1548) y usar material de autenticación alternativo, como tokens de sesión STS (T1550.001), para operar sin contraseñas ni access keys permanentes.",
+      "triage_steps": [
+        "Identifique el rol en userIdentity.sessionContext.sessionIssuer.arn, el nombre de sesión en userIdentity.arn y la acción en eventName y eventSource.",
+        "Busque el evento AssumeRole que creó la sesión (mismo accessKeyId o nombre de sesión) y determine quién lo asumió: usuario, rol, servicio o cuenta externa.",
+        "Revise sourceIPAddress y userAgent: compárelos con el uso habitual del rol (consola, SDK, Terraform, servicio AWS) y con IP corporativas conocidas.",
+        "Valide si eventName es sensible: IAM (CreateUser, AttachRolePolicy, CreateAccessKey), desactivación de CloudTrail o GuardDuty, cambios en S3, KMS o grupos de seguridad.",
+        "Pivotee en +/- 15 minutos sobre el mismo accessKeyId, rol e IP; busque encadenamiento de roles o AssumeRole hacia otras cuentas.",
+        "Revise errorCode: muchos AccessDenied seguidos sugieren enumeración de permisos.",
+        "Consulte alertas previas para el mismo rol, IP o cuenta y confirme con el dueño del rol si la actividad era esperada."
+      ],
+      "false_positives": [
+        "Administradores de sistemas o de red que asumen roles para tareas operativas legítimas.",
+        "Automatización con Terraform, pipelines de CI/CD o herramientas de IaC que asumen roles de despliegue.",
+        "Servicios y aplicaciones (EC2, Lambda, ECS) que operan con roles; esta regla coincide con casi todo su tráfico.",
+        "Acceso federado mediante SSO o IAM Identity Center, que se registra como rol asumido."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del rol o el equipo de plataforma si la sesión y las acciones eran autorizadas.",
+        "Si es sospechosa, revoque las sesiones activas del rol (política de denegación por aws:TokenIssueTime) y restrinja temporalmente su política de confianza.",
+        "Investigue y rote las credenciales de la identidad que originó el AssumeRole.",
+        "Revierta cambios no autorizados (políticas, usuarios, access keys, recursos) tras documentarlos como evidencia.",
+        "Ajuste la regla con exclusiones por rol, userAgent o IP conocidos para reducir ruido."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque la regla coincide con actividad rutinaria de roles asumidos y solo se vuelve relevante combinada con orígenes, roles o acciones inusuales."
+    },
+    "en": {
+      "summary": "CloudTrail logged an API call made with temporary credentials from an STS-assumed role. On its own this is very common; it matters when the role, source or action is unusual.",
+      "what_it_detects": "Any CloudTrail event where userIdentity.type is AssumedRole and userIdentity.sessionContext.sessionIssuer.type is Role. There is no eventName filter, so it matches every action taken from an assumed-role session, not only the AssumeRole call.",
+      "why_it_matters": "An attacker with stolen credentials can assume roles to move laterally across accounts or escalate privileges (T1548), and use alternate authentication material such as STS session tokens (T1550.001) without permanent passwords or keys.",
+      "triage_steps": [
+        "Identify the role in userIdentity.sessionContext.sessionIssuer.arn, the session name in userIdentity.arn, and the action in eventName and eventSource.",
+        "Find the AssumeRole event that created the session (same accessKeyId or session name) and determine who assumed it: user, role, service or external account.",
+        "Review sourceIPAddress and userAgent; compare with the role's normal usage (console, SDK, Terraform, AWS service) and known corporate IPs.",
+        "Check whether eventName is sensitive: IAM changes (CreateUser, AttachRolePolicy, CreateAccessKey), disabling CloudTrail or GuardDuty, S3, KMS or security group changes.",
+        "Pivot +/- 15 minutes on the same accessKeyId, role and IP; look for role chaining or AssumeRole into other accounts.",
+        "Review errorCode: bursts of AccessDenied suggest permission enumeration.",
+        "Check earlier alerts for the same role, IP or account and confirm with the role owner whether the activity was expected."
+      ],
+      "false_positives": [
+        "System or network administrators assuming roles for legitimate operational work.",
+        "Terraform, CI/CD pipelines or other IaC tooling assuming deployment roles.",
+        "Services and workloads (EC2, Lambda, ECS) running under roles; the rule matches nearly all their traffic.",
+        "Federated access through SSO or IAM Identity Center, which is logged as an assumed role."
+      ],
+      "response_steps": [
+        "Confirm with the role owner or platform team whether the session and actions were authorized.",
+        "If suspicious, revoke the role's active sessions (deny policy on aws:TokenIssueTime) and temporarily tighten its trust policy.",
+        "Investigate and rotate credentials of the identity that issued the AssumeRole.",
+        "Document, then revert unauthorized changes (policies, users, access keys, resources).",
+        "Tune the rule with exclusions for known roles, user agents or IPs to reduce noise."
+      ],
+      "severity_rationale": "Low fits because the rule matches routine assumed-role activity and only becomes meaningful combined with unusual sources, roles or actions."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Assumed-role session creating an access key for an IAM user from an unfamiliar IP",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T14:03:12Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateAccessKey",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAdminRole/jperez-session",
+          "userIdentity.accountId": "111122223333",
+          "userIdentity.accessKeyId": "ASIAEXAMPLE1234567",
+          "userIdentity.sessionContext.sessionIssuer.type": "Role",
+          "userIdentity.sessionContext.sessionIssuer.arn": "arn:aws:iam::111122223333:role/OpsAdminRole",
+          "userIdentity.sessionContext.sessionIssuer.userName": "OpsAdminRole",
+          "requestParameters.userName": "svc-backup",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Terraform deployment role listing S3 buckets",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T15:20:44Z",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.7.4",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeployRole/ci-run-8812",
+          "userIdentity.accountId": "111122223333",
+          "userIdentity.sessionContext.sessionIssuer.type": "Role",
+          "userIdentity.sessionContext.sessionIssuer.arn": "arn:aws:iam::111122223333:role/TerraformDeployRole",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "IAM user calling AssumeRole with long-term keys; identity type is IAMUser, so the selection does not match",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T14:01:05Z",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "AssumeRole",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Windows/10",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accountId": "111122223333",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE7654321",
+          "requestParameters.roleArn": "arn:aws:iam::111122223333:role/OpsAdminRole",
+          "requestParameters.roleSessionName": "jperez-session",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "AWS service principal action; userIdentity.type is AWSService, not AssumedRole",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T16:45:00Z",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "AssumeRole",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "lambda.amazonaws.com",
+          "userAgent": "lambda.amazonaws.com",
+          "userIdentity.type": "AWSService",
+          "userIdentity.invokedBy": "lambda.amazonaws.com",
+          "requestParameters.roleArn": "arn:aws:iam::111122223333:role/ReportLambdaRole",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

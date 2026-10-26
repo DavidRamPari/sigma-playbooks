@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "c90362e0-2df3-4e61-94fe-b37615814cb1",
+    "title": "Potential Persistence Via Netsh Helper DLL - Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Anish Bogati",
+    "path": "windows/registry/registry_set/registry_set_netsh_helper_dll_potential_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_netsh_helper_dll_potential_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.007"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió en la clave de registro HKLM\\SOFTWARE\\Microsoft\\NetSh un valor que apunta a una DLL. Puede ser un helper legítimo de netsh o un intento de persistencia que hace que netsh.exe cargue una DLL maliciosa.",
+      "what_it_detects": "Eventos registry_set (por ejemplo, Sysmon EventID 13) donde TargetObject contiene \\SOFTWARE\\Microsoft\\NetSh y Details contiene '.dll'. Se excluyen las escrituras de poqexec.exe con los helpers del sistema ipmontr.dll, iasmontr.dll e ippromon.dll.",
+      "why_it_matters": "netsh.exe carga cada DLL registrada como helper (ATT&CK T1546.007, Event Triggered Execution: Netsh Helper DLL). Un atacante con privilegios de administrador puede registrar una DLL para ejecutar código cada vez que se use netsh, a menudo con privilegios altos.",
+      "triage_steps": [
+        "Revise TargetObject y Details: anote el nombre del valor y la ruta de la DLL. Las rutas en carpetas de usuario, Temp, ProgramData o Public son más sospechosas que System32.",
+        "Identifique Image y el usuario que hizo el cambio. reg.exe, powershell.exe o netsh.exe con 'add helper' lanzados por un usuario interactivo requieren revisión.",
+        "Busque la creación del proceso padre y su CommandLine en el mismo host +/- 15 minutos, incluido 'netsh add helper' o 'reg add'.",
+        "Obtenga el hash, la firma digital y la fecha de creación de la DLL indicada en Details; consulte su reputación en su plataforma de inteligencia.",
+        "Verifique si después netsh.exe cargó esa DLL (eventos de image load) y si hubo conexiones de red o procesos hijos inusuales de netsh.exe.",
+        "Revise alertas previas del mismo host y usuario: elevación de privilegios, descarga de archivos o movimiento lateral.",
+        "Confirme con el equipo de TI si se instaló software de VPN, red o seguridad que registre helpers de netsh."
+      ],
+      "false_positives": [
+        "Instaladores de software de red, VPN o seguridad que registran su propio helper de netsh.",
+        "Actualizaciones de Windows o componentes del sistema que escriben helpers con un proceso distinto de poqexec.exe.",
+        "Herramientas de administración o imágenes corporativas que configuran netsh durante el aprovisionamiento."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad de la DLL (firma, origen, proveedor) antes de actuar.",
+        "Si es maliciosa, aísle el endpoint y preserve la DLL y la exportación de la clave NetSh como evidencia.",
+        "Elimine el valor del registro y la DLL solo después de documentarlos; revise otros mecanismos de persistencia en el host.",
+        "Restablezca las credenciales de la cuenta que realizó el cambio y busque el mismo hash o valor en otros equipos."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la técnica da persistencia con privilegios elevados, pero el software legítimo también registra helpers de netsh."
+    },
+    "en": {
+      "summary": "A value pointing to a DLL was written under HKLM\\SOFTWARE\\Microsoft\\NetSh. This may be a legitimate netsh helper or a persistence attempt that makes netsh.exe load a malicious DLL.",
+      "what_it_detects": "registry_set events (for example Sysmon EventID 13) where TargetObject contains \\SOFTWARE\\Microsoft\\NetSh and Details contains '.dll'. Writes by poqexec.exe of the built-in helpers ipmontr.dll, iasmontr.dll and ippromon.dll are excluded.",
+      "why_it_matters": "netsh.exe loads every DLL registered as a helper (ATT&CK T1546.007, Event Triggered Execution: Netsh Helper DLL). An attacker with admin rights can register a DLL to run code whenever netsh runs, often with high privileges.",
+      "triage_steps": [
+        "Review TargetObject and Details: note the value name and DLL path. Paths in user folders, Temp, ProgramData or Public are more suspicious than System32.",
+        "Identify Image and the user behind the change. reg.exe, powershell.exe or netsh.exe 'add helper' run by an interactive user needs scrutiny.",
+        "Find the parent process creation and its CommandLine on the same host +/- 15 minutes, including 'netsh add helper' or 'reg add'.",
+        "Collect the hash, digital signature and creation time of the DLL in Details; check its reputation in your threat intelligence platform.",
+        "Check whether netsh.exe later loaded that DLL (image load events) and whether netsh.exe made unusual network connections or spawned child processes.",
+        "Review earlier alerts for the same host and user: privilege escalation, file downloads or lateral movement.",
+        "Confirm with IT whether network, VPN or security software that registers netsh helpers was installed."
+      ],
+      "false_positives": [
+        "Network, VPN or security software installers registering their own netsh helper.",
+        "Windows updates or OS components writing helpers through a process other than poqexec.exe.",
+        "Admin tooling or corporate images configuring netsh during provisioning."
+      ],
+      "response_steps": [
+        "Verify the DLL's legitimacy (signature, origin, vendor) before acting.",
+        "If malicious, isolate the endpoint and preserve the DLL and an export of the NetSh key as evidence.",
+        "Remove the registry value and DLL only after documenting them; check the host for other persistence mechanisms.",
+        "Reset credentials of the account that made the change and hunt for the same hash or value on other hosts."
+      ],
+      "severity_rationale": "Medium fits because the technique gives persistence with elevated privileges, but legitimate software also registers netsh helpers."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers a DLL in a public folder as a netsh helper",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\NetSh\\svchlp",
+          "Details": "C:\\Users\\Public\\svchlp.dll"
+        }
+      },
+      {
+        "description": "netsh.exe add helper registers an unknown DLL from ProgramData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FS02.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "Image": "C:\\Windows\\System32\\netsh.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\NetSh\\nethelper",
+          "Details": "C:\\ProgramData\\Updater\\nethelper.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows servicing (poqexec.exe) writes the built-in ipmontr.dll helper, excluded by the filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\poqexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\NetSh\\ipmontr",
+          "Details": "ipmontr.dll"
+        }
+      },
+      {
+        "description": "Write under a different registry path that does not include the NetSh key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SharedDlls\\C:\\Program Files\\App\\helper.dll",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

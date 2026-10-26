@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "bb382fd5-b454-47ea-a264-1828e4c766d6",
+    "title": "Shell Invocation via Apt - Linux",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_apt_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_apt_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó apt o apt-get con la opción APT::Update::Pre-Invoke::=, que hace que apt lance un comando arbitrario antes de actualizar. Es una técnica documentada en GTFOBins para obtener una shell o escapar de entornos restringidos.",
+      "what_it_detects": "Procesos cuyo Image termina en /apt o /apt-get y cuyo CommandLine contiene 'APT::Update::Pre-Invoke::=', por ejemplo 'apt-get update -o APT::Update::Pre-Invoke::=/bin/sh'. El valor después de '=' se ejecuta con los privilegios de apt.",
+      "why_it_matters": "Si un usuario puede ejecutar apt con sudo, este hook le da una shell como root (escalamiento de privilegios o escape de shells restringidas). La regla lleva la etiqueta ATT&CK T1083 (File and Directory Discovery), pero el riesgo real es ejecutar comandos sin autorización.",
+      "triage_steps": [
+        "Revise el CommandLine completo y extraiga el comando que va después de 'APT::Update::Pre-Invoke::=': /bin/sh, bash, nc, curl o scripts en /tmp son una señal grave.",
+        "Identifique el usuario y el ParentImage: confirme si apt se lanzó con sudo, desde una sesión SSH, un cron o una herramienta de gestión de configuración.",
+        "Busque en /var/log/auth.log o journald la línea 'sudo: ... COMMAND=/usr/bin/apt-get' del mismo usuario y revise qué regla de sudoers le permite ejecutar apt.",
+        "Enumere los procesos hijos de apt: una shell interactiva o conexiones de red salientes confirman abuso.",
+        "Revise el mismo host +/- 15 minutos: comandos de reconocimiento, cambios en /etc/passwd, /etc/sudoers, llaves SSH o binarios nuevos.",
+        "Busque alertas anteriores del mismo usuario o host e intentos similares con otros binarios de GTFOBins.",
+        "Revise /etc/apt/apt.conf.d/ por hooks Pre-Invoke persistentes que no estén documentados."
+      ],
+      "false_positives": [
+        "Administradores o scripts que usan un hook Pre-Invoke legítimo en la línea de comandos, por ejemplo para ajustar mirrors o tomar un snapshot antes de actualizar.",
+        "Builds de contenedores o pipelines de CI que pasan opciones -o a apt-get update para tareas de preparación.",
+        "Pruebas autorizadas de pentest o de red team con técnicas de GTFOBins."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o el dueño del sistema si la ejecución estaba autorizada y documente el comando invocado.",
+        "Si no estaba autorizada, termine las shells hijas y las sesiones del usuario y considere aislar el host si se obtuvo root.",
+        "Restrinja las reglas de sudoers que permiten apt/apt-get sin control y rote las credenciales de la cuenta involucrada.",
+        "Busque persistencia (cron, systemd, llaves SSH, usuarios nuevos, hooks en apt.conf.d) y elimínela solo después de preservar la evidencia.",
+        "Restaure desde una configuración conocida y monitoree el host y la cuenta en los días siguientes."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque esta opción casi no se usa de forma legítima, pero la alerta sola no prueba un escalamiento; si hubo sudo o una shell hija, súbala."
+    },
+    "en": {
+      "summary": "apt or apt-get was run with the APT::Update::Pre-Invoke::= option, which makes apt run an arbitrary command before updating. GTFOBins documents this as a way to spawn a shell or break out of restricted environments.",
+      "what_it_detects": "Processes whose Image ends with /apt or /apt-get and whose CommandLine contains 'APT::Update::Pre-Invoke::=', such as 'apt-get update -o APT::Update::Pre-Invoke::=/bin/sh'. The value after '=' runs with apt's privileges.",
+      "why_it_matters": "If a user may run apt through sudo, this hook gives them a root shell, which means privilege escalation or escape from a restricted shell. The rule is tagged ATT&CK T1083 (File and Directory Discovery), but the real risk is unauthorized command execution.",
+      "triage_steps": [
+        "Read the full CommandLine and pull out the command after 'APT::Update::Pre-Invoke::='. Treat /bin/sh, bash, nc, curl or scripts in /tmp as serious.",
+        "Identify the user and ParentImage. Was apt started via sudo, an SSH session, cron or a configuration-management tool?",
+        "Check /var/log/auth.log or journald for 'sudo: ... COMMAND=/usr/bin/apt-get' from the same user, and find the sudoers rule that allows apt.",
+        "List apt's child processes. An interactive shell or outbound network connections confirm abuse.",
+        "Review the same host within +/- 15 minutes for reconnaissance and for changes to /etc/passwd, /etc/sudoers, SSH keys or new binaries.",
+        "Look for earlier alerts on the same user or host, and for similar abuse of other GTFOBins binaries.",
+        "Check /etc/apt/apt.conf.d/ for undocumented persistent Pre-Invoke hooks."
+      ],
+      "false_positives": [
+        "Admins or scripts that pass a legitimate Pre-Invoke hook on the command line, for example to adjust mirrors or take a snapshot before updating.",
+        "Container builds or CI pipelines that pass -o options to apt-get update for setup tasks.",
+        "Authorized penetration tests or red-team exercises that use GTFOBins techniques."
+      ],
+      "response_steps": [
+        "Ask the user or system owner whether the run was authorized, and record the invoked command.",
+        "If it was not authorized, kill the child shells and the user's sessions. Consider isolating the host if root was obtained.",
+        "Tighten sudoers rules that allow apt/apt-get and rotate the credentials of the account involved.",
+        "Hunt for persistence (cron, systemd, SSH keys, new users, apt.conf.d hooks). Preserve evidence before you remove anything.",
+        "Restore a known-good configuration and monitor the host and account over the following days."
+      ],
+      "severity_rationale": "Medium fits because legitimate use of this option is rare, yet the alert alone doesn't prove escalation. Raise it when sudo or a child shell is involved."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "apt-get run via sudo with a Pre-Invoke hook that spawns /bin/sh (GTFOBins technique)",
+        "event": {
+          "Image": "/usr/bin/apt-get",
+          "CommandLine": "apt-get update -o APT::Update::Pre-Invoke::=/bin/sh",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "LogonId": "1001",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "apt run with a Pre-Invoke hook that launches an interactive bash shell",
+        "event": {
+          "Image": "/usr/bin/apt",
+          "CommandLine": "apt update -o APT::Update::Pre-Invoke::=\"/bin/bash -i\"",
+          "ParentImage": "/bin/bash",
+          "User": "svc-deploy",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 50117,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine apt-get update with an unrelated -o option and no Pre-Invoke hook",
+        "event": {
+          "Image": "/usr/bin/apt-get",
+          "CommandLine": "apt-get update -o Acquire::Retries=3",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 47002,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "The Pre-Invoke string shows up in a grep command, not in apt, so Image does not match",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -r APT::Update::Pre-Invoke::= /etc/apt/apt.conf.d/",
+          "ParentImage": "/bin/bash",
+          "User": "mrodriguez",
+          "CurrentDirectory": "/home/mrodriguez",
+          "ProcessId": 47555,
+          "Computer": "web-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

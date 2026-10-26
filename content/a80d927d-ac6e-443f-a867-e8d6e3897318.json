@@ -1,0 +1,161 @@
+{
+  "rule": {
+    "id": "a80d927d-ac6e-443f-a867-e8d6e3897318",
+    "title": "Creation Of Pod In System Namespace",
+    "level": "medium",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_pod_in_system_namespace.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_pod_in_system_namespace.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un pod en el namespace kube-system. Puede ser un controlador legítimo o un pod backdoor que imita el nombre de un pod del sistema para pasar desapercibido.",
+      "what_it_detects": "Eventos de auditoría de Kubernetes con verb=create, objectRef.resource=pods y objectRef.namespace=kube-system. La regla no excluye a ningún solicitante, así que también se disparan las creaciones hechas por controladores, el kubelet (mirror pods) y, posiblemente, los bindings del scheduler (subresource binding).",
+      "why_it_matters": "Un atacante con permisos suficientes puede desplegar un pod con un nombre como kube-proxy-bv61v junto a los componentes administrativos. Es enmascaramiento (MITRE ATT&CK T1036.005, coincidencia de nombre o ubicación legítima), que sirve para persistir o acceder a privilegios del nodo.",
+      "triage_steps": [
+        "Revise user.username: daemon-set-controller, replicaset-controller, job-controller o system:node:<nodo> son esperables; un usuario humano, un token de CI o una service account de otro namespace son sospechosos.",
+        "Compruebe objectRef.subresource: si es binding, se trata del scheduler asignando un nodo, no de una creación nueva.",
+        "Examine objectRef.name y requestObject: ¿el sufijo imita a un controlador pero no existen ownerReferences hacia un DaemonSet o ReplicaSet real?",
+        "Inspeccione la especificación: imagen y registro, privileged, hostPID, hostNetwork, montajes hostPath, serviceAccountName y comandos inusuales.",
+        "Verifique sourceIPs y userAgent: kubectl o curl desde una IP externa o una estación de trabajo no es normal para un controlador.",
+        "Revise responseStatus.code para confirmar si la creación tuvo éxito (201) o fue rechazada.",
+        "Busque actividad del mismo usuario e IP en +/- 15 minutos: secrets get/list, exec, creación de rolebindings o clusterrolebindings, y alertas anteriores."
+      ],
+      "false_positives": [
+        "Controladores del sistema como daemon-set-controller o replicaset-controller que crean pods de DaemonSets y Deployments en kube-system.",
+        "Bindings del kube-scheduler y mirror pods de static pods creados por el kubelet.",
+        "Instalaciones o actualizaciones de add-ons (CNI, CoreDNS, metrics-server) hechas por administradores mediante Helm o kubectl, dentro de una ventana de cambios."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de plataforma si el pod corresponde a un cambio aprobado antes de actuar.",
+        "Si no está autorizado, conserve evidencia (kubectl get pod -o yaml, logs, imagen) y luego elimine el pod y su controlador, si lo tiene.",
+        "Revoque o rote las credenciales o el token del solicitante y revise sus permisos RBAC sobre kube-system.",
+        "Revise el nodo donde corrió el pod para detectar escapes o persistencia, y ajuste la regla para excluir controladores legítimos verificados."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque los controladores crean pods en kube-system de forma rutinaria, pero una creación manual allí es una técnica de ocultamiento con alto impacto potencial."
+    },
+    "en": {
+      "summary": "A pod was created in the kube-system namespace. A legitimate controller may have created it, or it may be a backdoor pod named to look like a system pod.",
+      "what_it_detects": "Kubernetes audit events with verb=create, objectRef.resource=pods and objectRef.namespace=kube-system. The rule excludes no requester, so it also fires on pods created by controllers, on kubelet mirror pods and possibly on scheduler bindings (subresource binding).",
+      "why_it_matters": "An attacker with enough rights can deploy a pod named like kube-proxy-bv61v next to the administrative components. This is masquerading (MITRE ATT&CK T1036.005, matching a legitimate name or location), used for persistence or for access to node-level privileges.",
+      "triage_steps": [
+        "Check user.username. daemon-set-controller, replicaset-controller, job-controller or system:node:<node> are expected. A human user, a CI token or a service account from another namespace is suspicious.",
+        "Check objectRef.subresource. If it is binding, the scheduler is assigning a node and no new pod was created.",
+        "Examine objectRef.name and requestObject. Does the suffix mimic a controller while ownerReferences point to no real DaemonSet or ReplicaSet?",
+        "Inspect the spec: image and registry, privileged, hostPID, hostNetwork, hostPath mounts, serviceAccountName and unusual commands.",
+        "Check sourceIPs and userAgent. A controller does not normally use kubectl or curl from an external IP or a workstation.",
+        "Check responseStatus.code to see whether the creation succeeded (201) or was denied.",
+        "Look at the same user and IP within +/- 15 minutes: secrets get/list, exec, new rolebindings or clusterrolebindings, and earlier alerts."
+      ],
+      "false_positives": [
+        "System controllers such as daemon-set-controller or replicaset-controller creating pods for DaemonSets and Deployments in kube-system.",
+        "kube-scheduler bindings and kubelet mirror pods for static pods.",
+        "Add-on installs or upgrades (CNI, CoreDNS, metrics-server) that administrators run with Helm or kubectl during a change window."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the platform team whether the pod belongs to an approved change.",
+        "If it is unauthorized, keep the evidence (kubectl get pod -o yaml, logs, image), then delete the pod and its controller if it has one.",
+        "Revoke or rotate the requester's credentials or token and review its RBAC permissions on kube-system.",
+        "Check the node that ran the pod for escape or persistence, and tune the rule to exclude verified legitimate controllers."
+      ],
+      "severity_rationale": "Medium fits because controllers create kube-system pods routinely, but a manual creation there is a stealth technique with high potential impact."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A CI service account from another namespace creates a privileged pod named like a kube-proxy DaemonSet pod in kube-system with kubectl.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "RequestResponse",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "requestURI": "/api/v1/namespaces/kube-system/pods",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "kube-proxy-bv61v",
+          "objectRef.apiVersion": "v1",
+          "user.username": "system:serviceaccount:default:ci-runner",
+          "sourceIPs": "203.0.113.25",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T14:03:12.418Z"
+        }
+      },
+      {
+        "description": "A human user creates a pod in kube-system directly from a workstation.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "requestURI": "/api/v1/namespaces/kube-system/pods",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "coredns-7db6d8ff4d-x9k2p",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "198.51.100.47",
+          "userAgent": "kubectl/v1.30.1 (darwin/arm64) kubernetes/6911225",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T22:41:07.902Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The same pod creation in the default namespace does not match the namespace condition.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "requestURI": "/api/v1/namespaces/default/pods",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "default",
+          "objectRef.name": "web-frontend-5d8f7c9b6-qwz4t",
+          "objectRef.apiVersion": "v1",
+          "user.username": "system:serviceaccount:kube-system:replicaset-controller",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kube-controller-manager/v1.29.2 (linux/amd64) kubernetes/4b8e819/system:serviceaccount:kube-system:replicaset-controller",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T14:05:33.120Z"
+        }
+      },
+      {
+        "description": "Listing pods in kube-system uses verb list rather than create, so it does not match.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "requestURI": "/api/v1/namespaces/kube-system/pods",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "kube-system",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "198.51.100.47",
+          "userAgent": "kubectl/v1.30.1 (darwin/arm64) kubernetes/6911225",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:06:01.554Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

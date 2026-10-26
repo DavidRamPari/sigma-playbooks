@@ -1,0 +1,122 @@
+{
+  "rule": {
+    "id": "3ab79e90-9fab-4cdf-a7b2-6522bc742adb",
+    "title": "HackTool - RemoteKrbRelay SMB Relay Secrets Dump Module Indicators",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_hktl_krbrelay_remote_ioc.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_hktl_krbrelay_remote_ioc.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1219.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en C:\\Windows\\Temp un archivo sam.tmp, sec.tmp o sys.tmp. Esos son los nombres que usa el módulo RemoteRegistry de RemoteKrbRelay cuando vuelca las colmenas SAM, SECURITY y SYSTEM de un host al que llegó una autenticación Kerberos retransmitida.",
+      "what_it_detects": "Eventos de creación de archivos donde TargetFilename termina en :\\windows\\temp\\sam.tmp, sec.tmp o sys.tmp. Son los nombres que RemoteKrbRelay tiene fijos en el código para guardar las colmenas del registro a través de Remote Registry.",
+      "why_it_matters": "Con SAM, SECURITY y SYSTEM, un atacante puede extraer los hashes de cuentas locales, los secretos LSA, las credenciales en caché y la contraseña de la cuenta de equipo, lo que facilita el movimiento lateral. SigmaHQ etiqueta la regla como T1219.002, pero en la práctica el comportamiento corresponde a robo de credenciales desde el registro.",
+      "triage_steps": [
+        "Revise TargetFilename, Image y User. Lo esperable es svchost.exe, que aloja el servicio RemoteRegistry, escribiendo en C:\\Windows\\Temp.",
+        "Verifique si en el mismo host y en un rango de 2 minutos aparecen los otros archivos .tmp. Si aparecen los tres, se volcaron las colmenas completas.",
+        "Busque inicios de sesión 4624 de tipo 3 en el host en un rango de ±15 minutos y anote la IP de origen, la cuenta y el paquete de autenticación (Kerberos).",
+        "Revise si el servicio RemoteRegistry se inició o cambió de modo de inicio (eventos 7036 y 7040) justo antes de que se crearan los archivos.",
+        "Busque accesos SMB a C$ o ADMIN$ que lean Windows\\Temp\\*.tmp (evento 5145) e identifique qué equipo se llevó los archivos.",
+        "Revise en la IP de origen si hay ejecuciones de RemoteKrbRelay, CLSIDs DCOM inusuales o alertas previas de relay o de coerción de autenticación."
+      ],
+      "false_positives": [
+        "Poco probable según la regla. Puede ocurrir con un script de respaldo o de análisis forense que use reg save con esos mismos nombres en C:\\Windows\\Temp.",
+        "Ejercicios autorizados de red team o pentest que utilicen RemoteKrbRelay; confírmelos con el responsable del ejercicio."
+      ],
+      "response_steps": [
+        "Confirme la actividad con los registros de inicio de sesión y de SMB. Antes de borrar los archivos .tmp, consérvelos junto con sus hashes como evidencia.",
+        "Aísle el host afectado y el equipo de origen del relay si se confirma que la actividad es maliciosa.",
+        "Rote las contraseñas de las cuentas locales (por ejemplo, con LAPS), de la cuenta de equipo y de las cuentas de servicio cuyos secretos LSA estaban en el host.",
+        "Busque reutilización de los hashes robados en todo el dominio. Refuerce la firma SMB y LDAP y deshabilite RemoteRegistry donde no se necesite."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque los nombres de archivo son exclusivos de la herramienta y su presencia indica que ya se volcaron colmenas con credenciales."
+    },
+    "en": {
+      "summary": "A file named sam.tmp, sec.tmp or sys.tmp was created in C:\\Windows\\Temp. These are the names the RemoteKrbRelay RemoteRegistry module uses when it dumps the SAM, SECURITY and SYSTEM hives of a host that received a relayed Kerberos authentication.",
+      "what_it_detects": "File creation events where TargetFilename ends in :\\windows\\temp\\sam.tmp, sec.tmp or sys.tmp. RemoteKrbRelay hardcodes these names when it saves registry hives through Remote Registry.",
+      "why_it_matters": "With SAM, SECURITY and SYSTEM, an attacker can extract local account hashes, LSA secrets, cached credentials and the machine account password, which helps them move laterally. SigmaHQ tags the rule T1219.002, but in practice the behavior is credential theft from the registry.",
+      "triage_steps": [
+        "Check TargetFilename, Image and User. You would expect svchost.exe, which hosts the RemoteRegistry service, writing to C:\\Windows\\Temp.",
+        "Check whether the other .tmp files appear on the same host within 2 minutes. All three means the full hive set was dumped.",
+        "Look for type 3 logons (event 4624) on the host within ±15 minutes. Note the source IP, the account and the authentication package (Kerberos).",
+        "Check whether the RemoteRegistry service started or changed its start mode (events 7036 and 7040) just before the files were created.",
+        "Look for SMB reads of Windows\\Temp\\*.tmp through C$ or ADMIN$ (event 5145) to find which machine took the files.",
+        "On the source IP, look for RemoteKrbRelay execution, unusual DCOM CLSIDs, or earlier relay or authentication-coercion alerts."
+      ],
+      "false_positives": [
+        "Unlikely per the rule. A backup or forensic script could run reg save with these same names into C:\\Windows\\Temp.",
+        "Authorized red team or pentest exercises that use RemoteKrbRelay; confirm with the exercise owner."
+      ],
+      "response_steps": [
+        "Confirm the activity using logon and SMB logs. Keep the .tmp files and their hashes as evidence before deleting them.",
+        "Isolate the affected host and the relay source machine if the activity is confirmed malicious.",
+        "Rotate the passwords of local accounts (for example with LAPS), the machine account and any service accounts whose LSA secrets were on the host.",
+        "Hunt for reuse of the stolen hashes across the domain. Enforce SMB and LDAP signing, and disable RemoteRegistry where it is not needed."
+      ],
+      "severity_rationale": "High fits because the file names are unique to the tool and their presence means credential hives have already been dumped."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "The RemoteRegistry service (svchost.exe) saves the SAM hive to C:\\Windows\\Temp\\sam.tmp during a RemoteKrbRelay attack",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\sam.tmp",
+          "User": "NT AUTHORITY\\LOCAL SERVICE",
+          "CreationUtcTime": "2024-07-02 14:03:12.481"
+        }
+      },
+      {
+        "description": "The SECURITY hive is dumped to sec.tmp, with mixed-case path",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetFilename": "C:\\WINDOWS\\TEMP\\SEC.TMP",
+          "User": "NT AUTHORITY\\LOCAL SERVICE",
+          "CreationUtcTime": "2024-07-02 14:03:13.027"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A file named sam.tmp in a user's temp folder, not C:\\Windows\\Temp",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Program Files\\Example\\updater.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\sam.tmp",
+          "User": "ANDES\\jperez",
+          "CreationUtcTime": "2024-07-02 09:15:40.112"
+        }
+      },
+      {
+        "description": "A backup tool writes a differently named hive export in C:\\Windows\\Temp",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-BKP-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\sam_backup_20240702.tmp",
+          "User": "ANDES\\svc_backup",
+          "CreationUtcTime": "2024-07-02 02:00:05.903"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

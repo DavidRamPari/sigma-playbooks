@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "12d027c3-b48c-4d9d-8bb6-a732200034b2",
+    "title": "Azure Kubernetes Service Account Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_service_account_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_service_account_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485",
+      "T1489",
+      "T1496",
+      "T1531"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó, eliminó o suplantó una service account de Kubernetes en un clúster conectado a Azure Arc (Microsoft.Kubernetes/connectedClusters), según el Azure Activity Log.",
+      "what_it_detects": "Eventos del Azure Activity Log cuyo operationName es SERVICEACCOUNTS/WRITE, SERVICEACCOUNTS/DELETE o SERVICEACCOUNTS/IMPERSONATE/ACTION del proveedor Microsoft.Kubernetes/connectedClusters.",
+      "why_it_matters": "Las service accounts dan identidad a los workloads. Si se borran o se alteran, las aplicaciones pueden perder el acceso o dejar de funcionar (T1531, T1489, T1485). Si se modifican o se suplantan, un atacante puede escalar privilegios o usar el clúster para minería (T1496).",
+      "triage_steps": [
+        "Revise operationName para saber qué ocurrió: WRITE (crear o modificar), DELETE (eliminar) o IMPERSONATE/ACTION (suplantación), y confirme en resultType si la operación tuvo éxito.",
+        "Use resourceId para identificar el clúster, el namespace y la service account; dé prioridad a kube-system y a las cuentas con bindings privilegiados.",
+        "Valide la identidad en caller, claims y callerIpAddress: ¿es un administrador, un service principal de CI/CD o una cuenta poco habitual?",
+        "Compare el user agent y la IP de origen con la actividad habitual de esa identidad; investigue a fondo si la IP es nueva o el país no corresponde.",
+        "Busque otras operaciones del mismo caller en el clúster en una ventana de +/- 15 minutos, como cambios en roles, rolebindings, secrets o deployments.",
+        "Busque alertas anteriores del mismo caller o del mismo clúster y verifique si existe un ticket de cambio aprobado.",
+        "Si la operación fue DELETE, revise en los logs del clúster si hubo pods con errores de autenticación o workloads detenidos."
+      ],
+      "false_positives": [
+        "Un administrador de sistemas o de la plataforma que gestiona service accounts como parte de un cambio planificado.",
+        "Pipelines de GitOps o CI/CD (Flux, Argo CD, Terraform) que reconcilian manifiestos y vuelven a crear o eliminar service accounts.",
+        "Desinstalación o actualización de extensiones de Azure Arc u operadores que gestionan sus propias service accounts."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del clúster o el solicitante del cambio si la operación estaba autorizada.",
+        "Si no estaba autorizada, revoque o deshabilite las credenciales del caller y quite sus roles RBAC en Azure sobre el clúster.",
+        "Restaure la service account eliminada o modificada desde los manifiestos de control de versiones y rote los tokens asociados.",
+        "Revise y revierta los bindings, secrets o workloads que el mismo actor haya cambiado.",
+        "Documente el incidente y, si el comportamiento es legítimo y recurrente, cree una exclusión acotada por caller y clúster."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque la gestión de service accounts suele ser una tarea administrativa legítima, pero puede provocar interrupción del servicio o escalación de privilegios."
+    },
+    "en": {
+      "summary": "The Azure Activity Log shows that an identity created, modified, deleted or impersonated a Kubernetes service account on an Azure Arc-connected cluster (Microsoft.Kubernetes/connectedClusters).",
+      "what_it_detects": "Azure Activity Log events whose operationName is SERVICEACCOUNTS/WRITE, SERVICEACCOUNTS/DELETE or SERVICEACCOUNTS/IMPERSONATE/ACTION under the Microsoft.Kubernetes/connectedClusters provider.",
+      "why_it_matters": "Service accounts give workloads their identity. If they are deleted or tampered with, applications can lose access or stop working (T1531, T1489, T1485). If they are changed or impersonated, an attacker can escalate privileges or use the cluster for mining (T1496).",
+      "triage_steps": [
+        "Check operationName to see what happened: WRITE (create or modify), DELETE or IMPERSONATE/ACTION. Check resultType to confirm whether it succeeded.",
+        "Use resourceId to identify the cluster, namespace and service account. Prioritize kube-system and accounts with privileged bindings.",
+        "Validate the identity in caller, claims and callerIpAddress. Is it an admin, a CI/CD service principal or an unusual account?",
+        "Compare the user agent and source IP with that identity's usual activity. Escalate if the IP or country is new.",
+        "Pivot on the same caller and cluster within +/- 15 minutes for changes to roles, rolebindings, secrets or deployments.",
+        "Look for earlier alerts on the same caller or cluster, and check for an approved change ticket.",
+        "If the operation was DELETE, check cluster logs for pods failing authentication or workloads that stopped."
+      ],
+      "false_positives": [
+        "A system or platform administrator managing service accounts during a planned change.",
+        "GitOps or CI/CD pipelines (Flux, Argo CD, Terraform) reconciling manifests and recreating or pruning service accounts.",
+        "Azure Arc extensions or operators that manage their own service accounts during install, upgrade or removal."
+      ],
+      "response_steps": [
+        "Confirm with the cluster owner or the change requester whether the operation was authorized.",
+        "If it was not, revoke or disable the caller's credentials and remove its Azure RBAC roles on the cluster.",
+        "Restore the deleted or modified service account from version-controlled manifests and rotate its tokens.",
+        "Review and revert any bindings, secrets or workloads the same actor changed.",
+        "Document the incident. If the activity is legitimate and recurring, add a tightly scoped exclusion by caller and cluster."
+      ],
+      "severity_rationale": "Medium fits because managing service accounts is often legitimate admin work, but it can still cause service disruption or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user deletes a service account in kube-system on an Arc-connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/SERVICEACCOUNTS/DELETE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/serviceaccounts/kube-system/metrics-agent",
+          "eventTimestamp": "2024-05-14T10:22:31Z"
+        }
+      },
+      {
+        "description": "Service account impersonation action by a service principal (lowercase operationName, case-insensitive match)",
+        "event": {
+          "operationName": "microsoft.kubernetes/connectedclusters/serviceaccounts/impersonate/action",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/serviceaccounts/default/app-runner",
+          "eventTimestamp": "2024-05-14T10:25:02Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of service accounts, not covered by the rule",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/SERVICEACCOUNTS/READ",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "mlopez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/serviceaccounts/default/app-runner",
+          "eventTimestamp": "2024-05-14T09:10:00Z"
+        }
+      },
+      {
+        "description": "Modification of a ConfigMap on the same cluster, a different resource type",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/CONFIGMAPS/WRITE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "mlopez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/configmaps/default/app-config",
+          "eventTimestamp": "2024-05-14T09:12:45Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

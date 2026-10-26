@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "2e69f167-47b5-4ae7-a390-47764529eff5",
+    "title": "Transferring Files with Credential Data via Network Shares - Zeek",
+    "level": "medium",
+    "status": "test",
+    "author": "@neu5ron, Teymur Kheirkhabarov, oscd.community",
+    "path": "network/zeek/zeek_smb_converted_win_transferring_files_with_credential_data.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_smb_converted_win_transferring_files_with_credential_data.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001",
+      "T1003.002",
+      "T1003.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró un acceso SMB a un archivo cuyo nombre coincide con un archivo sensible con credenciales (SAM, SECURITY, NTDS.dit, volcado de LSASS, minidump, hiberfil o mimidrv). Puede indicar exfiltración de credenciales a través de recursos compartidos de red.",
+      "what_it_detects": "Eventos de Zeek smb_files cuyo campo name es igual a uno de los valores listados: \\mimidrv, \\lsass, \\windows\\minidump\\, \\hiberfil, \\sqldmpr, \\sam, \\ntds.dit o \\security. Sin modificadores, la comparación es exacta (sin distinguir mayúsculas), no de subcadena.",
+      "why_it_matters": "Los hives SAM y SECURITY, la base NTDS.dit y los volcados de memoria de LSASS contienen hashes y secretos que permiten movimiento lateral o comprometer el dominio (ATT&CK T1003.001, T1003.002, T1003.003). Copiarlos por SMB suele ser el paso para sacarlos del host comprometido.",
+      "triage_steps": [
+        "Revise name, path y action (SMB::FILE_OPEN, FILE_READ, FILE_WRITE) para saber qué archivo se tocó, en qué recurso (C$, ADMIN$, otro) y en qué dirección.",
+        "Identifique id.orig_h (cliente) e id.resp_h (servidor): ¿el servidor es un controlador de dominio o servidor SQL? ¿El cliente es una estación de administración autorizada?",
+        "Compare el campo size con lo esperado: un NTDS.dit o volcado de LSASS de varios MB sugiere copia real, no solo apertura de metadatos.",
+        "Busque con el mismo uid en conn.log, smb_mapping.log y ntlm/kerberos.log para obtener la cuenta y el recurso montado.",
+        "Pivotee en ambos hosts +/- 15 minutos: ejecución de ntdsutil, vssadmin, reg save, procdump, comsvcs.dll MiniDump o rundll32 en los logs del endpoint.",
+        "Revise alertas previas para la IP de origen y la cuenta, y si el archivo luego sale por HTTP, FTP o a almacenamiento externo.",
+        "Confirme con el equipo de TI o el responsable del servidor si existe un cambio o tarea de respaldo autorizada."
+      ],
+      "false_positives": [
+        "Administradores que copian hives o NTDS.dit para respaldo, migración o recuperación de Active Directory con ticket de cambio.",
+        "Soporte técnico o proveedores que recogen volcados de LSASS o minidumps para diagnosticar fallas.",
+        "Herramientas de backup que leen archivos con estos nombres desde recursos administrativos."
+      ],
+      "response_steps": [
+        "Verifique con el responsable y la cuenta involucrada si la transferencia estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el host de origen y destino desde el EDR y deshabilite o restrinja la cuenta usada.",
+        "Localice y asegure las copias del archivo para análisis forense; preserve los logs de Zeek y del endpoint.",
+        "Si se expuso NTDS.dit o SAM, restablezca credenciales privilegiadas, incluida la cuenta krbtgt dos veces, según el procedimiento del dominio.",
+        "Busque uso posterior de las credenciales (pass-the-hash, nuevos inicios de sesión) y documente el incidente."
+      ],
+      "severity_rationale": "Es media porque la transferencia de estos archivos es un fuerte indicio de robo de credenciales, pero la administración legítima también la produce y requiere verificación."
+    },
+    "en": {
+      "summary": "Zeek logged SMB access to a file whose name matches a well-known credential-bearing file (SAM, SECURITY, NTDS.dit, LSASS dump, minidump, hiberfil or mimidrv). This may mean credentials are being moved off a host over network shares.",
+      "what_it_detects": "Zeek smb_files events whose name field equals one of: \\mimidrv, \\lsass, \\windows\\minidump\\, \\hiberfil, \\sqldmpr, \\sam, \\ntds.dit or \\security. With no modifiers this is an exact, case-insensitive match, not a substring match.",
+      "why_it_matters": "SAM and SECURITY hives, NTDS.dit and LSASS memory dumps hold hashes and secrets that enable lateral movement or full domain compromise (ATT&CK T1003.001, T1003.002, T1003.003). Copying them over SMB is often the staging step before exfiltration.",
+      "triage_steps": [
+        "Review name, path and action (SMB::FILE_OPEN, FILE_READ, FILE_WRITE) to learn which file, which share (C$, ADMIN$, other) and which direction.",
+        "Identify id.orig_h (client) and id.resp_h (server): is the server a domain controller or SQL server? Is the client an approved admin workstation?",
+        "Check size: a multi-megabyte NTDS.dit or LSASS dump suggests a real copy, not just a metadata open.",
+        "Pivot on the same uid in conn.log, smb_mapping.log and ntlm/kerberos logs to get the account and mapped share.",
+        "On both hosts +/- 15 minutes, look for ntdsutil, vssadmin, reg save, procdump, comsvcs.dll MiniDump or rundll32 in endpoint logs.",
+        "Check earlier alerts for the source IP and account, and whether the file later leaves via HTTP, FTP or cloud storage.",
+        "Confirm with IT or the server owner whether an approved change or backup task exists."
+      ],
+      "false_positives": [
+        "Administrators copying hives or NTDS.dit for Active Directory backup, migration or recovery under a change ticket.",
+        "Support staff or vendors collecting LSASS dumps or minidumps to troubleshoot crashes.",
+        "Backup tools reading files with these names from administrative shares."
+      ],
+      "response_steps": [
+        "Verify with the owner and the account involved whether the transfer was authorized before acting.",
+        "If unauthorized, isolate source and destination hosts via EDR and disable or restrict the account used.",
+        "Locate and secure copies of the file for forensics; preserve Zeek and endpoint logs.",
+        "If NTDS.dit or SAM was exposed, reset privileged credentials, including krbtgt twice, following domain procedures.",
+        "Hunt for follow-on credential use (pass-the-hash, new logons) and document the incident."
+      ],
+      "severity_rationale": "Medium because moving these files strongly suggests credential theft, but legitimate administration also does it and must be verified."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Workstation reads NTDS.dit from the C$ share of a domain controller over SMB",
+        "event": {
+          "ts": "2024-10-25T14:03:12.412Z",
+          "uid": "CzN7a21Xk3bQ9pLm4e",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 50122,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "fuid": "FtK2b83sLq1Vx0aZ7",
+          "action": "SMB::FILE_READ",
+          "path": "\\\\DC-01\\C$",
+          "name": "\\ntds.dit",
+          "size": 35651584
+        }
+      },
+      {
+        "description": "SAM hive copied from ADMIN$ of a file server (uppercase name, case-insensitive match)",
+        "event": {
+          "ts": "2024-10-25T14:07:48.090Z",
+          "uid": "Cb4Hq09Tr2mWz8KdLa",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 50188,
+          "id.resp_h": "198.51.100.22",
+          "id.resp_p": 445,
+          "fuid": "Fp9Qe61nUw3Rc7tYb",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FS-02\\ADMIN$",
+          "name": "\\SAM",
+          "size": 65536
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "User opens a spreadsheet whose name only starts with 'sam'; exact-match rule does not fire",
+        "event": {
+          "ts": "2024-10-25T15:12:03.551Z",
+          "uid": "CgR5t72Mn1pXa4QeZu",
+          "id.orig_h": "192.0.2.77",
+          "id.orig_p": 51544,
+          "id.resp_h": "198.51.100.30",
+          "id.resp_p": 445,
+          "fuid": "Fw3Lk28vBh5Yd9sNe",
+          "action": "SMB::FILE_READ",
+          "path": "\\\\FS-03\\Finance",
+          "name": "\\sam_report_q3.xlsx",
+          "size": 48211
+        }
+      },
+      {
+        "description": "Policy document containing 'security' in its name on a departmental share",
+        "event": {
+          "ts": "2024-10-25T15:20:41.007Z",
+          "uid": "Cm8Ys14Wq6dJr2HvKo",
+          "id.orig_h": "192.0.2.81",
+          "id.orig_p": 52010,
+          "id.resp_h": "198.51.100.30",
+          "id.resp_p": 445,
+          "fuid": "Fd6Pz47cXm2Tn8aLq",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FS-03\\IT",
+          "name": "\\security_policy_2024.docx",
+          "size": 120334
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

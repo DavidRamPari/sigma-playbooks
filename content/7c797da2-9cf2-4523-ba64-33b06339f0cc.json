@@ -1,0 +1,145 @@
+{
+  "rule": {
+    "id": "7c797da2-9cf2-4523-ba64-33b06339f0cc",
+    "title": "AWS ElastiCache Security Group Modified or Deleted",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_elasticache_security_group_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_elasticache_security_group_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1531"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "CloudTrail registró la eliminación de un cache security group de ElastiCache o la modificación de sus reglas de ingreso o egreso. Puede ser administración rutinaria o un intento de abrir o cortar el acceso de red a los clústeres de caché.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource elasticache.amazonaws.com y eventName DeleteCacheSecurityGroup, AuthorizeCacheSecurityGroupIngress, RevokeCacheSecurityGroupIngress, AuthorizeCacheSecurityGroupEgress o RevokeCacheSecurityGroupEgress.",
+      "why_it_matters": "Los cache security groups controlan qué redes o security groups de EC2 pueden alcanzar clústeres Redis o Memcached. Revocarlos o eliminarlos puede dejar sin acceso legítimo al servicio, por eso la regla se asocia con ATT&CK T1531 (Account Access Removal). Autorizar ingresos nuevos puede exponer datos en caché.",
+      "triage_steps": [
+        "Revise eventName y requestParameters (cacheSecurityGroupName, eC2SecurityGroupName, eC2SecurityGroupOwnerId) para saber exactamente qué grupo y qué regla cambiaron.",
+        "Verifique errorCode: un fallo (AccessDenied) muestra intención pero no hubo cambio. Una llamada exitosa requiere más análisis.",
+        "Identifique al actor con userIdentity.arn, el session issuer y el access key ID. Anote si usó MFA o asumió un rol.",
+        "Analice sourceIPAddress y userAgent. Es esperable el uso de la consola, Terraform o CloudFormation desde IP conocidas. Las llamadas por CLI o SDK desde IP desconocidas son sospechosas.",
+        "Relacione el cambio con un ticket de cambio, una ejecución de pipeline o una ventana de mantenimiento.",
+        "Pivotee por la misma identidad e IP en +/- 15 minutos: cambios de IAM, access keys nuevas, otros security groups, eliminaciones o snapshots de ElastiCache.",
+        "En eventos Authorize, confirme si el security group o el ID de cuenta autorizado pertenece a su organización.",
+        "Busque alertas previas del mismo principal o de la misma cuenta."
+      ],
+      "false_positives": [
+        "Administradores de red o de nube que modifican o depuran cache security groups como trabajo planificado.",
+        "Herramientas de infraestructura como código (Terraform, CloudFormation) que aplican o destruyen stacks.",
+        "Migración o retiro de entornos legados EC2-Classic, que elimina cache security groups antiguos."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del principal o del cambio si la acción estaba autorizada.",
+        "Si no estaba autorizada, revierta el cambio: vuelva a crear o autorizar las reglas necesarias y revoque los ingresos desconocidos.",
+        "Una vez confirmado el compromiso, deshabilite o rote las access keys involucradas, o revoque las sesiones activas del rol.",
+        "Revise en CloudTrail las demás acciones de la identidad y verifique que los clústeres de caché afectados estén disponibles e íntegros.",
+        "Documente los hallazgos. Excluya de la regla los roles de automatización conocidos solo después de revisarlos."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estos cambios suelen ser administración legítima y afectan el acceso de red, no los datos directamente. Un actor o una IP desconocidos elevan la prioridad."
+    },
+    "en": {
+      "summary": "CloudTrail recorded a deletion of an ElastiCache cache security group, or a change to its ingress or egress rules. This can be routine administration, or an attempt to open or cut network access to cache clusters.",
+      "what_it_detects": "CloudTrail events with eventSource elasticache.amazonaws.com and eventName DeleteCacheSecurityGroup, AuthorizeCacheSecurityGroupIngress, RevokeCacheSecurityGroupIngress, AuthorizeCacheSecurityGroupEgress or RevokeCacheSecurityGroupEgress.",
+      "why_it_matters": "Cache security groups control which networks or EC2 security groups can reach Redis or Memcached clusters. Revoking or deleting them can cut off legitimate access to the service, which is why the rule maps to ATT&CK T1531 (Account Access Removal). Authorizing new ingress can expose cached data.",
+      "triage_steps": [
+        "Read eventName and requestParameters (cacheSecurityGroupName, eC2SecurityGroupName, eC2SecurityGroupOwnerId) to see exactly which group and rule changed.",
+        "Check errorCode: a failed call (AccessDenied) shows intent but no change; a successful call needs a closer look.",
+        "Identify the actor from userIdentity.arn, the session issuer and the access key ID. Note whether MFA was used or the role was assumed.",
+        "Review sourceIPAddress and userAgent. Console, Terraform or CloudFormation from known IPs is expected. CLI or SDK calls from unfamiliar IPs are suspicious.",
+        "Match the change to a change ticket, deployment pipeline run or maintenance window.",
+        "Pivot on the same identity and source IP within +/- 15 minutes for IAM changes, new access keys, other security group edits or ElastiCache deletions and snapshots.",
+        "For Authorize events, check whether the newly allowed security group or account ID belongs to your organization.",
+        "Look for earlier alerts on the same principal or account."
+      ],
+      "false_positives": [
+        "Network or cloud administrators changing or cleaning up cache security groups as planned work.",
+        "Infrastructure-as-code tools (Terraform, CloudFormation) applying or tearing down stacks.",
+        "Legacy EC2-Classic environments being migrated or decommissioned, which removes old cache security groups."
+      ],
+      "response_steps": [
+        "Confirm with the principal's owner or the change owner whether the action was authorized.",
+        "If unauthorized, revert the change: re-create or re-authorize the needed rules and revoke any unknown ingress.",
+        "Disable or rotate the access keys involved, or revoke the role's active sessions, after you confirm compromise.",
+        "Review CloudTrail for the identity's other actions and check that the affected cache clusters are available and intact.",
+        "Document the findings. Exempt known automation roles from the rule only after review."
+      ],
+      "severity_rationale": "Low fits because these changes are often legitimate administration and affect network access, not data directly. Context such as an unknown actor or IP raises priority."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar IAM user deletes an ElastiCache cache security group via AWS CLI",
+        "event": {
+          "eventSource": "elasticache.amazonaws.com",
+          "eventName": "DeleteCacheSecurityGroup",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-05-14T03:12:45Z",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "requestParameters.cacheSecurityGroupName": "prod-redis-sg",
+          "errorCode": null
+        }
+      },
+      {
+        "description": "Ingress authorized on a cache security group for an external account's EC2 security group",
+        "event": {
+          "eventSource": "elasticache.amazonaws.com",
+          "eventName": "AuthorizeCacheSecurityGroupIngress",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-05-14T03:15:02Z",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAdmin/mrodriguez",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.0 Python/3.11.6",
+          "requestParameters.cacheSecurityGroupName": "prod-redis-sg",
+          "requestParameters.eC2SecurityGroupName": "ext-access",
+          "requestParameters.eC2SecurityGroupOwnerId": "444455556666",
+          "errorCode": null
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of cache security groups, not a modification",
+        "event": {
+          "eventSource": "elasticache.amazonaws.com",
+          "eventName": "DescribeCacheSecurityGroups",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-05-14T09:01:10Z",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ReadOnlyAudit/auditor",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "console.amazonaws.com"
+        }
+      },
+      {
+        "description": "Ingress change on a VPC security group in EC2, not ElastiCache",
+        "event": {
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "AuthorizeSecurityGroupIngress",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-05-14T09:20:33Z",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-runner",
+          "sourceIPAddress": "192.0.2.50",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.7.0",
+          "requestParameters.groupId": "sg-0123456789abcdef0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "252902e3-5830-4cf6-bf21-c22083dfd5cf",
+    "title": "Possible Impacket SecretDump Remote Activity",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden, wagga",
+    "path": "windows/builtin/security/win_security_impacket_secretdump.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_impacket_secretdump.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.002",
+      "T1003.003",
+      "T1003.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente remoto accedió a un archivo .tmp dentro de SYSTEM32 a través del recurso compartido ADMIN$. Este patrón coincide con la forma en que Impacket secretsdump guarda remotamente las colmenas del registro y luego las descarga para extraer credenciales.",
+      "what_it_detects": "Evento de seguridad 5145 (auditoría detallada de recursos compartidos) en el que ShareName es \\\\*\\ADMIN$ y RelativeTargetName contiene 'SYSTEM32\\' y también '.tmp'. secretsdump usa Remote Registry para guardar las colmenas SAM, SYSTEM y SECURITY como archivos .tmp aleatorios en System32 y luego las descarga por SMB.",
+      "why_it_matters": "Con esas colmenas se obtienen hashes de cuentas locales, secretos LSA, contraseñas de cuentas de servicio y credenciales de dominio en caché (T1003.002, T1003.004, T1003.003). Sirven para el movimiento lateral y, si el equipo es un controlador de dominio, pueden comprometer todo el dominio.",
+      "triage_steps": [
+        "Registre Computer, IpAddress, SubjectUserName/SubjectDomainName y RelativeTargetName. Verifique si el destino es un controlador de dominio o un servidor crítico.",
+        "Identifique el equipo de origen detrás de IpAddress y confirme si es una estación de administración o un jump server autorizado.",
+        "Revise el destino en +/- 15 minutos: eventos 4624 tipo 3 desde la misma IP y el mismo usuario, y 4672 con privilegios especiales.",
+        "Busque otros 5145 desde la misma IP: IPC$ con winreg o svcctl, y varias lecturas .tmp seguidas, lo que encaja con SAM, SYSTEM y SECURITY.",
+        "Revise el log System por inicio o cambio del servicio RemoteRegistry (7036/7040) y por creación de servicios (7045) en el mismo periodo.",
+        "En controladores de dominio, busque eventos 4662 de replicación (DRSUAPI) o actividad de VSS/ntds.dit realizada por la misma cuenta.",
+        "En el equipo de origen, busque ejecución de Python, impacket o secretsdump en la telemetría de procesos y en el historial de la shell.",
+        "Revise alertas previas del mismo usuario y de la misma IP de origen, y los inicios de sesión posteriores con otras cuentas."
+      ],
+      "false_positives": [
+        "La regla no documenta ninguno. Trate cada coincidencia como sospechosa hasta verificarla.",
+        "Una prueba de penetración o un ejercicio de red team autorizados que usan Impacket desde equipos conocidos.",
+        "Una herramienta poco común de administración o respaldo que guarda colmenas del registro en archivos temporales vía ADMIN$. Confírmelo con el responsable de la herramienta."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la cuenta y con los registros de cambios si la actividad estaba autorizada. Preserve los eventos 5145, 4624 y los del log System.",
+        "Si no estaba autorizada, aísle el equipo de origen y deshabilite la cuenta usada (SubjectUserName) o restablezca su contraseña.",
+        "Asuma que las credenciales del destino están expuestas. Rote las contraseñas de administrador local (LAPS), de las cuentas de servicio y de las cuentas privilegiadas en caché.",
+        "Si el destino es un DC, escale a respuesta a incidentes y planifique un doble restablecimiento controlado de krbtgt y de las cuentas privilegiadas.",
+        "Después de recolectar la evidencia, elimine las copias .tmp de las colmenas que queden en System32 y devuelva RemoteRegistry a su configuración base.",
+        "Busque el reúso de las credenciales robadas en todo el entorno y mantenga en vigilancia la IP de origen."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el patrón es específico del volcado remoto de colmenas del registro y expone de forma directa credenciales que permiten el movimiento lateral."
+    },
+    "en": {
+      "summary": "A remote client accessed a .tmp file under SYSTEM32 through the ADMIN$ share. This matches how Impacket secretsdump saves registry hives remotely and reads them back to extract credentials.",
+      "what_it_detects": "Security event 5145 (detailed file share audit) where ShareName is \\\\*\\ADMIN$ and RelativeTargetName contains both 'SYSTEM32\\' and '.tmp'. secretsdump uses Remote Registry to save the SAM, SYSTEM and SECURITY hives to random .tmp files in System32, then downloads them over SMB.",
+      "why_it_matters": "Getting the hives exposes local account hashes, LSA secrets, service account passwords and cached domain credentials (T1003.002, T1003.004, T1003.003). Attackers use them for lateral movement, and on a domain controller this can lead to domain-wide compromise.",
+      "triage_steps": [
+        "Record Computer, IpAddress, SubjectUserName/SubjectDomainName and RelativeTargetName. Check whether the target is a domain controller or a high-value server.",
+        "Identify the source host behind IpAddress and confirm whether it is an approved admin workstation or jump server.",
+        "Pivot on the target within +/- 15 minutes: look for 4624 logon type 3 from the same IP and user, plus 4672 special privileges.",
+        "Look for related 5145 events from the same IP: IPC$ with winreg or svcctl, and several .tmp reads in a row, which fits SAM/SYSTEM/SECURITY.",
+        "Check the System log for the RemoteRegistry service starting or changing start type (7036/7040), and for 7045 service creation around the same time.",
+        "On domain controllers, look for 4662 replication (DRSUAPI) access or VSS/ntds.dit activity by the same account.",
+        "On the source host, look for Python, impacket or secretsdump execution in process telemetry and shell history.",
+        "Review earlier alerts for the same user and source IP, and check for later logons using other accounts."
+      ],
+      "false_positives": [
+        "The rule lists none. Treat every hit as suspicious until you verify it.",
+        "An authorized penetration test or red team exercise using Impacket from known hosts.",
+        "A rare admin or backup tool that saves registry hives remotely to temporary files over ADMIN$. Confirm it with the tool owner."
+      ],
+      "response_steps": [
+        "Confirm with the account owner and change records whether the activity was authorized. Preserve the 5145, 4624 and System log events.",
+        "If it was not authorized, isolate the source host and disable or reset the account used (SubjectUserName).",
+        "Assume the target's credentials are exposed. Rotate local admin passwords (LAPS), service account passwords and cached privileged accounts.",
+        "If the target is a DC, escalate to incident response and plan a controlled double krbtgt reset and resets for privileged accounts.",
+        "Once evidence is collected, remove leftover .tmp hive copies from System32 and restore the RemoteRegistry service to its baseline state.",
+        "Hunt for reuse of the stolen credentials across the environment and keep monitoring the source IP."
+      ],
+      "severity_rationale": "High fits because the pattern is specific to remote dumping of registry hives and directly exposes credentials that enable lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "secretsdump reading a saved SECURITY hive copy from SYSTEM32 via ADMIN$",
+        "event": {
+          "EventID": 5145,
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50122",
+          "ObjectType": "File",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ShareLocalPath": "\\??\\C:\\Windows",
+          "RelativeTargetName": "SYSTEM32\\kQzLpXwe.tmp",
+          "AccessMask": "0x120089"
+        }
+      },
+      {
+        "description": "Same pattern against a domain controller with lowercase path",
+        "event": {
+          "EventID": 5145,
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "198.51.100.23",
+          "IpPort": "49833",
+          "ObjectType": "File",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ShareLocalPath": "\\??\\C:\\Windows",
+          "RelativeTargetName": "system32\\HtRmBcaN.tmp",
+          "AccessMask": "0x100081"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin reading a non-temporary file under SYSTEM32 via ADMIN$ (no .tmp)",
+        "event": {
+          "EventID": 5145,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "admin.lgarcia",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "192.0.2.10",
+          "IpPort": "51544",
+          "ObjectType": "File",
+          "ShareName": "\\\\*\\ADMIN$",
+          "ShareLocalPath": "\\??\\C:\\Windows",
+          "RelativeTargetName": "System32\\drivers\\etc\\hosts",
+          "AccessMask": "0x120089"
+        }
+      },
+      {
+        "description": "Temporary file accessed via C$ share instead of ADMIN$",
+        "event": {
+          "EventID": 5145,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "admin.lgarcia",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "192.0.2.10",
+          "IpPort": "51560",
+          "ObjectType": "File",
+          "ShareName": "\\\\*\\C$",
+          "ShareLocalPath": "\\??\\C:\\",
+          "RelativeTargetName": "Windows\\System32\\setup01.tmp",
+          "AccessMask": "0x120089"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

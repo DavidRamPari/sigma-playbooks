@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "f305fd62-beca-47da-ad95-7690a0620084",
+    "title": "Potential Bucket Enumeration on AWS",
+    "level": "low",
+    "status": "test",
+    "author": "Christopher Peacock @securepeacock, SCYTHE @scythe_io",
+    "path": "cloud/aws/cloudtrail/aws_enum_buckets.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_enum_buckets.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1580",
+      "T1619"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad que no es un rol asumido (usuario IAM, root u otra) llamó a ListBuckets de S3 y obtuvo el inventario de buckets de la cuenta. Puede ser administración rutinaria o el reconocimiento inicial con credenciales robadas.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource s3.amazonaws.com y eventName ListBuckets, excepto cuando userIdentity.type es AssumedRole. Así quedan sobre todo llamadas hechas con credenciales de larga duración de usuarios IAM o de la cuenta root.",
+      "why_it_matters": "Listar buckets suele ser el primer paso de un atacante para encontrar datos en S3 (MITRE ATT&CK T1619, Cloud Storage Object Discovery, y T1580, Cloud Infrastructure Discovery). Muchas veces viene antes de leer la configuración de los buckets y de exfiltrar objetos.",
+      "triage_steps": [
+        "Identifique al actor: userIdentity.type, userIdentity.arn, userIdentity.userName y userIdentity.accessKeyId. Si aparece Root o una access key de larga duración (AKIA…) sin uso previo, dele prioridad.",
+        "Revise sourceIPAddress y la geolocalización. Compárelos con las IP y redes habituales del usuario y marque VPN, hosting o países poco comunes.",
+        "Analice el userAgent: un cambio de herramienta (consola a SDK o CLI desde un host desconocido) o un user agent poco común indica posible abuso de credenciales.",
+        "Revise errorCode y errorMessage: un AccessDenied apunta a sondeo de permisos con credenciales comprometidas.",
+        "Busque eventos de la misma accessKeyId o IP en ±15 minutos: GetCallerIdentity, GetBucketAcl, GetBucketPolicy, ListObjects, GetObject, DescribeInstances o cambios en IAM.",
+        "Consulte alertas anteriores del mismo usuario o IP y averigüe la antigüedad de la access key y la fecha de su último uso en IAM.",
+        "Confirme con el dueño de la identidad o con el equipo de cloud si la actividad estaba prevista."
+      ],
+      "false_positives": [
+        "Administradores o personal de soporte que listan buckets desde la consola o la CLI como parte de su trabajo diario.",
+        "Herramientas de inventario, CSPM, respaldo o auditoría que usan un usuario IAM con access keys fijas.",
+        "Scripts de CI/CD o automatizaciones antiguas que todavía usan usuarios IAM en lugar de roles."
+      ],
+      "response_steps": [
+        "Verifique con el responsable si la actividad es legítima. Si lo es, documéntela y considere un filtro específico para esa identidad y ese origen.",
+        "Si no está autorizada, desactive la access key (sin borrarla) o revoque las sesiones del usuario y conserve la evidencia de CloudTrail.",
+        "Revise el acceso a datos: active o consulte los data events de S3 y busque GetObject o copias masivas desde la misma IP o clave.",
+        "Rote las credenciales, aplique MFA, use roles con credenciales temporales y limite s3:ListAllMyBuckets según el principio de mínimo privilegio."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque ListBuckets es una operación común y sin impacto directo, aunque sirve como señal temprana de reconocimiento y conviene correlacionarla."
+    },
+    "en": {
+      "summary": "An identity other than an assumed role (an IAM user, root or similar) called S3 ListBuckets and got the account's bucket inventory. This may be routine administration or the first reconnaissance step with stolen credentials.",
+      "what_it_detects": "CloudTrail events with eventSource s3.amazonaws.com and eventName ListBuckets, unless userIdentity.type is AssumedRole. This leaves mostly calls made with long-term IAM user credentials or the root account.",
+      "why_it_matters": "Listing buckets is often an attacker's first step toward finding data in S3 (MITRE ATT&CK T1619, Cloud Storage Object Discovery, and T1580, Cloud Infrastructure Discovery). It often comes before reading bucket settings and exfiltrating objects.",
+      "triage_steps": [
+        "Identify the actor: userIdentity.type, userIdentity.arn, userIdentity.userName and userIdentity.accessKeyId. Prioritize Root or a long-term key (AKIA…) with no previous use.",
+        "Check sourceIPAddress and geolocation against the user's usual IPs and networks. Flag VPN, hosting or unusual countries.",
+        "Review userAgent: a change of tool (console to SDK or CLI from an unknown host) or an uncommon user agent suggests credential misuse.",
+        "Check errorCode and errorMessage: AccessDenied points to permission probing with compromised credentials.",
+        "Pivot on the same accessKeyId or IP within ±15 minutes: GetCallerIdentity, GetBucketAcl, GetBucketPolicy, ListObjects, GetObject, DescribeInstances or IAM changes.",
+        "Look up earlier alerts for the same user or IP, and check the key's age and last-used date in IAM.",
+        "Confirm with the identity owner or the cloud team whether the activity was expected."
+      ],
+      "false_positives": [
+        "Administrators or support staff listing buckets from the console or CLI as part of their daily work.",
+        "Inventory, CSPM, backup or audit tools that use an IAM user with static access keys.",
+        "CI/CD scripts or legacy automation that still use IAM users instead of roles."
+      ],
+      "response_steps": [
+        "Verify legitimacy with the owner. If it is legitimate, document it and consider a narrow filter for that identity and source.",
+        "If it is unauthorized, deactivate the access key (do not delete it) or revoke the user's sessions, and keep the CloudTrail evidence.",
+        "Assess data access: enable or query S3 data events and look for GetObject or bulk copies from the same IP or key.",
+        "Rotate credentials, enforce MFA, move to roles with temporary credentials and restrict s3:ListAllMyBuckets to least privilege."
+      ],
+      "severity_rationale": "Low fits because ListBuckets is a common, non-destructive call, but it is a useful early sign of reconnaissance that should be correlated with other activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "IAM user with a long-term access key runs ListBuckets through the AWS CLI from an unfamiliar IP.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2024-10-25T14:03:12Z",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0 exe/x86_64.ubuntu.22",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.userName": "jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Root account lists buckets from the console.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2024-10-25T22:41:07Z",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "Root",
+          "userIdentity.arn": "arn:aws:iam::111122223333:root",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ListBuckets made by an assumed role (SSO or automation session). The AssumedRole filter excludes it.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2024-10-25T09:15:40Z",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "Boto3/1.34.69 Python/3.12.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/InventoryRole/inventory-job",
+          "userIdentity.accessKeyId": "ASIAEXAMPLE0000002",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "IAM user calls a different S3 API (GetBucketLocation), so eventName does not match.",
+        "event": {
+          "eventVersion": "1.09",
+          "eventTime": "2024-10-25T14:05:02Z",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "GetBucketLocation",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.55",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Windows/10 exe/AMD64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mgomez",
+          "userIdentity.userName": "mgomez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000003",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

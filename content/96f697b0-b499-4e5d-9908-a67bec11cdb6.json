@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "96f697b0-b499-4e5d-9908-a67bec11cdb6",
+    "title": "Removal of Potential COM Hijacking Registry Keys",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/registry/registry_delete/registry_delete_removal_com_hijacking_registry_key.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_delete/registry_delete_removal_com_hijacking_registry_key.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso fuera de la lista de software confiable eliminó una clave de registro que termina en \\shell\\open\\command. Puede indicar que un atacante borra rastros de un COM hijacking o de un bypass de UAC basado en el registro.",
+      "what_it_detects": "Eventos registry_delete (Sysmon EventID 12) donde TargetObject termina en \\shell\\open\\command e Image no es explorer.exe, svchost.exe, msiexec.exe, OpenWith.exe, binarios de Program Files ni instaladores conocidos (Dropbox, Wireshark, PeaZip, Java, Edge Update, TeamViewer, entre otros).",
+      "why_it_matters": "Las claves shell\\open\\command definen qué ejecutable se lanza al abrir un tipo de archivo o protocolo. Los atacantes las modifican para persistencia o para elevar privilegios (T1112, Modify Registry) y luego las borran para ocultar la evidencia.",
+      "triage_steps": [
+        "Identifique Image, User y el ProgID o CLSID en TargetObject (por ejemplo ms-settings, Folder, exefile) y verifique si es una clase legítima de una aplicación instalada.",
+        "Revise si la ruta está bajo HKCU o HKU\\<SID>_Classes; las claves por usuario que se borran poco después de crearse son sospechosas.",
+        "Busque en el mismo host, +/- 15 minutos, eventos de creación o modificación (EventID 13) del mismo TargetObject y el valor escrito, incluido DelegateExecute.",
+        "Obtenga el proceso padre y la línea de comandos de Image (EventID 1 o EDR); reg.exe o powershell.exe lanzados por scripts u Office merecen escalamiento.",
+        "Verifique si binarios con autoelevación (fodhelper.exe, computerdefaults.exe, sdclt.exe, eventvwr.exe) se ejecutaron entre la creación y el borrado de la clave.",
+        "Revise procesos de alta integridad lanzados por esos binarios y conexiones de red del host en la misma ventana.",
+        "Consulte alertas previas del mismo usuario y host, y la firma y el hash de Image."
+      ],
+      "false_positives": [
+        "Instalaciones o desinstalaciones de software legítimo que eliminan asociaciones de archivo, en especial desde rutas temporales no cubiertas por los filtros.",
+        "Aplicaciones portables o actualizadores que se ejecutan desde AppData y limpian sus propias clases de protocolo.",
+        "Scripts de administración o GPO que restablecen asociaciones de archivos por defecto."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo de TI si hubo una instalación o un cambio de asociaciones; si es legítimo, documente y proponga un filtro específico.",
+        "Si se confirma actividad maliciosa, aísle el endpoint mediante el EDR y preserve los logs de Sysmon y los hives de registro del usuario.",
+        "Identifique y elimine el payload referenciado por la clave borrada y cualquier otro mecanismo de persistencia encontrado.",
+        "Restablezca las credenciales del usuario afectado si hubo elevación de privilegios y busque el mismo patrón en otros hosts."
+      ],
+      "severity_rationale": "Medium es adecuado porque borrar estas claves es una señal de limpieza post-explotación, pero los instaladores legítimos lo hacen con frecuencia y requiere correlación para confirmar."
+    },
+    "en": {
+      "summary": "A process outside the trusted software list deleted a registry key ending in \\shell\\open\\command. This may mean an attacker is cleaning up after COM hijacking or a registry-based UAC bypass.",
+      "what_it_detects": "registry_delete events (Sysmon EventID 12) where TargetObject ends with \\shell\\open\\command and Image is not explorer.exe, svchost.exe, msiexec.exe, OpenWith.exe, a Program Files binary or a known installer (Dropbox, Wireshark, PeaZip, Java, Edge Update, TeamViewer and others).",
+      "why_it_matters": "shell\\open\\command keys define which executable runs when a file type or protocol is opened. Attackers modify them for persistence or privilege escalation (T1112, Modify Registry), then delete them to hide evidence.",
+      "triage_steps": [
+        "Identify Image, User and the ProgID or CLSID in TargetObject (for example ms-settings, Folder, exefile); check whether it belongs to an installed application.",
+        "Check whether the path is under HKCU or HKU\\<SID>_Classes; per-user keys deleted shortly after creation are suspicious.",
+        "On the same host, +/- 15 minutes, look for create or set events (EventID 13) on the same TargetObject and the written value, including DelegateExecute.",
+        "Get the parent process and command line of Image (EventID 1 or EDR); reg.exe or powershell.exe spawned by scripts or Office should be escalated.",
+        "Check whether auto-elevating binaries (fodhelper.exe, computerdefaults.exe, sdclt.exe, eventvwr.exe) ran between key creation and deletion.",
+        "Review high-integrity processes spawned by those binaries and host network connections in the same window.",
+        "Check earlier alerts for the same user and host, plus the signature and hash of Image."
+      ],
+      "false_positives": [
+        "Legitimate software installs or uninstalls removing file associations, especially from temp paths not covered by the filters.",
+        "Portable apps or updaters running from AppData that clean up their own protocol handlers.",
+        "Admin scripts or GPOs resetting default file associations."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether an install or association change occurred; if legitimate, document it and propose a narrow filter.",
+        "If malicious, isolate the endpoint via EDR and preserve Sysmon logs and the user's registry hives.",
+        "Identify and remove the payload referenced by the deleted key and any other persistence found.",
+        "Reset the affected user's credentials if privilege escalation occurred and hunt for the same pattern on other hosts."
+      ],
+      "severity_rationale": "Medium fits because deleting these keys signals post-exploitation cleanup, but legitimate installers do it often and correlation is needed to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe deletes a per-user Folder shell\\open\\command key, consistent with COM hijack cleanup",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteKey",
+          "UtcTime": "2025-10-25 14:03:12.418",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\Folder\\shell\\open\\command"
+        }
+      },
+      {
+        "description": "PowerShell removes the ms-settings handler after a fodhelper-style UAC bypass",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteKey",
+          "UtcTime": "2025-10-25 14:07:45.902",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7344,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKCU\\Software\\Classes\\ms-settings\\shell\\open\\command"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "7-Zip from Program Files removes its own file association; excluded by filter_main_generic_prorams",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteKey",
+          "UtcTime": "2025-10-25 09:12:03.110",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 4512,
+          "Image": "C:\\Program Files\\7-Zip\\7zFM.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\7-Zip.zip\\shell\\open\\command"
+        }
+      },
+      {
+        "description": "reg.exe deletes only the DelegateExecute value under the command key; TargetObject does not end with \\shell\\open\\command",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "UtcTime": "2025-10-25 14:07:44.305",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7290,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKCU\\Software\\Classes\\ms-settings\\shell\\open\\command\\DelegateExecute"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

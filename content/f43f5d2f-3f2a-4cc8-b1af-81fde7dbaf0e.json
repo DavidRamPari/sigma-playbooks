@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "f43f5d2f-3f2a-4cc8-b1af-81fde7dbaf0e",
+    "title": "AWS Suspicious SAML Activity",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer",
+    "path": "cloud/aws/cloudtrail/aws_susp_saml_activity.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_susp_saml_activity.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078",
+      "T1548",
+      "T1550",
+      "T1550.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "CloudTrail registró un inicio de sesión federado por SAML (AssumeRoleWithSAML) o un cambio en la configuración de un proveedor SAML de IAM (UpdateSAMLProvider). Cualquiera de los dos puede indicar que alguien instaló o usó un backdoor de federación.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource sts.amazonaws.com y eventName AssumeRoleWithSAML, o con eventSource iam.amazonaws.com y eventName UpdateSAMLProvider.",
+      "why_it_matters": "Si un atacante reemplaza el documento de metadatos SAML por uno con su propio certificado, puede firmar aserciones SAML y asumir roles sin credenciales válidas. Esto corresponde a Valid Accounts (T1078), uso de material de autenticación alternativo (T1550) y abuso de mecanismos de elevación (T1548).",
+      "triage_steps": [
+        "Identifique el tipo de evento con eventName. Si es UpdateSAMLProvider, dele prioridad, porque es mucho menos frecuente que AssumeRoleWithSAML.",
+        "Para UpdateSAMLProvider, revise userIdentity.arn, sourceIPAddress y userAgent. Confirme si ese principal y ese origen suelen administrar IAM, por ejemplo un pipeline de Terraform.",
+        "Compare el certificado y el issuer del nuevo documento de metadatos (requestParameters) con los metadatos legítimos que publica su IdP corporativo.",
+        "Para AssumeRoleWithSAML, revise requestParameters.roleArn, principalArn y responseElements.issuer y subject. Valide que el issuer sea su IdP y que el usuario exista.",
+        "Correlacione el evento con los logs de inicio de sesión del IdP. Si no hay un login equivalente, la aserción pudo haberse falsificado.",
+        "Siga la actividad de la sesión asumida (accessKeyId o el ARN del assumed-role) desde 15 minutos antes hasta 15 minutos después del evento. Busque cambios en IAM, acceso a datos o creación de recursos.",
+        "Busque en la misma cuenta eventos CreateSAMLProvider, UpdateAssumeRolePolicy y CreateRole que hagan referencia al proveedor, además de alertas previas del mismo principal o IP."
+      ],
+      "false_positives": [
+        "Inicios de sesión SSO legítimos de empleados mediante AssumeRoleWithSAML, que son frecuentes en organizaciones federadas.",
+        "Automatización con Terraform u otra herramienta de IaC que actualiza los metadatos del proveedor SAML.",
+        "Rotación planificada del certificado de firma del IdP, ejecutada por un administrador autorizado."
+      ],
+      "response_steps": [
+        "Confirme el cambio o el inicio de sesión con el equipo de identidad o con el responsable del IdP antes de actuar.",
+        "Si el cambio no está autorizado, restaure los metadatos SAML conocidos como legítimos y rote el certificado de firma del IdP.",
+        "Revoque las sesiones activas de los roles afectados. Puede usar la opción de revocar sesiones anteriores en IAM o una política de denegación basada en aws:TokenIssueTime.",
+        "Revise y corrija las políticas de confianza que hagan referencia al proveedor. Restrinja iam:UpdateSAMLProvider mediante SCP o permisos mínimos.",
+        "Revierta los recursos o cambios que haya hecho la sesión maliciosa y documente los indicadores encontrados."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque AssumeRoleWithSAML suele ser actividad legítima, aunque una actualización no autorizada del proveedor SAML permitiría un acceso persistente y difícil de detectar."
+    },
+    "en": {
+      "summary": "CloudTrail logged a SAML federated sign-in (AssumeRoleWithSAML) or a change to an IAM SAML provider (UpdateSAMLProvider). Either one can mean a federation backdoor was planted or used.",
+      "what_it_detects": "CloudTrail events with eventSource sts.amazonaws.com and eventName AssumeRoleWithSAML, or with eventSource iam.amazonaws.com and eventName UpdateSAMLProvider.",
+      "why_it_matters": "An attacker who swaps the SAML metadata for metadata holding their own certificate can sign SAML assertions and assume roles without valid credentials. This maps to Valid Accounts (T1078), alternate authentication material (T1550) and abuse of elevation mechanisms (T1548).",
+      "triage_steps": [
+        "Check eventName first. Treat UpdateSAMLProvider as the higher priority, because it is far rarer than AssumeRoleWithSAML.",
+        "For UpdateSAMLProvider, review userIdentity.arn, sourceIPAddress and userAgent. Confirm this principal and source normally manage IAM, for example a Terraform pipeline.",
+        "Compare the certificate and issuer in the new metadata document (requestParameters) with the legitimate metadata your corporate IdP publishes.",
+        "For AssumeRoleWithSAML, review requestParameters.roleArn, principalArn and responseElements.issuer and subject. Validate that the issuer is your IdP and the user exists.",
+        "Correlate the event with the IdP sign-in logs. If no matching login exists, the assertion may have been forged.",
+        "Follow the assumed-role session (accessKeyId or the assumed-role ARN) from 15 minutes before to 15 minutes after the event. Look for IAM changes, data access or new resources.",
+        "Search the account for CreateSAMLProvider, UpdateAssumeRolePolicy and CreateRole events that reference the provider, and for earlier alerts on the same principal or IP."
+      ],
+      "false_positives": [
+        "Legitimate employee SSO sign-ins through AssumeRoleWithSAML, which are routine in federated organizations.",
+        "Terraform or other IaC automation that updates the SAML provider metadata.",
+        "Planned rotation of the IdP signing certificate by an authorized administrator."
+      ],
+      "response_steps": [
+        "Before acting, confirm the change or sign-in with the identity team or the owner of the IdP.",
+        "If the change is unauthorized, restore the known-good SAML metadata and rotate the IdP signing certificate.",
+        "Revoke active sessions for the affected roles. Use the IAM option to revoke older sessions or a deny policy based on aws:TokenIssueTime.",
+        "Review and fix the trust policies that reference the provider. Restrict iam:UpdateSAMLProvider through SCPs or least privilege.",
+        "Roll back the resources or changes made by the malicious session and record the indicators you found."
+      ],
+      "severity_rationale": "Medium fits because AssumeRoleWithSAML is often legitimate, but an unauthorized SAML provider update would give persistent access that is hard to spot."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user changes the SAML provider metadata from an unfamiliar IP address.",
+        "event": {
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "UpdateSAMLProvider",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.sAMLProviderArn": "arn:aws:iam::111122223333:saml-provider/CorpIdP",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "A federated SAML sign-in assumes an administrative role.",
+        "event": {
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "AssumeRoleWithSAML",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "userIdentity.type": "SAMLUser",
+          "requestParameters.roleArn": "arn:aws:iam::111122223333:role/AdminAccess",
+          "requestParameters.principalArn": "arn:aws:iam::111122223333:saml-provider/CorpIdP",
+          "responseElements.issuer": "https://idp.example.com/saml",
+          "responseElements.subject": "mgarcia@example.com",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A read-only GetSAMLProvider call on IAM does not match, because the rule only looks for UpdateSAMLProvider.",
+        "event": {
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "GetSAMLProvider",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/auditor",
+          "requestParameters.sAMLProviderArn": "arn:aws:iam::111122223333:saml-provider/CorpIdP"
+        }
+      },
+      {
+        "description": "An STS AssumeRoleWithWebIdentity call (OIDC) does not match, because it is not AssumeRoleWithSAML.",
+        "event": {
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "AssumeRoleWithWebIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.55",
+          "userAgent": "aws-sdk-go/1.50.0",
+          "userIdentity.type": "WebIdentityUser",
+          "requestParameters.roleArn": "arn:aws:iam::111122223333:role/ci-deploy"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

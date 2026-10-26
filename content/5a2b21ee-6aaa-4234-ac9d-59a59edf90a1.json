@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "5a2b21ee-6aaa-4234-ac9d-59a59edf90a1",
+    "title": "Persistence Via New SIP Provider",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_sip_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_sip_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1553.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió una ruta de DLL en una clave de registro de un proveedor SIP (Subject Interface Package) o de cifrado de Windows, y esa DLL no figura entre las legítimas conocidas. Puede ser un intento de persistencia o de falsificar la validación de firmas.",
+      "what_it_detects": "Escrituras en valores Dll o $DLL bajo SOFTWARE\\Microsoft\\Cryptography\\Providers u OID\\EncodingType*, incluida la rama WOW6432Node, cuyo Details no es WINTRUST.DLL ni mso.dll. Excluye el registro de PsfSip.dll que hace poqexec.exe.",
+      "why_it_matters": "Los proveedores SIP y de confianza deciden cómo Windows verifica las firmas Authenticode. Si se registra o reemplaza uno con una DLL maliciosa, el código sin firma puede parecer firmado y la DLL se carga en cada proceso que valide firmas. Es la técnica T1553.003 (SIP and Trust Provider Hijacking).",
+      "triage_steps": [
+        "Revise TargetObject: identifique la función (CryptSIPDllGetSignedDataMsg, CryptSIPDllVerifyIndirectData, etc.), el GUID y si se trata de un GUID nuevo o de uno existente modificado.",
+        "Analice Details: ruta, existencia, firma digital, hash y fecha de creación de la DLL. Una DLL en ProgramData, Users o Temp es muy sospechosa.",
+        "Identifique el proceso en Image y su línea de comandos y proceso padre (reg.exe, powershell.exe, regsvr32.exe o un instalador).",
+        "Busque en el mismo host, entre 15 minutos antes y 15 minutos después, la escritura del valor FuncName relacionado y la creación de la DLL en disco.",
+        "Revise eventos de carga de imagen para ver qué procesos cargaron la DLL, como sigcheck, signtool o cualquier proceso que verifique firmas.",
+        "Correlacione el usuario y el host con alertas previas, y busque el mismo hash o la misma ruta de DLL en otros endpoints."
+      ],
+      "false_positives": [
+        "Instalación o actualización legítima de software que registra su propio SIP, como suites de Office, SDK de Windows o herramientas de firma.",
+        "Componentes del sistema operativo durante actualizaciones de Windows que no están en la lista de filtros.",
+        "Herramientas de seguridad o de gestión de paquetes que registran proveedores de cifrado propios."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del equipo si hubo una instalación autorizada. Si la DLL es legítima y está firmada, añádala al filtro.",
+        "Si resulta maliciosa, aísle el endpoint y exporte la clave de registro y la DLL como evidencia antes de cambiar nada.",
+        "Restaure los valores Dll y FuncName originales, como WINTRUST.DLL, comparándolos con un equipo de referencia sano, y ponga la DLL en cuarentena.",
+        "Revise los binarios que se ejecutaron o validaron como firmados desde el cambio, busque otros mecanismos de persistencia y restablezca las credenciales afectadas."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el cambio afecta a la confianza en las firmas y permite persistencia, aunque los instaladores legítimos también registran proveedores SIP."
+    },
+    "en": {
+      "summary": "A process wrote a DLL path into a Windows SIP (Subject Interface Package) or cryptography provider registry key, and that DLL is not one of the known legitimate ones. This may be persistence or an attempt to subvert signature validation.",
+      "what_it_detects": "Writes to Dll or $DLL values under SOFTWARE\\Microsoft\\Cryptography\\Providers or OID\\EncodingType*, including WOW6432Node, where Details is not WINTRUST.DLL or mso.dll. It excludes poqexec.exe registering PsfSip.dll.",
+      "why_it_matters": "SIP and trust providers decide how Windows verifies Authenticode signatures. If one is registered or replaced with a malicious DLL, unsigned code can look signed, and the DLL loads into every process that checks signatures. This is T1553.003 (SIP and Trust Provider Hijacking).",
+      "triage_steps": [
+        "Inspect TargetObject: identify the function (CryptSIPDllGetSignedDataMsg, CryptSIPDllVerifyIndirectData, etc.), the GUID, and whether the GUID is new or an existing one that was modified.",
+        "Analyze Details: check the DLL's path, whether it exists, its signature, hash and creation time. A DLL in ProgramData, Users or Temp is highly suspicious.",
+        "Identify the process in Image, plus its command line and parent (reg.exe, powershell.exe, regsvr32.exe or an installer).",
+        "On the same host, from 15 minutes before to 15 minutes after, look for the matching FuncName write and for the DLL being created on disk.",
+        "Check image-load events to see which processes loaded the DLL, such as sigcheck, signtool or anything else that verifies signatures.",
+        "Correlate the user and host with earlier alerts, and search other endpoints for the same DLL hash or path."
+      ],
+      "false_positives": [
+        "Legitimate software installs or updates that register their own SIP, such as Office suites, Windows SDKs or signing tools.",
+        "Operating system components that are not in the filter list, written during Windows updates.",
+        "Security or package-management tools that register their own crypto providers."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether an install was authorized. If the DLL is legitimate and signed, add it to the filter.",
+        "If it is malicious, isolate the endpoint and export the registry key and the DLL as evidence before changing anything.",
+        "Restore the original Dll and FuncName values, such as WINTRUST.DLL, by comparing against a known-good host, then quarantine the DLL.",
+        "Review binaries that ran or passed signature checks since the change, hunt for other persistence and reset affected credentials."
+      ],
+      "severity_rationale": "Medium fits because the change undermines signature trust and gives persistence, but legitimate installers also register SIP providers."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell replaces the VerifyIndirectData SIP DLL for the PE GUID with a DLL in ProgramData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6412,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}\\Dll",
+          "Details": "C:\\ProgramData\\SipCache\\sipprov.dll"
+        }
+      },
+      {
+        "description": "reg.exe registers a new 32-bit SIP provider DLL under WOW6432Node",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 3188,
+          "TargetObject": "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllGetSignedDataMsg\\{11111111-2222-3333-4444-555555555555}\\Dll",
+          "Details": "C:\\Users\\Public\\Libraries\\cryptsvc32.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows setup restores the default WINTRUST.DLL value, which the filter excludes",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 2240,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllVerifyIndirectData\\{C689AAB8-8E78-11D0-8C47-00C04FC295EE}\\Dll",
+          "Details": "WINTRUST.DLL"
+        }
+      },
+      {
+        "description": "poqexec.exe registers the in-box PsfSip.dll during servicing (filter_poqexec)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "SRV-FS01.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\poqexec.exe",
+          "ProcessId": 1876,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptSIPDllGetSignedDataMsg\\{CF78C6DE-64A2-4799-B506-89ADFF5D16D6}\\Dll",
+          "Details": "C:\\Windows\\System32\\PsfSip.dll"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

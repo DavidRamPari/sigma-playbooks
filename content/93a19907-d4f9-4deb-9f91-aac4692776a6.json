@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "93a19907-d4f9-4deb-9f91-aac4692776a6",
+    "title": "UAC Bypass Using .NET Code Profiler on MMC",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_uac_bypass_dotnet_profiler.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_uac_bypass_dotnet_profiler.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un archivo llamado pe386.dll en la carpeta Temp de un perfil de usuario. Ese archivo es el artefacto del método 39 de UACMe, que evade UAC con el .NET Code Profiler y mmc.exe.",
+      "what_it_detects": "Eventos de creación de archivos en los que TargetFilename empieza con C:\\Users\\ y termina con \\AppData\\Local\\Temp\\pe386.dll. UACMe deja ahí la DLL que se carga como profiler de .NET dentro de mmc.exe, un binario que se eleva automáticamente.",
+      "why_it_matters": "La técnica configura variables de profiler de .NET (COR_ENABLE_PROFILING, COR_PROFILER, COR_PROFILER_PATH) para que mmc.exe, que se eleva sin mostrar el aviso de UAC, cargue una DLL controlada por el atacante. Así se obtiene integridad alta sin consentimiento (ATT&CK T1548.002, evasión de UAC).",
+      "triage_steps": [
+        "Revise el campo Image del evento para identificar qué proceso escribió pe386.dll, su ruta, firma, hash y línea de comandos.",
+        "Obtenga el hash de pe386.dll y consúltelo en su inteligencia de amenazas. Si el EDR lo permite, conserve una copia.",
+        "Busque en HKCU\\Environment o HKCU\\Software\\Classes\\CLSID escrituras de COR_ENABLE_PROFILING, COR_PROFILER y COR_PROFILER_PATH en el mismo host, +/- 15 minutos.",
+        "Busque ejecuciones de mmc.exe con integridad alta justo después de la creación del archivo y cargas de pe386.dll en mmc.exe.",
+        "Enumere los procesos hijos de mmc.exe y del proceso que creó la DLL para detectar shells, herramientas de administración o persistencia.",
+        "Confirme qué usuario es dueño del perfil y si pertenece al grupo de administradores locales. Revise su actividad de inicio de sesión reciente.",
+        "Revise alertas anteriores del mismo host y usuario, en especial otras evasiones de UAC o descargas sospechosas."
+      ],
+      "false_positives": [
+        "La regla indica falsos positivos desconocidos. El nombre pe386.dll es muy específico de UACMe.",
+        "Pruebas autorizadas de red team o de validación de controles, por ejemplo Atomic Red Team, que ejecutan UACMe."
+      ],
+      "response_steps": [
+        "Valide con el usuario y con el equipo de seguridad si había pruebas autorizadas. Si no las había, trate el caso como un compromiso confirmado.",
+        "Aísle el endpoint desde el EDR y conserve la DLL, el binario que la creó y los eventos relacionados.",
+        "Elimine las variables COR_* maliciosas, pe386.dll y el binario de UACMe después de documentarlos. Revise si se instaló persistencia con privilegios elevados.",
+        "Restablezca las credenciales del usuario. Configure UAC en 'Notificar siempre' y quite los permisos de administrador local que no se necesiten."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el nombre de archivo es un artefacto casi exclusivo de una herramienta de escalamiento de privilegios y casi no tiene usos legítimos."
+    },
+    "en": {
+      "summary": "A file named pe386.dll was created in a user profile's Temp folder. That file is the artifact of UACMe method 39, a UAC bypass that uses the .NET Code Profiler and mmc.exe.",
+      "what_it_detects": "File creation events where TargetFilename starts with C:\\Users\\ and ends with \\AppData\\Local\\Temp\\pe386.dll. UACMe drops this DLL there so it loads as a .NET profiler inside the auto-elevating mmc.exe.",
+      "why_it_matters": "The technique sets .NET profiler variables (COR_ENABLE_PROFILING, COR_PROFILER, COR_PROFILER_PATH) so that mmc.exe, which elevates without a UAC prompt, loads an attacker DLL. This gives high integrity with no consent prompt (ATT&CK T1548.002, Bypass UAC).",
+      "triage_steps": [
+        "Check the event's Image field to find the process that wrote pe386.dll. Note its path, signature, hash and command line.",
+        "Hash pe386.dll and look it up in your threat intelligence. Keep a copy if your EDR allows it.",
+        "Look for writes of COR_ENABLE_PROFILING, COR_PROFILER and COR_PROFILER_PATH under HKCU\\Environment or HKCU\\Software\\Classes\\CLSID on the same host within +/- 15 minutes.",
+        "Look for mmc.exe starting with high integrity right after the file was created, and for mmc.exe loading pe386.dll.",
+        "List child processes of mmc.exe and of the process that dropped the DLL. Look for shells, admin tools or persistence.",
+        "Confirm who owns the profile and whether that user is a local administrator. Review the user's recent logons.",
+        "Review earlier alerts for the same host and user, especially other UAC bypasses or suspicious downloads."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unknown. The name pe386.dll is very specific to UACMe.",
+        "Authorized red team or control-validation tests, such as Atomic Red Team, that run UACMe."
+      ],
+      "response_steps": [
+        "Check with the user and the security team whether testing was authorized. If it was not, treat this as a confirmed compromise.",
+        "Isolate the endpoint through the EDR. Preserve the DLL, the binary that dropped it and the related events.",
+        "After documenting them, remove the malicious COR_* variables, pe386.dll and the UACMe binary. Check for elevated persistence.",
+        "Reset the user's credentials. Set UAC to 'Always notify' and remove local admin rights that are not needed."
+      ],
+      "severity_rationale": "High fits because this file name is an artifact of a privilege-escalation tool and has almost no legitimate uses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unsigned binary in Downloads drops pe386.dll into the user's Temp folder (UACMe method 39).",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\Akagi64.exe",
+          "ProcessId": 6140,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\pe386.dll",
+          "CreationUtcTime": "2024-05-14 13:22:41.512"
+        }
+      },
+      {
+        "description": "The same artifact written with mixed-case path by a renamed tool in another profile.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\Public\\upd.exe",
+          "ProcessId": 3388,
+          "TargetFilename": "C:\\users\\mrojas\\AppData\\Local\\Temp\\PE386.DLL",
+          "CreationUtcTime": "2024-05-14 15:02:09.004"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "pe386.dll written to C:\\Windows\\Temp, which does not start with C:\\Users\\.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 2216,
+          "TargetFilename": "C:\\Windows\\Temp\\pe386.dll",
+          "CreationUtcTime": "2024-05-14 09:10:00.100"
+        }
+      },
+      {
+        "description": "An installer extracts a differently named DLL into the user's Temp folder.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\setup.exe",
+          "ProcessId": 5012,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\pe386_x64_helper.dll",
+          "CreationUtcTime": "2024-05-14 10:45:31.877"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

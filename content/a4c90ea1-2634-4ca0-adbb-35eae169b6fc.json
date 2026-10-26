@@ -1,0 +1,157 @@
+{
+  "rule": {
+    "id": "a4c90ea1-2634-4ca0-adbb-35eae169b6fc",
+    "title": "ETW Logging Disabled In .NET Processes - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/builtin/security/win_security_dot_net_etw_tamper.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_dot_net_etw_tamper.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó un valor del registro para desactivar ETW en procesos .NET: ETWEnabled en la clave .NETFramework, o COMPlus_ETWEnabled/COMPlus_ETWFlags en una clave Environment, con valor 0. Así se oculta la carga de assemblies .NET a EDR y otras herramientas de telemetría.",
+      "what_it_detects": "Eventos 4657 de Windows Security (valor de registro modificado) donde ObjectName termina en \\SOFTWARE\\Microsoft\\.NETFramework con ObjectValueName ETWEnabled, o donde ObjectName contiene \\Environment con COMPlus_ETWEnabled o COMPlus_ETWFlags, y NewValue es 0.",
+      "why_it_matters": "Con ETW desactivado, el CLR deja de emitir eventos sobre assemblies cargados y compilación JIT, lo que oculta tradecraft .NET en memoria. La regla lo etiqueta como modificación del registro (T1112) y debilitamiento de defensas (T1685), con posible persistencia.",
+      "triage_steps": [
+        "Revise ObjectName, ObjectValueName, OldValue y NewValue para confirmar qué clave cambió y si es de alcance de máquina (HKLM) o de un usuario (\\REGISTRY\\USER\\<SID>).",
+        "Identifique ProcessName, ProcessId y SubjectUserName/SubjectLogonId: un cambio hecho desde reg.exe, powershell.exe o un binario no firmado es más sospechoso que uno de un instalador conocido.",
+        "Correlacione el SubjectLogonId con el evento 4624 para saber el tipo de inicio de sesión y la IP de origen.",
+        "Busque en el mismo host, +/- 15 minutos, creación de procesos (4688 o Sysmon 1) con la línea de comandos que hizo el cambio y su proceso padre.",
+        "Busque procesos .NET iniciados después del cambio, como cargas de assemblies inusuales, execute-assembly o PowerShell, que ya no generarían telemetría ETW.",
+        "Revise alertas previas del mismo usuario y del mismo host, y si el mismo cambio aparece en otros equipos."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ajustes de depuración o rendimiento hechos por desarrolladores o administradores que desactivan ETW del CLR a propósito y con un ticket que lo respalda.",
+        "Herramientas de prueba o laboratorios de seguridad autorizados que validan la evasión de ETW."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el usuario si el cambio estaba autorizado y documentado.",
+        "Si no lo estaba, aísle el endpoint y conserve la evidencia: exporte la clave afectada, los eventos de seguridad y una imagen de memoria si es posible.",
+        "Restaure el valor (elimine el valor o vuelva a poner ETWEnabled en 1) solo después de documentarlo, y reinicie los procesos .NET afectados.",
+        "Investigue la cadena de ejecución completa, restablezca las credenciales de la cuenta involucrada y busque el mismo cambio en toda la flota."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque casi no hay usos legítimos de esto en producción, y desactivar ETW de .NET indica evasión deliberada de la telemetría de seguridad."
+    },
+    "en": {
+      "summary": "A registry value was set to 0 to disable ETW for .NET processes: ETWEnabled under the .NETFramework key, or COMPlus_ETWEnabled/COMPlus_ETWFlags under an Environment key. This hides .NET assembly loads from EDR and other telemetry tools.",
+      "what_it_detects": "Windows Security event 4657 (registry value modified) where ObjectName ends with \\SOFTWARE\\Microsoft\\.NETFramework and ObjectValueName is ETWEnabled, or ObjectName contains \\Environment and ObjectValueName is COMPlus_ETWEnabled or COMPlus_ETWFlags, with NewValue 0.",
+      "why_it_matters": "With ETW off, the CLR stops emitting events about loaded assemblies and JIT activity, which hides in-memory .NET tradecraft. The rule tags this as Modify Registry (T1112) and defense impairment (T1685), with possible persistence.",
+      "triage_steps": [
+        "Check ObjectName, ObjectValueName, OldValue and NewValue to confirm which key changed and whether it applies machine-wide (HKLM) or to one user (\\REGISTRY\\USER\\<SID>).",
+        "Identify ProcessName, ProcessId and SubjectUserName/SubjectLogonId. A change made by reg.exe, powershell.exe or an unsigned binary is more suspicious than one made by a known installer.",
+        "Match the SubjectLogonId to event 4624 to get the logon type and source IP.",
+        "On the same host, +/- 15 minutes, look for process creation (4688 or Sysmon 1) showing the command line that made the change and its parent process.",
+        "Hunt for .NET processes started after the change, such as unusual assembly loads, execute-assembly or PowerShell, which would no longer produce ETW telemetry.",
+        "Review earlier alerts for the same user and host, and check whether the same change appears on other machines."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Developers or admins intentionally turning off CLR ETW for debugging or performance work, backed by a change ticket.",
+        "Authorized security testing or lab environments that validate ETW evasion."
+      ],
+      "response_steps": [
+        "Ask the host owner or user whether the change was authorized and documented.",
+        "If it was not, isolate the endpoint and preserve evidence: export the affected key and the security logs, and take a memory image if possible.",
+        "Document the value, then restore it (delete it or set ETWEnabled back to 1) and restart the affected .NET processes.",
+        "Investigate the full execution chain, reset credentials for the account involved, and hunt for the same change across the fleet."
+      ],
+      "severity_rationale": "High fits because this has almost no legitimate use in production, and disabling .NET ETW points to deliberate evasion of security telemetry."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets ETWEnabled to 0 under HKLM .NETFramework key",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A1F",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\.NETFramework",
+          "ObjectValueName": "ETWEnabled",
+          "OperationType": "%%1904",
+          "OldValueType": "-",
+          "OldValue": "-",
+          "NewValueType": "%%1876",
+          "NewValue": 0,
+          "ProcessId": "0x1a2c",
+          "ProcessName": "C:\\Windows\\System32\\reg.exe"
+        }
+      },
+      {
+        "description": "PowerShell sets user environment variable COMPlus_ETWEnabled to 0",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A1F",
+          "ObjectName": "\\REGISTRY\\USER\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Environment",
+          "ObjectValueName": "COMPlus_ETWEnabled",
+          "OperationType": "%%1904",
+          "OldValueType": "-",
+          "OldValue": "-",
+          "NewValueType": "%%1873",
+          "NewValue": 0,
+          "ProcessId": "0x2f40",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ETWEnabled re-enabled (NewValue 1) under .NETFramework key",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "svc_deploy",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\.NETFramework",
+          "ObjectValueName": "ETWEnabled",
+          "OperationType": "%%1905",
+          "OldValue": "0",
+          "NewValueType": "%%1876",
+          "NewValue": 1,
+          "ProcessId": "0x0f10",
+          "ProcessName": "C:\\Windows\\System32\\msiexec.exe"
+        }
+      },
+      {
+        "description": "Unrelated environment variable changed to 0 under the Environment key",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\USER\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Environment",
+          "ObjectValueName": "DOTNET_CLI_TELEMETRY_OPTOUT",
+          "OperationType": "%%1904",
+          "OldValue": "-",
+          "NewValueType": "%%1873",
+          "NewValue": 0,
+          "ProcessId": "0x2f40",
+          "ProcessName": "C:\\Windows\\System32\\SystemPropertiesAdvanced.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

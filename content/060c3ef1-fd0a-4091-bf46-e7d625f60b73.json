@@ -1,0 +1,106 @@
+{
+  "rule": {
+    "id": "060c3ef1-fd0a-4091-bf46-e7d625f60b73",
+    "title": "Suspicious Get-ADReplAccount",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_get_adreplaccount.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_get_adreplaccount.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell ejecutó Get-ADReplAccount del módulo DSInternals con los parámetros -All y -Server. Esto puede indicar un volcado de credenciales de todas las cuentas del dominio mediante replicación (DCSync).",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene a la vez 'Get-ADReplAccount', '-All ' y '-Server '. Es decir, una solicitud de replicación de todas las cuentas a un controlador de dominio específico.",
+      "why_it_matters": "Get-ADReplAccount usa el protocolo de replicación de directorio (MS-DRSR) para obtener los hashes NTLM, las claves Kerberos y otros secretos de las cuentas. Corresponde a ATT&CK T1003.006 (DCSync). Si obtiene el hash de krbtgt, el atacante puede falsificar tickets y comprometer todo el dominio.",
+      "triage_steps": [
+        "Revisa el ScriptBlockText completo: el valor de -Server, -NamingContext y si la salida se redirige a un archivo o se formatea con Format-Custom/-View (por ejemplo, HashcatNT).",
+        "Identifica el host (Computer) y el usuario que ejecutó PowerShell (UserID del evento 4104 y eventos 4624 del mismo host ±15 minutos).",
+        "Confirma si la cuenta tiene permisos de replicación (Replicating Directory Changes / Changes All) y si forma parte del equipo de identidad o de auditoría.",
+        "En el controlador de dominio indicado en -Server, busca eventos 4662 con los GUID de replicación 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 o 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 originados por un host que no sea DC.",
+        "Verifica cómo llegó DSInternals: Install-Module, Import-Module o archivos del módulo en carpetas de usuario o temporales en el mismo host.",
+        "Revisa el proceso padre de powershell.exe y otros script blocks con el mismo ScriptBlockId o de la misma sesión.",
+        "Busca alertas previas del mismo usuario o host: reconocimiento de AD, movimiento lateral o uso de herramientas como Mimikatz."
+      ],
+      "false_positives": [
+        "Auditorías de contraseñas legítimas con DSInternals (por ejemplo, Test-PasswordQuality) realizadas por el equipo de identidad con autorización documentada.",
+        "Ejercicios de red team o pentesting aprobados, o pruebas de Atomic Red Team en laboratorio.",
+        "Scripts de administración o migración de AD que usan DSInternals de forma programada."
+      ],
+      "response_steps": [
+        "Valida con el dueño de la cuenta y con el equipo de identidad si existe una auditoría o prueba autorizada; si no la hay, escala como incidente crítico.",
+        "Aísla el endpoint de origen y deshabilita o restringe temporalmente la cuenta usada, preservando memoria y logs para análisis forense.",
+        "Elimina permisos de replicación indebidos y busca archivos de salida con hashes en el host.",
+        "Si se confirma el volcado, restablece la contraseña de krbtgt dos veces (con intervalo de replicación) y rota las cuentas privilegiadas y de servicio afectadas.",
+        "Revisa la actividad posterior de las cuentas comprometidas (tickets Kerberos anómalos, inicios de sesión) y refuerza el monitoreo de eventos 4662 en los DC."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque el comando es casi siempre de alto impacto, pero existen auditorías legítimas con DSInternals que requieren verificación de contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A PowerShell script block ran DSInternals Get-ADReplAccount with -All and -Server. This may be a dump of every domain account's credentials via directory replication (DCSync).",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains all of 'Get-ADReplAccount', '-All ' and '-Server ', meaning a request to replicate all accounts from a specific domain controller.",
+      "why_it_matters": "Get-ADReplAccount uses the directory replication protocol (MS-DRSR) to pull NTLM hashes, Kerberos keys and other account secrets. This is ATT&CK T1003.006 (DCSync). With the krbtgt hash an attacker can forge tickets and own the domain.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: the -Server and -NamingContext values, and whether output is saved to a file or formatted with Format-Custom/-View (for example HashcatNT).",
+        "Identify the host (Computer) and the user running PowerShell (UserID in event 4104, plus 4624 logons on the same host within ±15 minutes).",
+        "Check whether the account holds replication rights (Replicating Directory Changes / Changes All) and belongs to the identity or audit team.",
+        "On the DC named in -Server, look for event 4662 with replication GUIDs 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 or 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 from a non-DC source.",
+        "Determine how DSInternals arrived: Install-Module, Import-Module, or module files in user or temp folders on the same host.",
+        "Review the parent process of powershell.exe and other script blocks with the same ScriptBlockId or session.",
+        "Search for earlier alerts on the same user or host: AD reconnaissance, lateral movement, or tools like Mimikatz."
+      ],
+      "false_positives": [
+        "Legitimate password audits with DSInternals (for example Test-PasswordQuality) by the identity team with documented approval.",
+        "Approved red team or penetration tests, or Atomic Red Team runs in a lab.",
+        "AD administration or migration scripts that use DSInternals on a schedule."
+      ],
+      "response_steps": [
+        "Confirm with the account owner and identity team whether an authorized audit or test exists; if not, escalate as a critical incident.",
+        "Isolate the source endpoint and temporarily disable or restrict the account used, preserving memory and logs for forensics.",
+        "Remove unwarranted replication rights and look for hash output files on the host.",
+        "If the dump is confirmed, reset the krbtgt password twice (allowing replication between resets) and rotate affected privileged and service accounts.",
+        "Monitor follow-on activity of compromised accounts (anomalous Kerberos tickets, logons) and strengthen 4662 monitoring on DCs."
+      ],
+      "severity_rationale": "Medium fits because the command is usually high impact, but legitimate DSInternals audits exist and require context checks before escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DSInternals Get-ADReplAccount dumping all accounts from a DC with hashcat-formatted output",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b44-4d2a-9e11-5c0d8a6b7f21",
+          "Path": "",
+          "ScriptBlockText": "Import-Module DSInternals; Get-ADReplAccount -All -Server DC-01.andes.example.com -NamingContext 'dc=andes,dc=example,dc=com' | Format-Custom -View HashcatNT | Out-File C:\\Users\\jperez\\AppData\\Local\\Temp\\h.txt"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Single-account replication query without -All, as used in a targeted admin check",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-WS-07.andes.example.com",
+          "ScriptBlockId": "9b1d4e2f-0c3a-4f6b-8a77-1e2d3c4b5a69",
+          "Path": "C:\\Scripts\\Check-SvcAccount.ps1",
+          "ScriptBlockText": "Import-Module DSInternals; Get-ADReplAccount -SamAccountName svc_backup -Domain ANDES -Server DC-01.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "460479f3-80b7-42da-9c43-2cc1d54dbccd",
+    "title": "Creation of a Local Hidden User Account by Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_add_local_hidden_user.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1136.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "lsass.exe escribió en el SAM local una clave de nombre de usuario que termina en '$'. Esto indica que se creó una cuenta local oculta, que no aparece en 'net user' y suele servir para persistencia.",
+      "what_it_detects": "Eventos de registro de Sysmon donde Image termina en \\lsass.exe y TargetObject contiene \\SAM\\SAM\\Domains\\Account\\Users\\Names\\ y termina en $\\(Default), es decir, el alta de una cuenta local cuyo nombre termina en '$'.",
+      "why_it_matters": "Los nombres que terminan en '$' no aparecen en 'net user' y se confunden con cuentas de equipo. Un atacante puede usarlos para mantener acceso, a menudo con privilegios de administrador o RDP (ATT&CK T1136.001, crear cuenta local; relacionado con T1564.002, usuarios ocultos).",
+      "triage_steps": [
+        "Extraiga el nombre de la cuenta del TargetObject (el segmento antes de '\\(Default)') y anote el host y la hora del evento.",
+        "Como lsass.exe siempre es quien escribe, busque en Security el 4720 del mismo host (+/- 15 min). SubjectUserName indica quién creó la cuenta.",
+        "Busque la creación de procesos (Sysmon 1 / 4688) en ese intervalo: net.exe o net1.exe con 'user ... /add', PowerShell New-LocalUser, wmic o herramientas remotas. Revise el ParentImage y la cadena de procesos.",
+        "Revise los 4732 y 4728 para ver si la cuenta se agregó a Administrators o a Remote Desktop Users.",
+        "Busque inicios de sesión de la cuenta (4624 y 4625, tipos 3 y 10) y anote las IP de origen. Revise también si hay cambios en Winlogon\\SpecialAccounts\\UserList.",
+        "Revise las alertas anteriores del host y del usuario creador, y busque el mismo nombre de cuenta en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ejecuciones autorizadas de Atomic Red Team (T1564.002) o pruebas de red team.",
+        "Algún script de aprovisionamiento o software de administración que cree cuentas de servicio con '$'. Confírmelo con el responsable y con un ticket de cambio."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o con el equipo de cambios si la cuenta estaba autorizada.",
+        "Si no lo estaba, deshabilite la cuenta ('net user nombre$ /active:no') y aísle el host desde el EDR. Preserve antes los registros y los artefactos.",
+        "Investigue al creador: restablezca sus credenciales, revise otros mecanismos de persistencia y busque movimiento lateral desde las IP observadas.",
+        "Cuando termine la recolección de evidencia, elimine la cuenta. Busque el mismo patrón en toda la flota y documente el incidente."
+      ],
+      "severity_rationale": "Es alta porque crear una cuenta local oculta casi nunca es legítimo y da al atacante acceso persistente y difícil de ver."
+    },
+    "en": {
+      "summary": "lsass.exe wrote a local SAM user-name key ending in '$'. This means a hidden local account was created, which 'net user' does not list and is often used for persistence.",
+      "what_it_detects": "Sysmon registry events where Image ends with \\lsass.exe and TargetObject contains \\SAM\\SAM\\Domains\\Account\\Users\\Names\\ and ends with $\\(Default). That is, a new local account whose name ends in '$'.",
+      "why_it_matters": "Names ending in '$' are hidden from 'net user' and look like computer accounts. Attackers use them to keep access, often with admin or RDP rights (ATT&CK T1136.001, Create Local Account; related to T1564.002, Hidden Users).",
+      "triage_steps": [
+        "Take the account name from TargetObject (the segment before '\\(Default)') and note the host and event time.",
+        "lsass.exe is always the writer, so look for Security event 4720 on the same host (+/- 15 min). SubjectUserName shows who created the account.",
+        "Search process creation (Sysmon 1 / 4688) in that window for net.exe or net1.exe 'user ... /add', PowerShell New-LocalUser, wmic or remote tools. Review ParentImage and the process chain.",
+        "Check events 4732 and 4728 to see whether the account was added to Administrators or Remote Desktop Users.",
+        "Search for logons by the account (4624 and 4625, types 3 and 10) and note the source IPs. Check for changes to Winlogon\\SpecialAccounts\\UserList.",
+        "Review earlier alerts for the host and the creating user, and look for the same account name on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Authorized Atomic Red Team (T1564.002) runs or red team exercises.",
+        "A provisioning script or management software that creates service accounts ending in '$'. Confirm with the owner and a change ticket."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change management whether the account was authorized.",
+        "If it was not, disable the account ('net user name$ /active:no') and isolate the host through EDR. Preserve logs and artifacts first.",
+        "Investigate the creator: reset their credentials, check for other persistence and look for lateral movement from the observed IPs.",
+        "After evidence collection, delete the account. Hunt for the same pattern across the fleet and document the incident."
+      ],
+      "severity_rationale": "High fits because creating a hidden local account is rarely legitimate and gives an attacker persistent access that is hard to see."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "lsass.exe writes the SAM Names key for the hidden account 'support$' after 'net user support$ ... /add'.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\lsass.exe",
+          "ProcessId": 712,
+          "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\support$\\(Default)",
+          "Details": "Binary Data",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Key creation for the hidden account 'adm1n$' by lsass.exe, with mixed-case path.",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "Image": "C:\\WINDOWS\\System32\\LSASS.EXE",
+          "ProcessId": 688,
+          "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\adm1n$\\(Default)",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal local account 'jperez' created by lsass.exe. The name does not end in '$'.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\lsass.exe",
+          "ProcessId": 712,
+          "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\jperez\\(Default)",
+          "Details": "Binary Data",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "A SAM Names key ending in '$' written by regedit.exe rather than lsass.exe, so the Image condition fails.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\regedit.exe",
+          "ProcessId": 4120,
+          "TargetObject": "HKLM\\SAM\\SAM\\Domains\\Account\\Users\\Names\\backup$\\(Default)",
+          "Details": "Binary Data",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

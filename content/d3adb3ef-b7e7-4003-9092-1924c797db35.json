@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "d3adb3ef-b7e7-4003-9092-1924c797db35",
+    "title": "AWS Identity Center Identity Provider Change",
+    "level": "high",
+    "status": "test",
+    "author": "Michael McIntyre @wtfender",
+    "path": "cloud/aws/cloudtrail/aws_sso_idp_change.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_sso_idp_change.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1556"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en CloudTrail un cambio en la fuente de identidad de AWS IAM Identity Center (antes AWS SSO): se asoció o desasoció un directorio, o se habilitó o deshabilitó un proveedor de identidad (IdP) externo.",
+      "what_it_detects": "Eventos de CloudTrail cuyo eventSource es sso-directory.amazonaws.com o sso.amazonaws.com y cuyo eventName es AssociateDirectory, DisassociateDirectory, EnableExternalIdPConfigurationForDirectory o DisableExternalIdPConfigurationForDirectory.",
+      "why_it_matters": "Quien controla la fuente de identidad decide quién inicia sesión en las cuentas AWS de la organización. Un atacante puede apuntarla a un IdP propio, suplantar usuarios con permisos elevados y mantener el acceso aunque se roten las credenciales (ATT&CK T1556, Modify Authentication Process).",
+      "triage_steps": [
+        "Identifique eventName, eventSource, awsRegion, eventTime y si hubo errorCode; un intento fallido también merece revisión, aunque con menor urgencia.",
+        "Determine quién ejecutó la acción con userIdentity.arn, userIdentity.type y userIdentity.sessionContext; anote si usó un rol asumido, root o un usuario de IAM.",
+        "Revise sourceIPAddress y userAgent: ¿coinciden con la red corporativa, la consola o las herramientas de IaC habituales del equipo de identidad?",
+        "Revise requestParameters y responseElements para identificar el directorio o el IdP involucrado (metadatos SAML, ID del directorio) y compárelos con la configuración aprobada.",
+        "Busque un ticket de cambio o una ventana de mantenimiento aprobada que cubra esta modificación de la fuente de identidad.",
+        "Pivotee sobre el mismo principal y la misma IP en un rango de +/- 15 minutos: CreatePermissionSet, AttachManagedPolicyToPermissionSet, CreateAccountAssignment, CreateUser, ConsoleLogin, AssumeRole.",
+        "Busque alertas anteriores para el mismo principal, la misma cuenta o la misma IP, y revise los inicios de sesión de Identity Center posteriores al cambio."
+      ],
+      "false_positives": [
+        "Cambios autorizados del proveedor de identidad de la cuenta AWS, por ejemplo una migración de Active Directory a un IdP externo como Okta o Entra ID.",
+        "Configuración inicial de IAM Identity Center en una organización o cuenta nueva.",
+        "Pipelines de IaC (Terraform, CloudFormation) ejecutados por el equipo de identidad durante cambios planificados."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de identidad y con el dueño del cambio si la modificación fue autorizada; si lo fue, documéntela y cierre la alerta.",
+        "Si no fue autorizada, revoque las sesiones activas del principal que hizo el cambio y restrinja su rol o sus credenciales.",
+        "Restaure la fuente de identidad aprobada desde la configuración documentada, después de validar el impacto con el equipo de identidad.",
+        "Revise y elimine los permission sets, asignaciones de cuenta y usuarios creados después del cambio; invalide los accesos que hayan obtenido.",
+        "Aplique SCP o restricciones de IAM que limiten las acciones sso:* y sso-directory:* a roles de administración designados."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque cambiar la fuente de identidad da control sobre la autenticación de todas las cuentas y es una acción poco frecuente y fácil de verificar."
+    },
+    "en": {
+      "summary": "CloudTrail recorded a change to the AWS IAM Identity Center (formerly AWS SSO) identity source: a directory was associated or disassociated, or an external identity provider (IdP) was enabled or disabled.",
+      "what_it_detects": "CloudTrail events with eventSource sso-directory.amazonaws.com or sso.amazonaws.com and eventName AssociateDirectory, DisassociateDirectory, EnableExternalIdPConfigurationForDirectory or DisableExternalIdPConfigurationForDirectory.",
+      "why_it_matters": "Whoever controls the identity source decides who can sign in to the organization's AWS accounts. An attacker can point it at an IdP they control, impersonate privileged users and keep access after credentials are rotated (ATT&CK T1556, Modify Authentication Process).",
+      "triage_steps": [
+        "Note eventName, eventSource, awsRegion, eventTime and any errorCode; a failed attempt still needs review, just with less urgency.",
+        "Identify the actor from userIdentity.arn, userIdentity.type and sessionContext; record whether it was an assumed role, root or an IAM user.",
+        "Check sourceIPAddress and userAgent against the corporate network, the console and the identity team's usual IaC tooling.",
+        "Inspect requestParameters and responseElements for the directory or IdP involved (directory ID, SAML metadata) and compare them with the approved configuration.",
+        "Look for an approved change ticket or maintenance window covering this identity source change.",
+        "Pivot on the same principal and source IP within +/- 15 minutes: CreatePermissionSet, AttachManagedPolicyToPermissionSet, CreateAccountAssignment, CreateUser, ConsoleLogin, AssumeRole.",
+        "Search earlier alerts for the same principal, account or IP, and review Identity Center sign-ins after the change."
+      ],
+      "false_positives": [
+        "Authorized changes to the AWS account's identity provider, such as migrating from Active Directory to an external IdP like Okta or Entra ID.",
+        "Initial IAM Identity Center setup in a new organization or account.",
+        "IaC pipelines (Terraform, CloudFormation) run by the identity team during planned changes."
+      ],
+      "response_steps": [
+        "Confirm with the identity team and the change owner whether this was authorized; if so, document it and close the alert.",
+        "If it was not authorized, revoke the actor's active sessions and restrict its role or credentials.",
+        "Once the identity team has checked the impact, restore the approved identity source from the documented configuration.",
+        "Review and remove permission sets, account assignments and users created after the change, and cut off any access gained through them.",
+        "Apply SCPs or IAM restrictions so only designated admin roles can perform sso:* and sso-directory:* actions."
+      ],
+      "severity_rationale": "High fits because changing the identity source gives control over authentication for every account, and the action is rare and easy to verify."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An external SAML IdP is enabled for the Identity Center directory from an unfamiliar IP by an assumed role.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T02:17:43Z",
+          "eventSource": "sso-directory.amazonaws.com",
+          "eventName": "EnableExternalIdPConfigurationForDirectory",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OrgAdmin/jperez",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "A directory is associated with IAM Identity Center via the sso.amazonaws.com event source.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T02:19:05Z",
+          "eventSource": "sso.amazonaws.com",
+          "eventName": "AssociateDirectory",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OrgAdmin/jperez",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A read-only Identity Center call from the same service; the eventName is not in the rule's list.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T09:02:11Z",
+          "eventSource": "sso.amazonaws.com",
+          "eventName": "ListInstances",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/IdentityReadOnly/mrojas",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "A Directory Service call that disables SSO, but its eventSource is ds.amazonaws.com and not an Identity Center source.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T09:10:37Z",
+          "eventSource": "ds.amazonaws.com",
+          "eventName": "DisableSso",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/DirectoryAdmin/mrojas",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

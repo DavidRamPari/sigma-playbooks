@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "0cf7a157-8879-41a2-8f55-388dd23746b7",
+    "title": "Linux Recon Indicators",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_recon_indicators.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_recon_indicators.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.001",
+      "T1592.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en Linux ejecutó un comando con patrones de reconocimiento típicos de scripts de escalamiento de privilegios: búsqueda de binarios SUID (-perm -4000) o de archivos .htpasswd.",
+      "what_it_detects": "Eventos de creación de procesos cuyo CommandLine contiene ' -name .htpasswd' o ' -perm -4000 ', normalmente invocaciones de find como las que usa linuxprivchecker y herramientas similares.",
+      "why_it_matters": "Enumerar binarios SUID permite encontrar vías de escalamiento a root, y los archivos .htpasswd guardan hashes de credenciales web (T1552.001, credenciales en archivos; T1592.004, reconocimiento del sistema). Suele indicar actividad posterior a un acceso inicial.",
+      "triage_steps": [
+        "Revise el CommandLine completo: ruta de búsqueda (/ completo vs. directorio acotado), redirecciones a archivos y opciones como -exec o -ls.",
+        "Identifique el usuario que ejecutó el comando. Una cuenta de servicio (www-data, nginx, tomcat) es mucho más sospechosa que un administrador conocido.",
+        "Examine el ParentImage y la cadena de procesos: un shell hijo de un servidor web, de un intérprete (python, perl) o de un script descargado en /tmp indica compromiso.",
+        "Pivote en el mismo host +/- 15 minutos: otros comandos de enumeración (id, uname -a, sudo -l, cat /etc/passwd), descargas con curl/wget o ejecución desde /tmp o /dev/shm.",
+        "Busque si se leyeron o copiaron archivos .htpasswd encontrados y si hubo conexiones salientes poco habituales desde el host.",
+        "Consulte alertas previas del mismo host y usuario, y verifique si existe un ticket de cambio o auditoría de seguridad que justifique la ejecución."
+      ],
+      "false_positives": [
+        "Administradores que auditan binarios SUID manualmente o mediante scripts de hardening.",
+        "Escáneres de cumplimiento o de vulnerabilidades (por ejemplo, benchmarks CIS) que buscan SUID o .htpasswd.",
+        "Pruebas de penetración autorizadas o ejercicios de red team planificados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del usuario si la ejecución estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint de la red, preservando memoria y registros para el análisis forense.",
+        "Identifique el vector de acceso inicial (servicio web, SSH, credenciales robadas) y elimine webshells, scripts o persistencia encontrados.",
+        "Rote las credenciales de los .htpasswd y de las cuentas expuestas; revise y elimine bits SUID innecesarios.",
+        "Restaure el servicio desde una línea base conocida y supervise el host en busca de reincidencia."
+      ],
+      "severity_rationale": "Nivel alto porque estos patrones casi siempre provienen de herramientas de escalamiento de privilegios o búsqueda de credenciales, y la administración legítima con ellos es poco frecuente."
+    },
+    "en": {
+      "summary": "A Linux process ran a command with reconnaissance patterns typical of privilege-escalation scripts: searching for SUID binaries (-perm -4000) or .htpasswd files.",
+      "what_it_detects": "Process creation events whose CommandLine contains ' -name .htpasswd' or ' -perm -4000 ', usually find invocations like those used by linuxprivchecker and similar tools.",
+      "why_it_matters": "Listing SUID binaries reveals paths to root, and .htpasswd files hold web credential hashes (T1552.001, credentials in files; T1592.004, host reconnaissance). It usually indicates post-compromise activity.",
+      "triage_steps": [
+        "Read the full CommandLine: search scope (whole / vs. a narrow directory), output redirection to files, and options such as -exec or -ls.",
+        "Identify the executing user. A service account (www-data, nginx, tomcat) is far more suspicious than a known administrator.",
+        "Inspect ParentImage and the process tree: a shell spawned by a web server, interpreter (python, perl) or a script in /tmp indicates compromise.",
+        "Pivot on the same host +/- 15 minutes: other enumeration (id, uname -a, sudo -l, cat /etc/passwd), curl/wget downloads, or execution from /tmp or /dev/shm.",
+        "Check whether discovered .htpasswd files were read or copied, and look for unusual outbound connections from the host.",
+        "Review earlier alerts for the same host and user, and confirm whether a change ticket or security audit explains the activity."
+      ],
+      "false_positives": [
+        "Administrators auditing SUID binaries manually or with hardening scripts.",
+        "Compliance or vulnerability scanners (for example CIS benchmark checks) searching for SUID files or .htpasswd.",
+        "Authorized penetration tests or planned red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the host or user owner whether the execution was authorized before acting.",
+        "If unauthorized, isolate the endpoint from the network while preserving memory and logs for forensics.",
+        "Find the initial access vector (web service, SSH, stolen credentials) and remove webshells, scripts or persistence found.",
+        "Rotate credentials stored in .htpasswd files and exposed accounts; review and remove unnecessary SUID bits.",
+        "Restore service from a known-good baseline and monitor the host for recurrence."
+      ],
+      "severity_rationale": "High fits because these patterns nearly always come from privilege-escalation or credential-hunting tooling, and legitimate administrative use is uncommon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Web server account enumerating SUID binaries across the filesystem, spawned from a shell under nginx.",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find / -perm -4000 -type f 2>/dev/null",
+          "ParentImage": "/bin/sh",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/tmp",
+          "Computer": "web-01.example.com"
+        }
+      },
+      {
+        "description": "Search for .htpasswd credential files under the web root.",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find /var/www -name .htpasswd -type f",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 51022,
+          "ParentProcessId": 50987,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin searching SUID files with the symbolic mode -perm -u=s, which does not contain ' -perm -4000 '.",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find /usr/bin -perm -u=s -type f",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 30211,
+          "ParentProcessId": 30200,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Search for .htaccess files, not .htpasswd, during a routine web configuration review.",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find /var/www -name .htaccess",
+          "ParentImage": "/usr/bin/bash",
+          "User": "mrodriguez",
+          "ProcessId": 30544,
+          "ParentProcessId": 30510,
+          "CurrentDirectory": "/var/www",
+          "Computer": "web-01.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

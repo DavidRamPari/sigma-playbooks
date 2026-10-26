@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "d6ce7ebd-260b-4323-9768-a9631c8d4db2",
+    "title": "RestrictedAdminMode Registry Value Tampering",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_lsa_disablerestrictedadmin.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_lsa_disablerestrictedadmin.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor de registro DisableRestrictedAdmin en HKLM\\System\\CurrentControlSet\\Control\\Lsa, lo que habilita o deshabilita el modo RestrictedAdmin de RDP en el host.",
+      "what_it_detects": "Eventos registry_set (por ejemplo, Sysmon Event ID 13) cuyo TargetObject termina en System\\CurrentControlSet\\Control\\Lsa\\DisableRestrictedAdmin, sin importar el valor escrito ni el proceso que lo escribió.",
+      "why_it_matters": "Si el valor es 0, se habilita RestrictedAdmin, y eso permite iniciar sesión por RDP con solo el hash NTLM (pass-the-hash). Si es 1, se deshabilita la protección. Corresponde a T1112, modificación del registro, usada para persistencia y para debilitar defensas.",
+      "triage_steps": [
+        "Revise Details: 0x00000000 habilita RestrictedAdmin (riesgo de pass-the-hash por RDP) y 0x00000001 lo deshabilita. Confirme si el valor coincide con la línea base aprobada.",
+        "Identifique Image y el usuario: reg.exe, powershell.exe o un binario desconocido. Contraste con gpsvc/svchost (GPO) o con herramientas de gestión conocidas.",
+        "Busque el proceso padre y el CommandLine en process_creation (por ejemplo, 'reg add ... DisableRestrictedAdmin /d 0') en el mismo host, +/- 15 minutos.",
+        "Busque ticket de cambio o GPO que configure RestrictedAdmin. Si no existe, trate el evento como sospechoso.",
+        "Revise inicios de sesión RDP entrantes (4624 LogonType 10, Restricted Admin Mode = Yes) hacia el host después del cambio y anote las IP origen.",
+        "Pivote por el usuario y la IP origen: busque otros hosts con el mismo cambio, volcados de LSASS o alertas anteriores de robo de credenciales."
+      ],
+      "false_positives": [
+        "GPO o línea base de seguridad que habilita RestrictedAdmin para que los administradores no expongan credenciales en servidores remotos.",
+        "Scripts de hardening o herramientas de configuración (Intune, SCCM, DSC) ejecutados por el equipo de TI.",
+        "Pruebas autorizadas de red team o de Atomic Red Team (T1112)."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host y con el equipo de TI si el cambio estaba autorizado antes de actuar.",
+        "Si no está autorizado, aísle el endpoint y restaure el valor según la línea base o elimínelo, siempre después de documentar la evidencia.",
+        "Restablezca las credenciales de las cuentas con acceso RDP a este host o cuyos hashes pudieron quedar expuestos.",
+        "Revise el alcance: otros hosts con el mismo cambio, sesiones RDP sospechosas y movimiento lateral desde las IP identificadas.",
+        "Monitoree el valor con políticas de integridad y aplique la configuración por GPO para que se detecte cualquier desviación."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque cambiar este valor fuera de una GPO es poco común y puede habilitar pass-the-hash por RDP o debilitar la protección de credenciales."
+    },
+    "en": {
+      "summary": "The DisableRestrictedAdmin value under HKLM\\System\\CurrentControlSet\\Control\\Lsa was modified. This turns RDP RestrictedAdmin mode on or off for the host.",
+      "what_it_detects": "registry_set events (for example, Sysmon Event ID 13) where TargetObject ends with System\\CurrentControlSet\\Control\\Lsa\\DisableRestrictedAdmin. The rule fires for any written value and any writing process.",
+      "why_it_matters": "A value of 0 turns RestrictedAdmin on, which allows RDP logons with only an NTLM hash (pass-the-hash). A value of 1 turns the protection off. This maps to T1112, Modify Registry, and is used for persistence and to weaken defenses.",
+      "triage_steps": [
+        "Check Details: 0x00000000 turns RestrictedAdmin on (RDP pass-the-hash risk) and 0x00000001 turns it off. Compare it with the approved baseline.",
+        "Identify Image and the user: reg.exe, powershell.exe or an unknown binary. Compare with gpsvc/svchost (GPO) or known management agents.",
+        "Find the parent process and CommandLine in process_creation, for example 'reg add ... DisableRestrictedAdmin /d 0', on the same host within +/- 15 minutes.",
+        "Look for a change ticket or a GPO that sets RestrictedAdmin. If none exists, treat the event as suspicious.",
+        "Review inbound RDP logons to the host after the change (4624 LogonType 10, Restricted Admin Mode = Yes) and note the source IPs.",
+        "Pivot on the user and the source IP: look for the same change on other hosts, LSASS access or earlier credential theft alerts."
+      ],
+      "false_positives": [
+        "A GPO or security baseline that turns on RestrictedAdmin so administrators do not expose credentials to remote servers.",
+        "Hardening scripts or configuration tools (Intune, SCCM, DSC) run by IT.",
+        "Authorized red team or Atomic Red Team testing (T1112)."
+      ],
+      "response_steps": [
+        "Check with the host owner and IT whether the change was authorized before you act.",
+        "If it was not authorized, isolate the endpoint. Then restore the baseline value or remove it, after you preserve the evidence.",
+        "Reset the credentials of accounts that have RDP access to this host or whose hashes may be exposed.",
+        "Scope the incident: other hosts with the same change, suspicious RDP sessions and lateral movement from the identified IPs.",
+        "Enforce the setting through GPO and monitor the value for drift."
+      ],
+      "severity_rationale": "High fits because changes to this value outside a GPO are uncommon and can allow RDP pass-the-hash or weaken credential protection."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets DisableRestrictedAdmin to 0, which turns on RestrictedAdmin mode (the Atomic Red Team T1112 test)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DisableRestrictedAdmin",
+          "Details": "DWORD (0x00000000)",
+          "User": "ANDES\\jperez",
+          "ProcessId": 4120
+        }
+      },
+      {
+        "description": "PowerShell sets DisableRestrictedAdmin to 1, which turns off RestrictedAdmin mode",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\DisableRestrictedAdmin",
+          "Details": "DWORD (0x00000001)",
+          "User": "ANDES\\admin.mrojas",
+          "ProcessId": 6644
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Near-miss: DisableRestrictedAdminOutboundCreds is a different Lsa value and does not match the endswith condition",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DisableRestrictedAdminOutboundCreds",
+          "Details": "DWORD (0x00000001)",
+          "User": "ANDES\\jperez",
+          "ProcessId": 4188
+        }
+      },
+      {
+        "description": "Write to another LSA protection value (RunAsPPL) by Group Policy, not DisableRestrictedAdmin",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\RunAsPPL",
+          "Details": "DWORD (0x00000001)",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 1236
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

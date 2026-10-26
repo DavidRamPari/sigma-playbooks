@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "5cd16c8f-44a6-4654-81e7-a84d6db507d4",
+    "title": "Process Execution From Shared Memory Directory",
+    "level": "high",
+    "status": "experimental",
+    "author": "Stan Beukers",
+    "path": "linux/process_creation/proc_creation_lnx_susp_exec_from_dev_shm.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_exec_from_dev_shm.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.011"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se inició un proceso desde un binario ubicado en /dev/shm, un directorio tmpfs respaldado en RAM. El software legítimo casi nunca ejecuta binarios desde ahí, así que trátelo como un probable staging malicioso.",
+      "what_it_detects": "Eventos de creación de procesos en Linux cuyo campo Image comienza con '/dev/shm/'. Es decir, el ejecutable reside en memoria compartida y no en disco.",
+      "why_it_matters": "Los atacantes depositan y ejecutan payloads en /dev/shm porque esos archivos nunca llegan al disco físico y desaparecen al reiniciar. Así evaden el escaneo y el análisis forense de disco (ATT&CK T1027.011, Fileless Storage). Suele aparecer después del acceso inicial, por ejemplo una web shell o un servicio explotado.",
+      "triage_steps": [
+        "Registre Image, CommandLine, User, ProcessId y el host. Los nombres ocultos (con punto inicial) o que imitan hilos del kernel, como kworker o systemd, son señales graves.",
+        "Revise ParentImage y ParentCommandLine. Un servidor web, una base de datos, cron o una shell de una cuenta de servicio sugieren explotación. Una sesión de administrador debe confirmarse con su responsable.",
+        "Si el proceso sigue activo, preserve el binario desde /proc/<pid>/exe antes de que desaparezca. Luego obtenga su hash y consulte su reputación.",
+        "Busque cómo llegó el archivo: curl, wget, base64, chmod +x o escrituras con echo en /dev/shm en el mismo host dentro de +/- 15 minutos.",
+        "Revise las conexiones de red y la actividad DNS del proceso. Busque callbacks salientes, sockets en escucha o sockets raw (backdoors basados en BPF).",
+        "Busque persistencia: nuevas entradas de cron, unidades systemd, cambios en authorized_keys o ld.so.preload. Revise también alertas previas del mismo host y usuario.",
+        "Busque el mismo hash, nombre de archivo o patrón de proceso padre en otros hosts Linux y contenedores."
+      ],
+      "false_positives": [
+        "Runtimes de contenedores o frameworks de IPC que usan /dev/shm. Deberían compartir memoria, pero no ejecutar binarios desde ahí.",
+        "Scripts de administración o de prueba que copian una herramienta a /dev/shm a propósito, por ejemplo en sistemas con raíz de solo lectura.",
+        "Pruebas de seguridad o ejercicios de red team autorizados y documentados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si la ejecución es esperada. Si no lo es, aísle de la red el host o el contenedor.",
+        "Capture la memoria, el binario de /proc/<pid>/exe y los detalles del proceso antes de terminarlo, porque el contenido de /dev/shm se pierde al reiniciar.",
+        "Termine los procesos maliciosos, elimine los archivos y la persistencia encontrada, y corrija el vector de acceso inicial, como un servicio vulnerable o credenciales robadas.",
+        "Rote las credenciales usadas o expuestas en el host. Evalúe montar /dev/shm con noexec, restablezca el servicio y mantenga el monitoreo."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque ejecutar un binario desde almacenamiento solo en RAM rara vez es legítimo y es una técnica conocida de staging de malware fileless."
+    },
+    "en": {
+      "summary": "A process started from a binary located under /dev/shm, a RAM-backed tmpfs directory. Legitimate software almost never runs executables from there, so treat it as likely malicious staging.",
+      "what_it_detects": "Linux process creation events where the Image path starts with '/dev/shm/', meaning the executable itself lives in shared memory rather than on disk.",
+      "why_it_matters": "Attackers drop and run payloads in /dev/shm because files there never reach physical disk and vanish on reboot, which helps them evade disk-based scanning and forensics (ATT&CK T1027.011, Fileless Storage). It often follows initial access, such as a web shell or an exploited service.",
+      "triage_steps": [
+        "Record Image, CommandLine, User, ProcessId and host. Hidden names (leading dot) or names mimicking kernel threads like kworker or systemd are strong red flags.",
+        "Review ParentImage and ParentCommandLine. A web server, database, cron, or a shell spawned by a service account suggests exploitation; an interactive admin session needs confirmation with the owner.",
+        "If the process is still running, preserve the binary from /proc/<pid>/exe before it disappears, then hash it and check reputation.",
+        "Look for how the file arrived: curl, wget, base64, chmod +x or echo writes into /dev/shm on the same host within +/- 15 minutes.",
+        "Check the process's network connections and DNS activity for outbound callbacks, listening sockets or raw sockets (BPF-based backdoors).",
+        "Check for persistence such as new cron entries, systemd units, modified authorized_keys or ld.so.preload, and review earlier alerts for the same host and user.",
+        "Hunt for the same hash, file name or parent pattern on other Linux hosts and containers."
+      ],
+      "false_positives": [
+        "Container runtimes or IPC frameworks that use /dev/shm. These should share memory but should not execute binaries from it.",
+        "Admin or test scripts that copy a tool to /dev/shm on purpose, for example on read-only root filesystems.",
+        "Security testing or red team exercises that are authorized and documented."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the execution is expected. If it is not, isolate the host or container from the network.",
+        "Capture memory, the /proc/<pid>/exe binary and process details before killing the process, because /dev/shm content is lost on reboot.",
+        "Terminate the malicious processes, remove the files and any persistence you found, and fix the initial access vector, such as a vulnerable service or stolen credentials.",
+        "Rotate credentials that were used or exposed on the host. Consider mounting /dev/shm with noexec, then restore service and keep monitoring."
+      ],
+      "severity_rationale": "High fits because running a binary from RAM-only storage is rarely legitimate and is a well-known fileless malware staging technique."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Hidden binary disguised as a kernel worker, executed from /dev/shm by the www-data web server account",
+        "event": {
+          "Computer": "web-03.example.com",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Image": "/dev/shm/.x/kworker",
+          "CommandLine": "/dev/shm/.x/kworker -s 203.0.113.45:443",
+          "CurrentDirectory": "/dev/shm/.x",
+          "ParentProcessId": 48190,
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c cd /dev/shm/.x && ./kworker -s 203.0.113.45:443"
+        }
+      },
+      {
+        "description": "Downloaded ELF dropped in /dev/shm and run from a root interactive shell",
+        "event": {
+          "Computer": "bastion-01",
+          "User": "root",
+          "ProcessId": 9921,
+          "Image": "/dev/shm/update",
+          "CommandLine": "./update",
+          "CurrentDirectory": "/dev/shm",
+          "ParentProcessId": 9870,
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A normal binary reads a file in /dev/shm. The Image is /usr/bin/cat, so the rule does not match",
+        "event": {
+          "Computer": "app-02.example.org",
+          "User": "jperez",
+          "ProcessId": 3312,
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /dev/shm/app_status.lock",
+          "CurrentDirectory": "/home/jperez",
+          "ParentProcessId": 3300,
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash"
+        }
+      },
+      {
+        "description": "An interpreter in /usr/bin runs a script stored in /dev/shm. The rule misses this because Image is not under /dev/shm/",
+        "event": {
+          "Computer": "app-02.example.org",
+          "User": "svc-batch",
+          "ProcessId": 5120,
+          "Image": "/usr/bin/python3",
+          "CommandLine": "python3 /dev/shm/job_runner.py",
+          "CurrentDirectory": "/opt/batch",
+          "ParentProcessId": 5101,
+          "ParentImage": "/usr/sbin/cron",
+          "ParentCommandLine": "/usr/sbin/CRON -f"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

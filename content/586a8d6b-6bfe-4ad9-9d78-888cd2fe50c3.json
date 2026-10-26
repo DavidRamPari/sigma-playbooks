@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "586a8d6b-6bfe-4ad9-9d78-888cd2fe50c3",
+    "title": "Remote Service Activity via SVCCTL Named Pipe",
+    "level": "medium",
+    "status": "test",
+    "author": "Samir Bousseaden",
+    "path": "windows/builtin/security/win_security_svcctl_remote_service.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_svcctl_remote_service.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un equipo remoto abrió el named pipe svcctl a través del recurso IPC$ con permiso de escritura. Esto indica una interacción remota con el Service Control Manager, por ejemplo para crear, modificar o iniciar un servicio.",
+      "what_it_detects": "Eventos 5145 (Detailed File Share) donde ShareName es \\\\*\\IPC$, RelativeTargetName es svcctl y AccessList contiene WriteData. Este acceso es el que hacen herramientas como sc.exe \\\\host, PsExec o equivalentes de Impacket al administrar servicios por SMB/RPC.",
+      "why_it_matters": "Crear o modificar servicios de forma remota es una técnica clásica de movimiento lateral y persistencia (T1021.002, SMB/Windows Admin Shares): el atacante ejecuta código como SYSTEM en el equipo destino usando credenciales robadas.",
+      "triage_steps": [
+        "Identifique el origen (IpAddress, IpPort) y la cuenta (SubjectUserName, SubjectDomainName). Determine si es un jump host, servidor de administración o un endpoint de usuario.",
+        "En el host destino, busque eventos 7045 o 4697 (instalación de servicio) dentro de +/- 15 minutos y revise el nombre del servicio y la ruta del binario.",
+        "Revise eventos 4624 tipo 3 de la misma IP y cuenta para confirmar el logon de red y el método de autenticación (NTLM o Kerberos).",
+        "Revise procesos hijos de services.exe en el destino: busque binarios en ADMIN$, rutas temporales, cmd.exe o powershell.exe con argumentos codificados.",
+        "En el host de origen, busque ejecución de sc.exe, PsExec, wmic, Python o herramientas similares cerca de la hora del evento.",
+        "Verifique si el mismo origen o cuenta accedió a svcctl en varios equipos (patrón de abanico) y revise alertas previas para esas entidades.",
+        "Confirme con el equipo de TI si existe un cambio o tarea de administración aprobada."
+      ],
+      "false_positives": [
+        "Administradores que gestionan servicios de forma remota con sc.exe, services.msc o PowerShell.",
+        "Uso autorizado de PsExec por soporte técnico.",
+        "Agentes de SCCM, herramientas de despliegue de software o soluciones de backup que instalan servicios remotos.",
+        "Escáneres de vulnerabilidades con credenciales y herramientas de monitoreo que consultan servicios."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta y con TI si la actividad era legítima antes de tomar acciones.",
+        "Si no está autorizada, aísle el host de origen y el destino mediante el EDR y preserve evidencia (logs, binario del servicio).",
+        "Deshabilite o restablezca las credenciales de la cuenta usada e investigue cómo se obtuvieron.",
+        "Una vez documentado, elimine los servicios maliciosos y los binarios asociados, y busque la misma actividad en otros equipos.",
+        "Restringa el acceso SMB/RPC administrativo a hosts de administración autorizados."
+      ],
+      "severity_rationale": "Nivel medio: la actividad es habitual en tareas de administración, pero también es un paso central del movimiento lateral y siempre requiere confirmar el contexto."
+    },
+    "en": {
+      "summary": "A remote host opened the svcctl named pipe over the IPC$ share with write access. This indicates remote interaction with the Service Control Manager, such as creating, changing or starting a service.",
+      "what_it_detects": "Event 5145 (Detailed File Share) where ShareName is \\\\*\\IPC$, RelativeTargetName is svcctl and AccessList contains WriteData. Tools such as sc.exe \\\\host, PsExec or Impacket equivalents produce this access when managing services over SMB/RPC.",
+      "why_it_matters": "Remote service creation or modification is a classic lateral movement and persistence technique (T1021.002, SMB/Windows Admin Shares). With stolen credentials, an attacker can run code as SYSTEM on the target.",
+      "triage_steps": [
+        "Identify the source (IpAddress, IpPort) and account (SubjectUserName, SubjectDomainName). Determine whether the source is a jump host, management server or user workstation.",
+        "On the target, look for event 7045 or 4697 (service install) within +/- 15 minutes. Review the service name and binary path.",
+        "Check 4624 logon type 3 events from the same IP and account to confirm the network logon and authentication package (NTLM or Kerberos).",
+        "Review child processes of services.exe on the target: binaries in ADMIN$, temp paths, cmd.exe or powershell.exe with encoded arguments.",
+        "On the source host, look for sc.exe, PsExec, wmic, Python or similar tools running near the event time.",
+        "Check whether the same source or account touched svcctl on multiple hosts (fan-out), and review earlier alerts for these entities.",
+        "Confirm with IT whether an approved change or admin task explains it."
+      ],
+      "false_positives": [
+        "Administrators managing services remotely with sc.exe, services.msc or PowerShell.",
+        "Authorized PsExec use by help desk staff.",
+        "SCCM agents, software deployment tools or backup products that install services remotely.",
+        "Credentialed vulnerability scanners and monitoring tools that query services."
+      ],
+      "response_steps": [
+        "Before acting, check with the account owner and IT whether the activity was legitimate.",
+        "If it was not authorized, isolate the source and target hosts through EDR and preserve evidence (logs, service binary).",
+        "Disable the account or reset its credentials, and investigate how they were obtained.",
+        "After documenting them, remove the malicious services and binaries, then hunt for the same activity on other hosts.",
+        "Restrict administrative SMB/RPC access to authorized management hosts."
+      ],
+      "severity_rationale": "Medium fits because admins do this routinely, but it is also a core lateral movement step, so the context always needs to be confirmed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote write access to svcctl over IPC$ from a workstation, consistent with remote service creation (e.g. PsExec or sc.exe \\\\host create).",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50412",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "svcctl",
+          "AccessMask": "0x12019f",
+          "AccessList": "%%1538 %%1541 %%4416 %%4417 %%4418 %%4419 %%4420 %%4423 %%4424 ReadData (or ListDirectory) WriteData (or AddFile) AppendData (or AddSubdirectory or CreatePipeInstance) ReadEA WriteEA ReadAttributes WriteAttributes"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only access to svcctl over IPC$ (no WriteData in AccessList), such as a service status query.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "SubjectUserName": "svc_monitor",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "IpAddress": "198.51.100.20",
+          "IpPort": "49822",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "svcctl",
+          "AccessMask": "0x120089",
+          "AccessList": "ReadData (or ListDirectory) ReadEA ReadAttributes"
+        }
+      },
+      {
+        "description": "Write access over IPC$ to a different named pipe (lsarpc), not svcctl.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50418",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "lsarpc",
+          "AccessMask": "0x12019f",
+          "AccessList": "ReadData (or ListDirectory) WriteData (or AddFile) AppendData (or AddSubdirectory or CreatePipeInstance) ReadEA WriteEA ReadAttributes WriteAttributes"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

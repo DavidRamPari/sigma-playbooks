@@ -1,0 +1,160 @@
+{
+  "rule": {
+    "id": "a1b0ca4e-7835-413e-8471-3ff2b8a66be6",
+    "title": "Potential Remote Command Execution In Pod Container",
+    "level": "medium",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_exec_into_container.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_exec_into_container.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1609"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El audit log de Kubernetes registró una solicitud create sobre el subrecurso pods/exec, es decir, una identidad abrió una sesión de ejecución de comandos dentro de un contenedor (por ejemplo con kubectl exec).",
+      "what_it_detects": "Eventos de auditoría de Kubernetes con verb igual a create, objectRef.resource igual a pods y objectRef.subresource igual a exec. Así se registran kubectl exec y las llamadas directas a la API que ejecutan comandos en un contenedor en ejecución.",
+      "why_it_matters": "Ejecutar comandos dentro de un contenedor (MITRE ATT&CK T1609, Container Administration Command) permite a un atacante con credenciales robadas o un token de service account leer secretos, moverse lateralmente o persistir sin desplegar workloads nuevos.",
+      "triage_steps": [
+        "Identifique la identidad en user.username y sus grupos. Determine si es una persona, una service account o un sistema de CI/CD, y si debería tener permiso de exec.",
+        "Revise objectRef.namespace y objectRef.name: ¿el pod es sensible (kube-system, bases de datos, pods con secretos o privilegiados)?",
+        "Lea requestURI: los parámetros command= muestran el comando ejecutado (por ejemplo sh, bash, cat, curl). Un shell interactivo es más relevante que un comando puntual.",
+        "Verifique sourceIPs y userAgent: compare con las IP habituales de administración y con versiones conocidas de kubectl. Un user agent raro o una IP externa aumentan el riesgo.",
+        "Confirme responseStatus.code: 101 indica que la sesión se estableció; 403 indica un intento denegado que puede reflejar reconocimiento.",
+        "Pivotee por el mismo usuario y la misma IP de origen en +/- 15 minutos: busque get/list de secrets, creación de rolebindings, pods nuevos o port-forward.",
+        "Busque alertas previas sobre la misma identidad, pod o namespace, y consulte con el equipo dueño si existe un ticket de soporte o depuración."
+      ],
+      "false_positives": [
+        "Depuración legítima por ingenieros de plataforma o SRE durante un incidente o despliegue.",
+        "Herramientas de CI/CD, operadores o jobs de backup que ejecutan comandos en pods (por ejemplo dumps de bases de datos).",
+        "Paneles o IDEs como Lens o k9s que abren shells en nombre de un usuario autorizado."
+      ],
+      "response_steps": [
+        "Confirme con el propietario de la identidad y el equipo responsable del namespace si la actividad estaba autorizada.",
+        "Si no está autorizada, revoque o rote las credenciales o el token de service account involucrado y elimine los RoleBindings que conceden pods/exec innecesariamente.",
+        "Aísle el pod afectado con una NetworkPolicy restrictiva y conserve evidencia (logs, imagen, sistema de archivos) antes de reemplazarlo.",
+        "Rote los secretos accesibles desde el pod y revise el resto del clúster en busca de persistencia.",
+        "Restrinja el permiso pods/exec mediante RBAC a grupos específicos y considere controles de admisión para namespaces sensibles."
+      ],
+      "severity_rationale": "Es nivel medio porque exec es una operación administrativa común, pero otorga ejecución de comandos directa en workloads y debe validarse según la identidad y el pod."
+    },
+    "en": {
+      "summary": "The Kubernetes audit log recorded a create request on the pods/exec subresource, meaning an identity opened a command execution session inside a container, e.g. with kubectl exec.",
+      "what_it_detects": "Kubernetes audit events where verb is create, objectRef.resource is pods and objectRef.subresource is exec. That is how kubectl exec and direct API calls that run commands in a running container are logged.",
+      "why_it_matters": "Running commands inside a container (MITRE ATT&CK T1609, Container Administration Command) lets an attacker holding stolen credentials or a service account token read secrets, move laterally or persist without deploying new workloads.",
+      "triage_steps": [
+        "Identify the identity in user.username and its groups. Is it a person, a service account or a CI/CD system, and should it have exec rights?",
+        "Review objectRef.namespace and objectRef.name: is the pod sensitive (kube-system, databases, privileged pods or pods with mounted secrets)?",
+        "Read requestURI: the command= parameters show what ran (sh, bash, cat, curl). An interactive shell matters more than a single one-off command.",
+        "Check sourceIPs and userAgent against usual admin IPs and known kubectl versions. Unusual user agents or external IPs raise the risk.",
+        "Confirm responseStatus.code: 101 means the session was established; 403 means a denied attempt, possibly reconnaissance.",
+        "Pivot on the same user and source IP within +/- 15 minutes: look for get/list on secrets, rolebinding creation, new pods or port-forward.",
+        "Look for earlier alerts on the same identity, pod or namespace, and ask the owning team whether a support or debugging ticket exists."
+      ],
+      "false_positives": [
+        "Legitimate debugging by platform engineers or SREs during an incident or deployment.",
+        "CI/CD tools, operators or backup jobs that run commands in pods, such as database dumps.",
+        "Dashboards or IDEs like Lens or k9s opening shells on behalf of an authorized user."
+      ],
+      "response_steps": [
+        "Confirm with the identity owner and the namespace's owning team whether the activity was authorized.",
+        "If unauthorized, revoke or rotate the credentials or service account token and remove RoleBindings that grant pods/exec unnecessarily.",
+        "Isolate the pod with a restrictive NetworkPolicy and preserve evidence (logs, image, filesystem) before replacing it.",
+        "Rotate secrets reachable from the pod and review the cluster for persistence.",
+        "Restrict pods/exec through RBAC to specific groups and consider admission controls for sensitive namespaces."
+      ],
+      "severity_rationale": "Medium fits because exec is a common admin operation, yet it gives direct command execution in workloads and must be validated against the identity and pod."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user opens an interactive shell in a payments pod via kubectl exec",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Request",
+          "stage": "ResponseStarted",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.subresource": "exec",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "payments-api-7d9f8c6b5-x2k4q",
+          "requestURI": "/api/v1/namespaces/payments/pods/payments-api-7d9f8c6b5-x2k4q/exec?command=sh&container=api&stdin=true&stdout=true&tty=true",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 101
+        }
+      },
+      {
+        "description": "Service account runs a one-off cat command against a pod in kube-system",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseStarted",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.subresource": "exec",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "coredns-5d78c9869d-abcde",
+          "requestURI": "/api/v1/namespaces/kube-system/pods/coredns-5d78c9869d-abcde/exec?command=cat&command=%2Fetc%2Fresolv.conf&stdout=true",
+          "user.username": "system:serviceaccount:ci:deployer",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "Go-http-client/1.1",
+          "responseStatus.code": 101
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "User reads pod logs: verb is get and the subresource is log, not exec",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "get",
+          "objectRef.resource": "pods",
+          "objectRef.subresource": "log",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "payments-api-7d9f8c6b5-x2k4q",
+          "requestURI": "/api/v1/namespaces/payments/pods/payments-api-7d9f8c6b5-x2k4q/log?container=api",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "Kubectl attach to a pod: create on pods but subresource is attach, not exec",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseStarted",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.subresource": "attach",
+          "objectRef.namespace": "dev",
+          "objectRef.name": "debug-shell",
+          "requestURI": "/api/v1/namespaces/dev/pods/debug-shell/attach?container=debug&stdin=true&stdout=true&tty=true",
+          "user.username": "mrojas@example.com",
+          "sourceIPs": "192.0.2.15",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 101
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

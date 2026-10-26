@@ -1,0 +1,145 @@
+{
+  "rule": {
+    "id": "f0d1feba-4344-4ca9-8121-a6c97bd6df52",
+    "title": "Credential Dumping Tools Service Execution - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Teymur Kheirkhabarov, Daniil Yugoslavskiy, oscd.community",
+    "path": "windows/builtin/security/win_security_mal_creddumper.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_mal_creddumper.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001",
+      "T1003.002",
+      "T1003.004",
+      "T1003.005",
+      "T1003.006",
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio en Windows (EventID 4697) cuyo ServiceFileName contiene el nombre de una herramienta conocida de volcado de credenciales, como pwdump, gsecdump o el driver de Mimikatz (mimidrv). Es muy probable que alguien esté intentando extraer credenciales del host.",
+      "what_it_detects": "Eventos 4697 del log Security en los que ServiceFileName contiene cachedump, dumpsvc, fgexec, gsecdump, mimidrv, pwdump o servpw. Estas herramientas suelen instalarse como servicio o driver temporal para leer LSASS, SAM o los secretos LSA.",
+      "why_it_matters": "Las credenciales robadas permiten movimiento lateral y escalamiento de privilegios. Cubre volcado de memoria LSASS, SAM, secretos LSA, credenciales en caché y DCSync (T1003), ejecutados mediante instalación de servicios (T1569.002).",
+      "triage_steps": [
+        "Revise ServiceFileName, ServiceName, ServiceType y ServiceStartType; anote la ruta del binario o driver y si está en Temp, ADMIN$ o una carpeta de usuario.",
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId; correlacione con eventos 4624 por LogonId para obtener el tipo de logon y la IP de origen.",
+        "Si el logon es remoto (tipo 3), investigue el host de origen: herramientas como PsExec, fgdump o pwdump instalan servicios en el destino desde otra máquina.",
+        "Busque en el mismo host +/- 15 minutos: eventos 7045 y 7036, creación de procesos (4688/Sysmon 1), accesos a lsass.exe y archivos nuevos en la ruta del servicio.",
+        "Obtenga el hash del binario y compárelo con su inteligencia de amenazas; verifique firma digital y metadatos.",
+        "Revise alertas previas del mismo usuario y del mismo host, y si otros equipos registraron el mismo ServiceName en la última semana."
+      ],
+      "false_positives": [
+        "Administrador o equipo de pentest autorizado usando la herramienta para recuperación de contraseñas o pruebas; confirme con ticket de cambio o carta de autorización.",
+        "Laboratorios de seguridad o equipos de análisis de malware donde se ejecutan estas herramientas a propósito."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del usuario y del host si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint de la red y deshabilite o restrinja la cuenta indicada en SubjectUserName.",
+        "Preserve evidencia: copia del binario, volcado de memoria si es viable y logs Security/System; luego detenga y elimine el servicio malicioso.",
+        "Asuma compromiso de credenciales: restablezca contraseñas de cuentas con sesión en el host y, si es un controlador de dominio, considere rotar KRBTGT dos veces.",
+        "Busque el mismo ServiceFileName o hash en todo el parque y revise movimiento lateral desde la IP de origen."
+      ],
+      "severity_rationale": "Es alta porque los nombres detectados corresponden casi siempre a herramientas ofensivas de robo de credenciales, con poco ruido legítimo y gran impacto potencial."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EventID 4697) whose ServiceFileName contains the name of a known credential dumping tool, such as pwdump, gsecdump or the Mimikatz driver (mimidrv). Someone is likely trying to extract credentials from the host.",
+      "what_it_detects": "Security log 4697 events where ServiceFileName contains cachedump, dumpsvc, fgexec, gsecdump, mimidrv, pwdump or servpw. These tools often install a temporary service or driver to read LSASS, SAM or LSA secrets.",
+      "why_it_matters": "Stolen credentials enable lateral movement and privilege escalation. Covers LSASS memory, SAM, LSA secrets, cached domain credentials and DCSync dumping (T1003), run through service installation (T1569.002).",
+      "triage_steps": [
+        "Review ServiceFileName, ServiceName, ServiceType and ServiceStartType; note the binary or driver path and whether it sits in Temp, ADMIN$ or a user folder.",
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId; correlate with 4624 by LogonId to get logon type and source IP.",
+        "If the logon is remote (type 3), investigate the source host: PsExec, fgdump or pwdump install services on the target from another machine.",
+        "Search the same host +/- 15 minutes: 7045 and 7036 events, process creation (4688/Sysmon 1), lsass.exe access and new files in the service path.",
+        "Get the binary hash, check it against threat intelligence, and verify signature and metadata.",
+        "Check earlier alerts for the same user and host, and whether other machines logged the same ServiceName in the past week."
+      ],
+      "false_positives": [
+        "Authorized administrator or pentest team using the tool for password recovery or testing; confirm with a change ticket or engagement letter.",
+        "Security labs or malware analysis machines where these tools run on purpose."
+      ],
+      "response_steps": [
+        "Confirm with the user and host owner whether the activity was authorized before acting.",
+        "If unauthorized, isolate the endpoint and disable or restrict the account in SubjectUserName.",
+        "Preserve evidence: binary copy, memory image if feasible, Security/System logs; then stop and remove the malicious service.",
+        "Assume credential compromise: reset passwords of accounts with sessions on the host; on a domain controller, consider rotating KRBTGT twice.",
+        "Hunt for the same ServiceFileName or hash fleet-wide and review lateral movement from the source IP."
+      ],
+      "severity_rationale": "High fits because these names almost always indicate offensive credential theft tools, with little legitimate noise and large potential impact."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "pwdump6-style service (servpw64) installed remotely from the ADMIN$ share",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ServiceName": "PWDumpSvc",
+          "ServiceFileName": "C:\\Windows\\Temp\\servpw64.exe",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Mimikatz kernel driver mimidrv.sys registered as a service",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5B11C4",
+          "ServiceName": "mimidrv",
+          "ServiceFileName": "C:\\Users\\svc_backup\\AppData\\Local\\Temp\\mimidrv.sys",
+          "ServiceType": "0x1",
+          "ServiceStartType": "3",
+          "ServiceAccount": ""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate antivirus update service installation; ServiceFileName has none of the tool names",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ServiceName": "ExampleAVUpdater",
+          "ServiceFileName": "\"C:\\Program Files\\ExampleAV\\avupdate.exe\" -service",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Same pwdump service file but logged as a different event (4688 process creation), so EventID 4697 does not match",
+        "event": {
+          "EventID": 4688,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "NewProcessName": "C:\\Windows\\Temp\\servpw64.exe",
+          "ServiceFileName": "C:\\Windows\\Temp\\servpw64.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

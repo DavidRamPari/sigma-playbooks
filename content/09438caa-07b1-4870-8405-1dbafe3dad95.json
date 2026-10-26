@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "09438caa-07b1-4870-8405-1dbafe3dad95",
+    "title": "Azure Subscription Permission Elevation Via ActivityLogs",
+    "level": "high",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_subscription_permissions_elevation_via_activitylogs.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_subscription_permissions_elevation_via_activitylogs.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un usuario ejecutó Microsoft.Authorization/elevateAccess/action y obtuvo el rol User Access Administrator en el ámbito raíz (/), lo que le permite gestionar el acceso a todas las suscripciones y grupos de administración del tenant.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es MICROSOFT.AUTHORIZATION/ELEVATEACCESS/ACTION. Esta operación ocurre cuando un Global Administrator de Entra ID activa \"Administración de acceso para recursos de Azure\" o llama a la API elevateAccess.",
+      "why_it_matters": "Con esta elevación, una cuenta de identidad comprometida puede asignarse cualquier rol en todas las suscripciones y pasar del control de Entra ID al control de Azure. Corresponde a ATT&CK T1078.004 (cuentas de nube válidas) usada para escalar privilegios y persistir.",
+      "triage_steps": [
+        "Identifique al usuario en caller, junto con callerIpAddress, resultType y correlationId. Confirme si la operación tuvo éxito (Succeeded) o falló.",
+        "Pregunte al responsable o a gestión de cambios si existe un ticket aprobado para la elevación en esa fecha y hora.",
+        "Revise los sign-in logs de Entra ID para ese usuario: IP, ubicación, user agent, dispositivo, MFA e indicadores de riesgo dentro de +/- 15 minutos.",
+        "Busque Microsoft.Authorization/roleAssignments/write en el ámbito raíz, grupos de administración o suscripciones realizados por el mismo caller después de la elevación.",
+        "Revise en los audit logs de Entra ID si el usuario recibió hace poco el rol Global Administrator o si hubo cambios de MFA o credenciales.",
+        "Pivote por callerIpAddress para encontrar otras cuentas o alertas que vengan del mismo origen.",
+        "Revise las alertas previas para el mismo usuario y tenant en los últimos 30 días."
+      ],
+      "false_positives": [
+        "Un administrador del sistema aprobó la elevación para recuperar el acceso a una suscripción huérfana o sin propietarios.",
+        "Una tarea planificada de gobierno, auditoría o migración de grupos de administración que requiere acceso a todo el tenant."
+      ],
+      "response_steps": [
+        "Si la actividad no está autorizada, retire la elevación quitando la asignación User Access Administrator en el ámbito / y desactive el interruptor en Entra ID.",
+        "Revoque las sesiones del usuario, restablezca sus credenciales y vuelva a registrar su MFA. Bloquee temporalmente la cuenta si hay indicios de compromiso.",
+        "Revise y elimine las asignaciones de roles creadas por el caller después de la elevación, solo tras confirmar con los dueños de cada suscripción.",
+        "Busque persistencia: service principals nuevos, secretos de aplicaciones y cambios en políticas de acceso condicional.",
+        "Si fue legítima, documente el ticket y confirme que la elevación se retiró al terminar la tarea."
+      ],
+      "severity_rationale": "La severidad es alta porque la operación da control del acceso a todas las suscripciones del tenant y en la práctica debería ocurrir muy pocas veces y solo con aprobación previa."
+    },
+    "en": {
+      "summary": "A user ran Microsoft.Authorization/elevateAccess/action and obtained User Access Administrator at root scope (/), allowing them to manage access to every subscription and management group in the tenant.",
+      "what_it_detects": "Azure Activity Log events whose operationName is MICROSOFT.AUTHORIZATION/ELEVATEACCESS/ACTION. This operation happens when an Entra ID Global Administrator enables \"Access management for Azure resources\" or calls the elevateAccess API.",
+      "why_it_matters": "With this elevation, a compromised identity account can grant itself any role on all subscriptions and move from control of Entra ID to control of Azure. It maps to ATT&CK T1078.004 (valid cloud accounts), used for privilege escalation and persistence.",
+      "triage_steps": [
+        "Identify the user in caller, along with callerIpAddress, resultType and correlationId. Confirm whether the operation succeeded or failed.",
+        "Ask the owner or change management whether an approved ticket covers this elevation at this time.",
+        "Review Entra ID sign-in logs for the user within +/- 15 minutes: IP, location, user agent, device, MFA and risk signals.",
+        "Search for Microsoft.Authorization/roleAssignments/write by the same caller at root, management group or subscription scope after the elevation.",
+        "Check Entra ID audit logs for a recent Global Administrator assignment to the user, or recent MFA or credential changes.",
+        "Pivot on callerIpAddress to find other accounts or alerts from the same source.",
+        "Review earlier alerts for the same user and tenant over the last 30 days."
+      ],
+      "false_positives": [
+        "A system administrator approved the elevation to regain access to an orphaned subscription or one with no owners.",
+        "Planned governance, audit or management-group migration work that requires tenant-wide access."
+      ],
+      "response_steps": [
+        "If the activity is unauthorized, remove the User Access Administrator assignment at scope / and turn the Entra ID toggle off.",
+        "Revoke the user's sessions, reset credentials and re-register MFA. Block the account temporarily if there are signs of compromise.",
+        "Review the role assignments the caller created after elevating. Remove them only after confirming with each subscription owner.",
+        "Hunt for persistence: new service principals, application secrets and changes to Conditional Access policies.",
+        "If the elevation was legitimate, record the ticket and confirm it was removed once the task was done."
+      ],
+      "severity_rationale": "Severity is high because the operation gives control over access to every subscription in the tenant and should be rare and pre-approved."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A Global Administrator elevates access to all Azure subscriptions from an unfamiliar IP",
+        "event": {
+          "operationName": "MICROSOFT.AUTHORIZATION/ELEVATEACCESS/ACTION",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/providers/Microsoft.Authorization",
+          "correlationId": "6f1c2b9e-4a7d-4c1e-9b2a-1d3e5f7a9c01",
+          "level": "Informational",
+          "time": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "Elevation recorded in mixed case by a different administrator",
+        "event": {
+          "operationName": "Microsoft.Authorization/elevateAccess/action",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "admin.cloud@example.org",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/providers/Microsoft.Authorization",
+          "correlationId": "a2b4c6d8-1e3f-4a5b-8c7d-9e0f1a2b3c4d",
+          "time": "2024-10-26T09:41:55Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine role assignment on a single subscription, not an elevateAccess operation",
+        "event": {
+          "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.Authorization/roleAssignments/1111aaaa-2222-bbbb-3333-cccc4444dddd",
+          "time": "2024-10-25T15:10:00Z"
+        }
+      },
+      {
+        "description": "Removal of an existing role assignment, a different Microsoft.Authorization operation",
+        "event": {
+          "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/DELETE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "admin.cloud@example.org",
+          "callerIpAddress": "192.0.2.15",
+          "resourceId": "/providers/Microsoft.Authorization/roleAssignments/5555eeee-6666-ffff-7777-000011112222",
+          "time": "2024-10-26T10:05:30Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

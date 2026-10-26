@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "09658312-bc27-4a3b-91c5-e49ab9046d1b",
+    "title": "WMIC Unquoted Services Path Lookup - PowerShell",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_wmi_unquoted_service_search.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_wmi_unquoted_service_search.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1047"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell consultó la clase WMI Win32_Service con Get-WmiObject o gwmi y pidió Name, DisplayName, PathName y StartMode. Este patrón se usa con frecuencia para buscar servicios con rutas sin comillas.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging en los que ScriptBlockText contiene 'Get-WmiObject ' o 'gwmi ', ' Win32_Service ' y las propiedades Name, DisplayName, PathName y StartMode. Es la consulta típica de scripts de enumeración como JAWS o redsnarf.",
+      "why_it_matters": "Usa WMI para hacer reconocimiento (ATT&CK T1047). Si un servicio tiene una ruta sin comillas que contiene espacios, un atacante con permiso de escritura en una carpeta intermedia puede colocar ahí un ejecutable que el servicio iniciará como SYSTEM.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si el script llegó en varios fragmentos, reconstrúyalo con ScriptBlockId, MessageNumber y MessageTotal, y busque filtros como -notlike '\"*' o StartMode Auto.",
+        "Revise el campo Path y el usuario del evento. Un script en Temp, Downloads o ejecutado desde memoria es más sospechoso que uno de administración conocido.",
+        "Identifique el proceso padre de powershell.exe con Sysmon 1 o 4688 en el mismo host, ±15 minutos: Office, cmd, wmiprvse o un agente remoto.",
+        "En la misma ventana, busque otros comandos de enumeración: whoami /priv, icacls, accesschk, sc qc o herramientas como PowerUp o winPEAS.",
+        "Busque escrituras posteriores de ejecutables en rutas intermedias, por ejemplo C:\\Program.exe o carpetas de Program Files, y eventos 7045 o 4697 de servicios nuevos o modificados.",
+        "Compruebe si hay alertas anteriores del mismo usuario o host y si existe una prueba de penetración o una auditoría autorizada en curso."
+      ],
+      "false_positives": [
+        "Scripts de inventario o de hardening que buscan rutas sin comillas para corregirlas.",
+        "Escáneres de vulnerabilidades o herramientas de cumplimiento que lanzan esta consulta por PowerShell.",
+        "Pruebas de penetración o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del usuario o del host si la actividad era legítima y estaba autorizada.",
+        "Si no lo era, aísle el endpoint y preserve los registros de PowerShell y el script original.",
+        "Cambie de inmediato las credenciales de la cuenta afectada si hay indicios de compromiso.",
+        "Después de validarlo, elimine los ejecutables plantados y revierta los cambios en servicios.",
+        "Corrija las rutas sin comillas poniéndolas entre comillas y restrinja la escritura en las carpetas intermedias."
+      ],
+      "severity_rationale": "La severidad es media porque esto es reconocimiento sin daño directo, aunque suele ser el paso previo a una escalada de privilegios local."
+    },
+    "en": {
+      "summary": "A PowerShell script block queried the WMI class Win32_Service through Get-WmiObject or gwmi and asked for Name, DisplayName, PathName and StartMode. This pattern is commonly used to find services with unquoted paths.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains 'Get-WmiObject ' or 'gwmi ', ' Win32_Service ', and the properties Name, DisplayName, PathName and StartMode. This is the usual query in enumeration scripts such as JAWS or redsnarf.",
+      "why_it_matters": "It uses WMI for reconnaissance (ATT&CK T1047). When a service path has spaces and no quotes, an attacker who can write to a folder along that path can drop an executable that the service will launch as SYSTEM.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If the script was split, rebuild it with ScriptBlockId, MessageNumber and MessageTotal, and look for filters like -notlike '\"*' or StartMode Auto.",
+        "Check the Path field and the user on the event. A script in Temp or Downloads, or one run from memory, is more suspicious than a known admin script.",
+        "Find the parent of powershell.exe using Sysmon 1 or 4688 on the same host, within ±15 minutes: Office, cmd, wmiprvse or a remote agent.",
+        "In the same window, look for other enumeration: whoami /priv, icacls, accesschk, sc qc, or tools such as PowerUp or winPEAS.",
+        "Look for executables written afterwards along service paths, such as C:\\Program.exe or folders under Program Files, and for 7045 or 4697 events showing new or changed services.",
+        "Check for earlier alerts on the same user or host, and whether an authorized pentest or audit is underway."
+      ],
+      "false_positives": [
+        "Inventory or hardening scripts that look for unquoted paths so they can be fixed.",
+        "Vulnerability scanners or compliance tools that run this query through PowerShell.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Ask the user or the host owner whether the activity was legitimate and authorized.",
+        "If it was not, isolate the endpoint and preserve the PowerShell logs and the original script.",
+        "Reset the account's credentials right away if you see signs of compromise.",
+        "Once verified, remove any planted executables and revert changes to services.",
+        "Fix unquoted service paths by adding quotes, and restrict write access to the folders along those paths."
+      ],
+      "severity_rationale": "Severity is medium because this is reconnaissance with no direct impact, though it often comes right before local privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "JAWS-style one-liner: gwmi lists auto-start services whose paths are unquoted and outside C:\\Windows",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "gwmi -class Win32_Service -Property Name, DisplayName, PathName, StartMode | Where {$_.StartMode -eq \"Auto\" -and $_.PathName -notlike \"C:\\Windows*\" -and $_.PathName -notlike '\"*'} | select PathName, DisplayName, Name",
+          "ScriptBlockId": "3f1c2a9e-7b4d-4e21-9a6f-0c8d5e2b1a77",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\enum.ps1",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-1105"
+        }
+      },
+      {
+        "description": "Get-WmiObject piped to a select of the four service properties",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockText": "Get-WmiObject win32_service | Select-Object Name, DisplayName, PathName, StartMode | Format-Table -AutoSize",
+          "ScriptBlockId": "9a2e4b10-55c3-4d8f-b1e2-6f7a8c9d0e11",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-1312"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin checks the Spooler service with Get-WmiObject but asks for no PathName, DisplayName or StartMode",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "ScriptBlockText": "Get-WmiObject -Class Win32_Service -Filter \"Name='Spooler'\" | Select-Object Name, State",
+          "ScriptBlockId": "c4d5e6f7-1a2b-4c3d-8e9f-a0b1c2d3e4f5",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Check-Spooler.ps1",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-500"
+        }
+      },
+      {
+        "description": "Same properties pulled with Get-CimInstance instead of Get-WmiObject or gwmi, so the rule does not match",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Get-CimInstance -ClassName Win32_Service | Select-Object Name, DisplayName, PathName, StartMode | Export-Csv C:\\Inventory\\services.csv",
+          "ScriptBlockId": "7e8f9a0b-2c3d-4e5f-9a1b-c2d3e4f5a6b7",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Inventory\\Get-Services.ps1",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-1105"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "db809f10-56ce-4420-8c86-d6a7d793c79c",
+    "title": "Potential Defense Evasion Via Raw Disk Access By Uncommon Tools",
+    "level": "low",
+    "status": "test",
+    "author": "Teymur Kheirkhabarov, oscd.community",
+    "path": "windows/raw_access_thread/raw_access_thread_susp_disk_access_using_uncommon_tools.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/raw_access_thread/raw_access_thread_susp_disk_access_using_uncommon_tools.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de las rutas habituales de Windows y del software instalado leyó directamente un volumen o disco (Sysmon Event ID 9, RawAccessRead). Puede tratarse de una herramienta que copia archivos bloqueados, como NTDS.dit o el hive SAM, evitando los controles del sistema de archivos.",
+      "what_it_detects": "Eventos raw_access_thread cuyo Image no pertenece a rutas confiables (System32, Program Files, WinSxS, Defender, entre otras) ni a las excepciones conocidas (GitHub Desktop, Keybase, THOR) y cuyo Device no es una unidad floppy.",
+      "why_it_matters": "El acceso directo a volúmenes (ATT&CK T1006, Direct Volume Access) permite leer datos sin pasar por las API de archivos. Con esto se pueden copiar archivos bloqueados con credenciales, evadir el monitoreo de archivos y saltarse las ACL.",
+      "triage_steps": [
+        "Revisar Image, Device, User y Computer del evento. Anotar si el binario está en Downloads, Temp, ProgramData, Users\\Public o en una carpeta con nombre aleatorio.",
+        "Obtener el hash del Image y consultarlo en la reputación interna y en VirusTotal. Validar la firma digital y los metadatos del archivo (OriginalFileName, Company).",
+        "Buscar con el ProcessGuid el evento de creación del proceso (Sysmon 1) para conocer la CommandLine, el ParentImage y la cadena completa de procesos padre.",
+        "Revisar los eventos de archivo (Sysmon 11) del mismo host en una ventana de +/- 15 minutos: copias de NTDS.dit, SAM, SYSTEM, SECURITY o archivos .dit/.hiv en rutas temporales.",
+        "Determinar si el host es un controlador de dominio o un servidor crítico. En esos equipos el acceso raw de herramientas desconocidas es mucho más grave.",
+        "Buscar si el mismo usuario o el mismo hash aparece en otros hosts y revisar alertas anteriores del equipo, como credential dumping, movimiento lateral o ejecución desde rutas temporales.",
+        "Confirmar con el dueño del equipo o con TI si hay herramientas legítimas de respaldo, forense, clonado o diagnóstico de disco en uso."
+      ],
+      "false_positives": [
+        "Software de respaldo, clonado o imagen de disco ejecutado desde rutas no estándar o portables.",
+        "Herramientas forenses o de respuesta a incidentes (adquisición de memoria o disco) usadas por el equipo de seguridad.",
+        "Utilidades de actualización de firmware SSD/NVMe, de particionado o de cifrado de disco del fabricante.",
+        "Instaladores y actualizadores de aplicaciones que se ejecutan desde AppData o Temp y no están cubiertos por los filtros."
+      ],
+      "response_steps": [
+        "Si el binario no tiene justificación, aislar el endpoint por EDR y preservar el ejecutable, su hash y la memoria del proceso antes de terminarlo.",
+        "Si hay indicios de copia de NTDS.dit o SAM, tratarlo como compromiso de credenciales: resetear las cuentas afectadas y la cuenta krbtgt dos veces según el procedimiento.",
+        "Eliminar el binario y la persistencia asociada después de documentar la evidencia. Bloquear el hash en el EDR.",
+        "Si es legítimo, documentarlo y crear una exclusión específica por ruta y hash, no por carpeta genérica."
+      ],
+      "severity_rationale": "Es nivel bajo porque la regla funciona por exclusión y genera muchos falsos positivos. Sin embargo, el contexto (controlador de dominio, binario sin firma, copia de hives) puede justificar escalarla."
+    },
+    "en": {
+      "summary": "A process outside the usual Windows and installed-software paths read a disk or volume directly (Sysmon Event ID 9, RawAccessRead). This may be a tool that copies locked files such as NTDS.dit or the SAM hive while bypassing file system controls.",
+      "what_it_detects": "raw_access_thread events whose Image is not in a trusted path (System32, Program Files, WinSxS, Defender, etc.) or a known exception (GitHub Desktop, Keybase, THOR), and whose Device is not a floppy drive.",
+      "why_it_matters": "Direct volume access (ATT&CK T1006, Direct Volume Access) reads data without going through the file APIs. Attackers use it to copy locked credential files, evade file monitoring and bypass ACLs.",
+      "triage_steps": [
+        "Review Image, Device, User and Computer. Note whether the binary runs from Downloads, Temp, ProgramData, Users\\Public or a randomly named folder.",
+        "Hash the Image and check internal reputation and VirusTotal. Validate its signature and file metadata (OriginalFileName, Company).",
+        "Use the ProcessGuid to find the process creation event (Sysmon 1) and get the CommandLine, the ParentImage and the full parent chain.",
+        "Check file events (Sysmon 11) on the same host within +/- 15 minutes for copies of NTDS.dit, SAM, SYSTEM, SECURITY or .dit/.hiv files in temp paths.",
+        "Determine whether the host is a domain controller or another critical server. Raw access by unknown tools there is far more serious.",
+        "Search for the same user or hash on other hosts and review earlier alerts for this host, such as credential dumping, lateral movement or execution from temp paths.",
+        "Confirm with the asset owner or IT whether legitimate backup, forensic, cloning or disk diagnostic tools are in use."
+      ],
+      "false_positives": [
+        "Backup, cloning or disk imaging software run from non-standard or portable locations.",
+        "Forensic or incident response acquisition tools used by the security team.",
+        "Vendor SSD/NVMe firmware updaters, partitioning or disk encryption utilities.",
+        "Application installers or updaters running from AppData or Temp that the filters do not cover."
+      ],
+      "response_steps": [
+        "If the binary is unjustified, isolate the endpoint through the EDR. Preserve the executable, its hash and the process memory before killing it.",
+        "If NTDS.dit or SAM was copied, treat it as a credential compromise: reset the affected accounts, and reset krbtgt twice following your procedure.",
+        "After documenting the evidence, remove the binary and any related persistence. Block the hash in the EDR.",
+        "If the activity is legitimate, document it and add a narrow exclusion by path and hash, not by a generic folder."
+      ],
+      "severity_rationale": "The level is low because the rule works by exclusion and is noisy. Context such as a domain controller, an unsigned binary or hive copies can justify escalating it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned tool in the user's Downloads folder reads the system volume directly on a domain controller",
+        "event": {
+          "EventID": 9,
+          "Computer": "DC-01.andes.example.com",
+          "UtcTime": "2025-03-14 02:17:45.112",
+          "ProcessGuid": "{5e1c2a7b-3f10-65f2-1a02-000000000b00}",
+          "ProcessId": 4312,
+          "Image": "C:\\Users\\jperez\\Downloads\\rawcopy64.exe",
+          "Device": "\\Device\\HarddiskVolume2",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Binary in C:\\Users\\Public performs a raw read of the physical disk",
+        "event": {
+          "EventID": 9,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2025-03-14 09:03:10.540",
+          "ProcessGuid": "{5e1c2a7b-4a22-65f2-8c03-000000000c00}",
+          "ProcessId": 7720,
+          "Image": "C:\\Users\\Public\\svchelper.exe",
+          "Device": "\\Device\\Harddisk0\\DR0",
+          "User": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate System32 process reading the volume, excluded by filter_main_generic",
+        "event": {
+          "EventID": 9,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2025-03-14 10:00:01.003",
+          "ProcessGuid": "{5e1c2a7b-0001-65f2-0b00-000000000a00}",
+          "ProcessId": 1288,
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "Device": "\\Device\\HarddiskVolume2",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Microsoft Defender engine scanning the disk, excluded by filter_main_windefender",
+        "event": {
+          "EventID": 9,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2025-03-14 10:05:33.871",
+          "ProcessGuid": "{5e1c2a7b-0002-65f2-0c00-000000000a00}",
+          "ProcessId": 3456,
+          "Image": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MsMpEng.exe",
+          "Device": "\\Device\\HarddiskVolume2",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

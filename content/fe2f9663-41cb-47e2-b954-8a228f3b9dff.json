@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "fe2f9663-41cb-47e2-b954-8a228f3b9dff",
+    "title": "Linux Base64 Encoded Shebang In CLI",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_base64_shebang_cli.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_base64_shebang_cli.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1140"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en Linux se ejecutó con una línea de comandos que contiene la versión en base64 de un shebang (#!/bin/bash, sh, dash, zsh o fish). Suele indicar que un script codificado está por decodificarse y ejecutarse.",
+      "what_it_detects": "Procesos cuyo CommandLine contiene los prefijos base64 de un shebang, como \"IyEvYmluL2Jhc2\" (#!/bin/bash) o \"IyEvYmluL3No\" (#!/bin/sh), típicos de patrones echo <base64> | base64 -d | bash.",
+      "why_it_matters": "Codificar un script en base64 oculta su contenido ante revisiones y controles simples (ATT&CK T1140, decodificar archivos o información). Se ha visto en scripts maliciosos y en herramientas de enumeración como linPEAS.",
+      "triage_steps": [
+        "Decodifique el bloque base64 del CommandLine en un entorno aislado, sin ejecutarlo, y revise qué hace el script.",
+        "Identifique el usuario, el Image y el ParentImage: ¿proviene de una sesión SSH interactiva, de cron, de un servicio web o de un contenedor?",
+        "Revise los procesos hijos (bash, sh, curl, wget, python) generados en el mismo host dentro de +/- 15 minutos.",
+        "Busque en el script decodificado URLs, IPs, rutas de persistencia (crontab, systemd, .bashrc, authorized_keys) o descargas adicionales.",
+        "Verifique conexiones de red salientes del host en esa ventana y consulte la reputación de los destinos.",
+        "Busque la misma cadena base64 o el mismo usuario en otros hosts y en alertas previas de la misma entidad."
+      ],
+      "false_positives": [
+        "Tareas legítimas de administración que transfieren scripts en base64 para evitar problemas de escape o de comillas.",
+        "Herramientas de aprovisionamiento (cloud-init, user-data, Ansible) que entregan scripts codificados.",
+        "Pruebas autorizadas de seguridad o auditorías que ejecutan herramientas como linPEAS."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del usuario si la ejecución era esperada y documentada.",
+        "Si es maliciosa, aísle el host de la red y preserve evidencia: script decodificado, historial de shell y lista de procesos.",
+        "Termine los procesos maliciosos y elimine la persistencia identificada tras verificar cada artefacto.",
+        "Rote las credenciales del usuario afectado y revise accesos SSH recientes.",
+        "Restaure desde una imagen confiable si hubo compromiso confirmado y agregue exclusiones solo para usos legítimos verificados."
+      ],
+      "severity_rationale": "Nivel medio: el patrón es sospechoso y común en ataques, pero también aparece en automatización legítima, por lo que requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A Linux process ran with a command line containing the base64 form of a shebang (#!/bin/bash, sh, dash, zsh or fish). This usually means an encoded script is about to be decoded and run.",
+      "what_it_detects": "Processes whose CommandLine contains base64 prefixes of a shebang, such as \"IyEvYmluL2Jhc2\" (#!/bin/bash) or \"IyEvYmluL3No\" (#!/bin/sh), typical of echo <base64> | base64 -d | bash patterns.",
+      "why_it_matters": "Base64-encoding a script hides its content from casual review and simple controls (ATT&CK T1140, Deobfuscate/Decode Files or Information). It appears in malicious shell scripts and enumeration tools such as linPEAS.",
+      "triage_steps": [
+        "Decode the base64 blob from CommandLine in an isolated environment, without executing it, and review what the script does.",
+        "Identify the user, Image and ParentImage: does it come from an interactive SSH session, cron, a web service or a container?",
+        "Review child processes (bash, sh, curl, wget, python) on the same host within +/- 15 minutes.",
+        "Look in the decoded script for URLs, IPs, persistence paths (crontab, systemd, .bashrc, authorized_keys) or further downloads.",
+        "Check outbound network connections from the host in that window and the reputation of destinations.",
+        "Search for the same base64 string or user on other hosts and in earlier alerts for the same entity."
+      ],
+      "false_positives": [
+        "Legitimate administration that passes scripts as base64 to avoid quoting or escaping issues.",
+        "Provisioning tools (cloud-init, user-data, Ansible) that deliver encoded scripts.",
+        "Authorized security testing or audits running tools such as linPEAS."
+      ],
+      "response_steps": [
+        "Confirm with the host or user owner whether the execution was expected and documented.",
+        "If malicious, isolate the host and preserve evidence: decoded script, shell history and process list.",
+        "Kill malicious processes and remove identified persistence after verifying each artifact.",
+        "Rotate the affected user's credentials and review recent SSH access.",
+        "Rebuild from a trusted image if compromise is confirmed; add exclusions only for verified legitimate use."
+      ],
+      "severity_rationale": "Medium fits because the pattern is suspicious and common in attacks but also appears in legitimate automation, so context is needed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Base64-encoded #!/bin/bash script piped to base64 -d and bash",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c echo IyEvYmluL2Jhc2gKZWNobyBoZWxsbwo= | base64 -d | bash",
+          "ParentImage": "/usr/sbin/sshd",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Base64-encoded #!/bin/sh script decoded via echo in a cron-spawned shell",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c echo IyEvYmluL3NoCmlkCg== | base64 -d > /tmp/.x && sh /tmp/.x",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "www-data",
+          "ProcessId": 51002,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Base64 decoding of a non-shebang string (hello world)",
+        "event": {
+          "Image": "/usr/bin/base64",
+          "CommandLine": "base64 -d /tmp/greeting.b64",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48300,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Plain-text shebang written to a script, not base64-encoded",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c echo '#!/bin/bash' > /opt/scripts/backup.sh",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 49110,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

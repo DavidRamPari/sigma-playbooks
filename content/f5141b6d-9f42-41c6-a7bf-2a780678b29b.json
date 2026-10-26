@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "f5141b6d-9f42-41c6-a7bf-2a780678b29b",
+    "title": "Gatekeeper Bypass via Xattr",
+    "level": "low",
+    "status": "test",
+    "author": "Daniil Yugoslavskiy, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_xattr_gatekeeper_bypass.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_xattr_gatekeeper_bypass.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1553.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó la utilidad xattr en macOS para eliminar el atributo com.apple.quarantine de un archivo. Esto evita que Gatekeeper verifique ese archivo al abrirlo.",
+      "what_it_detects": "Procesos cuyo Image termina en /xattr y cuyo CommandLine contiene tanto '-d' como 'com.apple.quarantine', por ejemplo 'xattr -d com.apple.quarantine /ruta/App.app'.",
+      "why_it_matters": "macOS marca con com.apple.quarantine los archivos descargados para que Gatekeeper valide la firma y la notarización antes de ejecutarlos. Quitar ese atributo permite ejecutar código no firmado sin advertencias (ATT&CK T1553.001, evasión de Gatekeeper).",
+      "triage_steps": [
+        "Revise CommandLine: identifique el archivo o bundle afectado, si se usó -r (recursivo) y si la ruta está en Downloads, /tmp, /Users/Shared o un volumen montado.",
+        "Revise ParentImage y la cadena de procesos: Terminal o zsh de un usuario técnico es menos sospechoso que un script, osascript, curl, un instalador o una app recién descargada.",
+        "Identifique al usuario y confirme si es desarrollador o administrador con motivo legítimo para quitar la cuarentena.",
+        "Obtenga el hash del archivo objetivo, verifique la firma con codesign o spctl y consulte su reputación.",
+        "Busque en el mismo host, +/- 15 minutos, descargas, montajes de DMG, ejecución del archivo afectado, conexiones de red nuevas o persistencia en LaunchAgents.",
+        "Consulte alertas previas del mismo host y usuario, y si el mismo archivo o comando aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Desarrolladores o administradores que quitan la cuarentena a herramientas propias, binarios compilados o apps internas no notarizadas.",
+        "Instrucciones de instalación de software de código abierto que piden ejecutar 'xattr -d com.apple.quarantine'.",
+        "Scripts de MDM, gestores de paquetes o despliegues que preparan aplicaciones confiables."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o el responsable del equipo si la acción fue intencional y si el archivo proviene de una fuente confiable.",
+        "Si el archivo no está firmado, es desconocido o se ejecutó junto con actividad sospechosa, aísle el endpoint desde el EDR o MDM.",
+        "Preserve una copia del archivo y su hash antes de eliminarlo; termine los procesos derivados y retire la persistencia encontrada.",
+        "Busque el hash y el comando en toda la flota y bloquéelos si se confirma que es malicioso.",
+        "Restablezca credenciales del usuario si hubo ejecución confirmada y documente las excepciones legítimas para ajustar la regla."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque usuarios técnicos quitan la cuarentena con frecuencia; la alerta cobra relevancia al correlacionarse con ejecución de archivos no firmados o actividad posterior."
+    },
+    "en": {
+      "summary": "The macOS xattr utility was run to delete the com.apple.quarantine attribute from a file. This stops Gatekeeper from checking that file when it is opened.",
+      "what_it_detects": "Processes whose Image ends with /xattr and whose CommandLine contains both '-d' and 'com.apple.quarantine', such as 'xattr -d com.apple.quarantine /path/App.app'.",
+      "why_it_matters": "macOS tags downloaded files with com.apple.quarantine so Gatekeeper validates signature and notarization before execution. Removing it lets unsigned code run without warnings (ATT&CK T1553.001, Gatekeeper bypass).",
+      "triage_steps": [
+        "Read CommandLine: identify the target file or bundle, whether -r (recursive) was used, and whether the path is in Downloads, /tmp, /Users/Shared or a mounted volume.",
+        "Check ParentImage and the process tree: an interactive Terminal or zsh shell is less suspicious than a script, osascript, curl, an installer or a freshly downloaded app.",
+        "Identify the user and confirm whether they are a developer or admin with a legitimate reason.",
+        "Hash the target file, check its signature with codesign or spctl, and look up its reputation.",
+        "On the same host within +/- 15 minutes, look for downloads, DMG mounts, execution of the target, new network connections or LaunchAgent persistence.",
+        "Review earlier alerts for the same host and user, and whether the same file or command appears on other endpoints."
+      ],
+      "false_positives": [
+        "Developers or admins removing quarantine from their own tools, locally built binaries or non-notarized internal apps.",
+        "Open-source install instructions that tell users to run 'xattr -d com.apple.quarantine'.",
+        "MDM, package manager or deployment scripts preparing trusted applications."
+      ],
+      "response_steps": [
+        "Confirm with the user or asset owner that the action was intended and the file came from a trusted source.",
+        "If the file is unsigned, unknown or ran alongside suspicious activity, isolate the endpoint through EDR or MDM.",
+        "Preserve a copy and hash of the file before removal; kill child processes and remove any persistence found.",
+        "Hunt for the hash and command across the fleet and block them if confirmed malicious.",
+        "Reset the user's credentials if execution is confirmed, and document legitimate exceptions to tune the rule."
+      ],
+      "severity_rationale": "Low fits because technical users routinely strip quarantine; the alert matters when correlated with execution of unsigned files or follow-on activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "xattr removes the quarantine attribute from a downloaded app bundle, launched from a shell script",
+        "event": {
+          "Image": "/usr/bin/xattr",
+          "CommandLine": "xattr -d com.apple.quarantine /Users/jperez/Downloads/UpdateHelper.app",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "/bin/zsh /tmp/setup.sh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "Recursive removal of quarantine from a binary in /Users/Shared",
+        "event": {
+          "Image": "/usr/bin/xattr",
+          "CommandLine": "/usr/bin/xattr -r -d com.apple.quarantine /Users/Shared/agent",
+          "ParentImage": "/bin/bash",
+          "User": "mlopez",
+          "Computer": "MBP-0217",
+          "ProcessId": 9934
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "xattr only prints the quarantine attribute (no -d), a read-only check",
+        "event": {
+          "Image": "/usr/bin/xattr",
+          "CommandLine": "xattr -p com.apple.quarantine /Users/jperez/Downloads/Report.pdf",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5102
+        }
+      },
+      {
+        "description": "xattr deletes a different, non-quarantine attribute",
+        "event": {
+          "Image": "/usr/bin/xattr",
+          "CommandLine": "xattr -d com.apple.metadata:kMDItemWhereFroms /Users/jperez/Documents/notes.txt",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5230
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "a7c0ae48-8df8-42bf-91bd-2ea57e2f9d43",
+    "title": "Juniper BGP Missing MD5",
+    "level": "low",
+    "status": "test",
+    "author": "Tim Brown",
+    "path": "network/juniper/bgp/juniper_bgp_missing_md5.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/juniper/bgp/juniper_bgp_missing_md5.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078",
+      "T1110",
+      "T1557"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un router Juniper recibió un segmento TCP hacia o desde el puerto BGP 179 sin la firma MD5 (TCP-MD5, RFC 2385) que exige la configuración del peer. Puede tratarse de un peer mal configurado o de un intento de inyectar o restablecer sesiones BGP.",
+      "what_it_detects": "Líneas de log de Juniper que contienen a la vez ':179' y 'missing MD5 digest'. El kernel de Junos las genera al descartar paquetes BGP sin autenticación MD5, por ejemplo 'tcp_auth_ok: Packet from 192.0.2.10:179 missing MD5 digest'.",
+      "why_it_matters": "Si un atacante logra establecer o manipular sesiones BGP, puede desviar o interceptar tráfico (adversario en el medio, T1557), abusar de cuentas válidas de peering (T1078) o probar claves por fuerza bruta (T1110). Los descartes repetidos también pueden indicar intentos de reiniciar sesiones.",
+      "triage_steps": [
+        "Extraiga del campo message el router, la IP origen, la IP destino y los puertos del paquete descartado.",
+        "Compare la IP origen con los vecinos BGP configurados ('show bgp neighbor'). Una IP que no es peer conocido aumenta la sospecha.",
+        "Cuente las ocurrencias de la misma IP origen en +/- 15 minutos: un evento aislado sugiere error de configuración; una ráfaga sugiere sondeo o inyección.",
+        "Revise si hubo cambios recientes de configuración en el router o en el peer (commits, rotación de clave MD5) en los logs de auditoría y cambios.",
+        "Verifique el estado de las sesiones BGP: flaps, resets o rutas nuevas inesperadas en la misma ventana de tiempo.",
+        "Busque alertas anteriores de la misma IP origen o del mismo router, incluidos escaneos al puerto 179.",
+        "Contacte al equipo de red o al dueño del peer para confirmar si la falta de MD5 es esperada."
+      ],
+      "false_positives": [
+        "Peer recién configurado o en migración donde un lado aún no tiene la clave MD5 aplicada.",
+        "Rotación de clave MD5 aplicada en un solo extremo de la sesión.",
+        "Equipos de monitoreo o pruebas de laboratorio que se conectan al puerto 179 sin autenticación."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de red si el origen es un peer legítimo con configuración incompleta y corríjala de forma coordinada.",
+        "Si el origen no es un peer conocido, bloquéelo con un filtro de firewall (lo0) que solo permita el puerto 179 desde vecinos autorizados.",
+        "Revise la tabla de rutas y los logs de BGP en busca de prefijos inyectados o sesiones reiniciadas, y escale si hay impacto.",
+        "Si se sospecha exposición de la clave, rótela en ambos extremos en una ventana coordinada y documente el incidente."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque el router descarta el paquete y la causa más común es un error de configuración, aunque una ráfaga desde orígenes desconocidos debe escalarse."
+    },
+    "en": {
+      "summary": "A Juniper router received a TCP segment on BGP port 179 without the TCP-MD5 signature (RFC 2385) required for that peer. This may be a misconfigured peer or an attempt to inject into or reset BGP sessions.",
+      "what_it_detects": "Juniper log lines containing both ':179' and 'missing MD5 digest'. The Junos kernel writes these when it drops unauthenticated BGP packets, for example 'tcp_auth_ok: Packet from 192.0.2.10:179 missing MD5 digest'.",
+      "why_it_matters": "An attacker who can establish or tamper with BGP sessions can redirect or intercept traffic (adversary-in-the-middle, T1557), abuse valid peering (T1078) or brute-force keys (T1110). Repeated drops may also signal session-reset attempts.",
+      "triage_steps": [
+        "Parse the message field for the router, source IP, destination IP and ports of the dropped packet.",
+        "Compare the source IP with configured BGP neighbors ('show bgp neighbor'). An unknown source raises suspicion.",
+        "Count events from the same source IP within +/- 15 minutes: one event suggests misconfiguration; a burst suggests probing or injection.",
+        "Check change and audit logs for recent commits or MD5 key rotation on the router or the peer.",
+        "Check BGP session state for flaps, resets or unexpected new routes in the same window.",
+        "Look for earlier alerts on the same source IP or router, including scans of port 179.",
+        "Ask the network team or peer owner whether missing MD5 is expected."
+      ],
+      "false_positives": [
+        "Newly configured or migrating peer where one side does not yet have the MD5 key.",
+        "MD5 key rotation applied on only one end of the session.",
+        "Monitoring tools or lab tests connecting to port 179 without authentication."
+      ],
+      "response_steps": [
+        "Confirm with the network team whether the source is a legitimate peer with incomplete config, and fix it in a coordinated change.",
+        "If the source is not a known peer, block it with a lo0 firewall filter allowing port 179 only from authorized neighbors.",
+        "Review routing tables and BGP logs for injected prefixes or reset sessions, and escalate if there is impact.",
+        "If key exposure is suspected, rotate the key on both ends in a coordinated window and document the incident."
+      ],
+      "severity_rationale": "Low fits because the router drops the packet and misconfiguration is the usual cause, though bursts from unknown sources should be escalated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Junos kernel drops a BGP packet from an unexpected source lacking the MD5 digest",
+        "event": {
+          "message": "Jan  9 10:15:22 rtr-edge-01 /kernel: tcp_auth_ok: Packet from 203.0.113.45:179 missing MD5 digest",
+          "host": "rtr-edge-01",
+          "product": "juniper",
+          "service": "bgp"
+        }
+      },
+      {
+        "description": "Packet to the local BGP port from a peer whose MD5 key is not configured",
+        "event": {
+          "message": "Jan  9 10:16:03 rtr-core-02 /kernel: tcp_auth_ok: Packet from 192.0.2.10:179 missing MD5 digest",
+          "host": "rtr-core-02",
+          "product": "juniper",
+          "service": "bgp"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "BGP packet with a wrong MD5 digest, not a missing one, so only ':179' matches",
+        "event": {
+          "message": "Jan  9 10:17:41 rtr-edge-01 /kernel: tcp_auth_ok: Packet from 192.0.2.10:179 Invalid MD5 digest",
+          "host": "rtr-edge-01",
+          "product": "juniper",
+          "service": "bgp"
+        }
+      },
+      {
+        "description": "Normal BGP session state change with no MD5 error",
+        "event": {
+          "message": "Jan  9 10:20:05 rtr-edge-01 rpd[1820]: BGP_PEER_STATE_CHANGED: BGP peer 198.51.100.1 (External AS 64500) changed state from OpenConfirm to Established (event RecvKeepAlive)",
+          "host": "rtr-edge-01",
+          "product": "juniper",
+          "service": "bgp"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

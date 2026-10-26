@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "2a926e6a-4b81-4011-8a96-e36cc8c04302",
+    "title": "PowerShell Scripts Installed as Services - Security",
+    "level": "high",
+    "status": "test",
+    "author": "oscd.community, Natalia Shornikova",
+    "path": "windows/builtin/security/win_security_powershell_script_installed_as_service.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_powershell_script_installed_as_service.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows cuyo binario (ServiceFileName) invoca PowerShell o pwsh. Los atacantes usan esta técnica para ejecutar código como SYSTEM, persistir o moverse lateralmente.",
+      "what_it_detects": "Eventos 4697 del log Security (instalación de servicio, requiere la auditoría 'System Security Extension') en los que ServiceFileName contiene 'powershell' o 'pwsh'.",
+      "why_it_matters": "Corresponde a ATT&CK T1569.002 (ejecución mediante servicios). Un servicio que lanza PowerShell corre como SYSTEM y es común en movimiento lateral remoto, cargas codificadas y persistencia. Los servicios legítimos casi nunca apuntan directamente a PowerShell.",
+      "triage_steps": [
+        "Lea ServiceFileName completo: busque -enc/-EncodedCommand, -w hidden, -nop, IEX, DownloadString, rutas en Temp o ProgramData. Decodifique el base64 en un entorno aislado.",
+        "Revise ServiceName, ServiceStartType y ServiceAccount: nombres aleatorios, inicio por demanda y LocalSystem son sospechosos.",
+        "Pivote con SubjectUserName y SubjectLogonId hacia el evento 4624 para obtener el tipo de inicio de sesión y la IP de origen; el tipo 3 sugiere instalación remota.",
+        "Correlacione en el mismo host +/- 15 minutos: eventos 7045 y 7036 del log System, 4688 o Sysmon 1 con padre services.exe y conexiones de red salientes.",
+        "Si hay un script .ps1 referenciado, obtenga su hash y contenido, y revise los logs 4104 (Script Block Logging).",
+        "Busque el mismo ServiceName o ServiceFileName en otros hosts y alertas previas del usuario o de la IP de origen para detectar propagación."
+      ],
+      "false_positives": [
+        "Herramientas de gestión o despliegue de software (SCCM, RMM) que crean servicios temporales con PowerShell; confirme con el equipo responsable.",
+        "Scripts administrativos internos empaquetados como servicio por TI, documentados y firmados.",
+        "Agentes de monitoreo o respaldo que usan wrappers de servicio para ejecutar PowerShell."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema y el usuario SubjectUserName si la instalación fue autorizada.",
+        "Si no lo fue, aísle el endpoint y deshabilite (no elimine aún) el servicio, preservando la evidencia y el script.",
+        "Restablezca las credenciales de la cuenta usada e investigue el host de origen del inicio de sesión remoto.",
+        "Elimine el servicio y los artefactos tras documentarlos, busque persistencia adicional y restaure el sistema; agregue a la lista blanca los casos legítimos confirmados."
+      ],
+      "severity_rationale": "El nivel high se justifica porque instalar servicios que ejecutan PowerShell es raro en uso legítimo y otorga ejecución como SYSTEM, típica del movimiento lateral."
+    },
+    "en": {
+      "summary": "A Windows service was installed whose binary path (ServiceFileName) invokes PowerShell or pwsh. Attackers use this to run code as SYSTEM, persist or move laterally.",
+      "what_it_detects": "Security log Event ID 4697 (service installed; requires the 'System Security Extension' audit subcategory) where ServiceFileName contains 'powershell' or 'pwsh'.",
+      "why_it_matters": "Maps to ATT&CK T1569.002 (Service Execution). A service launching PowerShell runs as SYSTEM and is common in remote lateral movement, encoded payloads and persistence. Legitimate services rarely point straight at PowerShell.",
+      "triage_steps": [
+        "Read the full ServiceFileName: look for -enc/-EncodedCommand, -w hidden, -nop, IEX, DownloadString, Temp or ProgramData paths. Decode base64 in a sandbox.",
+        "Review ServiceName, ServiceStartType and ServiceAccount: random names, demand start and LocalSystem are suspicious.",
+        "Pivot on SubjectUserName and SubjectLogonId to Event 4624 for logon type and source IP; logon type 3 suggests remote installation.",
+        "Correlate on the same host +/- 15 minutes: System 7045/7036, 4688 or Sysmon 1 with parent services.exe, and outbound network connections.",
+        "If a .ps1 script is referenced, collect its hash and content and review 4104 script block logs.",
+        "Search other hosts for the same ServiceName or ServiceFileName, and earlier alerts for the user or source IP, to spot spread."
+      ],
+      "false_positives": [
+        "Software deployment or management tools (SCCM, RMM) creating temporary PowerShell services; confirm with the owning team.",
+        "Internal admin scripts wrapped as a service by IT, documented and signed.",
+        "Monitoring or backup agents using service wrappers to run PowerShell."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and SubjectUserName whether the installation was authorized.",
+        "If not, isolate the endpoint and disable (do not yet delete) the service, preserving the script and evidence.",
+        "Reset credentials of the account used and investigate the source host of the remote logon.",
+        "Remove the service and artifacts after documenting them, hunt for further persistence and restore; allowlist confirmed legitimate cases."
+      ],
+      "severity_rationale": "High fits because services that run PowerShell are rare in legitimate use and grant SYSTEM execution typical of lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote service installation running hidden PowerShell with a script from Temp",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E1A2F",
+          "ServiceName": "WinUpdSvc8231",
+          "ServiceFileName": "%COMSPEC% /b /c start /b /min powershell.exe -nop -w hidden -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\upd.ps1",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service pointing to PowerShell 7 (pwsh.exe) running a script from ProgramData",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "svc_deploy",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x7A33C1",
+          "ServiceName": "SyncHelper",
+          "ServiceFileName": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File C:\\ProgramData\\sync\\helper.ps1",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate agent service installed with a regular executable, no PowerShell in ServiceFileName",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ServiceName": "ExampleBackupAgent",
+          "ServiceFileName": "\"C:\\Program Files\\Example\\Backup\\agent.exe\" --service",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "PowerShell service logged as System 7045 instead of Security 4697, so the EventID does not match",
+        "event": {
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinUpdSvc8231",
+          "ImagePath": "powershell.exe -nop -File C:\\Windows\\Temp\\upd.ps1",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

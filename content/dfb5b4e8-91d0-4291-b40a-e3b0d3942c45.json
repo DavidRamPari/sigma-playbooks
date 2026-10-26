@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "dfb5b4e8-91d0-4291-b40a-e3b0d3942c45",
+    "title": "Potential Persistence Via Shim Database Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_persistence_shim_database.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_shim_database.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.011"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió un valor no vacío bajo las claves AppCompatFlags\\InstalledSDB o AppCompatFlags\\Custom, lo que indica que se registró una base de datos de shims (.sdb). Puede tratarse de una instalación legítima de compatibilidad o de persistencia mediante shims.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\ o ...\\AppCompatFlags\\Custom\\, excluyendo los casos en que Details está vacío, es '(Empty)' o es nulo.",
+      "why_it_matters": "Los shims de Application Compatibility pueden inyectar DLL, redirigir rutas o alterar el comportamiento de un ejecutable cada vez que se inicia. Un atacante con privilegios de administrador puede registrar un .sdb malicioso para lograr persistencia o escalar privilegios (ATT&CK T1546.011, Application Shimming).",
+      "triage_steps": [
+        "Revise TargetObject: identifique el GUID de InstalledSDB o el ejecutable afectado bajo Custom\\<nombre.exe>, que indica qué programa recibirá el shim.",
+        "Revise Details: en InstalledSDB\\{GUID}\\DatabasePath obtenga la ruta del .sdb; rutas en %TEMP%, Users\\Public o ProgramData son sospechosas.",
+        "Identifique Image y el usuario: sdbinst.exe es el instalador habitual; reg.exe, powershell.exe o un binario desconocido escribiendo directamente la clave elevan la sospecha.",
+        "Revise el proceso padre y la línea de comandos de quien escribió la clave, y sus procesos hijos en el mismo host dentro de +/- 15 minutos.",
+        "Obtenga el archivo .sdb, calcule su hash y analícelo (por ejemplo con herramientas de volcado de SDB) buscando InjectDll, RedirectEXE o rutas a DLL inusuales.",
+        "Correlacione con instalaciones de software, despliegues de GPO/SCCM o tickets de cambio en ese equipo.",
+        "Busque la misma ruta, hash o GUID de .sdb en otros endpoints y alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Instalaciones legítimas de shims personalizados para aplicaciones heredadas, desplegadas por TI con sdbinst.exe.",
+        "Software empresarial o de proveedores que registra su propia base de compatibilidad durante la instalación o actualización.",
+        "Herramientas de compatibilidad como Compatibility Administrator usadas por administradores en pruebas o empaquetado."
+      ],
+      "response_steps": [
+        "Verifique con el equipo de TI o el propietario del sistema si la instalación del shim estaba autorizada antes de actuar.",
+        "Si es malicioso, aísle el endpoint y preserve el .sdb, las claves de registro y las DLL referenciadas como evidencia.",
+        "Elimine el shim con sdbinst.exe -u o borrando las claves InstalledSDB/Custom correspondientes, y retire el .sdb y los payloads asociados.",
+        "Investigue cómo se obtuvieron privilegios de administrador, restablezca credenciales comprometidas y busque otros mecanismos de persistencia.",
+        "Documente los shims aprobados para ajustar la regla con exclusiones específicas por ruta o hash."
+      ],
+      "severity_rationale": "Nivel medio porque es una técnica de persistencia real y poco común, pero las instalaciones legítimas de shims también la activan y requieren verificación."
+    },
+    "en": {
+      "summary": "A non-empty value was written under AppCompatFlags\\InstalledSDB or AppCompatFlags\\Custom, meaning a shim database (.sdb) was registered. This may be a legitimate compatibility fix or shim-based persistence.",
+      "what_it_detects": "registry_set events whose TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\ or ...\\AppCompatFlags\\Custom\\, excluding writes where Details is empty, '(Empty)' or null.",
+      "why_it_matters": "Application Compatibility shims can inject DLLs, redirect paths or change how an executable behaves every time it starts. An attacker with admin rights can register a malicious .sdb for persistence or privilege escalation (ATT&CK T1546.011, Application Shimming).",
+      "triage_steps": [
+        "Read TargetObject: note the InstalledSDB GUID or the executable under Custom\\<name.exe>, which shows which program the shim targets.",
+        "Read Details: for InstalledSDB\\{GUID}\\DatabasePath get the .sdb path; locations in %TEMP%, Users\\Public or ProgramData are suspicious.",
+        "Check Image and user: sdbinst.exe is the normal installer; reg.exe, powershell.exe or an unknown binary writing the key directly is more suspicious.",
+        "Review the writer's parent process and command line, plus child processes on the same host within +/- 15 minutes.",
+        "Collect the .sdb, hash it and parse it with an SDB dumping tool, looking for InjectDll, RedirectEXE or unusual DLL paths.",
+        "Correlate with software installs, GPO/SCCM deployments or change tickets for that host.",
+        "Hunt for the same .sdb path, hash or GUID on other endpoints and in earlier alerts for the host or user."
+      ],
+      "false_positives": [
+        "Legitimate custom shim installs for legacy applications deployed by IT with sdbinst.exe.",
+        "Enterprise or vendor software registering its own compatibility database during install or update.",
+        "Administrators using Compatibility Administrator for testing or application packaging."
+      ],
+      "response_steps": [
+        "Confirm with IT or the system owner whether the shim install was authorized before taking action.",
+        "If malicious, isolate the endpoint and preserve the .sdb, registry keys and referenced DLLs as evidence.",
+        "Remove the shim with sdbinst.exe -u or by deleting the matching InstalledSDB/Custom keys, then remove the .sdb and related payloads.",
+        "Investigate how admin rights were obtained, reset compromised credentials and hunt for other persistence.",
+        "Document approved shims and tune the rule with path- or hash-specific exclusions."
+      ],
+      "severity_rationale": "Medium fits because shimming is a real but uncommon persistence technique, while legitimate shim installs also trigger it and need verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers a shim database from a Public folder under InstalledSDB",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4812,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{4a2f7c1e-9b3d-4e8a-a1c2-7d6e5f4b3a21}\\DatabasePath",
+          "Details": "C:\\Users\\Public\\compat.sdb"
+        }
+      },
+      {
+        "description": "sdbinst.exe writes the Custom entry linking notepad.exe to a shim database",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "ProcessId": 5120,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom\\notepad.exe\\{4a2f7c1e-9b3d-4e8a-a1c2-7d6e5f4b3a21}.sdb",
+          "Details": "QWORD (0x01d80a1b-0x2c3e4f50)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Write to InstalledSDB with an empty value, excluded by filter_main_empty_value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "ProcessId": 3304,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{4a2f7c1e-9b3d-4e8a-a1c2-7d6e5f4b3a21}\\DatabaseDescription",
+          "Details": "(Empty)"
+        }
+      },
+      {
+        "description": "Compatibility mode set via AppCompatFlags\\Layers, a sibling key not covered by the rule",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\explorer.exe",
+          "ProcessId": 2216,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers\\C:\\Program Files\\LegacyApp\\legacy.exe",
+          "Details": "~ WIN7RTM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

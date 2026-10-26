@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "0ddcff6d-d262-40b0-804b-80eb592de8e3",
+    "title": "Azure Service Principal Created",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/audit_logs/azure_service_principal_created.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_service_principal_created.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un service principal en el tenant de Microsoft Entra ID (Azure AD). Hay que confirmar si la creación fue planificada y la hizo una identidad autorizada.",
+      "what_it_detects": "Eventos de Azure Audit Logs cuyo operationName es exactamente 'Add service principal'. Se generan cuando se registra una aplicación, se da consentimiento a una aplicación empresarial o alguien crea un service principal directamente con el portal, la CLI, PowerShell o Graph API.",
+      "why_it_matters": "Un service principal es una identidad no interactiva que puede autenticarse con secretos o certificados y recibir permisos sobre el directorio y las suscripciones. Un atacante puede crear uno para mantener el acceso y pasar desapercibido entre las identidades de aplicación legítimas, sin depender de cuentas de usuario vigiladas. La regla lo etiqueta en la táctica de stealth.",
+      "triage_steps": [
+        "Identifique al iniciador en initiatedBy (usuario o aplicación), su dirección IP y su user agent. Confirme si suele administrar aplicaciones en el tenant.",
+        "Revise targetResources: nombre, appId y tenant propietario del service principal. Determine si corresponde a una aplicación interna, de un proveedor conocido o desconocida.",
+        "Compruebe si hubo un cambio aprobado o un consentimiento de aplicación esperado en la misma fecha.",
+        "Busque en +/- 15 minutos operaciones relacionadas del mismo iniciador: 'Add service principal credentials', 'Add app role assignment to service principal', 'Consent to application' o asignaciones de roles de directorio.",
+        "Revise los inicios de sesión del iniciador: ubicación, MFA, IP inusual, riesgo de identidad y alertas previas sobre la misma cuenta.",
+        "Consulte los inicios de sesión del service principal y la actividad de Azure Activity Log asociada a su appId después de su creación.",
+        "Valide los permisos de Graph o de suscripción concedidos, sobre todo los privilegiados como Application.ReadWrite.All, RoleManagement.ReadWrite.Directory o Owner."
+      ],
+      "false_positives": [
+        "Administradores que registran aplicaciones o automatizaciones aprobadas.",
+        "Consentimiento de usuarios o administradores a aplicaciones SaaS legítimas, lo que crea su service principal en el tenant.",
+        "Pipelines de IaC (Terraform, Bicep) o servicios de Microsoft que crean identidades automáticamente.",
+        "Identidades conocidas y documentadas que pueden excluirse por iniciador o appId después de revisarlas."
+      ],
+      "response_steps": [
+        "Si la creación no está autorizada, confirme con el responsable del iniciador y con el equipo de identidad antes de actuar.",
+        "Contenga: deshabilite el inicio de sesión del service principal, revoque sus credenciales y retire los consentimientos y roles otorgados.",
+        "Si la cuenta iniciadora está comprometida, revoque sus sesiones, restablezca sus credenciales y exija MFA.",
+        "Erradique: después de preservar evidencia, elimine el service principal y cualquier otra persistencia creada por el mismo actor.",
+        "Recupere y mejore: restrinja quién puede registrar aplicaciones y dar consentimiento, y habilite el flujo de aprobación de consentimiento de administrador."
+      ],
+      "severity_rationale": "Es media porque crear un service principal es habitual en la administración, pero puede dar persistencia privilegiada y difícil de ver si lo hace una identidad no autorizada."
+    },
+    "en": {
+      "summary": "A service principal was created in the Microsoft Entra ID (Azure AD) tenant. Confirm the creation was planned and done by an authorized identity.",
+      "what_it_detects": "Azure Audit Log events whose operationName is exactly 'Add service principal'. They appear when an app is registered, an enterprise app gets consent, or someone creates a service principal directly through the portal, CLI, PowerShell or Graph API.",
+      "why_it_matters": "A service principal is a non-interactive identity. It can authenticate with secrets or certificates and hold directory and subscription permissions. An attacker can create one to keep access and hide among legitimate app identities without using monitored user accounts. The rule tags this under the stealth tactic.",
+      "triage_steps": [
+        "Identify the initiator in initiatedBy (user or app), plus its IP address and user agent. Confirm it normally manages applications in this tenant.",
+        "Review targetResources: the service principal's display name, appId and owning tenant. Decide whether it is an internal app, a known vendor app or unknown.",
+        "Check for an approved change ticket or expected app consent on the same date.",
+        "Search +/- 15 minutes for related operations by the same initiator: 'Add service principal credentials', 'Add app role assignment to service principal', 'Consent to application', directory role assignments.",
+        "Review the initiator's sign-ins for location, MFA, unusual IPs and risk detections, and look for earlier alerts on the account.",
+        "Query sign-ins and Azure Activity Log actions tied to the new appId after it was created.",
+        "Check the Graph or subscription permissions granted, especially privileged ones such as Application.ReadWrite.All, RoleManagement.ReadWrite.Directory or Owner."
+      ],
+      "false_positives": [
+        "Administrators registering approved applications or automation.",
+        "User or admin consent to legitimate SaaS apps, which creates their service principal in the tenant.",
+        "IaC pipelines (Terraform, Bicep) or Microsoft services that create identities automatically.",
+        "Known, documented identities that can be excluded by initiator or appId after review."
+      ],
+      "response_steps": [
+        "If the creation is not authorized, confirm with the initiator's owner and the identity team before acting.",
+        "Contain: disable sign-in for the service principal, revoke its credentials, and remove the consents and roles it was granted.",
+        "If the initiating account is compromised, revoke its sessions, reset its credentials and enforce MFA.",
+        "Eradicate: after preserving evidence, delete the service principal and any other persistence the same actor created.",
+        "Recover and harden: limit who can register apps and grant consent, and turn on the admin consent workflow."
+      ],
+      "severity_rationale": "Medium, because creating service principals is routine admin work, but an unauthorized identity can use one for privileged persistence that is hard to spot."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user creates a service principal for an unfamiliar app from an unusual IP using Azure CLI",
+        "event": {
+          "operationName": "Add service principal",
+          "category": "ApplicationManagement",
+          "result": "success",
+          "loggedByService": "Core Directory",
+          "initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "initiatedBy.user.ipAddress": "203.0.113.45",
+          "userAgent": "python/3.10 azure-cli/2.53.0",
+          "targetResources.displayName": "sync-helper-app",
+          "targetResources.appId": "11111111-2222-3333-4444-555555555555",
+          "activityDateTime": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "An enterprise app gets consent and its service principal is created through Graph",
+        "event": {
+          "operationName": "Add service principal",
+          "category": "ApplicationManagement",
+          "result": "success",
+          "loggedByService": "Core Directory",
+          "initiatedBy.user.userPrincipalName": "mgomez@example.org",
+          "initiatedBy.user.ipAddress": "198.51.100.20",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "targetResources.displayName": "Example Mail Reader",
+          "targetResources.appId": "66666666-7777-8888-9999-000000000000",
+          "activityDateTime": "2024-10-25T14:10:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Credentials added to an existing service principal: a related operation, but the operationName does not equal 'Add service principal'",
+        "event": {
+          "operationName": "Add service principal credentials",
+          "category": "ApplicationManagement",
+          "result": "success",
+          "loggedByService": "Core Directory",
+          "initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "initiatedBy.user.ipAddress": "203.0.113.45",
+          "targetResources.displayName": "sync-helper-app",
+          "activityDateTime": "2024-10-25T14:05:02Z"
+        }
+      },
+      {
+        "description": "Routine update to an existing service principal's properties",
+        "event": {
+          "operationName": "Update service principal",
+          "category": "ApplicationManagement",
+          "result": "success",
+          "loggedByService": "Core Directory",
+          "initiatedBy.user.userPrincipalName": "admin.it@example.com",
+          "initiatedBy.user.ipAddress": "192.0.2.10",
+          "targetResources.displayName": "HR-Portal",
+          "activityDateTime": "2024-10-25T09:00:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "rule": {
+    "id": "e9edd087-89d8-48c9-b0b4-5b9bb10896b8",
+    "title": "Potential SpEL Injection In Spring Framework",
+    "level": "high",
+    "status": "test",
+    "author": "Moti Harmats",
+    "path": "application/spring/spring_spel_injection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/spring/spring_spel_injection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "La aplicación Spring registró una org.springframework.expression.ExpressionException en sus logs de error. Puede ser un intento de inyección SpEL que podría terminar en ejecución remota de código, o un bug de la aplicación.",
+      "what_it_detects": "Cualquier línea de log de error de Spring que contenga literalmente 'org.springframework.expression.ExpressionException', la excepción que lanza Spring cuando falla el análisis o la evaluación de una expresión SpEL (Spring Expression Language).",
+      "why_it_matters": "Si la aplicación evalúa entradas del usuario como expresiones SpEL, un atacante puede inyectar expresiones que invoquen clases de Java y ejecuten comandos en el servidor. Corresponde a la explotación de una aplicación expuesta a Internet (T1190, acceso inicial).",
+      "triage_steps": [
+        "Revise el stack trace completo y el texto de la expresión que aparece en el mensaje; busque T(, #{, ${, Runtime, ProcessBuilder, getClass o forName.",
+        "Identifique el endpoint, el método y el thread de la solicitud; correlacione con access logs, proxy o WAF del mismo host en +/- 15 minutos.",
+        "Obtenga la IP de origen y el user agent de esas solicitudes y busque los parámetros, headers o el cuerpo que llevaron la expresión.",
+        "Pivotee por la misma IP de origen: escaneo de otros endpoints, otros payloads de inyección y alertas previas contra la misma aplicación.",
+        "En el host o contenedor, revise si el proceso java creó procesos hijo inesperados (sh, bash, cmd, curl, wget) o abrió conexiones salientes.",
+        "Revise la frecuencia del error: un pico desde una sola IP sugiere ataque; un error constante tras un despliegue sugiere un bug.",
+        "Confirme con el equipo de desarrollo si ese endpoint evalúa SpEL con datos controlados por el usuario."
+      ],
+      "false_positives": [
+        "Bugs de la aplicación: expresiones SpEL mal escritas en anotaciones, configuración o plantillas que fallan en tiempo de ejecución.",
+        "Errores tras un despliegue o cambio de configuración, como propiedades renombradas que referencia una expresión.",
+        "Pruebas de seguridad autorizadas o escaneos DAST contra la aplicación."
+      ],
+      "response_steps": [
+        "Verifique si hubo ejecución de código revisando procesos hijo, archivos nuevos y conexiones salientes del proceso java antes de escalar.",
+        "Si el origen es malicioso, bloquee la IP y agregue reglas de WAF para patrones SpEL en el endpoint afectado.",
+        "Si hay evidencia de ejecución, aísle el host o contenedor, preserve los logs y la memoria, y rote las credenciales accesibles para la aplicación.",
+        "Corrija el código para no evaluar entradas no confiables (por ejemplo, usando SimpleEvaluationContext) y actualice las dependencias de Spring.",
+        "Restaure desde una imagen confiable y monitoree el endpoint por nuevas excepciones."
+      ],
+      "severity_rationale": "Es alta porque la inyección SpEL puede llevar a ejecución remota de código en un servidor expuesto, aunque los bugs de la aplicación generen ruido."
+    },
+    "en": {
+      "summary": "The Spring application logged an org.springframework.expression.ExpressionException in its error logs. This may be a SpEL injection attempt that could lead to remote code execution, or an application bug.",
+      "what_it_detects": "Any Spring error log line that contains the literal string 'org.springframework.expression.ExpressionException', which Spring throws when it fails to parse or evaluate a SpEL (Spring Expression Language) expression.",
+      "why_it_matters": "If the application evaluates user input as SpEL, an attacker can inject expressions that call Java classes and run commands on the server. This is exploitation of a public-facing application (T1190, initial access).",
+      "triage_steps": [
+        "Read the full stack trace and the expression text in the message; look for T(, #{, ${, Runtime, ProcessBuilder, getClass or forName.",
+        "Identify the endpoint, method and request thread; correlate with access, proxy or WAF logs for the same host within +/- 15 minutes.",
+        "Get the source IP and user agent of those requests and find the parameter, header or body that carried the expression.",
+        "Pivot on the source IP: scanning of other endpoints, other injection payloads and earlier alerts against the same application.",
+        "On the host or container, check whether the java process spawned unexpected child processes (sh, bash, cmd, curl, wget) or made outbound connections.",
+        "Check error frequency: a burst from one IP suggests attack; a steady error since a deployment suggests a bug.",
+        "Confirm with developers whether this endpoint evaluates SpEL using user-controlled data."
+      ],
+      "false_positives": [
+        "Application bugs: malformed SpEL in annotations, configuration or templates that fails at runtime.",
+        "Errors after a deployment or configuration change, such as renamed properties referenced by an expression.",
+        "Authorized security testing or DAST scans against the application."
+      ],
+      "response_steps": [
+        "Verify whether code ran by reviewing child processes, new files and outbound connections of the java process before escalating.",
+        "If the source is malicious, block the IP and add WAF rules for SpEL patterns on the affected endpoint.",
+        "If execution is confirmed, isolate the host or container, preserve logs and memory, and rotate credentials the application can access.",
+        "Fix the code so untrusted input is never evaluated (for example, use SimpleEvaluationContext) and update Spring dependencies.",
+        "Redeploy from a known-good image and monitor the endpoint for new exceptions."
+      ],
+      "severity_rationale": "High fits because SpEL injection can give remote code execution on an exposed server, even though application bugs add some noise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Spring Boot error log: a request to a search endpoint triggered an ExpressionException while evaluating a user-supplied expression.",
+        "event": {
+          "message": "2023-10-25 14:03:12.481 ERROR 2417 --- [nio-8080-exec-7] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] in context with path [] threw exception [Request processing failed; nested exception is org.springframework.expression.ExpressionException: Expression [T(java.lang.Runtime)] @0: EL1005E: Type cannot be found] with root cause",
+          "host": "app-web-01",
+          "service": "orders-api",
+          "level": "ERROR",
+          "logger": "o.a.c.c.C.[.[.[/].[dispatcherServlet]"
+        }
+      },
+      {
+        "description": "Caused-by line from a stack trace in a Spring application error log.",
+        "event": {
+          "message": "Caused by: org.springframework.expression.ExpressionException: Cannot convert value of type 'java.lang.String' to required type 'java.lang.Integer' at org.springframework.expression.common.ExpressionUtils.convertTypedValue(ExpressionUtils.java:71)",
+          "host": "app-web-02",
+          "service": "billing-api",
+          "level": "ERROR"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "SpEL subclass exception logged by its own name; the literal keyword string does not appear.",
+        "event": {
+          "message": "2023-10-25 14:05:40.112 ERROR 2417 --- [nio-8080-exec-2] c.e.orders.web.ErrorHandler              : Evaluation failed: org.springframework.expression.spel.SpelEvaluationException: EL1008E: Property or field 'discount' cannot be found on object of type 'com.example.orders.Order'",
+          "host": "app-web-01",
+          "service": "orders-api",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "Unrelated Spring database error in the same error log.",
+        "event": {
+          "message": "2023-10-25 14:07:03.950 ERROR 2417 --- [nio-8080-exec-4] o.h.engine.jdbc.spi.SqlExceptionHelper   : org.springframework.dao.DataAccessResourceFailureException: Unable to acquire JDBC Connection",
+          "host": "app-web-01",
+          "service": "orders-api",
+          "level": "ERROR"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

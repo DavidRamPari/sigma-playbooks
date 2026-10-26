@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "966315ef-c5e1-4767-ba25-fce9c8de3660",
+    "title": "Suspicious Environment Variable Has Been Registered",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_suspicious_env_variables.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_suspicious_env_variables.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió en el registro una variable de entorno de usuario o del sistema con un valor sospechoso: una llamada directa a PowerShell, una ruta en Temp o Public, o datos en base64 como una cabecera PE o PowerShell codificado.",
+      "what_it_detects": "Eventos de escritura en el registro donde TargetObject contiene '\\Environment\\' (HKCU/HKU\\<SID>\\Environment o HKLM\\...\\Session Manager\\Environment) y Details es exactamente 'powershell' o 'pwsh', contiene rutas Temp o Public, contiene fragmentos base64 de MZ o 'Invoke-', o inicia con prefijos base64 típicos de PowerShell.",
+      "why_it_matters": "Los atacantes usan variables de entorno para lograr persistencia y evasión. Guardan payloads o binarios codificados para cargarlos sin archivos, secuestran variables que expanden otros programas o definen UserInitMprLogonScript para ejecutar código en cada inicio de sesión.",
+      "triage_steps": [
+        "Revise TargetObject para obtener el nombre y el alcance de la variable (SID en HKU o HKLM). Verifique si es un nombre que provoca ejecución, como UserInitMprLogonScript o windir.",
+        "Si Details está en base64, decodifíquelo e identifique el contenido: cabecera MZ, script IEX/Invoke-, blob gzip (H4sI) o línea de comandos.",
+        "Analice Image y el usuario del proceso que escribió el valor. Revise su proceso padre y su CommandLine en los eventos de creación de procesos del mismo host.",
+        "Pivotee sobre el mismo host en +/- 15 minutos: ejecuciones de powershell/pwsh, archivos creados en Temp o C:\\Users\\Public y conexiones de red.",
+        "Si Details apunta a un archivo, obtenga su hash y verifique la firma y la reputación.",
+        "Busque el mismo nombre de variable o valor de Details en otros hosts, además de alertas previas del usuario o del host."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; considere cada coincidencia como sospechosa hasta que tenga explicación.",
+        "Instaladores o scripts administrativos que definen variables apuntando a carpetas Temp o Public.",
+        "Herramientas de desarrollo o empaquetado que guardan rutas o configuración en variables de entorno del usuario."
+      ],
+      "response_steps": [
+        "Antes de modificar nada, confirme la actividad maliciosa decodificando el valor y rastreando el proceso que lo escribió.",
+        "Si confirma un payload o un logon script, aísle el endpoint y preserve el hive del registro y los archivos relacionados.",
+        "Exporte y después elimine la variable maliciosa. Retire los archivos referenciados y otras persistencias asociadas, como claves Run o tareas programadas.",
+        "Restablezca las credenciales del usuario afectado si se ejecutó código del atacante. Vigile si el valor reaparece después de reiniciar o iniciar sesión."
+      ],
+      "severity_rationale": "La severidad alta es adecuada porque el software legítimo rara vez guarda PowerShell codificado, cabeceras PE o rutas Temp/Public en variables de entorno, así que una coincidencia indica con fuerza persistencia o preparación de payloads."
+    },
+    "en": {
+      "summary": "A process wrote a user or system environment variable in the registry whose value looks malicious: a bare PowerShell call, a Temp or Public path, or base64 data such as a PE header or encoded PowerShell.",
+      "what_it_detects": "Registry set events where TargetObject contains '\\Environment\\' (HKCU/HKU\\<SID>\\Environment or HKLM\\...\\Session Manager\\Environment) and Details is exactly 'powershell' or 'pwsh', contains a Temp or Public path, contains base64 MZ or 'Invoke-' fragments, or starts with common base64 PowerShell prefixes.",
+      "why_it_matters": "Attackers use environment variables for persistence and stealth. They store encoded payloads or binaries for fileless loading, hijack variables that programs expand, or set values such as UserInitMprLogonScript so code runs at every logon.",
+      "triage_steps": [
+        "Read TargetObject to get the variable name and scope (HKU SID or HKLM). Check whether the name is known to auto-execute, such as UserInitMprLogonScript or windir.",
+        "Decode Details if it is base64 and identify the content: MZ header, IEX/Invoke- script, gzip blob (H4sI) or a command line.",
+        "Review Image and the user of the writing process. Look at its parent process and command line in process creation events from the same host.",
+        "Pivot on the same host within +/- 15 minutes for powershell/pwsh starts, files dropped in Temp or C:\\Users\\Public, and network connections.",
+        "If Details points to a file, collect its hash and check its signature and reputation.",
+        "Search for the same variable name or Details value on other hosts and look for earlier alerts on this user or host."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; treat every hit as suspicious until explained.",
+        "Installers or admin scripts that set a variable pointing to a Temp or Public folder.",
+        "Developer or packaging tools that keep tool paths or configuration in user environment variables."
+      ],
+      "response_steps": [
+        "Confirm maliciousness by decoding the value and tracing the writing process before you change anything.",
+        "Isolate the endpoint if a payload or logon script is confirmed, and preserve the registry hive and the related files.",
+        "Export, then delete, the malicious variable. Remove any referenced files and related persistence such as Run keys or scheduled tasks.",
+        "Reset the affected user's credentials if they ran attacker code. Watch for the value coming back after reboot or logon."
+      ],
+      "severity_rationale": "High fits because legitimate software rarely puts encoded PowerShell, PE headers or Temp/Public paths in environment variables, so a hit strongly suggests persistence or payload staging."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User logon script variable set via the registry pointing to a batch file in C:\\Users\\Public\\ (Details contains 'C:\\Users\\Public\\').",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Environment\\UserInitMprLogonScript",
+          "Details": "C:\\Users\\Public\\update.bat"
+        }
+      },
+      {
+        "description": "System-wide environment variable holding base64 PowerShell that starts with 'SUVY' (encoded 'IEX'), written by powershell.exe.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "User": "ANDES\\svc_deploy",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\Environment\\CfgData",
+          "Details": "SUVYIChwbGFjZWhvbGRlcik="
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Default TEMP user variable without a trailing backslash, so it does not contain '\\AppData\\Local\\Temp\\' and matches no other pattern.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\SystemPropertiesAdvanced.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Environment\\TEMP",
+          "Details": "%USERPROFILE%\\AppData\\Local\\Temp"
+        }
+      },
+      {
+        "description": "Environment variable holding the full PowerShell path. It is not exactly 'powershell' or 'pwsh' and does not match any contains or startswith value.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0210.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\explorer.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1187\\Environment\\PS_HOME",
+          "Details": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

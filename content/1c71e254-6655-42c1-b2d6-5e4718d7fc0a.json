@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "1c71e254-6655-42c1-b2d6-5e4718d7fc0a",
+    "title": "Azure Kubernetes CronJob",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_cronjob.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_cronjob.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó o modificó un Job o CronJob de Kubernetes en un clúster AKS o en un clúster conectado con Azure Arc, mediante Azure Resource Manager. Puede ser una tarea administrativa legítima o un intento de programar código malicioso como persistencia.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName empieza por MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/BATCH o MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/BATCH y termina en /CRONJOBS/WRITE o /JOBS/WRITE.",
+      "why_it_matters": "Un CronJob ejecuta contenedores de forma periódica y sobrevive a reinicios de pods. Un atacante puede usarlo para persistencia, ejecución recurrente o escalamiento de privilegios. La regla lo etiqueta como T1053.003 (Scheduled Task/Job: Cron).",
+      "triage_steps": [
+        "Identifique el caller (usuario, service principal o managed identity), callerIpAddress y el resourceId del clúster afectado.",
+        "Confirme el operationName exacto (Job o CronJob), el estado de la operación y el correlationId.",
+        "Revise el manifiesto: kubectl get cronjob/job -n <namespace> -o yaml. Verifique imagen, comando, schedule, serviceAccount, privileged, hostPath y hostNetwork.",
+        "Valide que la imagen provenga de un registro aprobado y busque comandos sospechosos: descargas con curl/wget, shells reversos o mineros.",
+        "Busque en el Activity Log la actividad del mismo caller +/- 15 minutos: listClusterAdminCredential, role assignments y cambios de red.",
+        "Compare con tickets de cambio, pipelines de CI/CD y operaciones habituales de esa identidad en el clúster.",
+        "Revise los resource logs de AKS (kube-audit) para ver acciones por kubectl que no aparecen en el Activity Log.",
+        "Busque alertas previas del mismo caller, de la misma IP de origen o del mismo clúster."
+      ],
+      "false_positives": [
+        "Administradores del clúster que crean Jobs o CronJobs desde el portal de Azure o con herramientas ARM.",
+        "Pipelines de CI/CD o herramientas GitOps que despliegan tareas batch programadas, como backups, limpiezas o reportes.",
+        "Comportamiento conocido y recurrente de una identidad específica, que puede exceptuarse de la regla."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del clúster o del caller si el cambio estaba autorizado antes de actuar.",
+        "Si no está autorizado, exporte el manifiesto y los logs de los pods como evidencia y suspenda el CronJob con spec.suspend=true.",
+        "Revoque sesiones y credenciales de la identidad comprometida y rote las credenciales del clúster.",
+        "Elimine el Job o CronJob malicioso y sus pods tras preservar la evidencia, y bloquee la imagen en el registro.",
+        "Busque otra persistencia en el clúster: DaemonSets, RoleBindings y secretos modificados. Luego restablezca la configuración aprobada."
+      ],
+      "severity_rationale": "La severidad media es adecuada: la creación de Jobs es común en operaciones legítimas, pero en manos de un atacante ofrece ejecución y persistencia dentro del clúster."
+    },
+    "en": {
+      "summary": "A Kubernetes Job or CronJob was created or modified through Azure Resource Manager on an AKS or Azure Arc-connected cluster. This may be routine admin work or an attempt to schedule malicious code for persistence.",
+      "what_it_detects": "Azure Activity Log events whose operationName starts with MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/BATCH or MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/BATCH and ends with /CRONJOBS/WRITE or /JOBS/WRITE.",
+      "why_it_matters": "A CronJob runs containers on a schedule and survives pod restarts. Attackers can use one for persistence, repeated execution or privilege escalation. The rule tags it as T1053.003 (Scheduled Task/Job: Cron).",
+      "triage_steps": [
+        "Identify the caller (user, service principal or managed identity), the callerIpAddress and the resourceId of the affected cluster.",
+        "Confirm the exact operationName (Job or CronJob), the operation status and the correlationId.",
+        "Inspect the manifest with kubectl get cronjob/job -n <namespace> -o yaml. Check the image, command, schedule, serviceAccount, privileged, hostPath and hostNetwork.",
+        "Make sure the image comes from an approved registry. Look for suspicious commands such as curl/wget downloads, reverse shells or miners.",
+        "Search the Activity Log for the same caller's activity within +/- 15 minutes: listClusterAdminCredential, role assignments and network changes.",
+        "Compare against change tickets, CI/CD pipelines and what this identity normally does on the cluster.",
+        "Review AKS resource logs (kube-audit) for kubectl actions, because those do not appear in the Activity Log.",
+        "Check for earlier alerts on the same caller, source IP or cluster."
+      ],
+      "false_positives": [
+        "Cluster administrators creating Jobs or CronJobs from the Azure portal or with ARM tooling.",
+        "CI/CD pipelines or GitOps tools deploying scheduled batch tasks such as backups, cleanups or reports.",
+        "Known recurring behavior by a specific identity, which can be exempted from the rule."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the cluster owner or the caller's owner whether the change was authorized.",
+        "If it was not, export the manifest and pod logs as evidence, then suspend the CronJob by setting spec.suspend=true.",
+        "Revoke the compromised identity's sessions and credentials, and rotate the cluster credentials.",
+        "After preserving evidence, delete the malicious Job or CronJob and its pods, and block the image in the registry.",
+        "Hunt for other persistence in the cluster, such as DaemonSets, RoleBindings and modified secrets, then restore the approved configuration."
+      ],
+      "severity_rationale": "Medium fits because creating Jobs is common in normal operations, but in an attacker's hands it gives execution and persistence inside the cluster."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user creates a CronJob on an AKS managed cluster through ARM",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/BATCH/CRONJOBS/WRITE",
+          "category": "Administrative",
+          "ActivityStatusValue": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-01/batch/cronjobs/default/cleanup-task",
+          "correlationId": "6f1c2a9e-1111-4b2c-9d3e-abcdef012345"
+        }
+      },
+      {
+        "description": "A service principal writes a Job on an Azure Arc-connected cluster",
+        "event": {
+          "operationName": "Microsoft.Kubernetes/connectedClusters/batch/jobs/write",
+          "category": "Administrative",
+          "ActivityStatusValue": "Success",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-edge/providers/Microsoft.Kubernetes/connectedClusters/arc-edge-02/batch/jobs/kube-system/sync-job",
+          "correlationId": "9a8b7c6d-2222-4e5f-8a9b-0123456789ab"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A Deployment write on AKS: the operation is not under the batch resource path",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/APPS/DEPLOYMENTS/WRITE",
+          "category": "Administrative",
+          "ActivityStatusValue": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-01/apps/deployments/default/web",
+          "correlationId": "1b2c3d4e-3333-4f60-9a1b-fedcba987654"
+        }
+      },
+      {
+        "description": "A CronJob deletion: the batch prefix matches but the operation does not end in /WRITE",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/BATCH/CRONJOBS/DELETE",
+          "category": "Administrative",
+          "ActivityStatusValue": "Success",
+          "caller": "mrodriguez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerService/managedClusters/aks-prod-01/batch/cronjobs/default/old-report",
+          "correlationId": "4d5e6f70-4444-4a1b-8c2d-0a1b2c3d4e5f"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

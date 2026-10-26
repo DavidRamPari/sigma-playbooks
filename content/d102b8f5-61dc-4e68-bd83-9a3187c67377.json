@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "d102b8f5-61dc-4e68-bd83-9a3187c67377",
+    "title": "Renamed VsCode Code Tunnel Execution - File Indicator",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_vscode_tunnel_renamed_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_vscode_tunnel_renamed_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que no es code.exe ni code-tunnel.exe creó el archivo code_tunnel.json. Esto sugiere que se ejecutó el túnel remoto de VS Code desde un binario renombrado o inesperado.",
+      "what_it_detects": "Eventos file_event en los que TargetFilename termina en \\code_tunnel.json y el Image que escribe el archivo no termina en \\code-tunnel.exe ni en \\code.exe. La CLI de VS Code genera este archivo cuando registra un túnel remoto.",
+      "why_it_matters": "VS Code Tunnels ofrece shell remoto y acceso a archivos mediante la infraestructura de Microsoft, autenticado con una cuenta de GitHub o Microsoft. Renombrar el binario sirve para evadir controles y usarlo como canal de comando y control difícil de bloquear.",
+      "triage_steps": [
+        "Revise Image: ruta, nombre, hash, firma digital y OriginalFileName en el evento de creación de proceso. Un binario firmado por Microsoft con otro nombre es muy sospechoso.",
+        "Obtenga CommandLine y ParentImage del proceso. Busque 'tunnel', '--accept-server-license-terms', '--name' o 'service install'.",
+        "Revise la ruta de TargetFilename (normalmente %USERPROFILE%\\.vscode-cli) y el usuario dueño del proceso.",
+        "Si el archivo sigue disponible, léalo para obtener el nombre del túnel y su identificador. No lo borre todavía.",
+        "Busque conexiones del mismo host, +/- 15 minutos, hacia *.tunnels.api.visualstudio.com, *.devtunnels.ms o github.com/login/device.",
+        "Investigue los procesos hijos del binario (cmd.exe, powershell.exe) y revise qué archivos se crearon en esa ventana de tiempo.",
+        "Busque el mismo hash o code_tunnel.json en otros endpoints y revise alertas anteriores del usuario y del host."
+      ],
+      "false_positives": [
+        "VS Code Insiders (code-insiders.exe) u otras variantes con nombres de ejecutable que el filtro no contempla.",
+        "Software de respaldo o sincronización (OneDrive, robocopy) que copia el perfil del usuario con el archivo .vscode-cli.",
+        "Desarrolladores con autorización que usan una CLI portable o reempaquetada con otro nombre."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con su responsable si el uso del túnel estaba autorizado y era necesario.",
+        "Si no estaba autorizado, aísle el endpoint y detenga el proceso después de preservar el binario, code_tunnel.json y la memoria si es posible.",
+        "Dé de baja el túnel y revoque los tokens de la cuenta de GitHub o Microsoft asociada. Restablezca las credenciales que pudieron quedar expuestas.",
+        "Elimine el binario y cualquier servicio o tarea programada que mantenga el túnel activo.",
+        "Según la política, bloquee los dominios de dev tunnels en el proxy y busque actividad parecida en todo el entorno."
+      ],
+      "severity_rationale": "Un túnel remoto que corre desde un binario renombrado combina acceso interactivo, tráfico legítimo de Microsoft e intención de evasión, así que el nivel high es adecuado."
+    },
+    "en": {
+      "summary": "A process other than code.exe or code-tunnel.exe created code_tunnel.json. This suggests the VS Code remote tunnel was run from a renamed or unexpected binary.",
+      "what_it_detects": "file_event records where TargetFilename ends with \\code_tunnel.json and the writing Image does not end with \\code-tunnel.exe or \\code.exe. The VS Code CLI writes this file when it registers a remote tunnel.",
+      "why_it_matters": "VS Code Tunnels gives a remote shell and file access through Microsoft infrastructure, authenticated with a GitHub or Microsoft account. Renaming the binary helps attackers evade controls and use it as a hard-to-block command-and-control channel.",
+      "triage_steps": [
+        "Inspect Image: path, name, hash, signature and the OriginalFileName in its process creation event. A Microsoft-signed binary running under another name is highly suspicious.",
+        "Get the process CommandLine and ParentImage. Look for 'tunnel', '--accept-server-license-terms', '--name' or 'service install'.",
+        "Check the TargetFilename path (usually %USERPROFILE%\\.vscode-cli) and which user owns the process.",
+        "If the file still exists, read it for the tunnel name and ID. Do not delete it yet.",
+        "Look for connections from the same host within +/- 15 minutes to *.tunnels.api.visualstudio.com, *.devtunnels.ms or github.com/login/device.",
+        "Check the binary's child processes (cmd.exe, powershell.exe) and any files created in the same time window.",
+        "Search other endpoints for the same hash or for code_tunnel.json. Review earlier alerts for this user and host."
+      ],
+      "false_positives": [
+        "VS Code Insiders (code-insiders.exe) or other builds whose executable names the filter does not cover.",
+        "Backup or sync software (OneDrive, robocopy) copying user profiles that include .vscode-cli.",
+        "Authorized developers running a portable or repackaged CLI under a different name."
+      ],
+      "response_steps": [
+        "Ask the user and their manager whether the tunnel was authorized and needed.",
+        "If it was not, isolate the endpoint and kill the process. First preserve the binary, code_tunnel.json and memory where possible.",
+        "Unregister the tunnel and revoke tokens for the linked GitHub or Microsoft account. Reset any credentials that may be exposed.",
+        "Remove the binary and any service or scheduled task that keeps the tunnel running.",
+        "Where policy allows, block dev tunnel domains at the proxy and hunt for similar activity across the environment."
+      ],
+      "severity_rationale": "A remote tunnel running from a renamed binary combines interactive access, trusted Microsoft traffic and an attempt at evasion, so high is the right level."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Renamed VS Code CLI in a Temp folder writes the tunnel configuration file",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svchost-update.exe",
+          "TargetFilename": "C:\\Users\\jperez\\.vscode-cli\\code_tunnel.json",
+          "CreationUtcTime": "2023-10-25 14:03:12.481"
+        }
+      },
+      {
+        "description": "Binary disguised as msedge.exe in ProgramData creates code_tunnel.json",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4388,
+          "Image": "C:\\ProgramData\\Microsoft\\msedge.exe",
+          "TargetFilename": "C:\\Users\\mrojas\\.vscode-cli\\code_tunnel.json",
+          "CreationUtcTime": "2023-10-25 16:41:07.112"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate VS Code (Code.exe) creates the tunnel file and is excluded by the filter",
+        "event": {
+          "EventID": 11,
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "ProcessId": 9012,
+          "Image": "C:\\Users\\lgomez\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+          "TargetFilename": "C:\\Users\\lgomez\\.vscode-cli\\code_tunnel.json",
+          "CreationUtcTime": "2023-10-25 09:15:44.020"
+        }
+      },
+      {
+        "description": "Unexpected process writes a backup file whose name does not end with \\code_tunnel.json",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 3304,
+          "Image": "C:\\Windows\\System32\\Robocopy.exe",
+          "TargetFilename": "D:\\Backups\\jperez\\.vscode-cli\\code_tunnel.json.bak",
+          "CreationUtcTime": "2023-10-25 22:00:03.554"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

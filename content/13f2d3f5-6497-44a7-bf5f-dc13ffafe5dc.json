@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "13f2d3f5-6497-44a7-bf5f-dc13ffafe5dc",
+    "title": "Azure Login Bypassing Conditional Access Policies",
+    "level": "high",
+    "status": "experimental",
+    "author": "Josh Nickels, Marius Rothenbücher",
+    "path": "cloud/m365/audit/microsoft365_bypass_conditional_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/m365/audit/microsoft365_bypass_conditional_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un inicio de sesión exitoso con el client ID de Microsoft Intune Company Portal (RequestType Cmsi:Cmsi) hacia un recurso distinto de Intune. Puede indicar el uso de una herramienta como TokenSmith para obtener tokens sin cumplir las políticas de Conditional Access de dispositivo compatible.",
+      "what_it_detects": "Eventos UserLoggedIn del audit de M365 con ApplicationId 9ba1a5c7-f17a-4de9-a1f1-6178c8d51223 (Intune Company Portal), ResultStatus Success y RequestType Cmsi:Cmsi. Se excluyen los inicios cuyo ObjectId es el recurso de Microsoft Intune (0000000a-...), que es lo habitual al inscribir dispositivos móviles.",
+      "why_it_matters": "Si las políticas de Conditional Access eximen a Company Portal del requisito de dispositivo compatible, un atacante con credenciales válidas puede suplantar ese cliente y obtener tokens para Graph u otros recursos desde un equipo no administrado. Corresponde a T1078 (cuentas válidas) y permite acceso inicial, persistencia y evasión de controles.",
+      "triage_steps": [
+        "Identifique UserId, ClientIP, ObjectId (recurso destino) y user agent del evento; anote la hora exacta.",
+        "Busque el mismo inicio en los sign-in logs de Entra ID: revise el estado de Conditional Access, el ID del dispositivo, si es compatible o administrado y el método de MFA.",
+        "Valide si ClientIP y la geolocalización coinciden con la ubicación habitual del usuario; compare con sus inicios de los últimos 30 días.",
+        "Revise el user agent: los scripts o clientes de Python no son coherentes con un Company Portal legítimo en móvil o Windows.",
+        "Pivotee sobre el mismo usuario y la misma IP en +/- 15 minutos: llamadas a Graph, MailItemsAccessed, acceso a SharePoint/OneDrive, cambios de MFA o registros de aplicaciones.",
+        "Consulte alertas previas del usuario o de la IP (password spray, MFA fatigue, inicios riesgosos).",
+        "Confirme con el usuario o con el equipo de endpoint si estaba inscribiendo un dispositivo en ese momento."
+      ],
+      "false_positives": [
+        "Inscripción o reinscripción legítima de dispositivos en Intune que solicita tokens a recursos auxiliares distintos de Intune.",
+        "Pruebas autorizadas de red team o de seguridad que usen TokenSmith o herramientas similares.",
+        "Equipos de soporte que diagnostican Company Portal en dispositivos nuevos."
+      ],
+      "response_steps": [
+        "Verifique la actividad con el usuario y con el equipo de endpoint antes de actuar.",
+        "Si no es legítima, revoque las sesiones y los refresh tokens del usuario y restablezca su contraseña.",
+        "Bloquee la ClientIP de origen mediante named locations o Conditional Access mientras dura la investigación.",
+        "Revise y revierta lo que se haya hecho con el token: reglas de buzón, registros de aplicaciones, métodos de MFA y datos descargados.",
+        "Revise las exclusiones de Company Portal en las políticas de Conditional Access y endurézcalas donde sea posible."
+      ],
+      "severity_rationale": "Nivel alto, porque un evento que coincide implica credenciales válidas usadas con éxito para evadir los controles de confianza del dispositivo, con posible acceso directo a datos del tenant."
+    },
+    "en": {
+      "summary": "A successful sign-in used the Microsoft Intune Company Portal client ID (RequestType Cmsi:Cmsi) against a resource other than Intune. This may mean a tool such as TokenSmith was used to get tokens without meeting compliant-device Conditional Access policies.",
+      "what_it_detects": "M365 audit UserLoggedIn events with ApplicationId 9ba1a5c7-f17a-4de9-a1f1-6178c8d51223 (Intune Company Portal), ResultStatus Success and RequestType Cmsi:Cmsi. Events whose ObjectId is the Microsoft Intune resource (0000000a-...) are excluded, because they normally come from mobile device enrollment.",
+      "why_it_matters": "If Conditional Access exempts Company Portal from the compliant-device requirement, an attacker with valid credentials can impersonate that client and get tokens for Graph or other resources from an unmanaged machine. This is T1078 (Valid Accounts) and gives initial access, persistence and a way around defenses.",
+      "triage_steps": [
+        "Record UserId, ClientIP, ObjectId (target resource), user agent and the exact time.",
+        "Find the matching Entra ID sign-in log. Check the Conditional Access result, the device ID, whether the device is compliant or managed, and the MFA method.",
+        "Check whether ClientIP and its geolocation match the user's usual locations over the last 30 days.",
+        "Inspect the user agent. Python or script clients do not fit a legitimate Company Portal on mobile or Windows.",
+        "Pivot on the same user and IP within +/- 15 minutes: Graph calls, MailItemsAccessed, SharePoint/OneDrive access, MFA changes, app registrations.",
+        "Look for earlier alerts on the user or IP, such as password spray, MFA fatigue or risky sign-ins.",
+        "Ask the user or the endpoint team whether a device was being enrolled at that time."
+      ],
+      "false_positives": [
+        "Legitimate Intune device enrollment or re-enrollment that requests tokens for auxiliary resources other than Intune.",
+        "Authorized red team or security testing with TokenSmith or similar tools.",
+        "Support staff troubleshooting Company Portal on new devices."
+      ],
+      "response_steps": [
+        "Confirm the activity with the user and the endpoint team before you act.",
+        "If it is not legitimate, revoke the user's sessions and refresh tokens and reset the password.",
+        "Block the source ClientIP with named locations or Conditional Access while you investigate.",
+        "Review and revert anything done with the token: mailbox rules, app registrations, MFA methods, downloaded data.",
+        "Review Company Portal exclusions in Conditional Access policies and tighten them where you can."
+      ],
+      "severity_rationale": "High, because a match means valid credentials were used successfully to get around device-trust controls, possibly with direct access to tenant data."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Company Portal client ID used with Cmsi:Cmsi to get a Microsoft Graph token from a Python user agent at a documentation IP",
+        "event": {
+          "CreationTime": "2025-01-15T09:42:17",
+          "Workload": "AzureActiveDirectory",
+          "RecordType": 15,
+          "Operation": "UserLoggedIn",
+          "ApplicationId": "9ba1a5c7-f17a-4de9-a1f1-6178c8d51223",
+          "ResultStatus": "Success",
+          "RequestType": "Cmsi:Cmsi",
+          "ObjectId": "00000003-0000-0000-c000-000000000000",
+          "UserId": "jperez@example.com",
+          "ClientIP": "203.0.113.45",
+          "UserAgent": "python-requests/2.31.0"
+        }
+      },
+      {
+        "description": "Company Portal sign-in with Cmsi:Cmsi targeting the Azure AD Graph resource",
+        "event": {
+          "CreationTime": "2025-01-15T22:05:03",
+          "Workload": "AzureActiveDirectory",
+          "RecordType": 15,
+          "Operation": "UserLoggedIn",
+          "ApplicationId": "9ba1a5c7-f17a-4de9-a1f1-6178c8d51223",
+          "ResultStatus": "Success",
+          "RequestType": "Cmsi:Cmsi",
+          "ObjectId": "00000002-0000-0000-c000-000000000000",
+          "UserId": "mrodriguez@example.com",
+          "ClientIP": "198.51.100.23",
+          "UserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal mobile enrollment: same client and request type, but the target ObjectId is Microsoft Intune, so the filter excludes it",
+        "event": {
+          "CreationTime": "2025-01-15T10:12:44",
+          "Workload": "AzureActiveDirectory",
+          "RecordType": 15,
+          "Operation": "UserLoggedIn",
+          "ApplicationId": "9ba1a5c7-f17a-4de9-a1f1-6178c8d51223",
+          "ResultStatus": "Success",
+          "RequestType": "Cmsi:Cmsi",
+          "ObjectId": "0000000a-0000-0000-c000-000000000000",
+          "UserId": "jperez@example.com",
+          "ClientIP": "192.0.2.10",
+          "UserAgent": "Dalvik/2.1.0 (Linux; U; Android 14)"
+        }
+      },
+      {
+        "description": "Company Portal sign-in to Graph with a standard login request type (Login:login) instead of Cmsi:Cmsi",
+        "event": {
+          "CreationTime": "2025-01-15T11:30:09",
+          "Workload": "AzureActiveDirectory",
+          "RecordType": 15,
+          "Operation": "UserLoggedIn",
+          "ApplicationId": "9ba1a5c7-f17a-4de9-a1f1-6178c8d51223",
+          "ResultStatus": "Success",
+          "RequestType": "Login:login",
+          "ObjectId": "00000003-0000-0000-c000-000000000000",
+          "UserId": "lgomez@example.com",
+          "ClientIP": "192.0.2.55",
+          "UserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

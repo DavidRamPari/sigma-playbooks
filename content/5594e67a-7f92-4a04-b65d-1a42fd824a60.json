@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "5594e67a-7f92-4a04-b65d-1a42fd824a60",
+    "title": "MSI Installation From Web",
+    "level": "medium",
+    "status": "test",
+    "author": "Stamatis Chatzimangou",
+    "path": "windows/builtin/application/msiinstaller/win_msi_install_from_web.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/msiinstaller/win_msi_install_from_web.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218",
+      "T1218.007"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Windows Installer (MsiInstaller) registró el inicio o el fin de una transacción de instalación cuyo origen es una URL remota y no una ruta local. Puede ser una instalación legítima desde la web o el abuso de msiexec para ejecutar un paquete malicioso.",
+      "what_it_detects": "Eventos 1040 (inicio de transacción) y 1042 (fin de transacción) del proveedor MsiInstaller en el log Application, cuando el campo Data contiene '://', lo que indica que el paquete MSI se cargó desde http/https u otro esquema remoto.",
+      "why_it_matters": "msiexec.exe es un binario firmado de Microsoft. Los atacantes lo usan como proxy para descargar y ejecutar paquetes MSI remotos (T1218.007, ejecución mediante Msiexec), cuyas custom actions pueden lanzar código con privilegios y evadir controles basados en listas de aplicaciones permitidas.",
+      "triage_steps": [
+        "Lea el campo Data: extraiga la URL completa, el dominio, el nombre del archivo MSI y el Client Process Id.",
+        "Evalúe la reputación del dominio o IP en proxy, DNS e inteligencia de amenazas; desconfíe de IP directas, dominios recién registrados o servicios de alojamiento de archivos.",
+        "Busque la creación de msiexec.exe en el mismo host +/- 15 minutos: CommandLine (/i, /q, URL), ParentImage y usuario que lo ejecutó.",
+        "Identifique el proceso cliente con el Client Process Id y su árbol: Office, navegador, script o shell como padre aumentan la sospecha.",
+        "Revise eventos MsiInstaller 1033/11707/1034 cercanos para conocer el producto, fabricante y resultado de la instalación.",
+        "Examine procesos hijos de msiexec (custom actions), archivos nuevos en %TEMP% y C:\\Windows\\Installer, servicios, tareas programadas y claves Run creadas.",
+        "Obtenga el hash del MSI descargado y compruebe la firma digital y su reputación.",
+        "Revise alertas previas del mismo host, usuario y dominio, y si la URL aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores que instalan software de fabricantes directamente desde una URL con msiexec /i.",
+        "Herramientas de despliegue o gestión de endpoints que distribuyen MSI desde un servidor web interno.",
+        "Actualizadores legítimos de aplicaciones que descargan e instalan paquetes MSI desde el sitio del fabricante."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o el equipo de TI si la instalación fue solicitada y si la URL corresponde a un proveedor aprobado.",
+        "Si es sospechosa, aísle el endpoint y bloquee el dominio o la URL en proxy, DNS y firewall.",
+        "Conserve el MSI, los logs de MsiInstaller y la memoria antes de desinstalar el producto o eliminar persistencias identificadas.",
+        "Busque la misma URL o hash en toda la flota, restablezca credenciales expuestas y restaure el equipo a un estado conocido."
+      ],
+      "severity_rationale": "Nivel medio: las instalaciones desde la web tienen usos legítimos, pero son una técnica conocida de ejecución por proxy que requiere validación rápida."
+    },
+    "en": {
+      "summary": "Windows Installer (MsiInstaller) logged the start or end of an installation transaction whose source is a remote URL rather than a local path. This may be a legitimate web install or msiexec abused to run a malicious package.",
+      "what_it_detects": "Application log events 1040 (transaction start) and 1042 (transaction end) from the MsiInstaller provider where the Data field contains '://', meaning the MSI package was loaded over http/https or another remote scheme.",
+      "why_it_matters": "msiexec.exe is a signed Microsoft binary. Attackers use it as a proxy to download and run remote MSI packages (T1218.007, Msiexec proxy execution), whose custom actions can execute privileged code and bypass application allow-listing.",
+      "triage_steps": [
+        "Read the Data field: extract the full URL, domain, MSI file name and Client Process Id.",
+        "Check domain or IP reputation in proxy, DNS and threat intel; treat raw IPs, newly registered domains and file-hosting services as suspicious.",
+        "Find msiexec.exe process creation on the same host +/- 15 minutes: CommandLine (/i, /q, URL), ParentImage and executing user.",
+        "Resolve the Client Process Id and its process tree; Office, browsers, scripts or shells as parents raise suspicion.",
+        "Review nearby MsiInstaller events 1033/11707/1034 for product name, manufacturer and install result.",
+        "Inspect msiexec child processes (custom actions), new files in %TEMP% and C:\\Windows\\Installer, services, scheduled tasks and Run keys.",
+        "Get the hash of the downloaded MSI and check its digital signature and reputation.",
+        "Review earlier alerts for the same host, user and domain, and whether the URL appears on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators installing vendor software directly from a URL with msiexec /i.",
+        "Software deployment or endpoint management tools distributing MSIs from an internal web server.",
+        "Legitimate application updaters that download and install MSI packages from the vendor site."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the install was requested and the URL belongs to an approved vendor.",
+        "If suspicious, isolate the endpoint and block the domain or URL at proxy, DNS and firewall.",
+        "Preserve the MSI, MsiInstaller logs and memory before uninstalling the product or removing identified persistence.",
+        "Hunt for the same URL or hash fleet-wide, reset exposed credentials and restore the host to a known-good state."
+      ],
+      "severity_rationale": "Medium: web installs have legitimate uses, but this is a known proxy execution technique that needs prompt validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Transaction start for an MSI loaded over HTTPS from a remote host",
+        "event": {
+          "Provider_Name": "MsiInstaller",
+          "EventID": 1040,
+          "Channel": "Application",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1104",
+          "Data": "Beginning a Windows Installer transaction: https://files.example.org/update/setup.msi. Client Process Id: 6124."
+        }
+      },
+      {
+        "description": "Transaction end for an MSI loaded over HTTP from a documentation IP",
+        "event": {
+          "Provider_Name": "MsiInstaller",
+          "EventID": 1042,
+          "Channel": "Application",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1104",
+          "Data": "Ending a Windows Installer transaction: http://203.0.113.45/pkg/agent.msi. Client Process Id: 6124."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MSI transaction from a local path, no remote scheme",
+        "event": {
+          "Provider_Name": "MsiInstaller",
+          "EventID": 1040,
+          "Channel": "Application",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "S-1-5-18",
+          "Data": "Beginning a Windows Installer transaction: C:\\Windows\\ccmcache\\a1\\ClientApp.msi. Client Process Id: 3380."
+        }
+      },
+      {
+        "description": "Product install event 1033 that mentions a vendor URL but is not a 1040/1042 transaction event",
+        "event": {
+          "Provider_Name": "MsiInstaller",
+          "EventID": 1033,
+          "Channel": "Application",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1104",
+          "Data": "Windows Installer installed the product. Product Name: Example Viewer. Product Version: 2.1.0. Manufacturer: Example Corp (https://www.example.com). Installation success or error status: 0."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "6b6976a3-b0e6-4723-ac24-ae38a737af41",
+    "title": "Potential Persistence Via Shim Database In Uncommon Location",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_shim_database_uncommon_location.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_shim_database_uncommon_location.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.011"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró una nueva base de datos de shims (SDB) en InstalledSDB cuyo DatabasePath apunta fuera de la ruta estándar C:\\Windows\\AppPatch\\Custom. Puede indicar persistencia o escalamiento de privilegios mediante application shimming.",
+      "what_it_detects": "Escrituras en el registro (registry_set) donde TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\ y \\DatabasePath, y el valor Details no contiene :\\Windows\\AppPatch\\Custom.",
+      "why_it_matters": "Los shims de Application Compatibility permiten inyectar DLL o alterar la ejecución de un programa cada vez que se inicia (ATT&CK T1546.011). Un SDB instalado desde una ruta poco habitual, como perfiles de usuario o carpetas temporales, suele indicar persistencia maliciosa.",
+      "triage_steps": [
+        "Revise Details para ver la ruta del .sdb y TargetObject para obtener el GUID; confirme si el archivo existe y obtenga su hash.",
+        "Identifique el proceso que escribió la clave (Image, ProcessId) y su ParentImage; sdbinst.exe, reg.exe o PowerShell lanzados por procesos inusuales son sospechosos.",
+        "Revise la línea de comandos completa del proceso creador y el usuario que lo ejecutó.",
+        "Inspeccione el SDB (por ejemplo, con python-sdb o sdb-explorer) para identificar el ejecutable objetivo y las DLL o parches que inyecta.",
+        "Busque en el mismo host, +/- 15 minutos, creación de archivos .sdb o .dll, claves AppCompatFlags\\Custom\\<ejecutable> y conexiones de red.",
+        "Consulte alertas previas del mismo host y usuario, y busque el mismo hash o GUID de SDB en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Software empresarial o de compatibilidad legítimo que instala su SDB desde su propia carpeta de instalación; valídelo con el equipo responsable.",
+        "Pruebas de administradores con Compatibility Administrator que guardan el SDB en rutas no estándar."
+      ],
+      "response_steps": [
+        "Verifique con el propietario del sistema si la instalación del shim fue autorizada antes de actuar.",
+        "Si es malicioso, aísle el endpoint y conserve como evidencia el archivo .sdb, las DLL relacionadas y las claves de registro.",
+        "Desinstale el shim con sdbinst.exe -u y elimine las claves InstalledSDB y AppCompatFlags\\Custom asociadas.",
+        "Busque otros mecanismos de persistencia, restablezca las credenciales comprometidas y supervise el host para detectar si el shim se reinstala."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque los SDB legítimos casi siempre se instalan en AppPatch\\Custom y un shim en otra ruta permite ejecutar código de forma persistente y con privilegios."
+    },
+    "en": {
+      "summary": "A new shim database (SDB) was registered under InstalledSDB with a DatabasePath outside the default C:\\Windows\\AppPatch\\Custom location. This may indicate persistence or privilege escalation through application shimming.",
+      "what_it_detects": "Registry set events where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\ and \\DatabasePath, and Details does not contain :\\Windows\\AppPatch\\Custom.",
+      "why_it_matters": "Application Compatibility shims can inject DLLs or change how a program runs every time it starts (ATT&CK T1546.011). An SDB installed from an unusual path, such as user profiles or temp folders, often points to malicious persistence.",
+      "triage_steps": [
+        "Read Details for the .sdb path and TargetObject for the GUID; confirm the file exists and collect its hash.",
+        "Identify the writing process (Image, ProcessId) and its ParentImage; sdbinst.exe, reg.exe or PowerShell spawned by unusual parents is suspicious.",
+        "Review the full command line of the writing process and the user that ran it.",
+        "Parse the SDB (for example with python-sdb or sdb-explorer) to find the targeted executable and any injected DLLs or patches.",
+        "On the same host within +/- 15 minutes, look for .sdb or .dll file creation, AppCompatFlags\\Custom\\<exe> keys and network connections.",
+        "Check earlier alerts for the same host and user, and hunt for the same SDB hash or GUID on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Legitimate enterprise or compatibility software that installs its SDB from its own install folder; confirm with the owning team.",
+        "Administrators testing with Compatibility Administrator and saving the SDB to a non-standard path."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the shim install was authorized before acting.",
+        "If malicious, isolate the endpoint and preserve the .sdb file, related DLLs and registry keys as evidence.",
+        "Uninstall the shim with sdbinst.exe -u and remove the related InstalledSDB and AppCompatFlags\\Custom keys.",
+        "Hunt for other persistence, reset affected credentials and monitor the host for the shim being reinstalled."
+      ],
+      "severity_rationale": "High fits because legitimate SDBs almost always live in AppPatch\\Custom, and a shim elsewhere gives persistent, often privileged, code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "sdbinst.exe registers a shim database stored in the Public user folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "ProcessId": 4812,
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{3f2a8c1e-7b4d-4e9a-9c11-5d6e7f8a9b0c}\\DatabasePath",
+          "Details": "C:\\Users\\Public\\Libraries\\update_fix.sdb"
+        }
+      },
+      {
+        "description": "reg.exe writes a DatabasePath pointing to a temp folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "User": "ANDES\\mrodriguez",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{a1b2c3d4-e5f6-4711-8899-aabbccddeeff}\\DatabasePath",
+          "Details": "C:\\Users\\mrodriguez\\AppData\\Local\\Temp\\compat.sdb"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate SDB installed in the default AppPatch\\Custom folder (excluded by filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "ProcessId": 3904,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{7c9e6679-7425-40de-944b-e07fc1f90ae7}\\DatabasePath",
+          "Details": "C:\\Windows\\AppPatch\\Custom\\{7c9e6679-7425-40de-944b-e07fc1f90ae7}.sdb"
+        }
+      },
+      {
+        "description": "Write to the DatabaseDescription value of InstalledSDB, not DatabasePath",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "ProcessId": 5520,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{7c9e6679-7425-40de-944b-e07fc1f90ae7}\\DatabaseDescription",
+          "Details": "Contoso Legacy App Fix"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

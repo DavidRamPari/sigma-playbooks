@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "1c563233-030e-4a07-af8c-ee0490a66d3a",
+    "title": "Suspicious New-PSDrive to Admin Share",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_new_psdrive.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_new_psdrive.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell ejecutó New-PSDrive con el proveedor FileSystem y una raíz UNC (\\\\host\\...) que contiene '$', lo que suele indicar el montaje de un recurso administrativo remoto (C$, ADMIN$).",
+      "what_it_detects": "Eventos de Script Block Logging (ID 4104) cuyo ScriptBlockText contiene a la vez 'New-PSDrive', '-PSProvider ', 'FileSystem', '-Root ', '\\\\' y '$'. El '$' puede venir de cualquier variable del script, no solo del nombre del recurso.",
+      "why_it_matters": "Montar recursos administrativos por SMB permite copiar herramientas, leer datos o preparar ejecución remota en otro equipo con la identidad del usuario. Corresponde a movimiento lateral mediante SMB/Windows Admin Shares (T1021.002).",
+      "triage_steps": [
+        "Revise ScriptBlockText completo: confirme que -Root apunta a un recurso administrativo (C$, ADMIN$, IPC$) y no a un recurso normal con '$' en otra variable.",
+        "Identifique el host destino de la ruta UNC, el usuario (UserID) y si se usó -Credential con credenciales distintas a las de la sesión.",
+        "Reconstruya el script completo uniendo los fragmentos por ScriptBlockId y revise Path para saber qué archivo .ps1 lo ejecutó.",
+        "Busque el proceso powershell.exe y su proceso padre (Sysmon 1 o 4688) para ver si vino de una sesión interactiva, tarea programada, WinRM o un documento.",
+        "En el host destino, revise eventos 4624 tipo 3 y 5140/5145 desde el host origen en +/- 15 minutos.",
+        "Busque en el destino archivos nuevos, servicios (7045) o tareas creadas poco después del montaje.",
+        "Revise alertas previas del mismo usuario y host, y si el usuario es administrador habitual de ese servidor."
+      ],
+      "false_positives": [
+        "Scripts de administración o despliegue que montan C$ o ADMIN$ para copiar archivos o recoger logs.",
+        "Herramientas de inventario, respaldo o soporte remoto basadas en PowerShell.",
+        "Montaje de recursos normales cuando el '$' proviene de una variable del script, no del recurso."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo dueño del script si la actividad era esperada y está documentada.",
+        "Si no es legítima, aísle el host origen y revise el destino; restablezca o deshabilite las credenciales usadas tras validar su uso.",
+        "Elimine herramientas, servicios o tareas dejadas en el destino, conservando copias y hashes como evidencia.",
+        "Restrinja el acceso a recursos administrativos y SMB entre estaciones mediante firewall o GPO, y documente exclusiones legítimas."
+      ],
+      "severity_rationale": "Nivel medio: es una técnica común de movimiento lateral, pero también la usan administradores legítimos, por lo que requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A PowerShell script ran New-PSDrive with the FileSystem provider and a UNC root (\\\\host\\...) containing '$', which usually means a remote administrative share (C$, ADMIN$) was mapped.",
+      "what_it_detects": "Script Block Logging events (ID 4104) whose ScriptBlockText contains all of 'New-PSDrive', '-PSProvider ', 'FileSystem', '-Root ', '\\\\' and '$'. The '$' may come from any script variable, not only the share name.",
+      "why_it_matters": "Mapping admin shares over SMB lets an attacker copy tools, read data or stage remote execution on another host as the current or supplied user. This is lateral movement via SMB/Windows Admin Shares (T1021.002).",
+      "triage_steps": [
+        "Read the full ScriptBlockText: confirm -Root targets an admin share (C$, ADMIN$, IPC$), not a normal share with '$' elsewhere in the script.",
+        "Identify the target host in the UNC path, the UserID, and whether -Credential supplied credentials different from the session user.",
+        "Rebuild the full script by ScriptBlockId and check Path to find which .ps1 file ran it.",
+        "Find the powershell.exe process and its parent (Sysmon 1 or 4688): interactive session, scheduled task, WinRM or an Office document?",
+        "On the target, review 4624 type 3 and 5140/5145 events from the source host within +/- 15 minutes.",
+        "Look on the target for new files, services (7045) or scheduled tasks created shortly after the mapping.",
+        "Check earlier alerts for the same user and host, and whether the user normally administers that server."
+      ],
+      "false_positives": [
+        "Admin or deployment scripts mapping C$ or ADMIN$ to copy files or collect logs.",
+        "PowerShell-based inventory, backup or remote support tools.",
+        "Mapping ordinary shares where the '$' comes from a script variable rather than the share."
+      ],
+      "response_steps": [
+        "Confirm with the user or script owner whether the activity was expected and documented.",
+        "If not legitimate, isolate the source host and investigate the target; reset or disable the used credentials after confirming misuse.",
+        "Remove tools, services or tasks dropped on the target, keeping copies and hashes as evidence.",
+        "Restrict admin share and workstation-to-workstation SMB access via firewall or GPO; document legitimate exclusions."
+      ],
+      "severity_rationale": "Medium: a common lateral movement technique that legitimate admins also use, so context is needed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Mapping the C$ admin share of a remote server with supplied credentials, as in the Atomic Red Team test.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "6f1c2a3e-8b47-4d2a-9e51-0c3b7a9d1f20",
+          "Path": "",
+          "ScriptBlockText": "New-PSDrive -Name g -PSProvider FileSystem -Root \\\\SRV-FS01\\C$ -Credential $cred"
+        }
+      },
+      {
+        "description": "Mapping ADMIN$ on another workstation from a script file.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UserID": "ANDES\\mrojas",
+          "ScriptBlockId": "b2d94e10-3c55-4f8e-a1d7-55e2c09b6a44",
+          "Path": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\m.ps1",
+          "ScriptBlockText": "$t = 'WS-0311'; New-PSDrive -Name X -psprovider filesystem -root \\\\WS-0311\\ADMIN$ | Out-Null; Copy-Item .\\svc.exe X:\\"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "New-PSDrive mapping a local folder; no UNC path and no '$'.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "0a7e5c21-1f3b-4c9d-8e6a-2b4d6f8a0c13",
+          "Path": "",
+          "ScriptBlockText": "New-PSDrive -Name Data -PSProvider FileSystem -Root D:\\Data"
+        }
+      },
+      {
+        "description": "New-PSDrive using the Registry provider, not FileSystem.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP02.andes.example.com",
+          "UserID": "ANDES\\svc_deploy",
+          "ScriptBlockId": "9c3f1b77-2e8d-4a60-b5c4-7d1e0f2a3b98",
+          "Path": "C:\\Scripts\\reg.ps1",
+          "ScriptBlockText": "New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

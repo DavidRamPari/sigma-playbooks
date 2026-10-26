@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "f6de9536-0441-4b3f-a646-f4e00f300ffd",
+    "title": "Weak Encryption Enabled and Kerberoast",
+    "level": "high",
+    "status": "test",
+    "author": "@neu5ron",
+    "path": "windows/builtin/security/win_security_alert_enable_weak_encryption.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_alert_enable_weak_encryption.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó una cuenta de usuario de Active Directory (evento 4738) para activar una opción de seguridad débil: claves solo DES, no requerir preautenticación Kerberos o cifrado reversible de contraseña. Esto puede preparar la cuenta para el robo y cracking de hashes.",
+      "what_it_detects": "Eventos 4738 (cuenta de usuario modificada) en los que NewUacValue tiene un flag que OldUacValue no tenía: 0x8000 (Use DES key only), 0x10000 (Don't require Kerberos preauthentication) o 0x800 (contraseña con cifrado reversible).",
+      "why_it_matters": "Si la cuenta no exige preautenticación, cualquier persona puede pedir un AS-REP y crackearlo offline (AS-REP roasting). DES deja tickets fáciles de romper y el cifrado reversible guarda la contraseña de forma recuperable. Corresponde a debilitamiento de defensas (ATT&CK T1685).",
+      "triage_steps": [
+        "Identifique TargetUserName, TargetSid y SubjectUserName; decodifique OldUacValue y NewUacValue y revise el campo UserAccountControl para confirmar qué flag se activó.",
+        "Busque un ticket de cambio o una solicitud aprobada que justifique la modificación para esa cuenta.",
+        "Con SubjectLogonId, ubique el 4624 del autor en el controlador de dominio y obtenga la IP y el host de origen.",
+        "Determine si la cuenta objetivo es privilegiada: grupos administrativos, SPN asignados, cuentas de servicio o delegación.",
+        "Busque eventos 4768/4769 de la cuenta objetivo con PreAuthType 0 o cifrado DES/RC4 desde IP poco habituales tras el cambio.",
+        "Revise otros 4738, 4728/4732 o 4724 del mismo SubjectUserName en ±15 minutos y alertas anteriores de ambas cuentas."
+      ],
+      "false_positives": [
+        "Aplicaciones heredadas o clientes Kerberos no Windows que requieren DES o no soportan preautenticación.",
+        "Servicios de autenticación CHAP o Digest (por ejemplo, RADIUS/NPS) que necesitan cifrado reversible de contraseña.",
+        "Scripts de aprovisionamiento o migraciones de dominio que copian atributos UAC de cuentas antiguas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la cuenta y con el administrador indicado en SubjectUserName si el cambio fue legítimo.",
+        "Si no hay justificación, revierta el flag en la cuenta objetivo y documente los valores originales de UAC.",
+        "Restablezca la contraseña de la cuenta objetivo con una contraseña robusta, ya que su hash pudo haberse obtenido.",
+        "Si el autor parece comprometido, deshabilite la sesión o la cuenta, revise su endpoint de origen y busque más cuentas modificadas.",
+        "Busque de forma proactiva otras cuentas con estos flags activos y ajuste la política para evitar configuraciones débiles."
+      ],
+      "severity_rationale": "Es alta porque activar estos flags casi nunca es necesario en dominios modernos y deja la cuenta expuesta al cracking offline de credenciales."
+    },
+    "en": {
+      "summary": "An Active Directory user account was changed (event 4738) to turn on a weak security option: DES-only keys, no Kerberos preauthentication, or reversible password encryption. This can set the account up for hash theft and cracking.",
+      "what_it_detects": "Event 4738 (user account changed) where NewUacValue has a flag that OldUacValue lacked: 0x8000 (Use DES key only), 0x10000 (Don't require Kerberos preauthentication) or 0x800 (reversible password encryption).",
+      "why_it_matters": "With preauthentication off, anyone can request an AS-REP and crack it offline (AS-REP roasting). DES makes tickets easy to crack, and reversible encryption stores the password in a recoverable form. This is defense impairment (ATT&CK T1685).",
+      "triage_steps": [
+        "Identify TargetUserName, TargetSid and SubjectUserName. Decode OldUacValue and NewUacValue and check the UserAccountControl field to confirm which flag was turned on.",
+        "Look for a change ticket or approved request that covers this change to the account.",
+        "Use SubjectLogonId to find the actor's 4624 on the domain controller and get the source IP and host.",
+        "Determine whether the target is privileged: admin groups, SPNs, service account or delegation settings.",
+        "Search for 4768/4769 events for the target with PreAuthType 0 or DES/RC4 encryption from unusual IPs after the change.",
+        "Review other 4738, 4728/4732 or 4724 events by the same SubjectUserName within ±15 minutes, plus earlier alerts for both accounts."
+      ],
+      "false_positives": [
+        "Legacy applications or non-Windows Kerberos clients that need DES or do not support preauthentication.",
+        "CHAP or Digest authentication services (for example RADIUS/NPS) that need reversible password encryption.",
+        "Provisioning scripts or domain migrations that copy UAC attributes from old accounts."
+      ],
+      "response_steps": [
+        "Ask the account owner and the administrator in SubjectUserName to confirm whether the change was legitimate.",
+        "If there is no justification, revert the flag on the target account and record the original UAC values.",
+        "Reset the target account's password to a strong one, since its hash may already have been captured.",
+        "If the actor looks compromised, disable the session or account, investigate the source endpoint and check for other modified accounts.",
+        "Hunt for other accounts with these flags set and tighten policy to block weak settings."
+      ],
+      "severity_rationale": "High, because modern domains rarely need these flags, and turning them on leaves the account open to offline credential cracking."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Administrator turns on 'Use DES key only' (0x8000) for a normal user account.",
+        "event": {
+          "EventID": 4738,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "TargetUserName": "mgomez",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1145",
+          "OldUacValue": "0x10",
+          "NewUacValue": "0x8010"
+        }
+      },
+      {
+        "description": "Kerberos preauthentication turned off (0x10000) for a service account, which sets it up for AS-REP roasting.",
+        "event": {
+          "EventID": 4738,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "SubjectUserName": "svc-deploy",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x51B0C4",
+          "TargetUserName": "svc-sql",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1203",
+          "OldUacValue": "0x210",
+          "NewUacValue": "0x10210"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Account re-enabled on a user that already had DES-only set, so no weak flag is newly turned on.",
+        "event": {
+          "EventID": 4738,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "TargetUserName": "legacy-app",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1310",
+          "OldUacValue": "0x8011",
+          "NewUacValue": "0x8010"
+        }
+      },
+      {
+        "description": "Routine account disable with no weak encryption or preauthentication flags involved.",
+        "event": {
+          "EventID": 4738,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "SubjectUserName": "helpdesk01",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x6620AF",
+          "TargetUserName": "lrios",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1422",
+          "OldUacValue": "0x10",
+          "NewUacValue": "0x11"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

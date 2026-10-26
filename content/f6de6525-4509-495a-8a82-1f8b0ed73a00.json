@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "f6de6525-4509-495a-8a82-1f8b0ed73a00",
+    "title": "Remote Task Creation via ATSVC Named Pipe",
+    "level": "medium",
+    "status": "test",
+    "author": "Samir Bousseaden",
+    "path": "windows/builtin/security/win_security_atsvc_task.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_atsvc_task.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un equipo remoto abrió el named pipe ATSVC del recurso IPC$ con permiso de escritura, lo que indica la creación remota de una tarea programada mediante at.exe o la API AT (por ejemplo, atexec de Impacket).",
+      "what_it_detects": "Eventos 5145 (Detailed File Share) en los que ShareName es \\\\*\\IPC$, RelativeTargetName es atsvc y AccessList contiene WriteData. Requiere que la auditoría «Audit Detailed File Share» esté habilitada.",
+      "why_it_matters": "La interfaz ATSVC permite programar comandos en otro host con privilegios SYSTEM. Es una vía clásica de ejecución remota y movimiento lateral (T1053.002, At). at.exe está obsoleto, así que su uso legítimo es poco común.",
+      "triage_steps": [
+        "Identifique el origen (IpAddress), la cuenta (SubjectDomainName\\SubjectUserName) y el host destino (Computer) en el evento 5145.",
+        "Busque en el destino el evento 4624 de tipo 3 de la misma IP y cuenta, y revise si la cuenta es privilegiada o es una cuenta de servicio.",
+        "En el destino, revise los eventos 4698 y TaskScheduler/Operational (106, 200, 201) en +/- 15 minutos para obtener el nombre y la acción de la tarea.",
+        "Inspeccione C:\\Windows\\System32\\Tasks en busca de tareas nuevas (At1, At2 o nombres aleatorios) y analice el comando que ejecutan.",
+        "Revise los procesos hijos de svchost.exe (Schedule) en el destino, como cmd.exe o powershell.exe, y busque salida redirigida a C:\\Windows\\Temp\\*.tmp.",
+        "Busque eventos 5145 adicionales del mismo IpAddress hacia ADMIN$ o C$, típicos de atexec al leer la salida del comando.",
+        "En el host de origen, busque ejecuciones de at.exe, python.exe o herramientas de Impacket, y alertas previas para esa cuenta o IP."
+      ],
+      "false_positives": [
+        "Scripts administrativos antiguos o herramientas de gestión que todavía usan at.exe o la API AT para programar trabajos remotos.",
+        "Pruebas autorizadas de pentesting o red team; confirme con el equipo responsable y la ventana de pruebas."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta y el equipo de TI si la tarea remota fue autorizada.",
+        "Si no lo fue, aísle el host destino y el de origen, y deshabilite o restablezca la cuenta usada.",
+        "Tras documentarla y recolectar evidencia, elimine la tarea programada maliciosa y los binarios o scripts que ejecutaba.",
+        "Busque la misma actividad desde ese origen en otros hosts y bloquee SMB lateral innecesario entre estaciones de trabajo.",
+        "Restablezca las credenciales expuestas y monitoree nuevos accesos al pipe atsvc."
+      ],
+      "severity_rationale": "Nivel medio: la escritura en atsvc indica ejecución remota real, pero los administradores pueden generarla legítimamente, así que hay que confirmar el contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A remote host opened the ATSVC named pipe over IPC$ with write access, indicating remote scheduled task creation via at.exe or the AT API (for example, Impacket atexec).",
+      "what_it_detects": "Event 5145 (Detailed File Share) where ShareName is \\\\*\\IPC$, RelativeTargetName is atsvc and AccessList contains WriteData. Requires the \"Audit Detailed File Share\" policy.",
+      "why_it_matters": "The ATSVC interface lets a caller schedule commands on another host that run as SYSTEM. Attackers use it for remote execution and lateral movement (T1053.002, At). at.exe is deprecated, so legitimate use is rare.",
+      "triage_steps": [
+        "Record the source IpAddress, the account (SubjectDomainName\\SubjectUserName) and the target Computer from the 5145 event.",
+        "On the target, find the matching 4624 logon type 3 from the same IP and account. Check whether the account is privileged or a service account.",
+        "On the target, review event 4698 and TaskScheduler/Operational events 106, 200 and 201 within +/- 15 minutes to get the task name and action.",
+        "Check C:\\Windows\\System32\\Tasks for new tasks (At1, At2 or random names) and review the command each one runs.",
+        "Review child processes of the Schedule svchost.exe, such as cmd.exe or powershell.exe, and look for output redirected to C:\\Windows\\Temp\\*.tmp.",
+        "Look for more 5145 events from the same IpAddress to ADMIN$ or C$. Impacket atexec reads command output this way.",
+        "On the source host, look for at.exe, python.exe or Impacket tooling, and for earlier alerts on the same account or IP."
+      ],
+      "false_positives": [
+        "Legacy admin scripts or management tools that still use at.exe or the AT API to schedule remote jobs.",
+        "Authorized penetration tests or red team exercises. Confirm with the responsible team and the test window."
+      ],
+      "response_steps": [
+        "Ask the account owner and IT whether the remote task was authorized.",
+        "If it was not, isolate the source and target hosts, then disable or reset the account.",
+        "After documenting it and collecting evidence, delete the malicious task and the binaries or scripts it ran.",
+        "Hunt for the same activity from that source on other hosts. Block unneeded workstation-to-workstation SMB.",
+        "Rotate exposed credentials and keep monitoring access to the atsvc pipe."
+      ],
+      "severity_rationale": "Medium: a write to atsvc means real remote execution, but administrators can do this legitimately, so confirm the context before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote write access to the atsvc pipe over IPC$ from a workstation, consistent with at.exe or Impacket atexec",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50123",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "atsvc",
+          "AccessMask": "0x12019f",
+          "AccessList": "%%1538 %%1541 %%4416 %%4417 %%4418 %%4419 %%4420 %%4423 %%4424 ReadData (or ListDirectory) WriteData (or AddFile) AppendData (or AddSubdirectory or CreatePipeInstance)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only access to the atsvc pipe (no WriteData in AccessList)",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "SubjectUserName": "svc_monitor",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "198.51.100.20",
+          "IpPort": "49822",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "atsvc",
+          "AccessMask": "0x120089",
+          "AccessList": "READ_CONTROL SYNCHRONIZE ReadData (or ListDirectory) ReadEA ReadAttributes"
+        }
+      },
+      {
+        "description": "Write access over IPC$ to the srvsvc pipe, which is common share enumeration and not ATSVC",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50140",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "srvsvc",
+          "AccessMask": "0x12019f",
+          "AccessList": "ReadData (or ListDirectory) WriteData (or AddFile) AppendData (or AddSubdirectory or CreatePipeInstance)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

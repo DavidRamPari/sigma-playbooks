@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "5b872a46-3b90-45c1-8419-f675db8053aa",
+    "title": "UAC Bypass via Sdclt",
+    "level": "high",
+    "status": "test",
+    "author": "Omer Yampel, Christian Burkard (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_uac_bypass_sdclt.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_uac_bypass_sdclt.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió en el registro un valor que sdclt.exe puede leer al ser abusado, una técnica conocida de bypass de UAC sin archivos. Si la alerta es real, un proceso con privilegios de usuario intenta ejecutar código con integridad alta sin mostrar el aviso de UAC.",
+      "what_it_detects": "Eventos de registry set donde TargetObject termina en Software\\Classes\\exefile\\shell\\runas\\command\\isolatedCommand, el secuestro descrito por enigma0x3. También detecta escrituras en Software\\Classes\\Folder\\shell\\open\\command\\SymbolicLinkValue cuyo Details apunta a una clave Software\\Classes de un usuario cuyo SID tiene un RID entre 1000 y 1999. Esa es la variante con enlace simbólico de registro, el método 53 de UACMe.",
+      "why_it_matters": "sdclt.exe se autoeleva. Al ejecutarse, lee estas claves del usuario y lanza con integridad alta el comando que contengan. Corresponde a ATT&CK T1548.002, Bypass User Account Control. Un usuario que ya es administrador local obtiene ejecución elevada sin aviso, algo que suele preceder al robo de credenciales, la persistencia o la desactivación de las defensas.",
+      "triage_steps": [
+        "Registre TargetObject, Details, Image, User y el host. En isolatedCommand, Details es el comando que se ejecutaría elevado. Identifique el binario o script al que apunta.",
+        "Revise Image, el proceso que escribió el valor. El software legítimo casi nunca escribe estas claves. Considere muy sospechosos los intérpretes de scripts, Office, rundll32 y las rutas escribibles por el usuario.",
+        "Busque sdclt.exe en el mismo host en +/- 15 minutos, sobre todo con /KickOffElev, y procesos hijos de sdclt.exe o control.exe con integridad alta.",
+        "Calcule el hash del archivo referenciado en Details y consulte su reputación. Revise su fecha de creación, su firma y si se ejecutó antes.",
+        "Revise el árbol de procesos padre de Image para encontrar el vector inicial, como un documento, una descarga o una sesión remota.",
+        "Pivote por el usuario y el host: alertas previas, servicios o tareas programadas nuevos, acceso a LSASS o cambios en Defender después de la escritura.",
+        "Compruebe si el valor o el enlace simbólico siguen existiendo o si se borraron después. Borrarlos justo después de usarlos es típico."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Las escrituras legítimas en estas claves son muy raras.",
+        "Ejercicios de red team, pruebas de penetración o investigación de bypass de UAC, como pruebas de UACMe en equipos de laboratorio.",
+        "Herramientas de validación de EDR o de productos de seguridad que simulan la técnica."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo y con el calendario del red team si la actividad estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint desde el EDR y conserve el hive de registro y el payload referenciado para su análisis.",
+        "Finalice los procesos elevados que lanzó el secuestro. Después de documentarlo, elimine el valor isolatedCommand o la clave SymbolicLinkValue.",
+        "Restablezca las credenciales del usuario, revise quiénes son administradores locales y busque las mismas claves en todo el parque.",
+        "Evalúe configurar UAC en Notificar siempre y retirar los privilegios de administrador local permanentes para reducir la exposición a bypass por autoelevación."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque estas claves casi no tienen uso legítimo y una coincidencia indica una probable escalada de privilegios exitosa en el endpoint."
+    },
+    "en": {
+      "summary": "A process wrote a registry value that sdclt.exe can be abused to read, a known fileless UAC bypass. If it is real, a user-level process is trying to run code with high integrity without a UAC prompt.",
+      "what_it_detects": "Registry set events where TargetObject ends with Software\\Classes\\exefile\\shell\\runas\\command\\isolatedCommand, the hijack from enigma0x3. It also catches writes to Software\\Classes\\Folder\\shell\\open\\command\\SymbolicLinkValue whose Details point to a per-user Software\\Classes key under a SID with a RID in the 1000-1999 range. That is the registry symbolic link variant, UACMe method 53.",
+      "why_it_matters": "sdclt.exe auto-elevates. When it runs, it reads these per-user keys and launches whatever command they hold at high integrity. This is ATT&CK T1548.002, Bypass User Account Control. A user who is already a local administrator gets elevated execution silently, which often happens just before credential theft, persistence or disabling security tools.",
+      "triage_steps": [
+        "Record TargetObject, Details, Image, User and host. For isolatedCommand, Details is the command an attacker would run elevated. Find the binary or script path it points to.",
+        "Check Image, the process that wrote the value. Legitimate software rarely writes these keys. Treat scripting hosts, Office, rundll32 and user-writable paths as highly suspicious.",
+        "Look for sdclt.exe on the same host within +/- 15 minutes, especially with /KickOffElev, and for high-integrity child processes of sdclt.exe or control.exe.",
+        "Hash the file referenced in Details and check it against reputation sources. Look for the file's creation time, signer and earlier executions.",
+        "Review the parent process tree of Image to find the initial access vector, such as a document, a download or a remote session.",
+        "Pivot on the user and host for earlier alerts, new services, scheduled tasks, LSASS access or Defender tampering after the write.",
+        "Check whether the value or the symbolic link key still exists and whether it was deleted afterwards. Cleanup right after use is typical."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Legitimate writes to these keys are very rare.",
+        "Red team exercises, penetration tests or UAC bypass research such as UACMe testing on lab hosts.",
+        "Security product or EDR validation tools that simulate this technique."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner and the red team schedule whether the activity was authorized.",
+        "If it was not, isolate the endpoint over EDR and keep the registry hive and the referenced payload for analysis.",
+        "Kill any elevated processes the hijack spawned. After documenting them, remove the isolatedCommand value or the SymbolicLinkValue key.",
+        "Reset the user's credentials, review local administrator membership and hunt for the same keys across the fleet.",
+        "Consider setting UAC to Always notify and removing standing local admin rights to reduce exposure to auto-elevation bypasses."
+      ],
+      "severity_rationale": "High fits because these keys have almost no legitimate use and a hit means likely successful privilege escalation on the endpoint."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell sets the isolatedCommand value used by the sdclt.exe /KickOffElev hijack",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Classes\\exefile\\shell\\runas\\command\\isolatedCommand",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.exe"
+        }
+      },
+      {
+        "description": "UACMe method 53 style SymbolicLinkValue pointing to the per-user Classes key of a SID with RID 1104",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\tool.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Classes\\Folder\\shell\\open\\command\\SymbolicLinkValue",
+          "Details": "\\REGISTRY\\USER\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Classes\\Launcher.Example"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Default value written under exefile runas command, not the isolatedCommand value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\regedit.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Classes\\exefile\\shell\\runas\\command\\(Default)",
+          "Details": "\"%1\" %*"
+        }
+      },
+      {
+        "description": "SymbolicLinkValue whose Details points to the machine Classes hive, so the per-user RID regex does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Classes\\Folder\\shell\\open\\command\\SymbolicLinkValue",
+          "Details": "\\REGISTRY\\MACHINE\\Software\\Classes\\Folder\\shell\\open\\command"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

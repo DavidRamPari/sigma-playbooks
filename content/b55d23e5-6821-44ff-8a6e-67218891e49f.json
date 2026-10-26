@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "b55d23e5-6821-44ff-8a6e-67218891e49f",
+    "title": "HybridConnectionManager Service Running",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/builtin/servicebus/win_hybridconnectionmgr_svc_running.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/servicebus/win_hybridconnectionmgr_svc_running.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1554"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El cliente Azure Service Bus de este endpoint registró actividad de Hybrid Connection Manager (HCM), es decir, un relay hacia un namespace sb://*.servicebus.windows.net. Hay que confirmar si el host es un servidor HCM autorizado.",
+      "what_it_detects": "Eventos 40300, 40301 o 40302 del log Microsoft-ServiceBus-Client que contienen HybridConnection, HybridConnectionManage, sb:// o servicebus.windows.net. Indican que el servicio Hybrid Connection Manager está activo y en conexión con Azure Relay.",
+      "why_it_matters": "HCM permite que una app de Azure App Service o Functions llegue a un host:puerto interno usando solo HTTPS saliente. Un atacante puede abusar de este software legítimo como túnel de entrada persistente (T1554, persistencia mediante software del host comprometido).",
+      "triage_steps": [
+        "En el mensaje del evento, extraiga el namespace (sb://<nombre>.servicebus.windows.net), el nombre de la hybrid connection y el host:puerto de destino.",
+        "Revise el inventario o la CMDB para saber si el host es un servidor HCM aprobado y si ese namespace pertenece a una suscripción Azure de la organización.",
+        "Busque en System el evento 7045 (instalación de servicio) y en Application los eventos MSI 11707/1033 de HybridConnectionManager, y anote qué usuario lo instaló y cuándo.",
+        "Revise la ruta del binario (Program Files\\Microsoft\\HybridConnectionManager*), su hash y su firma, y confirme que lo firma Microsoft.",
+        "Revise el destino host:puerto: un relay hacia RDP, SMB, WinRM o un controlador de dominio es más sospechoso que uno hacia una base de datos de una aplicación.",
+        "Busque actividad en el mismo host en una ventana de +/- 15 minutos: procesos padre del instalador, descargas, cambios de configuración de HCM y conexiones a *.servicebus.windows.net.",
+        "Revise alertas anteriores del host y del usuario que hizo la instalación, y busque otros endpoints que se conecten al mismo namespace."
+      ],
+      "false_positives": [
+        "Uso legítimo de Hybrid Connection Manager por parte de Azure Function Apps o App Service para llegar a bases de datos o API internas.",
+        "Pruebas o despliegues nuevos de equipos de desarrollo o integración que aún no figuran en el inventario."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la aplicación y el equipo de nube que el namespace y la hybrid connection están autorizados, y documente la excepción si lo están.",
+        "Si no está autorizado, preserve evidencia (eventos, configuración de HCM, binario) antes de detener el servicio y eliminar la hybrid connection.",
+        "Aísle el endpoint si hay indicios de acceso remoto malicioso, y bloquee el namespace en el proxy o firewall.",
+        "Rote las claves SAS asociadas y las credenciales expuestas en el host de destino, y busque el mismo namespace en todo el entorno."
+      ],
+      "severity_rationale": "Es alta porque un relay no autorizado ofrece acceso remoto persistente y difícil de ver a través de HTTPS saliente, aunque el uso legítimo obliga a verificar rápido con el dueño."
+    },
+    "en": {
+      "summary": "The Azure Service Bus client on this endpoint logged Hybrid Connection Manager (HCM) activity, meaning a relay to an sb://*.servicebus.windows.net namespace. Confirm whether the host is an authorized HCM server.",
+      "what_it_detects": "Microsoft-ServiceBus-Client events 40300, 40301 or 40302 that contain HybridConnection, HybridConnectionManage, sb:// or servicebus.windows.net. They show the Hybrid Connection Manager service is running and connected to Azure Relay.",
+      "why_it_matters": "HCM lets an Azure App Service or Functions app reach an internal host:port using only outbound HTTPS. Attackers can abuse this legitimate software as a persistent inbound tunnel (T1554, persistence through compromised host software).",
+      "triage_steps": [
+        "From the event message, extract the namespace (sb://<name>.servicebus.windows.net), the hybrid connection name and the target host:port.",
+        "Check the inventory or CMDB to see if the host is an approved HCM server and if the namespace belongs to an organizational Azure subscription.",
+        "Look for System event 7045 (service install) and Application MSI events 11707/1033 for HybridConnectionManager. Note who installed it and when.",
+        "Check the binary path (Program Files\\Microsoft\\HybridConnectionManager*), its hash and its signature. Confirm Microsoft signed it.",
+        "Assess the target host:port: a relay to RDP, SMB, WinRM or a domain controller is more suspicious than one to an application database.",
+        "Look at activity on the same host within +/- 15 minutes: installer parent processes, downloads, HCM configuration changes and connections to *.servicebus.windows.net.",
+        "Review earlier alerts for the host and the installing user, and look for other endpoints connecting to the same namespace."
+      ],
+      "false_positives": [
+        "Legitimate Hybrid Connection Manager use by Azure Function Apps or App Service to reach internal databases or APIs.",
+        "New deployments or tests by development or integration teams that are not yet in the inventory."
+      ],
+      "response_steps": [
+        "Confirm with the application owner and the cloud team that the namespace and hybrid connection are authorized. If they are, document the exception.",
+        "If it is unauthorized, preserve evidence (events, HCM configuration, binary) before stopping the service and removing the hybrid connection.",
+        "Isolate the endpoint if there are signs of malicious remote access, and block the namespace at the proxy or firewall.",
+        "Rotate the related SAS keys and any credentials exposed on the target host, then hunt for the same namespace across the environment."
+      ],
+      "severity_rationale": "High fits because an unauthorized relay gives persistent, hard-to-see remote access over outbound HTTPS, though legitimate use means checking quickly with the owner."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "HCM listener connects to an Azure Relay namespace (EventID 40300 with sb:// and servicebus.windows.net)",
+        "event": {
+          "EventID": 40300,
+          "Channel": "Microsoft-ServiceBus-Client",
+          "Provider_Name": "Microsoft-ServiceBus-Client",
+          "Computer": "WS-0142.andes.example.com",
+          "message": "HybridConnectionManager: Listener for HybridConnection 'hc-payroll' connecting to sb://relay-andes-test.servicebus.windows.net/hc-payroll, endpoint 10.0.5.20:3389"
+        }
+      },
+      {
+        "description": "HCM relay connection established (EventID 40302 mentioning HybridConnection)",
+        "event": {
+          "EventID": 40302,
+          "Channel": "Microsoft-ServiceBus-Client",
+          "Provider_Name": "Microsoft-ServiceBus-Client",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "message": "HybridConnection 'hc-sqlapp' rendezvous accepted; relaying to sqlapp01:1433"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Hybrid connection text in the same channel, but EventID 40310 is not in the selection",
+        "event": {
+          "EventID": 40310,
+          "Channel": "Microsoft-ServiceBus-Client",
+          "Provider_Name": "Microsoft-ServiceBus-Client",
+          "Computer": "WS-0142.andes.example.com",
+          "message": "HybridConnectionManager: client trace flushed for sb://relay-andes-test.servicebus.windows.net"
+        }
+      },
+      {
+        "description": "EventID 40301 with a generic client message that has none of the keywords",
+        "event": {
+          "EventID": 40301,
+          "Channel": "Microsoft-ServiceBus-Client",
+          "Provider_Name": "Microsoft-ServiceBus-Client",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "message": "Messaging client closed the AMQP link to the local broker during shutdown."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

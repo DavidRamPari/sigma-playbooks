@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "2c99737c-585d-4431-b61a-c911d86ff32f",
+    "title": "Powerview Add-DomainObjectAcl DCSync AD Extend Right",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden, Roberto Rodriguez @Cyb3rWard0g, oscd.community, Tim Shelton, Maxence Fossat",
+    "path": "windows/builtin/security/win_security_account_backdoor_dcsync_rights.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_account_backdoor_dcsync_rights.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el ntSecurityDescriptor de un objeto de Active Directory y el nuevo valor incluye los derechos extendidos de replicación que permiten DCSync. Puede indicar que se otorgó a una cuenta común la capacidad de extraer los hashes de cualquier usuario.",
+      "what_it_detects": "Eventos 5136 (Audit Directory Service Changes) donde AttributeLDAPDisplayName es ntSecurityDescriptor y AttributeValue contiene los GUID de DS-Replication-Get-Changes, Get-Changes-All o Get-Changes-In-Filtered-Set. Excluye los objetos DNS (dnsNode, dnsZone, dnsZoneScope). Es el patrón que deja Add-DomainObjectAcl -Rights DCSync de PowerView.",
+      "why_it_matters": "Con estos derechos, una cuenta puede pedir la replicación de credenciales a un DC (DCSync) y obtener hashes, incluido el de krbtgt. Corresponde a T1098 (Account Manipulation) y funciona como persistencia y escalamiento de privilegios en el dominio.",
+      "triage_steps": [
+        "Revise ObjectDN y ObjectClass: un cambio en la raíz del dominio (domainDNS) es el caso más crítico.",
+        "Compare los dos 5136 que comparten OpCorrelationID (valor eliminado y valor agregado) para identificar la ACE nueva (OA;;CR;<GUID>;;<SID>).",
+        "Resuelva el SID de esa ACE: determine si es un DC, una cuenta de sincronización conocida o un usuario o equipo común.",
+        "Identifique a quien hizo el cambio (SubjectUserName, SubjectUserSid) y busque el 4624 con el mismo SubjectLogonId para obtener la IP y el host de origen.",
+        "En el host de origen, busque en un rango de +/- 15 minutos eventos 4104 o 4688 con Add-DomainObjectAcl, PowerView o comandos LDAP sospechosos.",
+        "En los DC, busque eventos 4662 con estos GUID realizados por el SID beneficiado; si los encuentra, es probable que ya se haya ejecutado DCSync.",
+        "Revise si hubo alertas anteriores para el actor, el SID beneficiado o el host de origen, y confirme si existe un ticket de cambio aprobado."
+      ],
+      "false_positives": [
+        "Promoción de un nuevo controlador de dominio, cuya cuenta de equipo recibe derechos de replicación.",
+        "Instalación o reconfiguración de herramientas de sincronización de identidades (por ejemplo, la cuenta de servicio de Azure AD Connect).",
+        "Cambios legítimos de ACL en la raíz del dominio: el valor completo incluye las ACE de replicación que ya existían."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de Active Directory si el cambio estaba autorizado y documentado.",
+        "Si no está autorizado, respalde la ACL actual y elimine la ACE de replicación del SID beneficiado.",
+        "Deshabilite la cuenta beneficiada y la cuenta que hizo el cambio, y aísle el host de origen para el análisis forense.",
+        "Si hay evidencia de DCSync, trate el incidente como compromiso del dominio: reinicie krbtgt dos veces y rote las credenciales privilegiadas.",
+        "Vuelva a revisar periódicamente las ACL de la raíz del dominio en busca de otras ACE no autorizadas."
+      ],
+      "severity_rationale": "Es alta porque otorgar derechos DCSync a una cuenta no autorizada permite extraer todas las credenciales del dominio, y el ruido legítimo es poco frecuente."
+    },
+    "en": {
+      "summary": "An Active Directory object's ntSecurityDescriptor was modified, and the new value includes the replication extended rights that enable DCSync. A regular account may have been granted the ability to pull any user's password hashes.",
+      "what_it_detects": "Event 5136 (Audit Directory Service Changes) where AttributeLDAPDisplayName is ntSecurityDescriptor and AttributeValue contains the GUID for DS-Replication-Get-Changes, Get-Changes-All or Get-Changes-In-Filtered-Set. DNS objects (dnsNode, dnsZone, dnsZoneScope) are excluded. PowerView's Add-DomainObjectAcl -Rights DCSync leaves this pattern.",
+      "why_it_matters": "With these rights, an account can ask a DC to replicate credentials (DCSync) and get password hashes, including krbtgt. This maps to T1098 (Account Manipulation) and gives the attacker persistence and privilege escalation across the domain.",
+      "triage_steps": [
+        "Check ObjectDN and ObjectClass. A change on the domain root (domainDNS) is the most critical case.",
+        "Compare the two 5136 events that share an OpCorrelationID (value deleted and value added) to find the new ACE (OA;;CR;<GUID>;;<SID>).",
+        "Resolve that ACE's SID and decide whether it belongs to a DC, a known sync account, or a regular user or computer.",
+        "Identify who made the change (SubjectUserName, SubjectUserSid). Find the 4624 event with the same SubjectLogonId to get the source IP and host.",
+        "On the source host, look for 4104 or 4688 events showing Add-DomainObjectAcl, PowerView or suspicious LDAP tooling within +/- 15 minutes.",
+        "On the DCs, look for 4662 events with these GUIDs from the granted SID. If you find any, DCSync has likely already run.",
+        "Check for earlier alerts on the actor, the granted SID or the source host, and look for an approved change ticket."
+      ],
+      "false_positives": [
+        "Promotion of a new domain controller, whose computer account gets replication rights.",
+        "Installing or reconfiguring identity sync tools, such as the Azure AD Connect service account.",
+        "Legitimate ACL edits on the domain root. The full SDDL value still contains the replication ACEs that were already there."
+      ],
+      "response_steps": [
+        "Ask the AD team whether the change was authorized and documented.",
+        "If it was not authorized, back up the current ACL, then remove the replication ACE for the granted SID.",
+        "Disable the granted account and the account that made the change. Isolate the source host for forensics.",
+        "If there is evidence of DCSync, treat it as a domain compromise: reset krbtgt twice and rotate privileged credentials.",
+        "Recheck the domain root ACLs regularly for other unauthorized ACEs."
+      ],
+      "severity_rationale": "The level is high because DCSync rights on an unauthorized account expose every credential in the domain, and legitimate triggers are rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerView Add-DomainObjectAcl grants DS-Replication-Get-Changes-All on the domain root to regular user jperez",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1203",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5A3F21",
+          "OpCorrelationID": "{6c1f2a3b-0d4e-4f5a-9b8c-7d6e5f4a3b2c}",
+          "DSName": "andes.example.com",
+          "DSType": "%%14676",
+          "ObjectDN": "DC=andes,DC=example,DC=com",
+          "ObjectGUID": "{3f2504e0-4f89-11d3-9a0c-0305e82c3301}",
+          "ObjectClass": "domainDNS",
+          "AttributeLDAPDisplayName": "ntSecurityDescriptor",
+          "AttributeSyntaxOID": "2.5.5.15",
+          "AttributeValue": "O:BAG:BAD:AI(OA;;CR;1131f6ad-9c07-11d1-f79f-00c04fc2dcd2;;S-1-5-21-1111111111-2222222222-3333333333-1105)(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;S-1-5-21-1111111111-2222222222-3333333333-1105)(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;DA)",
+          "OperationType": "%%14674"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ntSecurityDescriptor change on a dnsZone object that contains a replication GUID, excluded by the DNS object class filter",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "DC-01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectDN": "DC=example.com,CN=MicrosoftDNS,DC=DomainDnsZones,DC=andes,DC=example,DC=com",
+          "ObjectClass": "dnsZone",
+          "AttributeLDAPDisplayName": "ntSecurityDescriptor",
+          "AttributeValue": "O:BAG:BAD:AI(OA;;CR;1131f6aa-9c07-11d1-f79f-00c04fc2dcd2;;S-1-5-21-1111111111-2222222222-3333333333-516)",
+          "OperationType": "%%14674"
+        }
+      },
+      {
+        "description": "Helpdesk delegation on an OU's ntSecurityDescriptor that grants a password reset right with no replication GUIDs",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "admin.lgomez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x7B2C10",
+          "ObjectDN": "OU=Ventas,DC=andes,DC=example,DC=com",
+          "ObjectClass": "organizationalUnit",
+          "AttributeLDAPDisplayName": "ntSecurityDescriptor",
+          "AttributeValue": "O:DAG:DAD:AI(OA;CIIO;CR;00299570-246d-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;S-1-5-21-1111111111-2222222222-3333333333-1310)(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;DA)",
+          "OperationType": "%%14674"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

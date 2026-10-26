@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "3f3f3506-1895-401b-9cc3-e86b16e630d0",
+    "title": "Potential Direct Syscall of NtOpenProcess",
+    "level": "medium",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems), Tim Shelton (FP)",
+    "path": "windows/process_access/proc_access_win_susp_direct_ntopenprocess_call.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_susp_direct_ntopenprocess_call.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1106"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso abrió un handle a otro proceso y el primer frame de su CallTrace es UNKNOWN. Esto suele indicar código en memoria sin módulo respaldado en disco o una syscall directa a NtOpenProcess que evita ntdll.dll.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon Event ID 10) en los que CallTrace empieza con 'UNKNOWN'. Se excluyen los pares SourceImage/TargetImage ubicados en rutas del sistema o en Program Files, el proveedor Kernel-Audit-API-Calls y aplicaciones conocidas como VS Code, Teams, Discord, Acrobat y algunos instaladores.",
+      "why_it_matters": "Llamar a NtOpenProcess directamente o desde shellcode (T1106, Native API) es una técnica habitual de implants y BOFs para eludir los hooks del EDR. Suele ser el paso previo a volcar credenciales de lsass o a inyectar código en otro proceso.",
+      "triage_steps": [
+        "Revise TargetImage. Si es lsass.exe, winlogon.exe, un navegador o un proceso de seguridad, trate la alerta con prioridad alta.",
+        "Interprete GrantedAccess. Valores como 0x1010, 0x1410 o 0x1FFFFF permiten leer memoria o tener control total, y son más graves que 0x1000.",
+        "Verifique SourceImage: ruta, firma, hash y reputación. Las rutas en AppData, Temp, ProgramData o Public son más sospechosas.",
+        "Busque el evento de creación del proceso origen (SourceProcessId) para conocer su ParentImage, su CommandLine y el usuario que lo ejecutó.",
+        "En el mismo host, dentro de +/- 15 minutos, busque CreateRemoteThread (Event ID 8), archivos .dmp creados, conexiones de red del proceso origen y carga de DLL inusuales.",
+        "Revise CallTrace completo: si después de UNKNOWN aparecen módulos legítimos, puede tratarse de código JIT. Si todos los frames son UNKNOWN, sospeche shellcode.",
+        "Consulte alertas previas para el mismo SourceImage, hash o usuario en otros endpoints."
+      ],
+      "false_positives": [
+        "Aplicaciones con compilación JIT (Electron, .NET, motores de JavaScript) instaladas por usuario fuera de Program Files.",
+        "Software empaquetado o protegido contra manipulación y sistemas anti-cheat que realizan syscalls directas.",
+        "Agentes de seguridad o monitoreo que se ejecutan desde rutas no estándar.",
+        "Instaladores y actualizadores que se ejecutan desde carpetas temporales del usuario."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo o el equipo de TI si el binario origen es software legítimo conocido.",
+        "Si el binario no es legítimo y el destino es lsass.exe, aísle el endpoint y capture la memoria del proceso origen antes de detenerlo.",
+        "Si hay indicios de acceso a credenciales, restablezca las contraseñas de las cuentas con sesión en el host e invalide sus tickets Kerberos.",
+        "Elimine el binario y los mecanismos de persistencia solo después de recolectar la evidencia, y busque el hash en toda la flota.",
+        "Si resulta un falso positivo confirmado, agregue un filtro que cubra exactamente el par SourceImage/TargetImage."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque es una señal fuerte de evasión de hooks, pero el software JIT o protegido también genera CallTrace UNKNOWN con frecuencia."
+    },
+    "en": {
+      "summary": "A process opened a handle to another process, and the first frame of its CallTrace is UNKNOWN. This usually means code running from memory not backed by a module on disk, or a direct NtOpenProcess syscall that bypasses ntdll.dll.",
+      "what_it_detects": "Process access events (Sysmon Event ID 10) where CallTrace starts with 'UNKNOWN'. Excluded: SourceImage/TargetImage pairs that both sit in system or Program Files paths, the Kernel-Audit-API-Calls provider, and known apps such as VS Code, Teams, Discord, Acrobat and some installers.",
+      "why_it_matters": "Implants and BOFs often call NtOpenProcess directly or from shellcode (T1106, Native API) to evade EDR user-mode hooks. This often comes before dumping lsass credentials or injecting code into another process.",
+      "triage_steps": [
+        "Check TargetImage. Treat lsass.exe, winlogon.exe, browsers or security processes as high priority.",
+        "Decode GrantedAccess. Values such as 0x1010, 0x1410 or 0x1FFFFF allow memory reads or full control and are worse than 0x1000.",
+        "Check SourceImage: path, signature, hash and reputation. Paths in AppData, Temp, ProgramData or Public are more suspicious.",
+        "Find the process creation event for SourceProcessId to get its ParentImage, CommandLine and user.",
+        "On the same host within +/- 15 minutes, look for CreateRemoteThread (Event ID 8), new .dmp files, network connections from the source process and unusual DLL loads.",
+        "Read the full CallTrace. If legitimate modules follow UNKNOWN, it may be JIT code. If every frame is UNKNOWN, suspect shellcode.",
+        "Look for earlier alerts on the same SourceImage, hash or user on other endpoints."
+      ],
+      "false_positives": [
+        "JIT-compiled apps (Electron, .NET, JavaScript engines) installed per user outside Program Files.",
+        "Packed or tamper-protected software and anti-cheat engines that make direct syscalls.",
+        "Security or monitoring agents running from non-standard paths.",
+        "Installers and updaters running from user temp folders."
+      ],
+      "response_steps": [
+        "Ask the host owner or IT to confirm whether the source binary is known, legitimate software.",
+        "If the binary is not legitimate and the target is lsass.exe, isolate the endpoint and capture the source process memory before you stop it.",
+        "If credentials may have been accessed, reset passwords for accounts logged on to the host and invalidate their Kerberos tickets.",
+        "Remove the binary and any persistence only after you collect evidence, then hunt for the hash across the fleet.",
+        "For a confirmed false positive, add a narrow filter for that exact SourceImage/TargetImage pair."
+      ],
+      "severity_rationale": "Medium fits because this is a strong sign of hook evasion, but JIT-compiled or protected software also produces UNKNOWN call traces fairly often."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder opens lsass.exe with memory-read rights; CallTrace starts with UNKNOWN (direct syscall).",
+        "event": {
+          "EventID": 10,
+          "Provider_Name": "Microsoft-Windows-Sysmon",
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6412,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupd.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "GrantedAccess": "0x1010",
+          "CallTrace": "UNKNOWN(00007FF6A1B2C3D4)",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Binary in ProgramData opens explorer.exe with full access from unbacked memory.",
+        "event": {
+          "EventID": 10,
+          "Provider_Name": "Microsoft-Windows-Sysmon",
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 3120,
+          "SourceImage": "C:\\ProgramData\\Intel\\igfxhost.exe",
+          "TargetProcessId": 4480,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "UNKNOWN(000001C2D3E40A1B)|UNKNOWN(000001C2D3E40011)",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal access through ntdll.dll: CallTrace does not start with UNKNOWN.",
+        "event": {
+          "EventID": 10,
+          "Provider_Name": "Microsoft-Windows-Sysmon",
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6412,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupd.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00007FF6A1B2C3D4)",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "UNKNOWN CallTrace, but source and target are both in system paths, so filter_main_generic excludes it.",
+        "event": {
+          "EventID": 10,
+          "Provider_Name": "Microsoft-Windows-Sysmon",
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 2210,
+          "SourceImage": "C:\\Windows\\System32\\backgroundTaskHost.exe",
+          "TargetProcessId": 2210,
+          "TargetImage": "C:\\Windows\\System32\\backgroundTaskHost.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "UNKNOWN(00007FFB12A4B001)",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

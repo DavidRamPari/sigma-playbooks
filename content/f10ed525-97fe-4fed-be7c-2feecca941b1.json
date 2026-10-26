@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "f10ed525-97fe-4fed-be7c-2feecca941b1",
+    "title": "Persistence Via Hhctrl.ocx",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_hhctrl_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_hhctrl_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor predeterminado de InprocServer32 del CLSID de hhctrl.ocx (control de Ayuda HTML) para apuntar a un binario distinto de C:\\Windows\\System32\\hhctrl.ocx. Es un indicio fuerte de persistencia mediante secuestro de COM.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene \\CLSID\\{52A2AAAE-085D-4187-97EA-8C30DB990436}\\InprocServer32\\(Default) y Details no es exactamente C:\\Windows\\System32\\hhctrl.ocx.",
+      "why_it_matters": "Cualquier proceso que cargue el control de Ayuda HTML (por ejemplo hh.exe al abrir un archivo CHM) cargará la DLL del atacante. Corresponde a persistencia por secuestro de objetos COM (Event Triggered Execution: Component Object Model Hijacking).",
+      "triage_steps": [
+        "Revise Details: ruta, nombre y ubicación del nuevo binario; rutas en Users, ProgramData, Temp o Public son muy sospechosas.",
+        "Identifique el Image y el usuario que escribió el valor; reg.exe, powershell.exe o un proceso desconocido elevan la sospecha.",
+        "Determine la colmena: HKU\\...\\_Classes indica secuestro por usuario sin privilegios; HKLM implica privilegios de administrador.",
+        "Obtenga el hash del binario de Details, verifique su firma y consulte reputación; compárelo con el hhctrl.ocx legítimo.",
+        "Revise el árbol de procesos padre e hijo del Image y la línea de comandos en el mismo host +/- 15 minutos.",
+        "Busque cargas de imagen del binario por hh.exe u otros procesos, y conexiones de red posteriores.",
+        "Consulte alertas previas del mismo host y usuario, y busque la misma ruta o hash en otros endpoints."
+      ],
+      "false_positives": [
+        "Instaladores, reparaciones o actualizaciones de Windows que escriben la ruta con variables (%SystemRoot%\\System32\\hhctrl.ocx) o con otro formato.",
+        "Clave WOW6432Node con C:\\Windows\\SysWOW64\\hhctrl.ocx en sistemas de 64 bits, que el filtro no excluye.",
+        "Herramientas de pruebas de seguridad o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo que no hay un cambio autorizado; si la ruta es legítima de Windows, documente y considere ajustar el filtro.",
+        "Si es malicioso, aísle el endpoint y preserve el binario de Details y el registro para análisis forense.",
+        "Restaure el valor predeterminado a C:\\Windows\\System32\\hhctrl.ocx o elimine la clave de usuario creada, tras exportarla como evidencia.",
+        "Elimine el binario malicioso, investigue el vector de acceso inicial y restablezca las credenciales del usuario involucrado.",
+        "Busque el mismo indicador en toda la flota y monitoree el host para detectar reinfección."
+      ],
+      "severity_rationale": "Es alta porque cambiar este CLSID casi nunca ocurre de forma legítima y otorga ejecución persistente de código cada vez que se carga la Ayuda HTML."
+    },
+    "en": {
+      "summary": "The default InprocServer32 value of the hhctrl.ocx (HTML Help control) CLSID was changed to a binary other than C:\\Windows\\System32\\hhctrl.ocx. This strongly suggests COM hijacking for persistence.",
+      "what_it_detects": "registry_set events where TargetObject contains \\CLSID\\{52A2AAAE-085D-4187-97EA-8C30DB990436}\\InprocServer32\\(Default) and Details is not exactly C:\\Windows\\System32\\hhctrl.ocx.",
+      "why_it_matters": "Any process loading the HTML Help control (for example hh.exe opening a CHM file) will load the attacker's DLL instead. This is persistence through COM object hijacking (Event Triggered Execution: Component Object Model Hijacking).",
+      "triage_steps": [
+        "Inspect Details: path, name and location of the new binary; paths under Users, ProgramData, Temp or Public are highly suspicious.",
+        "Identify the Image and user that wrote the value; reg.exe, powershell.exe or an unknown process raise suspicion.",
+        "Check the hive: HKU\\...\\_Classes means a per-user hijack without admin rights; HKLM implies administrative privileges.",
+        "Hash the binary in Details, verify its signature and check reputation; compare it with the legitimate hhctrl.ocx.",
+        "Review the parent and child process tree and command line of the Image on the same host within +/- 15 minutes.",
+        "Look for image loads of that binary by hh.exe or other processes, and any follow-on network connections.",
+        "Check earlier alerts for the same host and user, and hunt for the same path or hash on other endpoints."
+      ],
+      "false_positives": [
+        "Installers, repairs or Windows updates writing the path with variables (%SystemRoot%\\System32\\hhctrl.ocx) or another format.",
+        "WOW6432Node key set to C:\\Windows\\SysWOW64\\hhctrl.ocx on 64-bit systems, which the filter does not exclude.",
+        "Authorized security testing tools or red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the system owner that no authorized change exists; if the path is a legitimate Windows one, document it and consider tuning the filter.",
+        "If malicious, isolate the endpoint and preserve the Details binary and registry key for forensics.",
+        "Restore the default value to C:\\Windows\\System32\\hhctrl.ocx or remove the per-user key, after exporting it as evidence.",
+        "Remove the malicious binary, investigate the initial access vector and reset credentials of the involved user.",
+        "Hunt for the same indicator fleet-wide and monitor the host for reinfection."
+      ],
+      "severity_rationale": "High fits because this CLSID is almost never changed legitimately and the change grants persistent code execution whenever HTML Help loads."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Per-user COM hijack: reg.exe points the hhctrl CLSID InprocServer32 default value to a DLL in a public folder.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\CLSID\\{52A2AAAE-085D-4187-97EA-8C30DB990436}\\InprocServer32\\(Default)",
+          "Details": "C:\\Users\\Public\\Libraries\\hhupd.dll"
+        }
+      },
+      {
+        "description": "Machine-wide hijack via PowerShell in HKLM pointing to a DLL in ProgramData.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "User": "ANDES\\adm-lgomez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{52A2AAAE-085D-4187-97EA-8C30DB990436}\\InprocServer32\\(Default)",
+          "Details": "C:\\ProgramData\\HelpCache\\hhctrl.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows servicing re-registers the legitimate hhctrl.ocx path; excluded by the filter.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack\\TiWorker.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{52A2AAAE-085D-4187-97EA-8C30DB990436}\\InprocServer32\\(Default)",
+          "Details": "C:\\Windows\\System32\\hhctrl.ocx"
+        }
+      },
+      {
+        "description": "Same CLSID but the ThreadingModel value is written, not (Default); selection does not match.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\regsvr32.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{52A2AAAE-085D-4187-97EA-8C30DB990436}\\InprocServer32\\ThreadingModel",
+          "Details": "Apartment"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

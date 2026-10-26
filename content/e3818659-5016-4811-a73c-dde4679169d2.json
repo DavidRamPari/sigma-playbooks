@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "e3818659-5016-4811-a73c-dde4679169d2",
+    "title": "Suspicious Computer Machine Password by PowerShell",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_module/posh_pm_susp_reset_computermachinepassword.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_susp_reset_computermachinepassword.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en PowerShell (module logging) la ejecución del cmdlet Reset-ComputerMachinePassword, que cambia la contraseña de la cuenta de equipo usada para autenticarse ante los controladores de dominio.",
+      "what_it_detects": "Eventos de PowerShell module logging (ID 4103) cuyo campo ContextInfo contiene 'Reset-ComputerMachinePassword', sin importar el host, el usuario ni los parámetros usados.",
+      "why_it_matters": "Cambiar la contraseña de una cuenta de equipo afecta el secure channel con el dominio. El informe de DFIR referenciado describe su uso tras explotar Zerologon para restaurar la cuenta del DC. Se asocia a T1078 (Valid Accounts).",
+      "triage_steps": [
+        "Revise ContextInfo: Host Name, Host Application, Script Name y User. Identifique quién lo ejecutó y si fue interactivo, remoto (wsmprovhost) o desde un script.",
+        "Revise Payload para ver los parámetros: -Server (qué DC) y -Credential (qué cuenta se usó).",
+        "Determine si el host es un controlador de dominio. En un DC la ejecución es mucho más sensible y requiere escalar de inmediato.",
+        "Correlacione en los DC el evento 4742 (cuenta de equipo modificada) y los eventos de Netlogon 5827, 5828 y 5829 en +/- 15 minutos.",
+        "Revise la cadena de procesos (padre de powershell.exe) y los inicios de sesión 4624/4648 del mismo usuario en ese intervalo.",
+        "Busque alertas previas para el mismo host o usuario: Zerologon, DCSync, volcado de credenciales o movimiento lateral.",
+        "Confirme con el equipo de infraestructura si existe un ticket de cambio o una tarea de reparación del secure channel."
+      ],
+      "false_positives": [
+        "Scripts de administración que reparan la relación de confianza del equipo con el dominio.",
+        "Soporte técnico que restablece manualmente la contraseña de equipo tras restaurar una imagen o un snapshot de VM.",
+        "Herramientas de automatización o de gestión de configuración que mantienen la membresía al dominio."
+      ],
+      "response_steps": [
+        "Valide con el responsable del host y el ticket de cambio. Si está justificado, documente la actividad y ajuste la exclusión de forma acotada.",
+        "Si no está autorizado, aísle el endpoint y preserve los logs de PowerShell, Security y Netlogon.",
+        "Si afecta a un DC, active la respuesta a incidentes: revise la explotación de Netlogon, los cambios en cuentas privilegiadas y la replicación.",
+        "Restablezca las credenciales comprometidas y, después de verificar, rote la contraseña de la cuenta de equipo afectada.",
+        "Confirme que los parches de Netlogon estén aplicados y que el modo de aplicación esté habilitado."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el cmdlet tiene usos administrativos legítimos, pero en un DC o en manos de un usuario inesperado indica un posible compromiso grave del dominio."
+    },
+    "en": {
+      "summary": "PowerShell module logging recorded the Reset-ComputerMachinePassword cmdlet, which changes the computer account password used to authenticate to domain controllers.",
+      "what_it_detects": "PowerShell module logging events (ID 4103) whose ContextInfo field contains 'Reset-ComputerMachinePassword', whatever the host, user or parameters.",
+      "why_it_matters": "Changing a machine account password affects the host's secure channel with the domain. The referenced DFIR report describes its use after Zerologon exploitation to restore the DC account. Mapped to T1078 (Valid Accounts).",
+      "triage_steps": [
+        "Read ContextInfo: Host Name, Host Application, Script Name and User. Identify who ran it and whether it was interactive, remote (wsmprovhost) or scripted.",
+        "Check Payload for parameters: -Server (which DC) and -Credential (which account was used).",
+        "Determine whether the host is a domain controller. Execution on a DC is far more sensitive and needs immediate escalation.",
+        "On the DCs, correlate event 4742 (computer account changed) and Netlogon events 5827, 5828 and 5829 within +/- 15 minutes.",
+        "Review the process chain (parent of powershell.exe) and 4624/4648 logons by the same user in that window.",
+        "Look for earlier alerts on the same host or user: Zerologon, DCSync, credential dumping or lateral movement.",
+        "Ask infrastructure whether a change ticket or secure channel repair task exists."
+      ],
+      "false_positives": [
+        "Admin scripts that repair the computer's trust relationship with the domain.",
+        "Helpdesk resetting the machine password manually after restoring an image or VM snapshot.",
+        "Automation or configuration management tools that maintain domain membership."
+      ],
+      "response_steps": [
+        "Check with the host owner and the change ticket. If it is justified, document it and add a narrow exclusion.",
+        "If it is unauthorized, isolate the endpoint and preserve the PowerShell, Security and Netlogon logs.",
+        "If a DC is involved, start incident response: check for Netlogon exploitation, privileged account changes and replication.",
+        "Reset compromised credentials and, after verification, rotate the affected machine account password.",
+        "Confirm that the Netlogon patches are applied and enforcement mode is enabled."
+      ],
+      "severity_rationale": "Medium fits because the cmdlet has legitimate admin uses, but on a DC or run by an unexpected user it can signal serious domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Reset-ComputerMachinePassword run interactively on a domain controller against another DC with explicit credentials",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "DC-01.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Version = 5.1.17763.1 Host Application = C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe Engine Version = 5.1.17763.1 Command Name = Reset-ComputerMachinePassword Command Type = Cmdlet Script Name = User = ANDES\\jperez Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Reset-ComputerMachinePassword): \"Reset-ComputerMachinePassword\" ParameterBinding(Reset-ComputerMachinePassword): name=\"Server\"; value=\"DC-02\" ParameterBinding(Reset-ComputerMachinePassword): name=\"Credential\"; value=\"System.Management.Automation.PSCredential\""
+        }
+      },
+      {
+        "description": "Cmdlet invoked from a script over a remote PowerShell session on a workstation",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ServerRemoteHost Host Application = C:\\Windows\\system32\\wsmprovhost.exe -Embedding Command Name = Reset-ComputerMachinePassword Command Type = Cmdlet Script Name = C:\\Users\\Public\\fix.ps1 User = ANDES\\svc_backup",
+          "Payload": "CommandInvocation(Reset-ComputerMachinePassword): \"Reset-ComputerMachinePassword\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Secure channel check using Test-ComputerSecureChannel; ContextInfo does not contain the monitored cmdlet",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe Command Name = Test-ComputerSecureChannel Command Type = Cmdlet Script Name = User = ANDES\\jperez",
+          "Payload": "CommandInvocation(Test-ComputerSecureChannel): \"Test-ComputerSecureChannel\""
+        }
+      },
+      {
+        "description": "Help lookup for the related Reset-ComputerMachinePassword topic, but the string appears only in Payload, not in ContextInfo",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Application = C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe Command Name = Get-Help Command Type = Function Script Name = User = ANDES\\mgarcia",
+          "Payload": "CommandInvocation(Get-Help): \"Get-Help\" ParameterBinding(Get-Help): name=\"Name\"; value=\"Reset-ComputerMachinePassword\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

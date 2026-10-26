@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "e54979bd-c5f9-4d6c-967b-a04b19ac4c74",
+    "title": "Uncommon Outbound Kerberos Connection",
+    "level": "medium",
+    "status": "test",
+    "author": "Ilyas Ochkov, oscd.community",
+    "path": "windows/network_connection/net_connection_win_susp_outbound_kerberos_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/network_connection/net_connection_win_susp_outbound_kerberos_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1550.003",
+      "T1558"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto de lsass.exe inició una conexión saliente al puerto 88 (Kerberos). Puede indicar que una herramienta como Rubeus está solicitando o usando tickets Kerberos de forma directa.",
+      "what_it_detects": "Eventos de conexión de red de Windows (por ejemplo, Sysmon EventID 3) con DestinationPort 88 e Initiated en true, cuyo Image no es lsass.exe ni Chrome, Firefox o Tomcat 8 en sus rutas habituales.",
+      "why_it_matters": "En Windows, el tráfico Kerberos normalmente lo genera LSASS. Si otro proceso habla directamente con el KDC, puede estar robando o falsificando tickets (T1558), haciendo Kerberoasting o AS-REP roasting, o usando pass-the-ticket (T1550.003) para moverse lateralmente o abusar de la delegación.",
+      "triage_steps": [
+        "Identifique el Image, el usuario y el host. Revise la ruta, la firma, el hash y si el binario está en una carpeta escribible por el usuario, como Temp, Downloads o ProgramData.",
+        "Confirme que DestinationIp sea un controlador de dominio legítimo. Una conexión a una IP externa o a un host que no es DC es más sospechosa.",
+        "Busque la creación del proceso (EventID 1) y revise CommandLine y ParentImage. Busque argumentos de Rubeus como asktgt, kerberoast, asreproast, s4u, ptt o tgtdeleg.",
+        "En el DC, correlacione los eventos 4768, 4769 y 4771 del mismo origen dentro de +/- 15 minutos. Revise si hay muchos TGS con cifrado RC4 (0x17).",
+        "Revise el host en +/- 15 minutos: procesos hijos, otras conexiones, logons de tipo 3 o 9 y accesos a lsass.",
+        "Busque alertas anteriores para el mismo host, usuario o hash, y compruebe si el binario aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Navegadores o aplicaciones de terceros con autenticación Kerberos propia, como clientes Java, Python con GSSAPI, herramientas de SSO o agentes de monitoreo. Se requiere un baseline inicial.",
+        "Navegadores, Tomcat u otro software instalado en rutas no estándar que los filtros no cubren.",
+        "Pruebas de pentest o red team autorizadas y herramientas administrativas de diagnóstico de Kerberos."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema si la aplicación es legítima. Si lo es, documente la exclusión por ruta y hash.",
+        "Si es malicioso, aísle el endpoint y preserve memoria, el binario y la línea de comandos para el análisis forense.",
+        "Restablezca las credenciales de las cuentas afectadas. Si se sospecha un Golden Ticket, rote dos veces la cuenta krbtgt de forma coordinada.",
+        "Purgue los tickets en caché, elimine las herramientas encontradas y busque el mismo hash o comportamiento en todo el dominio."
+      ],
+      "severity_rationale": "Es media porque el comportamiento es inusual y suele asociarse con abuso de Kerberos, pero algunas aplicaciones legítimas lo generan y hace falta un baseline para descartarlas."
+    },
+    "en": {
+      "summary": "A process other than lsass.exe opened an outbound connection to port 88 (Kerberos). A tool such as Rubeus may be requesting or using Kerberos tickets directly.",
+      "what_it_detects": "Windows network connection events (for example, Sysmon EventID 3) with DestinationPort 88 and Initiated true, where Image is not lsass.exe or Chrome, Firefox or Tomcat 8 in their standard paths.",
+      "why_it_matters": "On Windows, Kerberos traffic normally comes from LSASS. A different process talking directly to the KDC may be stealing or forging tickets (T1558), Kerberoasting or AS-REP roasting, or using pass-the-ticket (T1550.003) to move laterally or abuse delegation.",
+      "triage_steps": [
+        "Identify the Image, user and host. Check the binary's path, signature and hash, and whether it sits in a user-writable folder such as Temp, Downloads or ProgramData.",
+        "Confirm DestinationIp is a legitimate domain controller. A connection to an external IP or to a host that is not a DC is more suspicious.",
+        "Find the process creation event (EventID 1) and review CommandLine and ParentImage. Look for Rubeus verbs such as asktgt, kerberoast, asreproast, s4u, ptt or tgtdeleg.",
+        "On the DC, correlate events 4768, 4769 and 4771 from the same source within +/- 15 minutes. Check for bursts of TGS requests using RC4 encryption (0x17).",
+        "Review the host within +/- 15 minutes: child processes, other connections, logon types 3 and 9, and access to lsass.",
+        "Look for earlier alerts on the same host, user or hash, and check whether the binary appears on other endpoints."
+      ],
+      "false_positives": [
+        "Browsers or third-party applications with their own Kerberos client, such as Java or Python GSSAPI clients, SSO tools or monitoring agents. An initial baseline is required.",
+        "Browsers, Tomcat or other software installed in non-standard paths that the filters do not cover.",
+        "Authorized pentest or red team exercises, and admin tools for diagnosing Kerberos."
+      ],
+      "response_steps": [
+        "Check with the system owner whether the application is legitimate. If it is, document an exclusion by path and hash.",
+        "If it is malicious, isolate the endpoint and preserve memory, the binary and the command line for forensics.",
+        "Reset the credentials of affected accounts. If a Golden Ticket is suspected, rotate krbtgt twice in a coordinated way.",
+        "Purge cached tickets, remove any tools found, and hunt for the same hash or behavior across the domain."
+      ],
+      "severity_rationale": "Medium because this behavior is unusual and often tied to Kerberos abuse, but some legitimate apps produce it and a baseline is needed to rule them out."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user Temp folder connects to a DC on port 88",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupd.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.45",
+          "SourcePort": 51234,
+          "DestinationIp": "192.0.2.10",
+          "DestinationHostname": "dc-01.andes.example.com",
+          "DestinationPort": 88
+        }
+      },
+      {
+        "description": "PowerShell initiates Kerberos traffic directly",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\mrojas",
+          "Computer": "WS-0177.andes.example.com",
+          "Protocol": "udp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.77",
+          "SourcePort": 60112,
+          "DestinationIp": "192.0.2.10",
+          "DestinationPort": 88
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal Kerberos authentication performed by lsass.exe",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Computer": "WS-0142.andes.example.com",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.45",
+          "SourcePort": 51300,
+          "DestinationIp": "192.0.2.10",
+          "DestinationPort": 88
+        }
+      },
+      {
+        "description": "Chrome from its standard path performing Kerberos SSO, excluded by the optional filter",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.45",
+          "SourcePort": 51410,
+          "DestinationIp": "192.0.2.10",
+          "DestinationPort": 88
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

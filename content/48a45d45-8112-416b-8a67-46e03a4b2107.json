@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "48a45d45-8112-416b-8a67-46e03a4b2107",
+    "title": "Remove Account From Domain Admin Group",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_remove_adgroupmember.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_remove_adgroupmember.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1531"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado por Script Block Logging (evento 4104) ejecutó Remove-ADGroupMember con -Identity y -Members para quitar cuentas de un grupo de Active Directory, posiblemente Domain Admins.",
+      "what_it_detects": "Bloques de script cuyo ScriptBlockText contiene a la vez 'Remove-ADGroupMember', '-Identity ' y '-Members '. La regla no filtra por grupo: coincide con cualquier grupo, no solo Domain Admins.",
+      "why_it_matters": "Un atacante puede sacar a los administradores legítimos de grupos privilegiados para impedirles responder o recuperar el dominio. Esto corresponde a Account Access Removal (T1531, táctica Impact) y suele aparecer antes de un ransomware o un sabotaje.",
+      "triage_steps": [
+        "Revise ScriptBlockText: qué grupo aparece en -Identity, qué cuentas en -Members y si el bloque quita varias cuentas o recorre una lista.",
+        "Identifique el host, el usuario que ejecutó el script y el Path del script, si existe. Confirme si es un servidor de administración o una estación de usuario.",
+        "Reconstruya el script completo uniendo los eventos 4104 con el mismo ScriptBlockId y busque ofuscación o comandos adicionales.",
+        "En los controladores de dominio, busque los eventos 4729, 4733 y 4757 (miembro eliminado de un grupo) y confirme el cambio real y la cuenta que lo hizo.",
+        "Revise el mismo host y el mismo usuario en un rango de +/- 15 minutos: procesos padre de powershell.exe, logons remotos, Add-ADGroupMember, restablecimientos de contraseña o cuentas deshabilitadas.",
+        "Consulte con el equipo de identidades si existe un ticket o cambio aprobado para esa modificación de membresía.",
+        "Busque alertas anteriores del mismo usuario o host, en especial de robo de credenciales o movimiento lateral."
+      ],
+      "false_positives": [
+        "Administradores que depuran grupos privilegiados como parte de una revisión de accesos aprobada.",
+        "Scripts de offboarding o de gestión del ciclo de vida de identidades que retiran membresías de forma automática.",
+        "Herramientas de gestión de identidades o de cumplimiento que sincronizan grupos de AD."
+      ],
+      "response_steps": [
+        "Verifique con el propietario de la cuenta ejecutora y con el equipo de identidades si el cambio fue legítimo.",
+        "Si no está autorizado, restaure las membresías eliminadas desde una cuenta de emergencia y documente el estado anterior.",
+        "Deshabilite o restablezca la cuenta que ejecutó el script y aísle el host de origen tras confirmar la actividad maliciosa.",
+        "Revise todos los grupos privilegiados para encontrar otros cambios no autorizados y rote las credenciales de los administradores afectados.",
+        "Busque persistencia y otras acciones de impacto en el dominio antes de dar por cerrada la recuperación."
+      ],
+      "severity_rationale": "Medium es adecuado porque la eliminación de membresías también es una tarea administrativa habitual, pero si el grupo es privilegiado y no hay un cambio aprobado debe escalarse."
+    },
+    "en": {
+      "summary": "A PowerShell script block (event 4104) ran Remove-ADGroupMember with -Identity and -Members, which removes accounts from an Active Directory group, possibly Domain Admins.",
+      "what_it_detects": "Script blocks whose ScriptBlockText contains all of 'Remove-ADGroupMember', '-Identity ' and '-Members '. The rule does not filter by group. It matches any group, not only Domain Admins.",
+      "why_it_matters": "An attacker can remove legitimate administrators from privileged groups so they cannot respond or recover the domain. This is Account Access Removal (T1531, Impact) and often comes before ransomware or sabotage.",
+      "triage_steps": [
+        "Read ScriptBlockText: note the group in -Identity, the accounts in -Members, and whether the block removes several accounts or loops over a list.",
+        "Identify the host, the executing user and the script Path, if present. Check whether the host is an admin server or a user workstation.",
+        "Rebuild the full script by joining the 4104 events that share the ScriptBlockId, and look for obfuscation or extra commands.",
+        "On domain controllers, find events 4729, 4733 and 4757 (member removed from a group) to confirm the actual change and which account made it.",
+        "Check the same host and user within +/- 15 minutes: parent processes of powershell.exe, remote logons, Add-ADGroupMember, password resets and disabled accounts.",
+        "Ask the identity team whether a ticket or approved change covers this membership change.",
+        "Look for earlier alerts on the same user or host, especially credential theft or lateral movement."
+      ],
+      "false_positives": [
+        "Administrators cleaning up privileged groups during an approved access review.",
+        "Offboarding or identity lifecycle scripts that remove group memberships automatically.",
+        "Identity management or compliance tools that sync AD groups."
+      ],
+      "response_steps": [
+        "Check with the owner of the executing account and the identity team whether the change was legitimate.",
+        "If it was not authorized, restore the removed memberships from a break-glass account and record the previous state.",
+        "Once malicious activity is confirmed, disable or reset the executing account and isolate the source host.",
+        "Audit all privileged groups for other unauthorized changes, and rotate credentials for the affected administrators.",
+        "Hunt for persistence and other impact actions in the domain before you close out recovery."
+      ],
+      "severity_rationale": "Medium fits because removing group members is also routine admin work, but escalate if the group is privileged and no approved change covers it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block that removes a user from Domain Admins without confirmation",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "6f1c2a3b-9d4e-4b7a-8c11-2e5f7a9b0c12",
+          "ScriptBlockText": "Remove-ADGroupMember -Identity \"Domain Admins\" -Members jperez -Confirm:$False",
+          "Path": "",
+          "UserID": "ANDES\\mrojas"
+        }
+      },
+      {
+        "description": "Loop that removes several administrators from a privileged group",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-ADM-02.andes.example.com",
+          "ScriptBlockId": "0a9b8c7d-1e2f-4a3b-9c8d-7e6f5a4b3c21",
+          "ScriptBlockText": "$admins = @('lgomez','acastro'); foreach ($a in $admins) { Remove-ADGroupMember -Identity 'Enterprise Admins' -Members $a -Confirm:$false }",
+          "Path": "C:\\Users\\Public\\cleanup.ps1",
+          "UserID": "ANDES\\svc-backup"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of the members of Domain Admins",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-ADM-02.andes.example.com",
+          "ScriptBlockId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "ScriptBlockText": "Get-ADGroupMember -Identity \"Domain Admins\" | Select-Object Name,SamAccountName",
+          "Path": "",
+          "UserID": "ANDES\\mrojas"
+        }
+      },
+      {
+        "description": "Remove-ADGroupMember called with positional parameters, so neither -Identity nor -Members appears",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-ADM-02.andes.example.com",
+          "ScriptBlockId": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+          "ScriptBlockText": "Remove-ADGroupMember 'VPN-Users' 'tmendez' -Confirm:$false",
+          "Path": "C:\\Scripts\\offboarding.ps1",
+          "UserID": "ANDES\\svc-idm"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

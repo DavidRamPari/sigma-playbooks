@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "95361ce5-c891-4b0a-87ca-e24607884a96",
+    "title": "Binary Padding - MacOS",
+    "level": "high",
+    "status": "test",
+    "author": "Igor Fits, Mikhail Larin, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_binary_padding.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_binary_padding.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "En un endpoint macOS se ejecutó truncate para ampliar un archivo (-s +) o dd leyendo desde /dev/zero, /dev/random o /dev/urandom. Puede tratarse de binary padding para alterar el hash y el tamaño de un malware.",
+      "what_it_detects": "Creación de procesos cuyo Image termina en /truncate con '-s +' en CommandLine, o cuyo Image termina en /dd con 'if=/dev/zero', 'if=/dev/random' o 'if=/dev/urandom' en CommandLine.",
+      "why_it_matters": "Agregar datos basura a un binario (MITRE ATT&CK T1027.001, Binary Padding) cambia su hash y puede superar límites de tamaño de escáneres, lo que permite evadir detecciones por firma o reputación.",
+      "triage_steps": [
+        "Lea el CommandLine completo: identifique el archivo destino (argumento de truncate, of= o redirección de dd), el tamaño agregado (bs, count, -s +N) y si se escribe en modo append (conv=notrunc, oflag=append, >>).",
+        "Revise ParentImage y la cadena de procesos: shell interactivo, script, LaunchAgent/LaunchDaemon, osascript o un proceso descargado recientemente.",
+        "Determine qué es el archivo destino: Mach-O, script, .app o .dmg; obtenga el hash, la firma de código (codesign) y los atributos de cuarentena.",
+        "Busque en el mismo host, +/- 15 minutos, descargas, escrituras en /tmp, /Users/Shared o ~/Library, cambios de permisos (chmod +x) y ejecución del archivo modificado.",
+        "Valide al usuario: ¿es desarrollador o administrador con tareas que justifiquen el uso de dd o truncate? Revise sus sesiones y alertas previas.",
+        "Compare el hash del archivo antes y después del relleno con inteligencia de amenazas y otros endpoints de la flota."
+      ],
+      "false_positives": [
+        "Scripts legítimos que crean archivos de prueba, swap o imágenes de disco con dd if=/dev/zero o datos aleatorios.",
+        "Borrado seguro o sobrescritura de discos y archivos por parte de administradores.",
+        "Herramientas de desarrollo, CI o pruebas de rendimiento que generan archivos de tamaño fijo.",
+        "Instaladores o scripts de gestión (MDM) que preasignan espacio con truncate."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o el responsable del script si la actividad era esperada; documente la justificación si es legítima.",
+        "Si el archivo destino es un ejecutable desconocido o se ejecutó después, aísle el endpoint desde el EDR y preserve el archivo para análisis.",
+        "Elimine el binario malicioso y cualquier mecanismo de persistencia asociado (LaunchAgents, LaunchDaemons, login items) tras confirmar el hallazgo.",
+        "Busque el hash original y el modificado en toda la flota y restablezca credenciales si hubo ejecución con privilegios."
+      ],
+      "severity_rationale": "El nivel high se justifica porque el relleno de binarios es una técnica directa de evasión, aunque los usos administrativos de dd exigen validar el contexto."
+    },
+    "en": {
+      "summary": "A macOS endpoint ran truncate to grow a file (-s +) or dd reading from /dev/zero, /dev/random or /dev/urandom. This may be binary padding to change a malware file's hash and size.",
+      "what_it_detects": "Process creation where Image ends with /truncate and CommandLine contains '-s +', or Image ends with /dd and CommandLine contains 'if=/dev/zero', 'if=/dev/random' or 'if=/dev/urandom'.",
+      "why_it_matters": "Appending junk data to a binary (MITRE ATT&CK T1027.001, Binary Padding) changes its hash and can exceed scanner size limits, helping evade signature and reputation-based detection.",
+      "triage_steps": [
+        "Read the full CommandLine: identify the target file (truncate argument, dd of= or redirection), the amount added (bs, count, -s +N) and append mode (conv=notrunc, oflag=append, >>).",
+        "Review ParentImage and the process tree: interactive shell, script, LaunchAgent/LaunchDaemon, osascript or a recently downloaded process.",
+        "Determine what the target file is: Mach-O, script, .app or .dmg; collect its hash, code signature (codesign) and quarantine attributes.",
+        "On the same host within +/- 15 minutes, look for downloads, writes to /tmp, /Users/Shared or ~/Library, chmod +x and execution of the modified file.",
+        "Validate the user: are they a developer or admin with tasks that justify dd or truncate? Check their sessions and earlier alerts.",
+        "Check original and padded hashes against threat intelligence and other fleet endpoints."
+      ],
+      "false_positives": [
+        "Legitimate scripts creating test files, swap or disk images with dd if=/dev/zero or random data.",
+        "Administrators securely wiping or overwriting disks and files.",
+        "Development, CI or benchmarking tools generating fixed-size files.",
+        "Installers or MDM scripts preallocating space with truncate."
+      ],
+      "response_steps": [
+        "Confirm with the user or script owner whether the activity was expected; document the justification if legitimate.",
+        "If the target is an unknown executable or was run afterwards, isolate the endpoint via EDR and preserve the file for analysis.",
+        "After confirmation, remove the malicious binary and related persistence (LaunchAgents, LaunchDaemons, login items).",
+        "Hunt for the original and padded hashes across the fleet and reset credentials if privileged execution occurred."
+      ],
+      "severity_rationale": "High fits because binary padding is a direct evasion technique, though administrative dd use means context must be validated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dd appends 1 MB of zeros to a binary dropped in /tmp",
+        "event": {
+          "Image": "/bin/dd",
+          "CommandLine": "dd if=/dev/zero bs=1024 count=1024 conv=notrunc oflag=append of=/tmp/updater",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "truncate grows a file by 5 MB to change its hash and size",
+        "event": {
+          "Image": "/usr/bin/truncate",
+          "CommandLine": "truncate -s +5M /Users/Shared/helper",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4877
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "dd copying a disk to an image file, input is not /dev/zero or random",
+        "event": {
+          "Image": "/bin/dd",
+          "CommandLine": "dd if=/dev/disk2 of=/Users/admin/backup.img bs=1m",
+          "ParentImage": "/bin/zsh",
+          "User": "admin",
+          "Computer": "MBP-0099",
+          "ProcessId": 3310
+        }
+      },
+      {
+        "description": "truncate used to empty a log file, no '-s +' growth",
+        "event": {
+          "Image": "/usr/bin/truncate",
+          "CommandLine": "truncate -s 0 /var/log/app/debug.log",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "MBP-0099",
+          "ProcessId": 3402
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

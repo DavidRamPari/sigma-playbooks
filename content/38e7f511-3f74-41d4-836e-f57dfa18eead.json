@@ -1,0 +1,155 @@
+{
+  "rule": {
+    "id": "38e7f511-3f74-41d4-836e-f57dfa18eead",
+    "title": "Potential Malicious Usage of CloudTrail System Manager",
+    "level": "high",
+    "status": "test",
+    "author": "jamesc-grafana",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_ssm_malicious_usage.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_ssm_malicious_usage.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1566",
+      "T1566.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS ejecutó con éxito SSM SendCommand, que corre comandos en una o más instancias administradas. Puede ser mantenimiento legítimo o un atacante que ejecuta código remoto con credenciales comprometidas.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ssm.amazonaws.com y eventName SendCommand cuyo errorCode es 'Success' o no existe, es decir, llamadas que AWS aceptó.",
+      "why_it_matters": "SendCommand permite ejecutar scripts como root o SYSTEM en instancias EC2 o servidores híbridos sin SSH ni RDP. Con credenciales robadas sirve para ejecutar código, moverse lateralmente o robar credenciales del rol de la instancia. La regla lo asocia a ATT&CK T1566.002 (phishing con enlace) y a escalamiento de privilegios.",
+      "triage_steps": [
+        "Identifique al llamante: userIdentity.arn, tipo (IAMUser, AssumedRole), nombre de sesión y accessKeyId. Confirme si esa identidad suele usar SSM.",
+        "Revise sourceIPAddress y userAgent: consola, AWS CLI, SDK o automatización conocida. Una IP externa no habitual o un user agent atípico es sospechoso.",
+        "Examine requestParameters: documentName (AWS-RunShellScript, AWS-RunPowerShellScript o documentos personalizados), instanceIds o targets. Los comandos pueden aparecer ocultos en CloudTrail.",
+        "Obtenga los comandos y la salida reales con el historial de Run Command, GetCommandInvocation o la salida en S3/CloudWatch Logs.",
+        "Busque descargas, shells reversos, lectura de credenciales del rol, creación de usuarios o desactivación de agentes de seguridad.",
+        "Pivotee por la misma identidad +/- 15 minutos: GetCallerIdentity, DescribeInstances, CreateAccessKey, AttachRolePolicy, AssumeRole u otras alertas previas.",
+        "Valide con el responsable del cambio o el ticket de mantenimiento; verifique si coincide con una ventana programada."
+      ],
+      "false_positives": [
+        "Administradores que usan SSM Run Command para parches, actualizaciones o mantenimiento de instancias.",
+        "Automatización legítima: State Manager, Maintenance Windows, pipelines de CI/CD o herramientas de gestión de configuración.",
+        "Servicios de seguridad o inventario que lanzan comandos SSM de forma periódica desde roles conocidos."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la identidad y del cambio antes de actuar; documente comandos, instancias y origen.",
+        "Si no está autorizado, desactive o rote las claves de acceso, revoque las sesiones del rol y restrinja ssm:SendCommand con una política de denegación.",
+        "Aísle las instancias afectadas con un security group restrictivo y tome snapshots de EBS para el análisis forense.",
+        "Elimine la persistencia encontrada, rote las credenciales expuestas en las instancias y revise los roles de instancia asociados.",
+        "Restaure desde imágenes confiables si hay compromiso confirmado y limite SendCommand a roles y documentos aprobados."
+      ],
+      "severity_rationale": "Es nivel alto porque una llamada aceptada implica ejecución de código privilegiado en instancias, aunque hay que contrastarla con el uso legítimo frecuente de SSM."
+    },
+    "en": {
+      "summary": "An AWS identity successfully called SSM SendCommand, which runs commands on one or more managed instances. It may be routine maintenance or an attacker executing code with compromised credentials.",
+      "what_it_detects": "CloudTrail events with eventSource ssm.amazonaws.com and eventName SendCommand where errorCode is 'Success' or absent, meaning AWS accepted the call.",
+      "why_it_matters": "SendCommand runs scripts as root or SYSTEM on EC2 or hybrid instances without SSH or RDP. With stolen credentials it enables code execution, lateral movement and theft of instance role credentials. The rule maps it to ATT&CK T1566.002 (spearphishing link) and privilege escalation.",
+      "triage_steps": [
+        "Identify the caller: userIdentity.arn, identity type (IAMUser, AssumedRole), session name and accessKeyId. Confirm whether this identity normally uses SSM.",
+        "Check sourceIPAddress and userAgent: console, AWS CLI, SDK or known automation. An unusual external IP or odd user agent is suspicious.",
+        "Inspect requestParameters: documentName (AWS-RunShellScript, AWS-RunPowerShellScript or custom documents), instanceIds or targets. Commands may be hidden in CloudTrail.",
+        "Retrieve the actual commands and output from Run Command history, GetCommandInvocation, or output in S3/CloudWatch Logs.",
+        "Look for downloads, reverse shells, reads of role credentials, user creation or disabling of security agents.",
+        "Pivot on the same identity +/- 15 minutes: GetCallerIdentity, DescribeInstances, CreateAccessKey, AttachRolePolicy, AssumeRole and earlier alerts.",
+        "Confirm with the change owner or maintenance ticket and check whether it falls within a scheduled window."
+      ],
+      "false_positives": [
+        "Administrators using SSM Run Command for patching, updates or instance maintenance.",
+        "Legitimate automation: State Manager, Maintenance Windows, CI/CD pipelines or configuration management tools.",
+        "Security or inventory services issuing periodic SSM commands from known roles."
+      ],
+      "response_steps": [
+        "Verify with the identity and change owner before acting; record commands, instances and origin.",
+        "If unauthorized, disable or rotate access keys, revoke role sessions and block ssm:SendCommand with a deny policy.",
+        "Isolate affected instances with a restrictive security group and snapshot EBS volumes for forensics.",
+        "Remove any persistence found, rotate credentials exposed on the instances and review attached instance roles.",
+        "Rebuild from trusted images if compromise is confirmed; restrict SendCommand to approved roles and documents."
+      ],
+      "severity_rationale": "High fits because an accepted call means privileged code execution on instances, though it must be weighed against frequent legitimate SSM use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful SendCommand with no errorCode, run from an unusual IP by an IAM user with AWS-RunShellScript",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-14T02:17:45Z",
+          "eventSource": "ssm.amazonaws.com",
+          "eventName": "SendCommand",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.documentName": "AWS-RunShellScript",
+          "requestParameters.instanceIds": "i-0abc1234def567890",
+          "errorCode": null,
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "SendCommand explicitly marked with errorCode Success from an assumed role",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-14T09:02:11Z",
+          "eventSource": "ssm.amazonaws.com",
+          "eventName": "SendCommand",
+          "awsRegion": "us-west-2",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.10 Python/3.12.1",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAutomation/session-ops",
+          "requestParameters.documentName": "AWS-RunPowerShellScript",
+          "requestParameters.instanceIds": "i-0fedcba9876543210",
+          "errorCode": "Success",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "SendCommand denied by IAM (errorCode AccessDenied), so it was not executed",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-14T02:16:30Z",
+          "eventSource": "ssm.amazonaws.com",
+          "eventName": "SendCommand",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mrojas",
+          "errorCode": "AccessDeniedException",
+          "errorMessage": "User is not authorized to perform: ssm:SendCommand",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Read-only SSM call GetCommandInvocation, not SendCommand",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-03-14T09:03:05Z",
+          "eventSource": "ssm.amazonaws.com",
+          "eventName": "GetCommandInvocation",
+          "awsRegion": "us-west-2",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.10 Python/3.12.1",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAutomation/session-ops",
+          "errorCode": null,
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

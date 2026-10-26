@@ -1,0 +1,114 @@
+{
+  "rule": {
+    "id": "0055ad1f-be85-4798-83cf-a6da17c993b3",
+    "title": "Application URI Configuration Changes",
+    "level": "high",
+    "status": "test",
+    "author": "Mark Morowczynski '@markmorow', Bailey Bercik '@baileybercik'",
+    "path": "cloud/azure/audit_logs/azure_app_uri_modifications.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_app_uri_modifications.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004",
+      "T1528"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó la configuración de URI (AppAddress, como las redirect URIs o reply URLs) de una aplicación registrada en Entra ID. Si el cambio no fue planificado, alguien podría estar redirigiendo tokens o códigos de autorización hacia un destino que controla.",
+      "what_it_detects": "Eventos de Azure AuditLogs donde properties.message es exactamente 'Update Application Sucess- Property Name AppAddress', es decir, una actualización exitosa de las direcciones URI de un registro de aplicación.",
+      "why_it_matters": "Una redirect URI maliciosa, colgante (dangling), sin HTTPS, con comodín o en un dominio ajeno permite robar tokens de acceso de aplicaciones (T1528) y usar cuentas cloud válidas (T1078.004). Así se obtiene persistencia y acceso a datos sin necesitar la contraseña del usuario.",
+      "triage_steps": [
+        "Identifique la aplicación afectada (targetResources: displayName, appId) y quién hizo el cambio (initiatedBy: usuario o service principal, dirección IP).",
+        "Compare los valores anterior y nuevo de AppAddress en modifiedProperties y anote cada URI que se agregó o se eliminó.",
+        "Revise cada URI nueva: si usa HTTPS, si tiene comodines, si el dominio es de la organización, si resuelve en DNS (dangling) y si es exclusiva de esta aplicación.",
+        "Busque el ticket de cambio o confirme con el propietario de la aplicación que el cambio estaba planificado.",
+        "Revise los inicios de sesión del iniciador +/- 15 minutos: IP, ubicación, user agent, MFA, alertas de riesgo y otros alertas previas sobre la misma identidad.",
+        "Busque otros cambios sobre la misma aplicación: credenciales o certificados agregados, nuevos propietarios, permisos de API o consentimientos otorgados.",
+        "Revise los inicios de sesión y las emisiones de tokens de la aplicación desde el cambio, en especial los que vengan de IP o tenants poco habituales."
+      ],
+      "false_positives": [
+        "Un administrador o desarrollador hace un cambio legítimo y planificado de URI, por ejemplo al desplegar un entorno nuevo o migrar un dominio.",
+        "Pipelines de CI/CD o herramientas de infraestructura como código que actualizan las reply URLs de forma automática.",
+        "Ajustes de configuración hechos por el proveedor durante la integración de una aplicación SaaS."
+      ],
+      "response_steps": [
+        "Confirme con el propietario de la aplicación y con el ticket de cambio si la modificación estaba autorizada.",
+        "Si no estaba autorizada, restaure las URIs anteriores y elimine las que no sean de la organización o estén colgantes.",
+        "Revoque las sesiones y los refresh tokens del iniciador, restablezca sus credenciales y revise su MFA si la cuenta parece comprometida.",
+        "Rote los secretos y certificados de la aplicación y quite los propietarios o permisos que se agregaron sin autorización.",
+        "Investigue los accesos a datos hechos con tokens de la aplicación desde el cambio y documente el alcance del incidente."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque controlar las redirect URIs de una aplicación permite interceptar tokens y mantener la persistencia en el tenant."
+    },
+    "en": {
+      "summary": "An Entra ID application registration had its URI configuration (AppAddress, such as redirect or reply URLs) changed. If the change was not planned, someone may be redirecting tokens or authorization codes to an endpoint they control.",
+      "what_it_detects": "Azure AuditLogs events where properties.message is exactly 'Update Application Sucess- Property Name AppAddress', meaning an application's URI addresses were updated successfully.",
+      "why_it_matters": "A malicious, dangling, non-HTTPS, wildcard or third-party redirect URI enables theft of application access tokens (T1528) and abuse of valid cloud accounts (T1078.004). This gives persistence and data access without the user's password.",
+      "triage_steps": [
+        "Identify the target application (targetResources displayName, appId) and the initiator (initiatedBy user or service principal, IP address).",
+        "Compare the old and new AppAddress values in modifiedProperties and list every URI that was added or removed.",
+        "Check each new URI: is it HTTPS, does it use wildcards, is the domain yours, does it still resolve in DNS (dangling), and is it unique to this app?",
+        "Look for a change ticket or confirm with the application owner that the change was planned.",
+        "Review the initiator's sign-ins within +/- 15 minutes: IP, location, user agent, MFA, risk detections, and earlier alerts for that identity.",
+        "Look for other changes to the same app: added credentials or certificates, new owners, API permissions, or consent grants.",
+        "Review sign-ins and token issuance for the application since the change, especially from unusual IPs or tenants."
+      ],
+      "false_positives": [
+        "An administrator or developer makes a legitimate, planned URI change, for example when deploying a new environment or migrating a domain.",
+        "CI/CD pipelines or infrastructure-as-code tools that update reply URLs automatically.",
+        "Configuration adjustments made with a vendor while onboarding a SaaS application."
+      ],
+      "response_steps": [
+        "Confirm with the application owner and the change ticket whether the change was authorized.",
+        "If it was not authorized, restore the previous URIs and remove any URI that is outside your control or dangling.",
+        "Revoke the initiator's sessions and refresh tokens, reset their credentials and review their MFA if the account appears compromised.",
+        "Rotate the application's secrets and certificates and remove any owners or permissions added without authorization.",
+        "Investigate data accessed with the application's tokens since the change and document the scope of the incident."
+      ],
+      "severity_rationale": "High fits because whoever controls an application's redirect URIs can intercept tokens and keep persistent access to the tenant."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful update of an application's redirect URIs (AppAddress) by a user account",
+        "event": {
+          "time": "2024-03-14T15:22:41Z",
+          "category": "AuditLogs",
+          "operationName": "Update application",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.message": "Update Application Sucess- Property Name AppAddress",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "properties.initiatedBy.user.ipAddress": "203.0.113.45",
+          "properties.targetResources.displayName": "Portal-Clientes",
+          "properties.targetResources.modifiedProperties.newValue": "[{\"Address\":\"https://login.example.org/callback\"}]"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same application update operation, but the modified property is the display name, not AppAddress",
+        "event": {
+          "time": "2024-03-14T15:30:02Z",
+          "category": "AuditLogs",
+          "operationName": "Update application",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.message": "Update Application Sucess- Property Name DisplayName",
+          "properties.initiatedBy.user.userPrincipalName": "mrodriguez@example.com",
+          "properties.initiatedBy.user.ipAddress": "198.51.100.20",
+          "properties.targetResources.displayName": "Portal-Clientes"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "a622fcd2-4b5a-436a-b8a2-a4171161833c",
+    "title": "Granting Of Permissions To An Account",
+    "level": "medium",
+    "status": "test",
+    "author": "sawwinnnaung",
+    "path": "cloud/azure/activity_logs/azure_granting_permission_detection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_granting_permission_detection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El Azure Activity Log registró una escritura de asignación de rol (Microsoft.Authorization/roleAssignments/write). Alguien otorgó un rol de Azure RBAC a un usuario, grupo o service principal, y hay que confirmar que el cambio estaba autorizado.",
+      "what_it_detects": "Cualquier evento del Azure Activity Log que contenga la operación Microsoft.Authorization/roleAssignments/write. La regla solo busca esa palabra clave. No incluye la lógica de \"IP de origen no vista antes\" de la analítica original de Sentinel, así que el analista debe revisar callerIpAddress manualmente.",
+      "why_it_matters": "Con una identidad privilegiada comprometida, un atacante puede otorgar roles como Owner, Contributor o User Access Administrator a cuentas que controla. Así obtiene persistencia y escalamiento de privilegios en la nube (ATT&CK T1098.003, Additional Cloud Roles).",
+      "triage_steps": [
+        "Identifique caller, callerIpAddress, el alcance (resourceId, suscripción o grupo de administración) y el estado (Started o Succeeded). Un mismo cambio genera varios eventos.",
+        "Traduzca el roleDefinitionId del request body al nombre del rol y el principalId a su identidad. Priorice Owner, User Access Administrator y Contributor con alcance de suscripción o superior.",
+        "Verifique si callerIpAddress aparece para ese caller en los últimos 30 días de Activity Log y de sign-ins de Entra ID. Una IP, un país o un proveedor de hosting nuevos aumentan el riesgo.",
+        "Revise los sign-ins de Entra ID del caller cerca del evento: MFA, marcas de riesgo, user agent inusual y dispositivo nuevo.",
+        "Busque un ticket de cambio, una activación de PIM o un pipeline de IaC (Terraform, Bicep) que justifique la asignación.",
+        "Correlacione el mismo caller y el principal destino en +/- 15 minutos: credenciales nuevas en service principals, app registrations, acceso a Key Vault u otras asignaciones de rol.",
+        "Consulte alertas previas del caller, del principal destino y de la IP de origen."
+      ],
+      "false_positives": [
+        "Cambio válido de administradores durante un onboarding aprobado o una solicitud de acceso.",
+        "Asignaciones gestionadas por PIM o activaciones de roles elegibles.",
+        "Pipelines de IaC o managed identities que asignan roles al desplegar recursos.",
+        "Onboarding de Azure Lighthouse o de proveedores de servicios administrados con acceso delegado."
+      ],
+      "response_steps": [
+        "Confirme con el caller y con el dueño del recurso si la asignación era esperada. Conserve el JSON del evento como evidencia.",
+        "Si no estaba autorizada, registre el ID, el alcance y el principal de la asignación y luego elimínela.",
+        "Deshabilite la cuenta del caller o restablezca su contraseña, revoque sesiones y refresh tokens, y rote los secretos de los service principals afectados.",
+        "Revise todas las acciones del caller y del principal destino desde el primer sign-in sospechoso y revierta los cambios adicionales.",
+        "Exija PIM, MFA y Conditional Access para los permisos de asignación de roles."
+      ],
+      "severity_rationale": "Medium es adecuado porque asignar roles es una tarea administrativa habitual, pero una asignación no autorizada otorga privilegios persistentes en la nube."
+    },
+    "en": {
+      "summary": "The Azure Activity Log recorded a role assignment write (Microsoft.Authorization/roleAssignments/write). Someone granted an Azure RBAC role to a user, group or service principal, and the change must be confirmed as authorized.",
+      "what_it_detects": "Any Azure Activity Log event that contains the operation Microsoft.Authorization/roleAssignments/write. The rule only matches this keyword. It does not include the \"previously unseen source IP\" logic from the original Sentinel analytic, so the analyst must check callerIpAddress manually.",
+      "why_it_matters": "With a compromised privileged identity, an attacker can grant roles such as Owner, Contributor or User Access Administrator to accounts they control. This gives them persistence and privilege escalation in the cloud (ATT&CK T1098.003, Additional Cloud Roles).",
+      "triage_steps": [
+        "Identify the caller, callerIpAddress, scope (resourceId, subscription or management group) and status (Started or Succeeded). One change produces several events.",
+        "Map the roleDefinitionId in the request body to a role name and the principalId to an identity. Prioritize Owner, User Access Administrator and Contributor at subscription scope or higher.",
+        "Check whether callerIpAddress appears for this caller in the last 30 days of Activity Log and Entra ID sign-in data. A new IP, country or hosting provider raises the risk.",
+        "Review the caller's Entra ID sign-ins around the event: MFA, risk flags, unusual user agent and new device.",
+        "Look for a change ticket, PIM activation or IaC pipeline (Terraform, Bicep) that explains the assignment.",
+        "Pivot on the same caller and the target principal within +/- 15 minutes: new service principal credentials, app registrations, Key Vault access or other role assignments.",
+        "Check earlier alerts for the caller, the target principal and the source IP."
+      ],
+      "false_positives": [
+        "Valid change by administrators during approved onboarding or an access request.",
+        "PIM-managed assignments or eligible role activations.",
+        "IaC pipelines or managed identities that assign roles while deploying resources.",
+        "Azure Lighthouse or managed service provider onboarding with delegated access."
+      ],
+      "response_steps": [
+        "Confirm with the caller and the resource owner whether the assignment was expected. Keep the event JSON as evidence.",
+        "If it was unauthorized, record the assignment ID, scope and principal, then remove the assignment.",
+        "Disable the caller account or reset its password, revoke sessions and refresh tokens, and rotate secrets of affected service principals.",
+        "Review every action by the caller and the target principal since the first suspicious sign-in, and revert any further changes.",
+        "Require PIM, MFA and Conditional Access for role-assignment permissions."
+      ],
+      "severity_rationale": "Medium fits because role assignments are routine admin work, but an unauthorized one grants persistent cloud privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An Owner role is assigned at subscription scope from an unfamiliar IP. The raw Activity Log record contains the operation name.",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T02:17:45.1234567Z\",\"resourceId\":\"/SUBSCRIPTIONS/00000000-1111-2222-3333-444444444444/PROVIDERS/MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/5f2c9a10-7b3e-4d21-9c88-0a1b2c3d4e5f\",\"operationName\":\"MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"resultSignature\":\"Succeeded.Created\",\"callerIpAddress\":\"203.0.113.77\",\"identity\":{\"claims\":{\"name\":\"jperez@example.com\"}},\"properties\":{\"requestbody\":\"{\\\"Id\\\":\\\"5f2c9a10-7b3e-4d21-9c88-0a1b2c3d4e5f\\\",\\\"Properties\\\":{\\\"PrincipalId\\\":\\\"9a8b7c6d-1111-2222-3333-abcdefabcdef\\\",\\\"RoleDefinitionId\\\":\\\"/providers/Microsoft.Authorization/roleDefinitions/8e3af657-a8ff-443c-a75c-2fe8c4bcb635\\\",\\\"Scope\\\":\\\"/subscriptions/00000000-1111-2222-3333-444444444444\\\"}}\",\"message\":\"Microsoft.Authorization/roleAssignments/write\"}}",
+          "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.77",
+          "category": "Administrative"
+        }
+      },
+      {
+        "description": "Started event for a Contributor assignment on a resource group, written in mixed case.",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T09:05:02.0000000Z\",\"operationName\":\"Microsoft.Authorization/roleAssignments/write\",\"category\":\"Administrative\",\"resultType\":\"Start\",\"callerIpAddress\":\"198.51.100.24\",\"caller\":\"mgarcia@example.com\",\"resourceId\":\"/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-finanzas/providers/Microsoft.Authorization/roleAssignments/aa11bb22-cc33-dd44-ee55-ff6677889900\"}",
+          "operationName": "Microsoft.Authorization/roleAssignments/write",
+          "caller": "mgarcia@example.com",
+          "callerIpAddress": "198.51.100.24",
+          "category": "Administrative"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A role assignment is deleted, not written. The operation string differs, so the keyword is absent.",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T10:12:33.0000000Z\",\"operationName\":\"MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/DELETE\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"callerIpAddress\":\"198.51.100.24\",\"caller\":\"mgarcia@example.com\"}",
+          "operationName": "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/DELETE",
+          "caller": "mgarcia@example.com",
+          "callerIpAddress": "198.51.100.24",
+          "category": "Administrative"
+        }
+      },
+      {
+        "description": "A custom role definition is written. This is a related Authorization operation, but it is not a role assignment.",
+        "event": {
+          "message": "{\"time\":\"2024-03-14T11:40:00.0000000Z\",\"operationName\":\"MICROSOFT.AUTHORIZATION/ROLEDEFINITIONS/WRITE\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"callerIpAddress\":\"192.0.2.15\",\"caller\":\"admin.nube@example.com\"}",
+          "operationName": "MICROSOFT.AUTHORIZATION/ROLEDEFINITIONS/WRITE",
+          "caller": "admin.nube@example.com",
+          "callerIpAddress": "192.0.2.15",
+          "category": "Administrative"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "rule": {
+    "id": "910ab938-668b-401b-b08c-b596e80fdca5",
+    "title": "Transferring Files with Credential Data via Network Shares",
+    "level": "medium",
+    "status": "test",
+    "author": "Teymur Kheirkhabarov, oscd.community",
+    "path": "windows/builtin/security/win_security_transf_files_with_cred_data_via_network_shares.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_transf_files_with_cred_data_via_network_shares.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001",
+      "T1003.002",
+      "T1003.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un equipo remoto accedió por un recurso compartido de red (SMB) a un archivo con nombre típico de datos de credenciales: un volcado de LSASS, minidumps, hiberfil, mimidrv o las bases NTDS.dit, SAM, SECURITY o SYSTEM.",
+      "what_it_detects": "Eventos 5145 del registro Security (verificación de acceso a un objeto de recurso compartido) cuyo RelativeTargetName contiene \\lsass, \\mimidrv, \\windows\\minidump\\, \\hiberfil o \\sqldmpr, o es exactamente la ruta de ntds.dit, SAM, SECURITY o SYSTEM.",
+      "why_it_matters": "Los atacantes vuelcan la memoria de LSASS o copian las bases SAM/NTDS y se las llevan por SMB para extraer hashes y contraseñas sin conexión (ATT&CK T1003.001, T1003.002, T1003.003). Esto suele preceder al movimiento lateral y al compromiso del dominio.",
+      "triage_steps": [
+        "Revise RelativeTargetName, ShareName (C$, ADMIN$ u otro) y ShareLocalPath para saber exactamente qué archivo se tocó y en qué servidor (Computer).",
+        "Revise AccessMask/AccessList y el resultado (Audit Success o Failure): una lectura (ReadData 0x1) indica una posible exfiltración y una escritura, que alguien dejó el archivo en el share.",
+        "Identifique SubjectUserName, SubjectDomainName e IpAddress; confirme si la cuenta y el equipo de origen pertenecen a administradores o a sistemas de respaldo autorizados.",
+        "Busque eventos 4624 tipo 3 y 4672 del mismo IpAddress y usuario en el servidor dentro de +/- 15 minutos, además de otros 5145 o 5140 relacionados.",
+        "En el servidor, busque la creación del archivo: procesos como procdump, rundll32 comsvcs.dll MiniDump, reg save, ntdsutil o vssadmin, y la creación de shadow copies.",
+        "En el equipo de origen, revise procesos que accedieron al share (copy, robocopy, xcopy, PowerShell, herramientas de Impacket) y alertas previas de la misma entidad."
+      ],
+      "false_positives": [
+        "Un administrador legítimo que copia volcados de memoria o de LSASS para soporte técnico o análisis de fallas.",
+        "Respaldos o recolección forense de SAM, SYSTEM o NTDS.dit hecha por herramientas autorizadas o equipos de respuesta a incidentes.",
+        "Volcados de SQL Server (sqldmpr) recolectados por DBA o por el soporte de Microsoft."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la cuenta y con control de cambios si la transferencia estaba autorizada; si lo estaba, documéntela y ajuste la regla para ese origen.",
+        "Si no está autorizada, aísle el equipo de origen y deshabilite o restrinja la cuenta usada, conservando primero la evidencia (logs, archivos y memoria).",
+        "Elimine los volcados o las copias de bases de credenciales de los shares y del origen, y conserve una copia para la investigación.",
+        "Restablezca las contraseñas de las cuentas expuestas; si se tocó NTDS.dit, planifique restablecer krbtgt dos veces y rotar las cuentas privilegiadas.",
+        "Busque reutilización de credenciales (pass-the-hash, nuevos inicios de sesión) en todo el dominio durante los días siguientes."
+      ],
+      "severity_rationale": "Es nivel medio porque el acceso a estos archivos por la red es muy sospechoso, pero algunos administradores y herramientas de respaldo lo hacen de forma legítima, así que hay que confirmar el contexto."
+    },
+    "en": {
+      "summary": "A remote host accessed a file over an SMB network share whose name matches typical credential data: an LSASS dump, minidumps, hiberfil, mimidrv, or the NTDS.dit, SAM, SECURITY or SYSTEM hives.",
+      "what_it_detects": "Security event 5145 (network share object access check) where RelativeTargetName contains \\lsass, \\mimidrv, \\windows\\minidump\\, \\hiberfil or \\sqldmpr, or is exactly the ntds.dit, SAM, SECURITY or SYSTEM path.",
+      "why_it_matters": "Attackers dump LSASS memory or copy the SAM/NTDS databases, then move them over SMB to extract hashes and passwords offline (ATT&CK T1003.001, T1003.002, T1003.003). This often comes before lateral movement and domain compromise.",
+      "triage_steps": [
+        "Check RelativeTargetName, ShareName (C$, ADMIN$, other) and ShareLocalPath to see exactly which file was touched and on which server (Computer).",
+        "Check AccessMask/AccessList and the outcome (Audit Success or Failure): a read (ReadData 0x1) suggests exfiltration, while a write means someone dropped the file on the share.",
+        "Identify SubjectUserName, SubjectDomainName and IpAddress; confirm whether the account and source host belong to admins or authorized backup systems.",
+        "On the server, look for 4624 type 3 and 4672 events from the same IpAddress and user within +/- 15 minutes, plus related 5145 or 5140 events.",
+        "On the server, look for how the file was created: procdump, rundll32 comsvcs.dll MiniDump, reg save, ntdsutil or vssadmin, and new shadow copies.",
+        "On the source host, review processes that touched the share (copy, robocopy, xcopy, PowerShell, Impacket tools) and earlier alerts for the same entity."
+      ],
+      "false_positives": [
+        "A legitimate administrator copying crash or LSASS dumps for troubleshooting or support cases.",
+        "Authorized backups or forensic collection of SAM, SYSTEM or NTDS.dit by approved tools or incident response teams.",
+        "SQL Server dumps (sqldmpr) collected by DBAs or by Microsoft support."
+      ],
+      "response_steps": [
+        "Check with the account owner and change management whether the transfer was authorized. If it was, document it and tune the rule for that source.",
+        "If it was not, isolate the source host and disable or restrict the account used. Preserve evidence (logs, files, memory) first.",
+        "Remove the dumps and credential database copies from the shares and the source host, keeping a copy for the investigation.",
+        "Reset passwords for exposed accounts. If NTDS.dit was touched, plan a double krbtgt reset and rotate privileged accounts.",
+        "Hunt for credential reuse (pass-the-hash, new logons) across the domain over the following days."
+      ],
+      "severity_rationale": "Medium fits because network access to these files is highly suspicious, but some admins and backup tools do it legitimately, so context has to be confirmed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A non-admin workstation reads an LSASS dump from the C$ share of a server.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50122",
+          "ShareName": "\\\\*\\C$",
+          "ShareLocalPath": "\\??\\C:\\",
+          "RelativeTargetName": "Users\\Public\\lsass.dmp",
+          "AccessMask": "0x1",
+          "AccessList": "%%4416",
+          "Keywords": "Audit Success"
+        }
+      },
+      {
+        "description": "Remote read of the NTDS.dit database through the C$ share of a domain controller.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "198.51.100.23",
+          "IpPort": "49833",
+          "ShareName": "\\\\*\\C$",
+          "ShareLocalPath": "\\??\\C:\\",
+          "RelativeTargetName": "Windows\\NTDS\\ntds.dit",
+          "AccessMask": "0x1",
+          "AccessList": "%%4416",
+          "Keywords": "Audit Success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Access to a registry transaction log next to SAM. It is not an exact match for the SAM path and contains none of the listed substrings.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50130",
+          "ShareName": "\\\\*\\C$",
+          "ShareLocalPath": "\\??\\C:\\",
+          "RelativeTargetName": "Windows\\System32\\config\\SAM.LOG1",
+          "AccessMask": "0x1",
+          "AccessList": "%%4416",
+          "Keywords": "Audit Success"
+        }
+      },
+      {
+        "description": "A user opens an ordinary document on a departmental share.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "SubjectUserName": "mgomez",
+          "SubjectDomainName": "ANDES",
+          "IpAddress": "203.0.113.17",
+          "IpPort": "51544",
+          "ShareName": "\\\\*\\Finanzas",
+          "ShareLocalPath": "\\??\\D:\\Shares\\Finanzas",
+          "RelativeTargetName": "Reportes\\presupuesto_2025.xlsx",
+          "AccessMask": "0x1",
+          "AccessList": "%%4416",
+          "Keywords": "Audit Success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

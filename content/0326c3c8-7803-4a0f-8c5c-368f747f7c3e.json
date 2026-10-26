@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "0326c3c8-7803-4a0f-8c5c-368f747f7c3e",
+    "title": "Triple Cross eBPF Rootkit Execve Hijack",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_triple_cross_rootkit_execve_hijack.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_triple_cross_rootkit_execve_hijack.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó sudo con una línea de comandos que contiene \"execve_hijack\", el helper que usa el rootkit eBPF Triple Cross para elevar privilegios. Trate el host como posiblemente comprometido a nivel kernel.",
+      "what_it_detects": "Eventos process_creation en Linux donde Image termina en /sudo y CommandLine contiene \"execve_hijack\". Es el binario auxiliar de Triple Cross, que se ejecuta mediante sudo para conseguir privilegios de root.",
+      "why_it_matters": "Triple Cross es un rootkit de código abierto basado en eBPF. Secuestra llamadas execve para ejecutar su helper como root y así elevar privilegios (escalada de privilegios) y ocultarse (evasión de defensas). Un rootkit activo puede ocultar procesos, archivos y tráfico, por lo que la telemetría del host puede no ser confiable.",
+      "triage_steps": [
+        "Revise CommandLine completo: ruta del binario execve_hijack, argumentos y directorio de trabajo (rutas como /tmp, /dev/shm o directorios ocultos aumentan la sospecha).",
+        "Identifique el usuario que invocó sudo y el ParentImage/ParentCommandLine; verifique si el proceso padre era un programa legítimo cuyo execve pudo ser secuestrado.",
+        "Busque en los logs de autenticación (/var/log/auth.log, journal) la entrada sudo correspondiente: COMMAND=, TTY, PWD y si hubo contraseña o NOPASSWD.",
+        "Pivote en el mismo host +/- 15 minutos: procesos hijos de sudo, uso de bpftool, carga de programas eBPF, módulos nuevos y conexiones de red salientes.",
+        "Obtenga el hash del archivo execve_hijack y de otros binarios en el mismo directorio; compárelo con fuentes de inteligencia internas.",
+        "Revise alertas previas del mismo host y del mismo usuario, y busque la cadena execve_hijack en otros endpoints de la flota."
+      ],
+      "false_positives": [
+        "La regla indica que los falsos positivos son poco probables.",
+        "Investigadores o equipos red team que prueban Triple Cross en laboratorios autorizados; confirme con el responsable y con el ticket del ejercicio.",
+        "Herramientas de análisis que ejecutan con sudo comandos que contienen la cadena (por ejemplo, búsquedas forenses); valide el contexto del comando."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema si existe una prueba autorizada; si no la hay, escale como incidente de compromiso con privilegios root.",
+        "Aísle el host de la red manteniéndolo encendido para preservar memoria y evidencia volátil.",
+        "Adquiera memoria y disco desde medios confiables; liste programas eBPF cargados con herramientas externas, sin confiar solo en la vista del sistema.",
+        "Rote las credenciales del usuario afectado y las de cuentas privilegiadas usadas en el host.",
+        "Reinstale el sistema desde una imagen conocida y limpia; no confíe en la limpieza manual de un rootkit a nivel kernel.",
+        "Agregue los hashes, rutas y patrones encontrados a la búsqueda en toda la flota."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque la cadena es específica de un rootkit, implica ejecución como root y casi no tiene usos legítimos."
+    },
+    "en": {
+      "summary": "sudo was executed with a command line containing \"execve_hijack\", the helper used by the Triple Cross eBPF rootkit to elevate privileges. Treat the host as possibly compromised at kernel level.",
+      "what_it_detects": "Linux process_creation events where Image ends with /sudo and CommandLine contains \"execve_hijack\", the Triple Cross helper binary that runs through sudo to obtain root.",
+      "why_it_matters": "Triple Cross is an open-source eBPF rootkit. It hijacks execve calls to run its helper as root, giving privilege escalation and stealth. An active rootkit can hide processes, files and traffic, so host telemetry may be unreliable.",
+      "triage_steps": [
+        "Review the full CommandLine: path of the execve_hijack binary, arguments and working directory; /tmp, /dev/shm or hidden directories raise suspicion.",
+        "Identify the user who invoked sudo and the ParentImage/ParentCommandLine; check whether a legitimate parent program had its execve hijacked.",
+        "Find the matching sudo entry in auth logs or journal: COMMAND=, TTY, PWD, and whether a password or NOPASSWD rule was used.",
+        "Pivot on the same host +/- 15 minutes: sudo child processes, bpftool use, eBPF program loads, new modules and outbound connections.",
+        "Hash the execve_hijack file and other binaries in the same directory; compare against internal threat intelligence.",
+        "Check earlier alerts for the same host and user, and hunt for the execve_hijack string across other endpoints."
+      ],
+      "false_positives": [
+        "The rule states false positives are unlikely.",
+        "Researchers or red teams testing Triple Cross in authorized labs; confirm with the owner and the exercise ticket.",
+        "Analysis tools run with sudo whose command includes the string, such as forensic searches; validate the command context."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether an authorized test exists; if not, escalate as a root-level compromise.",
+        "Isolate the host from the network while keeping it powered on to preserve memory and volatile evidence.",
+        "Acquire memory and disk with trusted tooling; enumerate loaded eBPF programs without relying solely on the host's own view.",
+        "Rotate credentials of the affected user and privileged accounts used on the host.",
+        "Rebuild the system from a known-good image; do not trust manual cleanup of a kernel-level rootkit.",
+        "Add discovered hashes, paths and patterns to fleet-wide hunting."
+      ],
+      "severity_rationale": "High fits because the string is specific to a rootkit, implies root execution and has almost no legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "sudo launches the Triple Cross execve_hijack helper from a hidden directory",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo /home/jperez/.cache/.tc/execve_hijack",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/home/jperez",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "sudo runs execve_hijack from /tmp with an argument",
+        "event": {
+          "Image": "/bin/sudo",
+          "CommandLine": "sudo /tmp/helpers/execve_hijack -v",
+          "ParentImage": "/usr/bin/python3",
+          "User": "www-data",
+          "ProcessId": 51007,
+          "ParentProcessId": 50990,
+          "CurrentDirectory": "/tmp",
+          "host": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Analyst greps for the string without sudo; Image does not end with /sudo",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -r execve_hijack /opt/ir/samples",
+          "ParentImage": "/usr/bin/bash",
+          "User": "analyst",
+          "ProcessId": 30211,
+          "ParentProcessId": 30200,
+          "CurrentDirectory": "/opt/ir",
+          "host": "ws-0142"
+        }
+      },
+      {
+        "description": "Ordinary sudo usage that does not reference execve_hijack",
+        "event": {
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo systemctl restart nginx",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48300,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/home/jperez",
+          "host": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

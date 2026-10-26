@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "f8103686-e3e8-46f3-be72-65f7fcb4aa53",
+    "title": "AWS Console GetSigninToken Potential Abuse",
+    "level": "medium",
+    "status": "test",
+    "author": "Chester Le Bron (@123Le_Bron)",
+    "path": "cloud/aws/cloudtrail/aws_console_getsignintoken.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_console_getsignintoken.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.007",
+      "T1550.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró una llamada a GetSigninToken en signin.amazonaws.com con un user agent distinto del portal AWS SSO. Puede indicar que alguien convirtió credenciales de API en una sesión de consola, por ejemplo con aws_consoler.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource signin.amazonaws.com y eventName GetSigninToken cuyo userAgent no contiene 'Jersey/${project.version}', el valor que deja el flujo del portal AWS SSO.",
+      "why_it_matters": "Con aws_consoler, un atacante usa una access key robada para obtener credenciales federadas temporales y un token de inicio de sesión. Así abre la consola sin MFA y dificulta saber qué clave original se comprometió (T1550.001, T1021.007).",
+      "triage_steps": [
+        "Revise userIdentity (type, arn, accessKeyId, sessionContext) para identificar la sesión federada o el rol y, a partir de ella, la identidad IAM de origen.",
+        "Analice userAgent: si es python-requests, boto3, curl o un cliente poco común, la sospecha aumenta. Compárelo con los agentes que ese usuario usa normalmente.",
+        "Verifique sourceIPAddress: geolocalización, ASN, si es VPN o hosting y si coincide con IP corporativas conocidas.",
+        "Pivote en +/- 15 minutos con la misma IP o la misma access key: sts GetFederationToken, AssumeRole o GetCallerIdentity antes del evento y ConsoleLogin después.",
+        "Revise qué hizo la sesión de consola resultante: cambios en IAM, creación de access keys, acceso a S3 o Secrets Manager, cambios en CloudTrail.",
+        "Busque alertas anteriores sobre el mismo usuario, rol, access key o IP y confirme la actividad con el dueño de la cuenta."
+      ],
+      "false_positives": [
+        "Inicios de sesión mediante AWS SSO/IAM Identity Center cuyo user agent cambió o no coincide con el filtro 'Jersey/${project.version}'.",
+        "Herramientas internas o scripts de federación aprobados que generan URL de consola para administradores.",
+        "Pruebas de red team o pentest autorizadas con aws_consoler."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el dueño del rol si el acceso a consola fue legítimo antes de tomar medidas.",
+        "Si no se reconoce, desactive la access key de origen y revoque las sesiones activas del rol con una política de denegación por aws:TokenIssueTime.",
+        "Revise y revierta los cambios hechos durante la sesión: usuarios, claves y políticas nuevas, y configuración de registro.",
+        "Rote las credenciales afectadas, exija MFA y limite sts:GetFederationToken con SCP o políticas IAM.",
+        "Documente los user agents legítimos del SSO para ajustar el filtro de la regla."
+      ],
+      "severity_rationale": "Media porque el portal SSO también genera este evento, pero fuera de ese flujo indica un posible uso de credenciales robadas para entrar a la consola sin MFA."
+    },
+    "en": {
+      "summary": "A GetSigninToken call was made to signin.amazonaws.com with a user agent other than the AWS SSO portal's. Someone may have turned API credentials into a console session, for example with aws_consoler.",
+      "what_it_detects": "CloudTrail events where eventSource is signin.amazonaws.com and eventName is GetSigninToken, and the userAgent does not contain 'Jersey/${project.version}', the value the AWS SSO portal flow leaves.",
+      "why_it_matters": "With aws_consoler, an attacker uses a stolen access key to get temporary federated credentials and a sign-in token. This opens the console without MFA and hides which original key was compromised (T1550.001, T1021.007).",
+      "triage_steps": [
+        "Review userIdentity (type, arn, accessKeyId, sessionContext) to identify the federated session or role, and from it the source IAM identity.",
+        "Inspect userAgent. python-requests, boto3, curl or an unusual client raises suspicion. Compare it with the agents this user normally uses.",
+        "Check sourceIPAddress: geolocation, ASN, whether it is VPN or hosting, and whether it matches known corporate IPs.",
+        "Pivot +/- 15 minutes on the same IP or access key: sts GetFederationToken, AssumeRole or GetCallerIdentity before the event, and ConsoleLogin after it.",
+        "Review what the resulting console session did: IAM changes, new access keys, S3 or Secrets Manager access, CloudTrail changes.",
+        "Look for earlier alerts on the same user, role, access key or IP, and confirm the activity with the account owner."
+      ],
+      "false_positives": [
+        "AWS SSO/IAM Identity Center logins whose user agent changed or does not match the 'Jersey/${project.version}' filter.",
+        "Approved internal tools or federation scripts that generate console URLs for administrators.",
+        "Authorized red team or pentest exercises using aws_consoler."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the user or role owner whether the console access was legitimate.",
+        "If it is not recognized, disable the source access key and revoke the role's active sessions with a deny policy on aws:TokenIssueTime.",
+        "Review and revert changes made during the session: new users, keys and policies, and logging configuration.",
+        "Rotate the affected credentials, require MFA and restrict sts:GetFederationToken with SCPs or IAM policies.",
+        "Document the legitimate SSO user agents so the rule filter can be tuned."
+      ],
+      "severity_rationale": "Medium because the SSO portal also creates this event, but outside that flow it points to stolen credentials possibly being used to reach the console without MFA."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GetSigninToken called from a federated session with a python-requests user agent, which fits aws_consoler.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "GetSigninToken",
+          "userAgent": "python-requests/2.31.0",
+          "eventTime": "2024-03-04T14:03:12Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userIdentity.type": "FederatedUser",
+          "userIdentity.arn": "arn:aws:sts::111122223333:federated-user/aws_consoler",
+          "userIdentity.accessKeyId": "ASIAEXAMPLE7QXZ4KDLM",
+          "eventType": "AwsConsoleSignIn"
+        }
+      },
+      {
+        "description": "GetSigninToken from an assumed role using a curl user agent.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "GetSigninToken",
+          "userAgent": "curl/8.4.0",
+          "eventTime": "2024-03-05T02:17:40Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.77",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/DevOpsRole/jperez",
+          "eventType": "AwsConsoleSignIn"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal AWS SSO portal login: the user agent contains Jersey/${project.version}, so the filter excludes it.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "GetSigninToken",
+          "userAgent": "Jersey/${project.version} (HttpUrlConnection 17.0.9)",
+          "eventTime": "2024-03-04T09:12:05Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/AWSReservedSSO_ReadOnly_abc123/mlopez",
+          "eventType": "AwsConsoleSignIn"
+        }
+      },
+      {
+        "description": "Regular ConsoleLogin event on the same event source but with a different eventName.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "ConsoleLogin",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+          "eventTime": "2024-03-04T09:13:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mlopez",
+          "eventType": "AwsConsoleSignIn"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

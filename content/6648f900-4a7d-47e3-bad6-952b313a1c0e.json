@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "6648f900-4a7d-47e3-bad6-952b313a1c0e",
+    "title": "Add Authorized Applications to Microsoft Defender Firewall via Registry",
+    "level": "medium",
+    "status": "experimental",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_defender_firewall_add_exception.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_defender_firewall_add_exception.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor en la lista AuthorizedApplications\\List de la política de Windows Firewall con el estado ':Enabled:', lo que autoriza a un ejecutable a usar la red sin restricciones del firewall.",
+      "what_it_detects": "Eventos registry_set donde TargetObject contiene '\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\' y '\\AuthorizedApplications\\List', y Details contiene ':Enabled:'. Es decir, la creación o reactivación de una excepción por aplicación con el formato heredado 'ruta:*:Enabled:nombre'.",
+      "why_it_matters": "El malware agrega su propio binario a esta lista para recibir conexiones entrantes o comunicarse con su C2 sin que el firewall lo bloquee. La regla corresponde a degradación de defensas (ATT&CK T1686.003): debilitar controles de seguridad del host.",
+      "triage_steps": [
+        "Lea Details para identificar la ruta del ejecutable autorizado y el nombre descriptivo; desconfíe de rutas en AppData, Temp, ProgramData o Public y de nombres que imitan procesos del sistema.",
+        "Revise Image (proceso que escribió el registro) y su ParentImage, CommandLine y usuario; reg.exe, scripts o binarios no firmados son más sospechosos que un instalador conocido.",
+        "Identifique el perfil afectado en TargetObject (DomainProfile, StandardProfile o PublicProfile) y si se modificaron varios perfiles a la vez.",
+        "Obtenga el hash y la firma del ejecutable autorizado y consúltelos en su plataforma de threat intelligence.",
+        "Busque conexiones de red del ejecutable autorizado, sobre todo puertos en escucha o destinos externos poco comunes, en las horas siguientes al evento.",
+        "Correlacione en el mismo host +/- 15 minutos: creación del binario, persistencia (Run keys, servicios, tareas programadas) y otros cambios en SharedAccess.",
+        "Verifique alertas previas para el mismo host, usuario o hash, y si el cambio coincide con un despliegue de software o GPO documentado."
+      ],
+      "false_positives": [
+        "Instaladores de aplicaciones antiguas (juegos, clientes P2P, herramientas de soporte remoto) que usan la API heredada del firewall para autorizarse.",
+        "Herramientas de despliegue de software o scripts de administración que configuran excepciones del firewall.",
+        "Políticas de grupo que agregan aplicaciones autorizadas en equipos del dominio."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el equipo de TI si la excepción y la aplicación son legítimas antes de actuar.",
+        "Si es malicioso, aísle el endpoint de la red y preserve el binario, el hash y la exportación de la clave del registro como evidencia.",
+        "Elimine el valor de AuthorizedApplications\\List, detenga el proceso, retire el binario y cualquier persistencia asociada.",
+        "Bloquee el hash y los destinos de red identificados, busque el mismo indicador en otros hosts y restaure la configuración del firewall por GPO."
+      ],
+      "severity_rationale": "Nivel medio: la modificación debilita el firewall y es típica de malware, pero algunas aplicaciones legítimas antiguas también usan este mecanismo."
+    },
+    "en": {
+      "summary": "A process wrote a value to the Windows Firewall policy AuthorizedApplications\\List with ':Enabled:', granting an executable network access that bypasses firewall restrictions.",
+      "what_it_detects": "registry_set events where TargetObject contains '\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\' and '\\AuthorizedApplications\\List', and Details contains ':Enabled:'. This is the creation or re-enabling of a legacy per-application exception in the 'path:*:Enabled:name' format.",
+      "why_it_matters": "Malware adds its own binary to this list so it can accept inbound connections or reach its C2 without being blocked. The rule maps to defense impairment (ATT&CK T1686.003): weakening host security controls.",
+      "triage_steps": [
+        "Read Details to get the authorized executable path and friendly name; distrust paths in AppData, Temp, ProgramData or Public and names mimicking system processes.",
+        "Review Image (the writing process) plus its ParentImage, CommandLine and user; reg.exe, scripts or unsigned binaries are more suspicious than a known installer.",
+        "Identify the profile in TargetObject (DomainProfile, StandardProfile, PublicProfile) and whether several profiles were changed together.",
+        "Get the hash and signature of the authorized executable and check them against threat intelligence.",
+        "Look for network activity from the authorized executable, especially listening ports or unusual external destinations, in the hours after the event.",
+        "Correlate on the same host +/- 15 minutes: binary creation, persistence (Run keys, services, scheduled tasks) and other SharedAccess changes.",
+        "Check earlier alerts for the same host, user or hash, and whether the change matches a documented software deployment or GPO."
+      ],
+      "false_positives": [
+        "Installers of older applications (games, P2P clients, remote support tools) that use the legacy firewall API to authorize themselves.",
+        "Software deployment tools or admin scripts that configure firewall exceptions.",
+        "Group Policy adding authorized applications on domain machines."
+      ],
+      "response_steps": [
+        "Confirm with the machine owner or IT whether the exception and application are legitimate before acting.",
+        "If malicious, isolate the endpoint and preserve the binary, its hash and an export of the registry key as evidence.",
+        "Remove the AuthorizedApplications\\List value, stop the process, delete the binary and any related persistence.",
+        "Block the hash and identified network destinations, hunt for the indicator on other hosts and restore firewall settings via GPO."
+      ],
+      "severity_rationale": "Medium: the change weakens the firewall and is typical of malware, but some legitimate legacy applications use the same mechanism."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in AppData authorizes itself in the StandardProfile legacy firewall list",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Roaming\\svchost32.exe",
+          "ProcessId": 4812,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\StandardProfile\\AuthorizedApplications\\List\\C:\\Users\\jperez\\AppData\\Roaming\\svchost32.exe",
+          "Details": "C:\\Users\\jperez\\AppData\\Roaming\\svchost32.exe:*:Enabled:Windows Update Helper"
+        }
+      },
+      {
+        "description": "reg.exe adds an exception in the DomainProfile list",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\DomainProfile\\AuthorizedApplications\\List\\C:\\ProgramData\\cache\\qhost.exe",
+          "Details": "C:\\ProgramData\\cache\\qhost.exe:*:Enabled:qhost"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same key but the exception is being disabled, so ':Enabled:' is absent",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1324,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\StandardProfile\\AuthorizedApplications\\List\\C:\\Program Files\\LegacyApp\\legacy.exe",
+          "Details": "C:\\Program Files\\LegacyApp\\legacy.exe:*:Disabled:Legacy App"
+        }
+      },
+      {
+        "description": "Modern firewall rule written under FirewallRules, not AuthorizedApplications\\List",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1324,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules\\{3F2A1B7C-0000-4000-8000-000000000001}",
+          "Details": "v2.30|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=443|App=C:\\Program Files\\ExampleApp\\app.exe|Name=ExampleApp|"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

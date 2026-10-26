@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "9acf45ed-3a26-4062-bf08-56857613eb52",
+    "title": "New File Exclusion Added To Time Machine Via Tmutil - MacOS",
+    "level": "medium",
+    "status": "test",
+    "author": "Pratinav Chandra",
+    "path": "macos/process_creation/proc_creation_macos_tmutil_exclude_file_from_backup.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_tmutil_exclude_file_from_backup.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1490"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutó tmutil con el verbo addexclusion, por lo que Time Machine dejará de respaldar un archivo o ruta de este Mac. Puede ser un ajuste legítimo o un intento de dejar datos o herramientas fuera de los respaldos.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde Image termina en /tmutil o CommandLine contiene 'tmutil', y además CommandLine contiene 'addexclusion'. Incluye exclusiones persistentes (sticky) y de ruta fija (-p, que requiere root).",
+      "why_it_matters": "Excluir rutas de los respaldos reduce la capacidad de recuperación. Un atacante puede hacerlo antes de un ransomware o de un sabotaje, o para ocultar sus carpetas de trabajo (MITRE ATT&CK T1490, Inhibit System Recovery).",
+      "triage_steps": [
+        "Revise el CommandLine completo: qué rutas se excluyeron y si se usó -p. Documentos de usuario, volúmenes o carpetas home son más sospechosos que cachés o imágenes de VM.",
+        "Identifique al usuario, el uso de sudo y el proceso padre (ParentImage): Terminal interactiva, script, agente MDM o binario desconocido.",
+        "En el mismo host, +/- 15 minutos, busque otros comandos tmutil (disable, delete, deletelocalsnapshots, stopbackup), además de csrutil, diskutil o modificaciones masivas de archivos.",
+        "Ejecute 'tmutil isexcluded <ruta>' y revise las exclusiones vigentes para medir el alcance y detectar otras exclusiones agregadas fuera de la alerta.",
+        "Busque alertas previas del mismo host y usuario, y el mismo CommandLine en otros Mac. Si el patrón se repite en toda la flota, apunta a MDM o a un script de despliegue.",
+        "Confirme con el responsable del equipo o con TI si el cambio estaba planificado (ticket de cambio, perfil MDM, política de respaldo)."
+      ],
+      "false_positives": [
+        "Administradores o usuarios que excluyen datos grandes o temporales, como imágenes de VM, cachés de compilación, datos de Docker o descargas.",
+        "Scripts de MDM o de gestión de configuración que aplican exclusiones en toda la flota.",
+        "Herramientas de desarrollo o aplicaciones que excluyen sus propias carpetas de caché mediante tmutil."
+      ],
+      "response_steps": [
+        "Si no está autorizado, preserve la evidencia y luego elimine la exclusión con 'tmutil removeexclusion' (agregue -p si se usó).",
+        "Aísle el endpoint si aparece otra actividad de inhibición de recuperación o de cifrado, y verifique que los respaldos recientes estén íntegros.",
+        "Analice el proceso padre y los scripts o binarios relacionados. Restablezca las credenciales de la cuenta si está comprometida.",
+        "Documente las exclusiones autorizadas y ajuste la regla para los scripts MDM conocidos según el proceso padre o el CommandLine exacto."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estas exclusiones son un ajuste administrativo habitual, pero en un ataque debilitan la recuperación y suelen preceder a un ransomware."
+    },
+    "en": {
+      "summary": "A process ran tmutil with the addexclusion verb, so a file or path on this Mac will no longer be backed up by Time Machine. This may be routine tuning by an admin, or an attempt to keep data or tools out of backups.",
+      "what_it_detects": "macOS process creation events where Image ends with /tmutil or CommandLine contains 'tmutil', and CommandLine contains 'addexclusion'. This covers both sticky exclusions and fixed-path exclusions (-p, which requires root).",
+      "why_it_matters": "Excluding paths from backups removes recovery options. Before ransomware or destructive activity, an attacker can do this so victims cannot restore data, or so their own staging folders stay out of backup copies (MITRE ATT&CK T1490, Inhibit System Recovery).",
+      "triage_steps": [
+        "Read the full CommandLine: which paths were excluded, and was -p used? User documents, whole volumes or home folders are more suspicious than caches or VM images.",
+        "Check who ran it: the user, sudo use, and the parent process (ParentImage). An interactive Terminal session differs from a script, an MDM agent or an unknown binary.",
+        "Look on the same host +/- 15 minutes for other tmutil activity (disable, delete, deletelocalsnapshots, stopbackup) and for csrutil, diskutil or mass file changes.",
+        "Run 'tmutil isexcluded <path>' and review the current exclusion list to see the scope and whether more exclusions were added outside the alert.",
+        "Look for earlier alerts for the same host and user, and for the same command line on other Macs. A fleet-wide pattern points to MDM or a deployment script.",
+        "Confirm with the asset owner or IT whether the change was planned (change ticket, MDM profile, backup policy)."
+      ],
+      "false_positives": [
+        "Administrators or users excluding large or temporary data such as VM images, build caches, Docker data or downloads.",
+        "MDM, configuration-management or backup-optimization scripts that set exclusions across the fleet.",
+        "Developer tools or applications that exclude their own cache folders using tmutil."
+      ],
+      "response_steps": [
+        "If not authorized, remove the exclusion with 'tmutil removeexclusion' (add -p if it was used) after you save evidence.",
+        "Isolate the host if other recovery-inhibition or encryption activity shows up, and confirm that recent backups are intact.",
+        "Investigate the parent process and any dropped scripts or binaries. Reset credentials of the account that ran the command if it was compromised.",
+        "Document authorized exclusions and tune the rule for known MDM scripts by parent process or exact command line."
+      ],
+      "severity_rationale": "Medium fits because exclusions are common admin tuning, but in an attack they directly weaken recovery and often come before ransomware."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Fixed-path exclusion of a user's Documents folder via sudo from a shell script",
+        "event": {
+          "Image": "/usr/bin/tmutil",
+          "CommandLine": "tmutil addexclusion -p /Users/jperez/Documents",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /tmp/.cfg/run.sh",
+          "User": "root",
+          "ProcessId": 4821,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "Sticky exclusion run through zsh with the full tmutil path",
+        "event": {
+          "Image": "/bin/zsh",
+          "CommandLine": "zsh -c /usr/bin/tmutil addexclusion /Volumes/Data/Projects",
+          "ParentImage": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+          "User": "jperez",
+          "ProcessId": 5102,
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin checks whether a path is excluded (no addexclusion verb)",
+        "event": {
+          "Image": "/usr/bin/tmutil",
+          "CommandLine": "tmutil isexcluded /Users/jperez/Documents",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 5230,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "Removing an existing exclusion, which does not contain 'addexclusion'",
+        "event": {
+          "Image": "/usr/bin/tmutil",
+          "CommandLine": "tmutil removeexclusion -p /Users/jperez/Documents",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 5311,
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

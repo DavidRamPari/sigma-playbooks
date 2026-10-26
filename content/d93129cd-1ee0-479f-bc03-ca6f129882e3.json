@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "d93129cd-1ee0-479f-bc03-ca6f129882e3",
+    "title": "Powershell Detect Virtualization Environment",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113, Duc.Le-GTSC",
+    "path": "windows/powershell/powershell_script/posh_ps_detect_vm_env.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_detect_vm_env.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1497.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell consultó WMI (Get-WmiObject o gwmi) sobre la clase MSAcpi_ThermalZoneTemperature o Win32_ComputerSystem. Esto puede indicar que el código intenta detectar si corre en una máquina virtual o sandbox.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging cuyo ScriptBlockText contiene Get-WmiObject o gwmi y también MSAcpi_ThermalZoneTemperature o Win32_ComputerSystem, consultas típicas para identificar fabricante, modelo o sensores térmicos ausentes en VMs.",
+      "why_it_matters": "El malware suele revisar el entorno antes de actuar y se detiene si detecta virtualización o análisis (ATT&CK T1497.001, System Checks). Esa evasión retrasa la detección en sandbox y puede preceder a la descarga o ejecución del payload real.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo; si MessageTotal es mayor a 1, reconstruya el script uniendo los fragmentos con el mismo ScriptBlockId.",
+        "Revise si el script compara Manufacturer o Model con cadenas como VMware, VirtualBox o QEMU, o si sale (exit) cuando la consulta térmica no devuelve datos.",
+        "Identifique el origen: campo Path del 4104, y en Sysmon 1 o 4688 el proceso powershell.exe, su CommandLine y ParentImage (Office, wscript, mshta son sospechosos).",
+        "Revise el mismo host +/- 15 minutos: conexiones de red, archivos nuevos, tareas programadas, claves Run y otros bloques 4104.",
+        "Pivote por el usuario: confirme si es administrador o cuenta de servicio y si ejecutó scripts similares en otros equipos.",
+        "Calcule el hash del script en Path y compárelo con inventario de scripts aprobados e inteligencia interna.",
+        "Busque alertas previas del mismo host o usuario, sobre todo de ofuscación, descarga o ejecución de PowerShell codificado."
+      ],
+      "false_positives": [
+        "Scripts de inventario de hardware o CMDB que leen fabricante y modelo mediante Win32_ComputerSystem.",
+        "Herramientas de gestión (SCCM, Intune, RMM) o agentes de monitoreo que consultan temperatura o datos del equipo.",
+        "Administradores que diagnostican hardware manualmente o instaladores que verifican si corren en una VM por licenciamiento."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del script o del equipo si la ejecución es legítima y documentada antes de actuar.",
+        "Si hay lógica de evasión u otra actividad sospechosa, aísle el endpoint desde el EDR y preserve evidencia: script, logs 4103/4104 y memoria si es posible.",
+        "Elimine la persistencia y los archivos relacionados ya confirmados, bloquee hashes y dominios/IP observados y restablezca credenciales del usuario afectado.",
+        "Si es benigno, cree una exclusión acotada por Path, hash o firma del script, nunca por la clase WMI sola."
+      ],
+      "severity_rationale": "Nivel medio porque estas consultas WMI son comunes en administración legítima, pero dentro de un script desconocido suelen indicar evasión de sandbox previa a actividad maliciosa."
+    },
+    "en": {
+      "summary": "A PowerShell script queried WMI (Get-WmiObject or gwmi) for MSAcpi_ThermalZoneTemperature or Win32_ComputerSystem. This may mean the code is checking whether it runs in a virtual machine or sandbox.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains Get-WmiObject or gwmi together with MSAcpi_ThermalZoneTemperature or Win32_ComputerSystem, queries commonly used to read manufacturer, model or thermal sensors missing on VMs.",
+      "why_it_matters": "Malware often checks its environment and stops if it detects virtualization or analysis (ATT&CK T1497.001, System Checks). This evasion defeats sandbox analysis and often comes right before the real payload is downloaded or executed.",
+      "triage_steps": [
+        "Read the full ScriptBlockText; if MessageTotal is greater than 1, rebuild the script by joining fragments with the same ScriptBlockId.",
+        "Check whether the script compares Manufacturer or Model with strings like VMware, VirtualBox or QEMU, or exits when the thermal query returns nothing.",
+        "Identify the origin: the 4104 Path field, and in Sysmon 1 or 4688 the powershell.exe CommandLine and ParentImage (Office, wscript, mshta are suspicious).",
+        "Review the same host within +/- 15 minutes: network connections, new files, scheduled tasks, Run keys and other 4104 blocks.",
+        "Pivot on the user: is it an admin or service account, and did it run similar scripts on other hosts?",
+        "Hash the script at Path and compare it with the approved script inventory and internal intelligence.",
+        "Look for earlier alerts for the same host or user, especially obfuscation, downloads or encoded PowerShell execution."
+      ],
+      "false_positives": [
+        "Hardware inventory or CMDB scripts reading manufacturer and model via Win32_ComputerSystem.",
+        "Management tools (SCCM, Intune, RMM) or monitoring agents querying temperature or system data.",
+        "Admins troubleshooting hardware manually, or installers checking for a VM for licensing reasons."
+      ],
+      "response_steps": [
+        "Confirm with the script or host owner whether the execution is legitimate and documented before acting.",
+        "If evasion logic or other suspicious activity is present, isolate the endpoint via EDR and preserve evidence: script, 4103/4104 logs and memory if possible.",
+        "Remove confirmed persistence and related files, block observed hashes and domains/IPs, and reset the affected user's credentials.",
+        "If benign, add a narrow exclusion by script Path, hash or signer, never by WMI class alone."
+      ],
+      "severity_rationale": "Medium because these WMI queries are common in legitimate administration, yet inside an unknown script they usually signal sandbox evasion preceding malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic-style thermal zone check that exits when no sensor data is returned (typical VM detection).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "7c1e2a4b-3f5d-4e8a-9b21-0d6f4c2e9a11",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$t = Get-WmiObject -Namespace root/wmi -Class MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue; if (-not $t) { exit }"
+        }
+      },
+      {
+        "description": "gwmi alias reading Win32_ComputerSystem manufacturer and aborting on known hypervisor vendors.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "b3d9f0e2-6a7c-4b15-8e44-2c9a1f7d5e30",
+          "Path": "",
+          "ScriptBlockText": "$cs = gwmi Win32_ComputerSystem; if ($cs.Manufacturer -match 'VMware|innotek|QEMU' -or $cs.Model -match 'Virtual') { exit }"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Inventory query via Get-CimInstance; no Get-WmiObject or gwmi present, so selection_action fails.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-MGMT-01.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "e5a2c7d1-9b3f-4a60-8c12-7f4e0b6d2a98",
+          "Path": "C:\\Scripts\\Inventory\\Get-HostInfo.ps1",
+          "ScriptBlockText": "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Name, Manufacturer, Model"
+        }
+      },
+      {
+        "description": "Get-WmiObject used for a different class (Win32_OperatingSystem), so selection_module fails.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "1f8b3e6a-2d4c-4f97-a0b5-3c7e9d1a6f42",
+          "Path": "C:\\Scripts\\Patch\\Check-Uptime.ps1",
+          "ScriptBlockText": "Get-WmiObject -Class Win32_OperatingSystem | Select-Object Caption, LastBootUpTime"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "833ef470-fa01-4631-a79b-6f291c9ac498",
+    "title": "Add Debugger Entry To Hangs Key For Persistence",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_hangs_debugger_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_hangs_debugger_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor \"Debugger\" bajo la clave Windows Error Reporting\\Hangs del registro. Windows no crea este valor por defecto, y un atacante puede usarlo para ejecutar su propio binario cuando una aplicación se cuelga o falla.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene \\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\Debugger, sea en HKLM o en el hive de un usuario (HKU).",
+      "why_it_matters": "Cuando una aplicación deja de responder, Windows Error Reporting (WER) lanza el programa configurado como depurador. Un atacante puede apuntarlo a su payload y lograr persistencia con ejecución disparada por eventos, sin usar claves Run, que están más vigiladas.",
+      "triage_steps": [
+        "Revise Details para ver la ruta y los argumentos configurados como depurador. Sospeche de rutas en perfiles de usuario, %TEMP%, ProgramData o C:\\Users\\Public, y de scripts o LOLBins.",
+        "Identifique el Image y el User que escribieron el valor. Lo normal sería un instalador firmado o una herramienta de administración, no reg.exe, powershell.exe ni un binario desconocido.",
+        "Reconstruya el árbol de procesos (proceso padre e hijos) del proceso que escribió el valor y revise su CommandLine.",
+        "Obtenga el hash del binario indicado en Details, consulte su firma y su reputación, y busque el mismo hash en otros endpoints.",
+        "Busque en el mismo host, con +/- 15 minutos de margen, otros cambios de registro relacionados (ReflectDebugger, AeDebug, IFEO, claves Run), servicios o tareas programadas nuevas.",
+        "Revise si WER ya lanzó el depurador: busque procesos creados por WerFault.exe con el binario configurado y conexiones de red posteriores.",
+        "Consulte alertas anteriores del mismo host y del mismo usuario, y verifique con el equipo de TI si existe un cambio autorizado."
+      ],
+      "false_positives": [
+        "Algún administrador o desarrollador que configura a propósito un depurador para analizar cuelgues de aplicaciones, lo cual es poco común.",
+        "Herramientas de diagnóstico o depuración de terceros que registran su propio depurador en WER durante la instalación."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo si el cambio estaba autorizado. Si no lo estaba, trate el host como comprometido.",
+        "Aísle el endpoint desde el EDR mientras investiga, sobre todo si el depurador ya se ejecutó o generó tráfico de red.",
+        "Respalde el valor y el binario para el análisis forense, y después elimine el valor Debugger y el archivo malicioso.",
+        "Busque el mismo TargetObject en toda la flota, elimine los demás mecanismos de persistencia que encuentre, restablezca las credenciales afectadas y vigile el host."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque Windows no establece este valor por defecto y casi nadie lo usa de forma legítima, mientras que su abuso permite ejecutar código de forma persistente."
+    },
+    "en": {
+      "summary": "A process wrote the \"Debugger\" value under the Windows Error Reporting\\Hangs registry key. Windows does not create this value by default, and an attacker can use it to run their own binary when an application hangs or crashes.",
+      "what_it_detects": "registry_set events where TargetObject contains \\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\Debugger, in either HKLM or a user hive (HKU).",
+      "why_it_matters": "When an application stops responding, Windows Error Reporting (WER) launches the program configured as the debugger. An attacker can point it to a payload and get event-triggered persistence without touching the more closely watched Run keys.",
+      "triage_steps": [
+        "Check Details for the path and arguments set as the debugger. Be suspicious of paths in user profiles, %TEMP%, ProgramData or C:\\Users\\Public, and of scripts or LOLBins.",
+        "Identify the Image and User that wrote the value. You would expect a signed installer or an admin tool, not reg.exe, powershell.exe or an unknown binary.",
+        "Rebuild the process tree (parent and children) of the writing process and review its CommandLine.",
+        "Hash the binary named in Details, check its signature and reputation, and search for the same hash on other endpoints.",
+        "On the same host, within +/- 15 minutes, look for related registry changes (ReflectDebugger, AeDebug, IFEO, Run keys) and new services or scheduled tasks.",
+        "Check whether WER has already launched the debugger: look for processes started by WerFault.exe with that binary and for network connections after that.",
+        "Review earlier alerts for the same host and user, and ask IT whether an approved change exists."
+      ],
+      "false_positives": [
+        "An administrator or developer who sets a debugger on purpose to analyze application hangs, which is uncommon.",
+        "Third-party diagnostic or debugging tools that register their own debugger with WER during installation."
+      ],
+      "response_steps": [
+        "Ask the system owner whether the change was approved. If it was not, treat the host as compromised.",
+        "Isolate the endpoint through EDR while you investigate, especially if the debugger has already run or made network connections.",
+        "Back up the value and the binary for forensics, then delete the Debugger value and the malicious file.",
+        "Search the whole fleet for the same TargetObject, remove any other persistence you find, reset affected credentials and monitor the host."
+      ],
+      "severity_rationale": "High fits because Windows does not set this value by default and almost nobody uses it legitimately, while abusing it gives persistent code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe run from PowerShell sets the WER Hangs Debugger value in HKLM to a binary in C:\\Users\\Public",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 10:22:31.512",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\Debugger",
+          "Details": "C:\\Users\\Public\\wersvc.exe -p %ld"
+        }
+      },
+      {
+        "description": "Unsigned binary sets the Hangs Debugger value in a user hive",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 11:05:09.004",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\updater.exe",
+          "User": "ANDES\\mrojas",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\Hangs\\Debugger",
+          "Details": "C:\\Users\\mrojas\\AppData\\Roaming\\helper.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy sets the legitimate WER DontShowUI value, which is not under the Hangs\\Debugger path",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 09:00:02.118",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\DontShowUI",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "Visual Studio installer registers its JIT debugger under AeDebug, which is a different key from WER Hangs",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-05-14 13:41:57.630",
+          "Computer": "DEV-0031.andes.example.com",
+          "Image": "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\setup.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug\\Debugger",
+          "Details": "\"C:\\WINDOWS\\system32\\vsjitdebugger.exe\" -p %ld -e %ld"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

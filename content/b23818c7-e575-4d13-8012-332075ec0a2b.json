@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "b23818c7-e575-4d13-8012-332075ec0a2b",
+    "title": "Register New IFiltre For Persistence",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_ifilter.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_ifilter.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso fuera de System32 o Program Files registró un PersistentHandler o IFilter de Windows Search que no pertenece a la lista de handlers predeterminados. Puede ser una instalación legítima o una DLL maliciosa registrada para persistencia.",
+      "what_it_detects": "Escrituras de registro (registry_set) en HKLM\\SOFTWARE\\Classes\\.<extensión>\\PersistentHandler o en SOFTWARE\\Classes\\CLSID\\{...}\\PersistentAddinsRegistered\\{89BCB740-6119-101A-BCB7-00DD010655AF}. Se excluyen los CLSID de handlers conocidos de Windows y Office, y los procesos (Image) ubicados en C:\\Windows\\System32\\ o Program Files.",
+      "why_it_matters": "Windows Search carga los IFilters como componentes COM al indexar archivos. Un atacante puede registrar una DLL propia como filtro para que el servicio de indexación la ejecute cada vez que procese archivos con esa extensión. Así logra persistencia sigilosa (táctica de persistencia de ATT&CK).",
+      "triage_steps": [
+        "Revisa TargetObject y Details: identifica la extensión afectada y el CLSID asignado como PersistentHandler o IFilter.",
+        "Resuelve ese CLSID en HKLM\\SOFTWARE\\Classes\\CLSID\\{CLSID}\\InprocServer32 y anota la ruta de la DLL registrada.",
+        "Obtén el hash, la firma digital y la fecha de creación de la DLL; consulta reputación y busca el mismo hash en otros endpoints.",
+        "Analiza el Image que escribió la clave: ruta, firma, proceso padre, línea de comandos y usuario que lo ejecutó.",
+        "Revisa en el mismo host, +/- 15 minutos, creación de archivos DLL, otras modificaciones de registro y conexiones de red del proceso.",
+        "Comprueba si SearchFilterHost.exe o SearchProtocolHost.exe cargaron la DLL (eventos de image load) después del cambio.",
+        "Busca alertas previas del mismo host o usuario y confirma con TI si hubo una instalación de software autorizada."
+      ],
+      "false_positives": [
+        "Instalación legítima de IFilters de terceros (lectores de PDF, CAD, herramientas de búsqueda) ejecutada desde carpetas temporales o de usuario.",
+        "Instaladores o actualizadores de software que corren desde %TEMP% o ProgramData y registran handlers para formatos propietarios.",
+        "Herramientas de despliegue corporativo que registran filtros mediante scripts fuera de las rutas excluidas."
+      ],
+      "response_steps": [
+        "Verifica con el dueño del equipo y con TI si el software y la DLL son legítimos antes de modificar nada.",
+        "Si es malicioso, aísla el endpoint y conserva la DLL, el ejecutable y un export de las claves de registro como evidencia.",
+        "Elimina el registro del CLSID y del PersistentHandler malicioso y restaura el handler original de la extensión, si existía.",
+        "Elimina la DLL y el ejecutable, reinicia el servicio Windows Search y busca el mismo hash o CLSID en toda la flota.",
+        "Restablece credenciales del usuario implicado si hay indicios de compromiso y monitorea el host para detectar reincidencia."
+      ],
+      "severity_rationale": "Medium es adecuado porque el registro de IFilters es un mecanismo de persistencia real pero poco común, y también lo realizan instaladores legítimos, por lo que requiere verificación."
+    },
+    "en": {
+      "summary": "A process outside System32 or Program Files registered a Windows Search PersistentHandler or IFilter that is not among the known default handlers. It may be a legitimate install or a malicious DLL registered for persistence.",
+      "what_it_detects": "Registry writes (registry_set) to HKLM\\SOFTWARE\\Classes\\.<ext>\\PersistentHandler or SOFTWARE\\Classes\\CLSID\\{...}\\PersistentAddinsRegistered\\{89BCB740-6119-101A-BCB7-00DD010655AF}. Known Windows and Office handler CLSIDs, and writer processes (Image) under C:\\Windows\\System32\\ or Program Files, are excluded.",
+      "why_it_matters": "Windows Search loads IFilters as COM components while indexing files. An attacker can register a custom DLL as a filter so the indexing service runs it whenever it processes files of that extension. This gives stealthy persistence (ATT&CK persistence tactic).",
+      "triage_steps": [
+        "Review TargetObject and Details: identify the affected extension and the CLSID set as PersistentHandler or IFilter.",
+        "Resolve that CLSID under HKLM\\SOFTWARE\\Classes\\CLSID\\{CLSID}\\InprocServer32 and record the registered DLL path.",
+        "Collect the DLL hash, signature and creation time; check reputation and search for the same hash on other endpoints.",
+        "Examine the writing Image: path, signer, parent process, command line and the user who ran it.",
+        "On the same host within +/- 15 minutes, look for DLL file creation, other registry changes and network connections from that process.",
+        "Check whether SearchFilterHost.exe or SearchProtocolHost.exe loaded the DLL (image load events) after the change.",
+        "Look for earlier alerts on the same host or user and confirm with IT whether an authorized software install occurred."
+      ],
+      "false_positives": [
+        "Legitimate third-party IFilter installs (PDF readers, CAD, search tools) running from temp or user folders.",
+        "Installers or updaters running from %TEMP% or ProgramData that register handlers for proprietary formats.",
+        "Enterprise deployment tooling registering filters via scripts outside the excluded paths."
+      ],
+      "response_steps": [
+        "Confirm with the device owner and IT whether the software and DLL are legitimate before changing anything.",
+        "If malicious, isolate the endpoint and preserve the DLL, the executable and an export of the registry keys.",
+        "Remove the malicious CLSID and PersistentHandler entries and restore the extension's original handler if one existed.",
+        "Delete the DLL and executable, restart Windows Search, and hunt for the same hash or CLSID fleet-wide.",
+        "Reset the involved user's credentials if compromise is indicated and monitor the host for recurrence."
+      ],
+      "severity_rationale": "Medium fits because IFilter registration is a real but uncommon persistence mechanism that legitimate installers also perform, so it needs verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user-writable path sets a custom PersistentHandler for a new extension",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\Public\\Libraries\\svcupd.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\.xyzlog\\PersistentHandler\\(Default)",
+          "Details": "{7A3C1E52-9B4D-4F60-8E21-3C5D6A7B8C90}"
+        }
+      },
+      {
+        "description": "Process from ProgramData registers a custom IFilter CLSID under PersistentAddinsRegistered",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\ProgramData\\Indexer\\loader.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{7A3C1E52-9B4D-4F60-8E21-3C5D6A7B8C90}\\PersistentAddinsRegistered\\{89BCB740-6119-101A-BCB7-00DD010655AF}\\(Default)",
+          "Details": "{C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "msiexec in System32 registers a PersistentHandler during an installation; excluded by the Image path filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 3012,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\.dwgx\\PersistentHandler\\(Default)",
+          "Details": "{5B8E2A10-3C4D-4E5F-9A6B-7C8D9E0F1A2B}"
+        }
+      },
+      {
+        "description": "Write to the default PDF Persistent Handler CLSID; excluded by the default-targets filter even though the writer is in a temp folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_reader.exe",
+          "ProcessId": 7744,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{1AA9BF05-9A97-48c1-BA28-D9DCE795E93C}\\PersistentAddinsRegistered\\{89BCB740-6119-101A-BCB7-00DD010655AF}\\(Default)",
+          "Details": "{6C59883F-4E3F-40DD-8D5C-73C8A2A0B6C8}"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

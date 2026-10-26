@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "4096842a-8f9f-4d36-92b4-d0b2a62f9b2a",
+    "title": "Potential PetitPotam Attack Via EFS RPC Calls",
+    "level": "medium",
+    "status": "test",
+    "author": "@neu5ron, @Antonlovesdnb, Mike Remen",
+    "path": "network/zeek/zeek_dce_rpc_potential_petit_potam_efs_rpc_call.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_dce_rpc_potential_petit_potam_efs_rpc_call.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1187",
+      "T1557.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró una llamada DCE/RPC cuyo campo operation comienza con \"efs\", es decir, una función del protocolo Encrypting File System Remote Protocol (MS-EFSRPC). Este patrón se usa en ataques PetitPotam para forzar a un servidor, a menudo un controlador de dominio, a autenticarse ante el atacante.",
+      "what_it_detects": "Cualquier evento del log dce_rpc de Zeek en el que el campo operation comienza con \"efs\" (sin distinguir mayúsculas), por ejemplo EfsRpcOpenFileRaw o EfsRpcEncryptFileSrv, sin importar el pipe (lsarpc, efsrpc, netlogon) ni el endpoint.",
+      "why_it_matters": "PetitPotam abusa de MS-EFSRPC para coaccionar la autenticación NTLM de la cuenta de máquina de la víctima (T1187, Forced Authentication). Esa autenticación puede retransmitirse, por ejemplo hacia AD CS (T1557.001), y permitir comprometer el dominio.",
+      "triage_steps": [
+        "Identifique id.orig_h (quien hizo la llamada) e id.resp_h (servidor coaccionado). Confirme si id.resp_h es un controlador de dominio, un servidor AD CS u otro servidor crítico.",
+        "Revise operation, named_pipe y endpoint. EfsRpcOpenFileRaw o EfsRpcEncryptFileSrv sobre \\pipe\\lsarpc o \\pipe\\efsrpc desde una estación de trabajo resultan muy sospechosos.",
+        "Correlacione los logs ntlm.log, smb_mapping, smb_files y kerberos de ambas IP en +/- 15 minutos. Busque autenticación saliente de la cuenta de máquina de id.resp_h (por ejemplo DC01$).",
+        "Verifique si esa autenticación llegó a id.orig_h o a un tercer host. Revise si luego hubo solicitudes HTTP a /certsrv en servidores AD CS.",
+        "En AD CS, revise los certificados emitidos recientemente a cuentas de máquina de controladores de dominio. En los DC, busque eventos 4624 de red de cuentas de máquina desde IP poco habituales.",
+        "Determine quién es el dueño de id.orig_h, qué procesos generaron tráfico SMB/RPC en ese momento y si existen alertas previas para esa IP o ese usuario."
+      ],
+      "false_positives": [
+        "Tareas administrativas legítimas que usan EFS remoto, como cifrar o descifrar archivos en recursos compartidos o gestionar certificados EFS.",
+        "Software de respaldo, gestión o seguridad que invoca funciones EFSRPC contra servidores de archivos.",
+        "Escáneres de vulnerabilidades o pruebas de penetración autorizadas que comprueban la exposición a PetitPotam."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de id.orig_h si la actividad estaba autorizada. Si no hay justificación, escale como incidente de acceso a credenciales.",
+        "Aísle el host de origen tras la verificación y bloquee su tráfico SMB/RPC y HTTP hacia controladores de dominio y servidores AD CS.",
+        "Revoque los certificados emitidos de forma fraudulenta y, si hubo retransmisión exitosa, restablezca las credenciales de las cuentas de máquina afectadas.",
+        "Aplique las mitigaciones de ADV210003: EPA y HTTPS en AD CS, restricción de NTLM y filtros RPC para la interfaz EFSRPC.",
+        "Documente las excepciones legítimas confirmadas para afinar la regla sin ocultar llamadas desde hosts no autorizados."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque estas llamadas son raras e indican posible coacción de autenticación, pero existen usos legítimos y se requiere correlación para confirmar retransmisión o compromiso."
+    },
+    "en": {
+      "summary": "Zeek logged a DCE/RPC call whose operation starts with \"efs\", meaning a function of the Encrypting File System Remote Protocol (MS-EFSRPC). PetitPotam uses this pattern to force a server, often a domain controller, to authenticate to the attacker.",
+      "what_it_detects": "Any Zeek dce_rpc event whose operation field starts with \"efs\" (case-insensitive), such as EfsRpcOpenFileRaw or EfsRpcEncryptFileSrv, on any pipe (lsarpc, efsrpc, netlogon) or endpoint.",
+      "why_it_matters": "PetitPotam abuses MS-EFSRPC to coerce NTLM authentication from the victim's machine account (T1187, Forced Authentication). That authentication can be relayed, for example to AD CS (T1557.001), and lead to domain compromise.",
+      "triage_steps": [
+        "Identify id.orig_h (caller) and id.resp_h (coerced server). Check whether id.resp_h is a domain controller, an AD CS server or another critical server.",
+        "Review operation, named_pipe and endpoint. EfsRpcOpenFileRaw or EfsRpcEncryptFileSrv over \\pipe\\lsarpc or \\pipe\\efsrpc from a workstation is highly suspicious.",
+        "Correlate ntlm.log, smb_mapping, smb_files and kerberos logs for both IPs within +/- 15 minutes. Look for outbound authentication from the machine account of id.resp_h, such as DC01$.",
+        "Check whether that authentication went to id.orig_h or a third host. Look for follow-up HTTP requests to /certsrv on AD CS servers.",
+        "On AD CS, review certificates recently issued to domain controller machine accounts. On DCs, look for network logon events 4624 by machine accounts from unusual IPs.",
+        "Find the owner of id.orig_h, which processes generated SMB/RPC traffic at that time, and any earlier alerts for that IP or user."
+      ],
+      "false_positives": [
+        "Legitimate admin tasks using remote EFS, such as encrypting or decrypting files on shares or managing EFS certificates.",
+        "Backup, management or security software that calls EFSRPC functions against file servers.",
+        "Authorized vulnerability scanners or penetration tests checking PetitPotam exposure."
+      ],
+      "response_steps": [
+        "Confirm with the owner of id.orig_h whether the activity was authorized. Without justification, escalate as a credential access incident.",
+        "After verification, isolate the source host and block its SMB/RPC and HTTP traffic to domain controllers and AD CS servers.",
+        "Revoke fraudulently issued certificates and, if relay succeeded, reset credentials of affected machine accounts.",
+        "Apply ADV210003 mitigations: EPA and HTTPS on AD CS, NTLM restrictions and RPC filters for the EFSRPC interface.",
+        "Document confirmed legitimate exceptions to tune the rule without hiding calls from unauthorized hosts."
+      ],
+      "severity_rationale": "Medium fits because these calls are rare and suggest authentication coercion, but legitimate uses exist and correlation is needed to confirm relay or compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PetitPotam-style EfsRpcOpenFileRaw call from a workstation to a domain controller over the lsarpc pipe",
+        "event": {
+          "ts": "2024-10-25T14:03:12.481Z",
+          "uid": "CpX3aB1kQ7rT9mVz2e",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49822,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "rtt": 0.000712,
+          "named_pipe": "\\pipe\\lsarpc",
+          "endpoint": "efsrpc",
+          "operation": "EfsRpcOpenFileRaw"
+        }
+      },
+      {
+        "description": "EfsRpcEncryptFileSrv call to a file server over the efsrpc pipe",
+        "event": {
+          "ts": "2024-10-25T14:05:40.102Z",
+          "uid": "C9fLm2Wq8sYd4Hn1oa",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49840,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "rtt": 0.000958,
+          "named_pipe": "\\pipe\\efsrpc",
+          "endpoint": "efsrpc",
+          "operation": "EfsRpcEncryptFileSrv"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal LSA lookup on the same lsarpc pipe; operation does not start with efs",
+        "event": {
+          "ts": "2024-10-25T14:01:03.220Z",
+          "uid": "CzQ8nR4tLp2Xw6Ke1b",
+          "id.orig_h": "192.0.2.60",
+          "id.orig_p": 50112,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "rtt": 0.000431,
+          "named_pipe": "\\pipe\\lsarpc",
+          "endpoint": "lsarpc",
+          "operation": "LsarLookupSids3"
+        }
+      },
+      {
+        "description": "Share enumeration via srvsvc; unrelated RPC operation",
+        "event": {
+          "ts": "2024-10-25T14:02:17.875Z",
+          "uid": "CkV1sD7yHb3Mq9Tf0c",
+          "id.orig_h": "192.0.2.61",
+          "id.orig_p": 50230,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "rtt": 0.000615,
+          "named_pipe": "\\pipe\\srvsvc",
+          "endpoint": "srvsvc",
+          "operation": "NetrShareEnum"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

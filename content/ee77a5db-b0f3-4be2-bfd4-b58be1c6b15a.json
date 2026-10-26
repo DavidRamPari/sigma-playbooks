@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "ee77a5db-b0f3-4be2-bfd4-b58be1c6b15a",
+    "title": "Potential Attachment Manager Settings Attachments Tamper",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_policies_attachments_tamper.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_policies_attachments_tamper.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor de política del Administrador de datos adjuntos que debilita el manejo de archivos descargados: la información de zona deja de guardarse o mostrarse, o los adjuntos ya no se analizan con antivirus.",
+      "what_it_detects": "Escrituras de registro bajo \\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments\\ donde TargetObject termina en HideZoneInfoOnProperties = DWORD 1, SaveZoneInformation = DWORD 2 (desactivado) o ScanWithAntiVirus = DWORD 1 (análisis deshabilitado).",
+      "why_it_matters": "Estos valores controlan Mark-of-the-Web. Desactivarlos permite que payloads descargados o recibidos por correo se ejecuten sin SmartScreen, Vista protegida ni análisis antivirus; es un paso de debilitamiento de defensas previo a la ejecución.",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique el valor modificado y si es HKLM (todo el equipo) o un hive HKU\\<SID>; resuelva el SID al usuario.",
+        "Revise Image y su CommandLine: reg.exe, powershell.exe, un binario sin firma o un script host es sospechoso; svchost.exe aplicando directivas apunta a GPO.",
+        "Recorra el árbol de procesos: ParentImage y abuelo, sobre todo Office, navegadores, mshta, wscript o archivos en carpetas escribibles por el usuario.",
+        "Verifique control de cambios y GPO (gpresult /h) para confirmar si existe una política Attachments autorizada en ese equipo u OU.",
+        "En el mismo host +/- 15 minutos, busque descargas, extracción de archivos comprimidos y ejecución desde Downloads, Temp o la caché de Outlook.",
+        "Busque otra manipulación de defensas: exclusiones de Defender, cambios en SmartScreen o UAC, y alertas previas del mismo host y usuario.",
+        "Consulte en toda la flota el mismo par TargetObject/Details para detectar propagación por script."
+      ],
+      "false_positives": [
+        "La regla los considera poco probables; posible causa: una GPO o script de configuración de un administrador que cambia intencionalmente la política del Administrador de datos adjuntos.",
+        "Imágenes de kiosco, laboratorio o empaquetado de aplicaciones donde se deshabilitó deliberadamente la información de zona."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del activo o el administrador de GPO que el cambio no está autorizado antes de actuar.",
+        "Si es malicioso, aísle el endpoint y preserve el binario que escribió el valor, su hash y el árbol de procesos.",
+        "Restaure los valores (elimínelos o fije SaveZoneInformation=1, ScanWithAntiVirus=3) y aplíquelos por GPO.",
+        "Analice los archivos descargados desde el cambio y busque sus hashes en todo el entorno.",
+        "Restablezca credenciales del usuario afectado si se ejecutó un payload y documente los hallazgos."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque los cambios legítimos son raros y desactivar Mark-of-the-Web o el análisis de adjuntos elimina protecciones directas contra malware entregado."
+    },
+    "en": {
+      "summary": "A process wrote an Attachment Manager policy value that weakens how Windows handles downloaded files: zone information is no longer saved or shown, or attachments are no longer scanned by antivirus.",
+      "what_it_detects": "Registry writes under \\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments\\ where TargetObject ends with HideZoneInfoOnProperties = DWORD 1, SaveZoneInformation = DWORD 2 (off) or ScanWithAntiVirus = DWORD 1 (scanning disabled).",
+      "why_it_matters": "These settings drive Mark-of-the-Web. Turning them off lets downloaded or emailed payloads run without SmartScreen, Protected View or AV attachment checks, a defense-impairment step often taken before payload execution.",
+      "triage_steps": [
+        "Read TargetObject and Details: identify which value changed and whether it is HKLM (machine-wide) or an HKU\\<SID> hive; resolve the SID to a user.",
+        "Review Image and its CommandLine: reg.exe, powershell.exe, an unsigned binary or a script host is suspicious; svchost.exe applying Group Policy points to GPO.",
+        "Walk the process tree: ParentImage and grandparent, especially Office, browsers, mshta, wscript or files in user-writable folders.",
+        "Check change management and GPOs (gpresult /h) for a sanctioned Attachments policy on this host or OU.",
+        "On the same host +/- 15 minutes, look for downloads, archive extraction and execution from Downloads, Temp or Outlook cache folders.",
+        "Search for other defense tampering on the host: Defender exclusions, SmartScreen or UAC changes, and earlier alerts for the same host and user.",
+        "Query the fleet for the same TargetObject/Details pair to spot scripted spread."
+      ],
+      "false_positives": [
+        "Rule lists them as unlikely; possible cause is an administrator GPO or configuration script intentionally changing Attachment Manager policy.",
+        "Kiosk, lab or application-packaging images where zone information was deliberately disabled."
+      ],
+      "response_steps": [
+        "Confirm the change is unsanctioned with the asset owner or GPO admin before acting.",
+        "If malicious, isolate the endpoint and preserve the writing binary, its hash and the process tree.",
+        "Restore the values (delete them or set SaveZoneInformation=1, ScanWithAntiVirus=3) and enforce via GPO.",
+        "Scan files downloaded since the change; hunt their hashes across the environment.",
+        "Reset credentials of the affected user if a payload ran, and document findings."
+      ],
+      "severity_rationale": "High fits because legitimate changes are rare and disabling Mark-of-the-Web or attachment scanning directly removes protections against delivered malware."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe launched from PowerShell disables zone information saving in the user hive (SaveZoneInformation = 2).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments\\SaveZoneInformation",
+          "Details": "DWORD (0x00000002)"
+        }
+      },
+      {
+        "description": "Unsigned binary in AppData disables antivirus scanning of attachments machine-wide (ScanWithAntiVirus = 1).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "Image": "C:\\Users\\mlopez\\AppData\\Local\\Temp\\upd4721.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments\\ScanWithAntiVirus",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy sets SaveZoneInformation to 1 (zone information preserved), which is not the Off value.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments\\SaveZoneInformation",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "HideZoneInfoOnProperties set to 0, which keeps zone information visible.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0310.andes.example.com",
+          "User": "ANDES\\admin.gruiz",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments\\HideZoneInfoOnProperties",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

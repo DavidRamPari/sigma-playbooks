@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "83c17918-746e-4bd9-920b-8e098bf88c23",
+    "title": "Azure Network Firewall Policy Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_network_firewall_policy_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_network_firewall_policy_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó, asoció, actualizó con certificados o eliminó una Azure Firewall Policy. El cambio puede ser administración legítima o un intento de debilitar los controles de red.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es MICROSOFT.NETWORK/FIREWALLPOLICIES/WRITE, JOIN/ACTION, CERTIFICATES/ACTION o DELETE, es decir, escritura, asociación, gestión de certificados o borrado de una Firewall Policy.",
+      "why_it_matters": "La Firewall Policy define qué tráfico permite o bloquea Azure Firewall. Si alguien la modifica o la elimina, puede abrir rutas de salida para exfiltración, desactivar la inspección TLS o dejar de filtrar tráfico. Corresponde a impacto y debilitamiento de defensas (ATT&CK T1686.001, según la etiqueta de la regla).",
+      "triage_steps": [
+        "Identifique operationName, resourceId (nombre de la política y grupo de recursos), estado y hora del evento. Distinga si fue DELETE, WRITE, JOIN o CERTIFICATES.",
+        "Revise caller, callerIpAddress y user agent: confirme si la identidad es un administrador de red, un service principal de IaC o una cuenta desconocida.",
+        "Compare con tickets de cambio, pipelines de Terraform, Bicep o ARM y ventanas de mantenimiento aprobadas.",
+        "Para WRITE, examine el cambio en el historial de la política o en Change Analysis: reglas allow any, nuevas IP o FQDN de destino, inspección TLS o IDPS desactivados.",
+        "Pivote sobre el mismo caller en +/- 15 minutos: cambios de RBAC, NSG, route tables, diagnostic settings o borrado de Log Analytics.",
+        "Revise los sign-in logs de Entra ID del caller: IP, ubicación, MFA, riesgo de inicio de sesión y alertas anteriores para la misma identidad."
+      ],
+      "false_positives": [
+        "Administradores de red o de seguridad que actualizan reglas durante cambios aprobados.",
+        "Despliegues automatizados de IaC (Terraform, Bicep, ARM, Azure DevOps) que reescriben la política con cada ejecución.",
+        "Renovación o rotación de certificados para inspección TLS que genera CERTIFICATES/ACTION.",
+        "Desmantelamiento planificado de entornos de prueba que elimina políticas."
+      ],
+      "response_steps": [
+        "Confirme con el propietario del recurso o el responsable del cambio si la operación fue autorizada.",
+        "Si no fue autorizada, restaure la política desde IaC o desde una versión exportada y vuelva a asociarla al firewall o al Firewall Manager.",
+        "Contenga la identidad: revoque sesiones, restablezca credenciales o secretos del service principal y retire roles excesivos tras verificar.",
+        "Busque tráfico saliente anómalo en los logs de Azure Firewall durante el periodo en que la política estuvo debilitada.",
+        "Restrinja quién puede escribir o eliminar políticas mediante RBAC, PIM y resource locks; documente excepciones conocidas para la regla."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estos cambios suelen ser administración rutinaria, pero un cambio no autorizado puede dejar sin protección el perímetro de red en la nube."
+    },
+    "en": {
+      "summary": "An Azure Firewall Policy was written, joined, updated with certificates or deleted. This may be legitimate administration or an attempt to weaken network controls.",
+      "what_it_detects": "Azure Activity Log events whose operationName is MICROSOFT.NETWORK/FIREWALLPOLICIES/WRITE, JOIN/ACTION, CERTIFICATES/ACTION or DELETE, meaning a Firewall Policy was created or changed, associated, given certificates, or removed.",
+      "why_it_matters": "The Firewall Policy decides what traffic Azure Firewall allows or blocks. Changing or deleting it can open egress paths for exfiltration, disable TLS inspection or stop filtering altogether. This is impact and defense impairment (ATT&CK T1686.001, as tagged by the rule).",
+      "triage_steps": [
+        "Note operationName, resourceId (policy name and resource group), status and time. Distinguish DELETE, WRITE, JOIN and CERTIFICATES operations.",
+        "Check caller, callerIpAddress and user agent: is this a network admin, an IaC service principal or an unfamiliar identity?",
+        "Match the event against change tickets, Terraform, Bicep or ARM pipeline runs and approved maintenance windows.",
+        "For WRITE, review the actual diff in policy history or Change Analysis: allow-any rules, new destinations, TLS inspection or IDPS disabled.",
+        "Pivot on the same caller within +/- 15 minutes: RBAC, NSG, route table, diagnostic setting changes or Log Analytics deletions.",
+        "Review the caller's Entra ID sign-in logs: source IP, location, MFA, sign-in risk and earlier alerts for that identity."
+      ],
+      "false_positives": [
+        "Network or security admins updating rules during approved changes.",
+        "Automated IaC deployments (Terraform, Bicep, ARM, Azure DevOps) that rewrite the policy on every run.",
+        "Certificate renewal or rotation for TLS inspection producing CERTIFICATES/ACTION events.",
+        "Planned teardown of test environments deleting policies."
+      ],
+      "response_steps": [
+        "Confirm with the resource owner or change requester whether the operation was authorized.",
+        "If unauthorized, restore the policy from IaC or an exported version and re-associate it with the firewall or Firewall Manager.",
+        "Contain the identity: revoke sessions, reset credentials or service principal secrets, and remove excess roles after verification.",
+        "Hunt Azure Firewall logs for anomalous outbound traffic during the window the policy was weakened.",
+        "Restrict write and delete rights with RBAC, PIM and resource locks; document known exceptions for this rule."
+      ],
+      "severity_rationale": "Medium fits because these changes are often routine administration, yet an unauthorized change can leave the cloud network perimeter unprotected."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user deletes a Firewall Policy from an external IP",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/FIREWALLPOLICIES/DELETE",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/firewallPolicies/fwpol-hub-prod",
+          "ResourceGroup": "rg-network-prod",
+          "activityStatusValue": "Succeeded",
+          "userAgent": "python-requests/2.31.0"
+        }
+      },
+      {
+        "description": "Firewall Policy rewritten via the portal",
+        "event": {
+          "operationName": "Microsoft.Network/firewallPolicies/write",
+          "category": "Administrative",
+          "caller": "mgomez@example.com",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/firewallPolicies/fwpol-hub-prod",
+          "ResourceGroup": "rg-network-prod",
+          "activityStatusValue": "Succeeded"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only access to a Firewall Policy, not in the operation list",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/FIREWALLPOLICIES/READ",
+          "category": "Administrative",
+          "caller": "auditor@example.com",
+          "callerIpAddress": "192.0.2.15",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/firewallPolicies/fwpol-hub-prod",
+          "activityStatusValue": "Succeeded"
+        }
+      },
+      {
+        "description": "Write to the Azure Firewall resource itself, not to a Firewall Policy",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/AZUREFIREWALLS/WRITE",
+          "category": "Administrative",
+          "caller": "netadmin@example.com",
+          "callerIpAddress": "192.0.2.30",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network-prod/providers/Microsoft.Network/azureFirewalls/fw-hub-prod",
+          "activityStatusValue": "Succeeded"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "c172b7b5-f3a1-4af2-90b7-822c63df86cb",
+    "title": "Mask System Power Settings Via Systemctl",
+    "level": "high",
+    "status": "experimental",
+    "author": "Milad Cheraghi, Nasreddine Bencherchali",
+    "path": "linux/process_creation/proc_creation_lnx_systemctl_mask_power_settings.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_systemctl_mask_power_settings.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1653"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó systemctl mask sobre objetivos de energía de systemd (suspend, hibernate o hybrid-sleep), lo que impide que el equipo entre en suspensión o hibernación. Puede ser un ajuste administrativo o un intento de mantener activos procesos maliciosos.",
+      "what_it_detects": "Procesos cuyo Image termina en /systemctl y cuyo CommandLine contiene ' mask' junto con suspend.target, hibernate.target o hybrid-sleep.target. Enmascarar una unidad la enlaza a /dev/null y bloquea su inicio, incluso manual.",
+      "why_it_matters": "Corresponde a ATT&CK T1653 (Power Settings): un atacante modifica la configuración de energía para que el sistema no se suspenda y sus implantes, mineros o sesiones remotas sigan activos sin interrupción.",
+      "triage_steps": [
+        "Revise CommandLine completo: qué objetivos se enmascaran, si incluye --runtime o --now y si se combinan con sleep.target u otras unidades.",
+        "Identifique el usuario y si usó sudo; confirme si es un administrador autorizado del host.",
+        "Analice ParentImage y la cadena de procesos: shell interactivo, cron, herramienta de gestión de configuración o un binario desconocido en /tmp o /dev/shm.",
+        "Pivotee en el mismo host +/- 15 minutos: descargas con curl o wget, nuevos servicios o timers, cambios en crontab, claves SSH o procesos con alto consumo de CPU.",
+        "Verifique en /etc/systemd/system/ o /run/systemd/system/ los enlaces a /dev/null de los objetivos afectados y su fecha de creación.",
+        "Busque alertas previas para el mismo host, usuario o IP de origen de la sesión SSH.",
+        "Consulte con el responsable del equipo o el ticket de cambios si existe una solicitud de deshabilitar la suspensión."
+      ],
+      "false_positives": [
+        "Hardening o aprovisionamiento de servidores que deshabilita la suspensión mediante Ansible, Puppet, cloud-init o scripts de imagen.",
+        "Equipos tipo kiosko, señalización digital o estaciones de laboratorio configurados para estar siempre encendidos.",
+        "Administradores que corrigen manualmente suspensiones no deseadas en portátiles usados como servidores."
+      ],
+      "response_steps": [
+        "Valide con el propietario del equipo y el registro de cambios si la acción fue autorizada; si lo fue, documente y considere una exclusión acotada.",
+        "Si no está autorizada, aísle el host de la red y preserve evidencia: listado de procesos, conexiones, unidades systemd y historial de shell.",
+        "Identifique y elimine el mecanismo malicioso asociado (implante, minero, servicio o timer) tras confirmar su origen.",
+        "Revierta el cambio con systemctl unmask de los objetivos afectados y verifique el estado con systemctl status.",
+        "Restablezca credenciales del usuario implicado y revise otros hosts por la misma línea de comandos."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque el comportamiento es poco común en operación normal y sirve directamente para mantener actividad maliciosa persistente e ininterrumpida."
+    },
+    "en": {
+      "summary": "systemctl mask was run against systemd power targets (suspend, hibernate or hybrid-sleep), preventing the host from sleeping or hibernating. This may be an admin tweak or an attempt to keep malicious processes running.",
+      "what_it_detects": "Processes whose Image ends with /systemctl and whose CommandLine contains ' mask' together with suspend.target, hibernate.target or hybrid-sleep.target. Masking links the unit to /dev/null so it cannot start, even manually.",
+      "why_it_matters": "Maps to ATT&CK T1653 (Power Settings): adversaries change power settings so the system never sleeps, keeping implants, cryptominers or remote sessions alive without interruption.",
+      "triage_steps": [
+        "Read the full CommandLine: which targets are masked, whether --runtime or --now is used, and whether sleep.target or other units are included.",
+        "Identify the user and whether sudo was used; confirm they are an authorized administrator of the host.",
+        "Review ParentImage and the process tree: interactive shell, cron, configuration management, or an unknown binary in /tmp or /dev/shm.",
+        "Pivot on the same host +/- 15 minutes: curl or wget downloads, new services or timers, crontab or SSH key changes, high-CPU processes.",
+        "Check /etc/systemd/system/ or /run/systemd/system/ for /dev/null symlinks of the affected targets and their creation time.",
+        "Search earlier alerts for the same host, user or SSH source IP.",
+        "Ask the host owner or check change tickets for a request to disable sleep."
+      ],
+      "false_positives": [
+        "Server hardening or provisioning disabling sleep via Ansible, Puppet, cloud-init or image build scripts.",
+        "Kiosks, digital signage or lab workstations configured to stay always on.",
+        "Administrators manually stopping unwanted suspends on laptops repurposed as servers."
+      ],
+      "response_steps": [
+        "Confirm with the owner and change records whether the action was authorized; if so, document it and consider a narrow exclusion.",
+        "If unauthorized, isolate the host and preserve evidence: process list, network connections, systemd units and shell history.",
+        "Identify and remove the associated malicious mechanism (implant, miner, service or timer) after confirming its origin.",
+        "Revert with systemctl unmask on the affected targets and verify with systemctl status.",
+        "Reset the involved user's credentials and hunt other hosts for the same command line."
+      ],
+      "severity_rationale": "High fits because this behavior is rare in normal operations and directly supports keeping malicious activity running uninterrupted."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Root masks all sleep-related targets from a shell spawned by a binary in /tmp",
+        "event": {
+          "Image": "/usr/bin/systemctl",
+          "CommandLine": "systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash -c /tmp/.x/upd.sh",
+          "User": "root",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/tmp/.x",
+          "host": "web-03"
+        }
+      },
+      {
+        "description": "Runtime mask of suspend target via sudo",
+        "event": {
+          "Image": "/bin/systemctl",
+          "CommandLine": "/bin/systemctl --runtime mask suspend.target",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo /bin/systemctl --runtime mask suspend.target",
+          "User": "root",
+          "ProcessId": 5521,
+          "ParentProcessId": 5519,
+          "CurrentDirectory": "/home/jperez",
+          "host": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator unmasks the suspend target; ' unmask' does not contain ' mask' with a leading space",
+        "event": {
+          "Image": "/usr/bin/systemctl",
+          "CommandLine": "systemctl unmask suspend.target hibernate.target",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 7702,
+          "ParentProcessId": 7700,
+          "CurrentDirectory": "/root",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "systemctl mask on a non-power unit",
+        "event": {
+          "Image": "/usr/bin/systemctl",
+          "CommandLine": "systemctl mask bluetooth.service",
+          "ParentImage": "/usr/bin/python3",
+          "User": "root",
+          "ProcessId": 9120,
+          "ParentProcessId": 9101,
+          "CurrentDirectory": "/root",
+          "host": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

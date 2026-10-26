@@ -1,0 +1,155 @@
+{
+  "rule": {
+    "id": "def8b624-e08f-4ae1-8612-1ba21190da6b",
+    "title": "Outgoing Logon with New Credentials",
+    "level": "low",
+    "status": "test",
+    "author": "Max Altgelt (Nextron Systems)",
+    "path": "windows/builtin/security/account_management/win_security_susp_logon_newcredentials.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/account_management/win_security_susp_logon_newcredentials.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1550"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un equipo Windows registró un inicio de sesión exitoso de tipo 9 (NewCredentials). Un proceso usa ahora otras credenciales en sus conexiones de red salientes, aunque localmente sigue ejecutándose como el usuario original.",
+      "what_it_detects": "El evento de seguridad 4624 con LogonType 9. Este tipo de logon lo generan runas /netonly, CreateProcessWithLogonW con LOGON_NETCREDENTIALS_ONLY y las herramientas de pass-the-hash o pass-the-ticket que inyectan credenciales alternativas (LogonProcessName suele ser 'seclogo').",
+      "why_it_matters": "Los atacantes usan material de autenticación alternativo, como hashes o tickets robados (ATT&CK T1550), para acceder a otros sistemas con otra cuenta. La sesión local no cambia, lo que oculta el cambio de identidad y facilita el movimiento lateral.",
+      "triage_steps": [
+        "Revise SubjectUserName, TargetOutboundUserName y TargetOutboundDomainName. Determine si ese usuario debería usar esa cuenta saliente, sobre todo si es privilegiada o de servicio.",
+        "Revise LogonProcessName, AuthenticationPackageName y ProcessName. Es sospechoso un logon seclogo desde un proceso inusual o sin un uso de runas que lo explique.",
+        "Pivotee por TargetLogonId: busque la creación de procesos (4688/Sysmon 1) de esa sesión y analice CommandLine y ParentImage.",
+        "Busque en el mismo equipo, +/- 15 minutos, actividad tipo mimikatz, acceso a LSASS (Sysmon 10) o PowerShell inusual.",
+        "Busque autenticaciones salientes (4648, 4624 tipo 3, 4768/4769) de la cuenta saliente desde este equipo hacia otros sistemas.",
+        "Revise alertas anteriores y si el usuario suele usar runas /netonly en este equipo."
+      ],
+      "false_positives": [
+        "Administradores que usan runas /netonly para gestionar otro dominio o un sistema fuera del dominio.",
+        "Herramientas administrativas (SSMS, consolas RSAT, scripts de gestión) lanzadas con credenciales de red alternativas.",
+        "Despliegue de software o automatización de TI que suplanta una cuenta de servicio para acceder a la red."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el equipo de administración que iniciaron esta sesión con credenciales alternativas a propósito.",
+        "Si no se puede confirmar, aísle el equipo y revise los inicios de sesión recientes de la cuenta saliente en todo el dominio.",
+        "Restablezca la contraseña de la cuenta saliente. Si es privilegiada, invalide también los tickets Kerberos y rote krbtgt dos veces si el compromiso es amplio.",
+        "Elimine las herramientas de robo de credenciales y su persistencia, restaure el equipo y vigile si se repiten logons tipo 9."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque los logons tipo 9 son frecuentes en la administración legítima, aunque según el contexto pueden indicar claramente movimiento lateral."
+    },
+    "en": {
+      "summary": "A Windows host recorded a successful logon of type 9 (NewCredentials). Some process on it now uses different credentials for outbound network connections while running locally as the original user.",
+      "what_it_detects": "Security event 4624 with LogonType 9. This logon type comes from runas /netonly, CreateProcessWithLogonW with LOGON_NETCREDENTIALS_ONLY, and pass-the-hash or pass-the-ticket tools that inject alternate credentials (LogonProcessName often 'seclogo').",
+      "why_it_matters": "Attackers use alternate authentication material such as stolen hashes or tickets (ATT&CK T1550) to reach other systems as a different account. The local session stays the same, which hides the identity switch and enables lateral movement.",
+      "triage_steps": [
+        "Check SubjectUserName, TargetOutboundUserName and TargetOutboundDomainName. Ask whether this user should be using that outbound account, especially if it is privileged or a service account.",
+        "Review LogonProcessName, AuthenticationPackageName and ProcessName. A seclogo logon from an unusual process, or one with no matching runas use, is suspicious.",
+        "Pivot on TargetLogonId: find process creation events (4688/Sysmon 1) for that logon session and inspect their CommandLine and ParentImage.",
+        "Search the same host within +/- 15 minutes for mimikatz-like activity, LSASS access (Sysmon 10) or unusual PowerShell.",
+        "Look for outbound authentications (4648, 4624 type 3, 4768/4769) using the outbound account from this host to other systems.",
+        "Check earlier alerts and whether the user normally runs runas /netonly on this host."
+      ],
+      "false_positives": [
+        "Administrators running runas /netonly to manage another domain or a non-domain-joined system.",
+        "Admin tools (SSMS, RSAT consoles, management scripts) started with alternate network credentials.",
+        "Software deployment or IT automation that impersonates a service account for network access."
+      ],
+      "response_steps": [
+        "Confirm with the user or the admin team that they started this alternate-credential session on purpose.",
+        "If you can't confirm it, isolate the host and check the outbound account's recent logons across the domain.",
+        "Reset the password of the outbound account. For privileged accounts, also invalidate Kerberos tickets, rotating krbtgt twice if compromise is broad.",
+        "Remove credential theft tools and their persistence, then restore the host and watch for repeated type 9 logons."
+      ],
+      "severity_rationale": "Low fits because type 9 logons are common in legitimate administration, but context can raise it to a strong lateral-movement signal."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "NewCredentials logon via the seclogo process, consistent with runas /netonly or pass-the-hash, using a domain admin as outbound account",
+        "event": {
+          "EventID": 4624,
+          "LogonType": 9,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "TargetOutboundUserName": "adm-backup",
+          "TargetOutboundDomainName": "ANDES",
+          "TargetLogonId": "0x5a3f21",
+          "LogonProcessName": "seclogo",
+          "AuthenticationPackageName": "Negotiate",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "IpAddress": "::1",
+          "IpPort": "0"
+        }
+      },
+      {
+        "description": "Type 9 logon created by an unusual process from a user profile directory",
+        "event": {
+          "EventID": 4624,
+          "LogonType": 9,
+          "Channel": "Security",
+          "Computer": "WS-0177.andes.example.com",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "mrojas",
+          "TargetDomainName": "ANDES",
+          "TargetOutboundUserName": "svc-sql",
+          "TargetOutboundDomainName": "ANDES",
+          "TargetLogonId": "0x7b19c4",
+          "LogonProcessName": "seclogo",
+          "AuthenticationPackageName": "Negotiate",
+          "ProcessName": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\updater.exe",
+          "IpAddress": "::1",
+          "IpPort": "0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal network logon (type 3) to a file server; not NewCredentials",
+        "event": {
+          "EventID": 4624,
+          "LogonType": 3,
+          "Channel": "Security",
+          "Computer": "FS-01.andes.example.com",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "LogonProcessName": "Kerberos",
+          "AuthenticationPackageName": "Kerberos",
+          "ProcessName": "-",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "52114"
+        }
+      },
+      {
+        "description": "Failed logon event 4625 with LogonType 9; wrong EventID so it doesn't match",
+        "event": {
+          "EventID": 4625,
+          "LogonType": 9,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "jperez",
+          "TargetDomainName": "ANDES",
+          "LogonProcessName": "seclogo",
+          "AuthenticationPackageName": "Negotiate",
+          "Status": "0xc000006d",
+          "IpAddress": "::1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

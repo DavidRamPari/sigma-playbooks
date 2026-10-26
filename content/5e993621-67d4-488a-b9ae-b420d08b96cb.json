@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "5e993621-67d4-488a-b9ae-b420d08b96cb",
+    "title": "Service Installation in Suspicious Folder",
+    "level": "medium",
+    "status": "test",
+    "author": "pH-T (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_susp_service_installation_folder.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_susp_service_installation_folder.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (evento 7045 del Service Control Manager) cuyo ImagePath apunta a una carpeta AppData de un usuario o a una ruta UNC local (\\\\127.0.0.1 o \\\\localhost). Los servicios legítimos casi nunca se ejecutan desde esas ubicaciones.",
+      "what_it_detects": "Eventos 7045 del log System con Provider_Name 'Service Control Manager' donde ImagePath contiene '\\AppData\\', '\\\\127.0.0.1' o '\\\\localhost'. Excluye el servicio 'Zoom Sharing Service' de Zoom (CptService.exe en Common Files).",
+      "why_it_matters": "Crear o modificar un servicio de sistema (ATT&CK T1543.003) da persistencia y ejecución como SYSTEM. Los atacantes dejan binarios en AppData, donde cualquier usuario puede escribir, y las rutas UNC locales son típicas de la ejecución remota mediante servicios.",
+      "triage_steps": [
+        "Revisa ImagePath, ServiceName, ServiceType, StartType y AccountName del evento 7045; anota el host y la hora exacta.",
+        "Determina a qué perfil de usuario pertenece la ruta AppData y si ese usuario estaba conectado en el host.",
+        "Obtén el hash del binario referenciado, verifica firma digital y consúltalo en tu plataforma de threat intelligence.",
+        "Si ImagePath contiene cmd.exe, powershell o rutas \\\\127.0.0.1\\C$ o ADMIN$, trátalo como posible ejecución remota tipo PsExec o smbexec.",
+        "Revisa en el mismo host +/- 15 minutos los inicios de sesión de red (4624 tipo 3), el acceso a recursos compartidos administrativos y la IP de origen.",
+        "Busca la creación del proceso hijo del servicio (services.exe como ParentImage) y la actividad posterior del binario: red, archivos, procesos.",
+        "Busca el mismo ServiceName o hash en otros endpoints y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Software instalado por usuario que registra un servicio desde AppData, como algunos clientes de videoconferencia, actualizadores o agentes de soporte.",
+        "Herramientas de administración o despliegue que copian temporalmente un servicio a una ruta local o UNC durante la instalación.",
+        "Variantes de Zoom con rutas no cubiertas por el filtro existente."
+      ],
+      "response_steps": [
+        "Confirma con el usuario o el área de TI si la instalación del servicio estaba autorizada antes de actuar.",
+        "Si es malicioso, aísla el endpoint y deshabilita el servicio; conserva el binario y los logs como evidencia antes de eliminarlo.",
+        "Restablece las credenciales de la cuenta usada para el inicio de sesión remoto y revisa su uso en otros hosts.",
+        "Elimina el servicio y los artefactos asociados, y verifica que no haya otros mecanismos de persistencia.",
+        "Si es legítimo, documenta la excepción con ServiceName y ruta exacta en lugar de excluir AppData completo."
+      ],
+      "severity_rationale": "Medium es adecuado porque es un indicador fuerte de persistencia o ejecución remota, pero algún software legítimo instala servicios desde AppData y requiere verificación."
+    },
+    "en": {
+      "summary": "A Windows service was installed (Service Control Manager event 7045) with an ImagePath in a user AppData folder or a local UNC path (\\\\127.0.0.1 or \\\\localhost). Legitimate services rarely run from these locations.",
+      "what_it_detects": "System log event 7045 from Provider_Name 'Service Control Manager' where ImagePath contains '\\AppData\\', '\\\\127.0.0.1' or '\\\\localhost'. The Zoom 'Zoom Sharing Service' (CptService.exe in Common Files) is excluded.",
+      "why_it_matters": "Creating or modifying a system service (ATT&CK T1543.003) gives persistence and SYSTEM-level execution. Attackers drop binaries in user-writable AppData, and local UNC paths are typical of remote execution through services.",
+      "triage_steps": [
+        "Review ImagePath, ServiceName, ServiceType, StartType and AccountName in the 7045 event; note the host and exact time.",
+        "Identify which user profile owns the AppData path and whether that user was logged on to the host.",
+        "Hash the referenced binary, check its digital signature and look it up in your threat intelligence platform.",
+        "If ImagePath contains cmd.exe, powershell or \\\\127.0.0.1\\C$ or ADMIN$ paths, treat it as possible PsExec- or smbexec-style remote execution.",
+        "On the same host within +/- 15 minutes, review network logons (4624 type 3), admin share access and the source IP.",
+        "Look for the service's child process (ParentImage services.exe) and the binary's follow-on activity: network, files, processes.",
+        "Search for the same ServiceName or hash on other endpoints and for earlier alerts on the same user or host."
+      ],
+      "false_positives": [
+        "Per-user software that registers a service from AppData, such as some conferencing clients, updaters or remote support agents.",
+        "Administration or deployment tools that temporarily stage a service on a local or UNC path during installation.",
+        "Zoom variants whose paths are not covered by the existing filter."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the service installation was authorized before acting.",
+        "If malicious, isolate the endpoint and disable the service; preserve the binary and logs as evidence before removal.",
+        "Reset credentials of the account used for the remote logon and review its use on other hosts.",
+        "Remove the service and related artifacts, and check for additional persistence mechanisms.",
+        "If legitimate, document a narrow exception by ServiceName and exact path rather than excluding AppData broadly."
+      ],
+      "severity_rationale": "Medium fits because this is a strong persistence or remote-execution indicator, yet some legitimate software installs services from AppData and needs verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown service installed from a user's AppData\\Roaming folder, auto-start as LocalSystem",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinUpdateHelper",
+          "ImagePath": "C:\\Users\\jperez\\AppData\\Roaming\\Microsoft\\updhelper.exe",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service whose ImagePath runs cmd.exe launching a batch file from AppData\\Local\\Temp",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ServiceName": "BTOBTO",
+          "ImagePath": "%COMSPEC% /Q /c C:\\Users\\svc_backup\\AppData\\Local\\Temp\\execute.bat",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Zoom Sharing Service whose arguments reference AppData; excluded by filter_optional_zoom",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "Zoom Sharing Service",
+          "ImagePath": "\"C:\\Program Files\\Common Files\\Zoom\\Support\\CptService.exe\" -user_path \"C:\\Users\\jperez\\AppData\\Roaming\\Zoom\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Regular vendor service installed under Program Files; ImagePath has no AppData or local UNC path",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ExampleBackupAgent",
+          "ImagePath": "\"C:\\Program Files\\ExampleCorp\\Backup\\agent.exe\" -service",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

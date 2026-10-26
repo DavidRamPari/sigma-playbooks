@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "504d63cb-0dba-4d02-8531-e72981aace2c",
+    "title": "Suspicious X509Enrollment - Ps Script",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_x509enrollment.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_x509enrollment.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1553.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell usó el objeto COM X509Enrollment.CBinaryConverter de CertEnroll, o hizo referencia al CLSID 884e2002-217d-11da-b2a4-000e7bbb2b09. Esto puede indicar la manipulación de certificados, por ejemplo la instalación de un certificado raíz no autorizado.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) en los que ScriptBlockText contiene 'X509Enrollment.CBinaryConverter' o el CLSID '884e2002-217d-11da-b2a4-000e7bbb2b09'. Ambos se usan para invocar el convertidor de codificaciones de CertEnroll (Base64, binario, hex) desde PowerShell.",
+      "why_it_matters": "Un atacante puede decodificar e instalar un certificado raíz propio (T1553.004, Install Root Certificate). Así el equipo confía en código firmado por él o en su interceptación TLS, y se debilitan los controles de confianza. El convertidor también sirve para decodificar payloads.",
+      "triage_steps": [
+        "Reconstruya el script completo con ScriptBlockId (MessageNumber/MessageTotal) y revise el Path del script, si existe.",
+        "Identifique qué datos se convierten: blobs de certificado en Base64, llamadas a CX509Enrollment, InstallResponse o escrituras en el almacén Root.",
+        "Correlacione en el mismo host (+/- 15 minutos) la creación del proceso powershell.exe: ParentImage, CommandLine, usuario e integridad.",
+        "Revise si se agregaron certificados nuevos en Cert:\\LocalMachine\\Root, Cert:\\CurrentUser\\Root o en el registro SystemCertificates\\Root\\Certificates, y anote thumbprint y emisor.",
+        "Valide con el equipo de PKI o de administración si el usuario y el script corresponden a una tarea de inscripción conocida.",
+        "Busque el mismo thumbprint o el mismo contenido del script en otros endpoints y alertas previas del usuario y del host.",
+        "Revise conexiones de red posteriores del host hacia proxies o dominios inusuales que puedan indicar interceptación TLS."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que solicitan o instalan certificados mediante CertEnroll.",
+        "Herramientas de PKI, de gestión de dispositivos o de configuración que automatizan la inscripción de certificados.",
+        "Pruebas de laboratorio o desarrollo con CertEnroll por parte de personal autorizado."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si la actividad estaba autorizada antes de actuar.",
+        "Si es maliciosa, aísle el endpoint y conserve el script, el certificado exportado y su thumbprint como evidencia.",
+        "Elimine el certificado raíz no autorizado después de documentarlo, y búsquelo en toda la flota.",
+        "Restablezca las credenciales de la cuenta implicada e investigue cómo se ejecutó el script.",
+        "Bloquee el thumbprint mediante GPO o en la lista de certificados no confiables y documente los hallazgos."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el uso de CertEnroll también es legítimo en la administración de PKI, pero el abuso puede debilitar la confianza en certificados de todo el equipo."
+    },
+    "en": {
+      "summary": "A PowerShell script used the CertEnroll COM object X509Enrollment.CBinaryConverter or referenced the CLSID 884e2002-217d-11da-b2a4-000e7bbb2b09. This may indicate certificate tampering, such as installing a rogue root certificate.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains 'X509Enrollment.CBinaryConverter' or the CLSID '884e2002-217d-11da-b2a4-000e7bbb2b09'. Both invoke the CertEnroll encoding converter (Base64, binary, hex) from PowerShell.",
+      "why_it_matters": "Attackers can decode and install their own root certificate (T1553.004, Install Root Certificate). The host then trusts code they sign or their TLS interception, which weakens trust controls. The converter can also decode payloads.",
+      "triage_steps": [
+        "Rebuild the full script using ScriptBlockId (MessageNumber/MessageTotal) and check the script Path, if present.",
+        "Identify what is being converted: Base64 certificate blobs, CX509Enrollment calls, InstallResponse, or writes to the Root store.",
+        "On the same host within +/- 15 minutes, find the powershell.exe process creation: ParentImage, CommandLine, user, integrity level.",
+        "Check for new certificates in Cert:\\LocalMachine\\Root, Cert:\\CurrentUser\\Root or registry SystemCertificates\\Root\\Certificates. Record the thumbprint and issuer.",
+        "Ask the PKI or admin team whether the user and script match a known enrollment task.",
+        "Search other endpoints for the same thumbprint or script content, and review earlier alerts for this user and host.",
+        "Review the host's later network connections to unusual proxies or domains that could indicate TLS interception."
+      ],
+      "false_positives": [
+        "Legitimate administrative scripts that request or install certificates through CertEnroll.",
+        "PKI, device management or configuration tools that automate certificate enrollment.",
+        "Authorized lab or development testing with CertEnroll."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the activity was authorized before acting.",
+        "If malicious, isolate the endpoint and preserve the script, the exported certificate and its thumbprint as evidence.",
+        "After documenting it, remove the rogue root certificate and hunt for it across the fleet.",
+        "Reset credentials of the involved account and investigate how the script was executed.",
+        "Distrust the thumbprint via GPO or the untrusted certificate store, and document findings."
+      ],
+      "severity_rationale": "Medium fits because CertEnroll use is also legitimate in PKI administration, but abuse can undermine certificate trust across the whole host."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block creating the CBinaryConverter COM object to decode a Base64 certificate before adding it to the Root store",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e21-9a0f-1c2d3e4f5a6b",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$conv = New-Object -ComObject X509Enrollment.CBinaryConverter; $raw = $conv.StringToString($b64Cert, 1, 0); $store = Get-Item Cert:\\LocalMachine\\Root"
+        }
+      },
+      {
+        "description": "Script block instantiating the converter through its CLSID",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "8c7d6e5f-4a3b-4c2d-9e1f-0a1b2c3d4e5f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "$t = [Type]::GetTypeFromCLSID([Guid]'884e2002-217d-11da-b2a4-000e7bbb2b09'); $c = [Activator]::CreateInstance($t)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script importing a certificate with Import-Certificate; it does not use CBinaryConverter or the CLSID",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-PKI-01.andes.example.com",
+          "ScriptBlockId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Deploy-CorpCA.ps1",
+          "ScriptBlockText": "Import-Certificate -FilePath \\\\fs01.example.com\\pki\\CorpRootCA.cer -CertStoreLocation Cert:\\LocalMachine\\Root"
+        }
+      },
+      {
+        "description": "Enrollment script that uses X509Enrollment.CX509Enrollment without the binary converter",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-PKI-01.andes.example.com",
+          "ScriptBlockId": "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Request-WebCert.ps1",
+          "ScriptBlockText": "$enroll = New-Object -ComObject X509Enrollment.CX509Enrollment; $enroll.InitializeFromRequest($request); $csr = $enroll.CreateRequest(1)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

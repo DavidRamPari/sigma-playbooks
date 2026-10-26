@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "d00a9a72-2c09-4459-ad03-5e0a23351e36",
+    "title": "Suspicious LDAP-Attributes Used",
+    "level": "high",
+    "status": "test",
+    "author": "xknow @xknow_infosec",
+    "path": "windows/builtin/security/win_security_susp_ldap_dataexchange.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_ldap_dataexchange.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1001.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró una modificación de Active Directory (evento 5136) que escribió un valor en primaryInternationalISDNNumber, otherFacsimileTelephoneNumber o primaryTelexNumber. Casi nadie usa estos atributos, pero LDAPFragger los usa para transportar tráfico de comando y control.",
+      "what_it_detects": "Eventos 5136 de auditoría de cambios del servicio de directorio en los que AttributeLDAPDisplayName es uno de los tres atributos poco comunes y AttributeValue no está vacío.",
+      "why_it_matters": "LDAPFragger, de Fox-IT, intercambia tráfico de Cobalt Strike escribiendo fragmentos en atributos de objetos de AD. Así, equipos sin salida a Internet se comunican a través del controlador de dominio. Corresponde a ATT&CK T1001.003 (suplantación de protocolo) y puede ocultar C2 dentro del tráfico LDAP legítimo.",
+      "triage_steps": [
+        "Revise AttributeValue: un número telefónico tiene sentido; un texto largo, en Base64 o con aspecto cifrado indica transporte de datos.",
+        "Identifique ObjectDN y ObjectClass: anote qué objeto se modificó y si es la cuenta del propio SubjectUserName o una cuenta de servicio.",
+        "Use SubjectLogonId para cruzar con el evento 4624 del mismo controlador de dominio y obtener la IP y el equipo de origen de la sesión.",
+        "Busque más eventos 5136 en el mismo ObjectDN y atributo en un rango de +/- 15 minutos. Un patrón repetido de valores agregados y eliminados (OperationType) sugiere sondeo de C2.",
+        "Si existe auditoría de lectura, revise los eventos 4662 del mismo objeto para identificar otros equipos que leen el atributo y que podrían ser agentes internos.",
+        "En el endpoint de origen, revise los procesos que abren conexiones LDAP (389/636), como rundll32 o powershell, o binarios sin firma, y busque alertas previas.",
+        "Confirme con el equipo de identidades o RR. HH. si alguna aplicación llena legítimamente estos atributos."
+      ],
+      "false_positives": [
+        "Empresas o sistemas de gestión de identidades que usan estos atributos predeterminados para guardar datos de contacto personales.",
+        "Sincronizaciones de directorio (HR, IDM) que copian números de fax, télex o ISDN heredados a AD."
+      ],
+      "response_steps": [
+        "Guarde los eventos 5136 y el contenido del atributo como evidencia antes de cualquier cambio.",
+        "Si se confirma tráfico codificado, aísle los equipos de origen y de lectura identificados y reúna evidencia forense de memoria y procesos.",
+        "Deshabilite o restablezca la contraseña de la cuenta usada y revise sus sesiones activas.",
+        "Limpie el atributo solo después de preservar la evidencia y busque valores similares en otros objetos del dominio.",
+        "Si el uso es legítimo, documente la aplicación y aplique una exclusión acotada por objeto o cuenta."
+      ],
+      "severity_rationale": "La severidad es alta porque estos atributos casi nunca se usan, y un valor escrito en ellos coincide con una técnica de C2 conocida que abarca todo el dominio."
+    },
+    "en": {
+      "summary": "A domain controller logged an Active Directory change (event 5136) that wrote a value to primaryInternationalISDNNumber, otherFacsimileTelephoneNumber or primaryTelexNumber. These attributes are rarely used, but LDAPFragger uses them to carry command-and-control traffic.",
+      "what_it_detects": "Directory Service Changes events 5136 where AttributeLDAPDisplayName is one of the three uncommon attributes and AttributeValue is not empty.",
+      "why_it_matters": "Fox-IT's LDAPFragger relays Cobalt Strike traffic by writing chunks of it into AD object attributes. This lets hosts without Internet access communicate through the domain controller. It maps to ATT&CK T1001.003 (protocol impersonation), and it can hide C2 inside legitimate LDAP traffic.",
+      "triage_steps": [
+        "Inspect AttributeValue. A phone number is plausible. Long, Base64 or encrypted-looking text points to data transport.",
+        "Identify ObjectDN and ObjectClass. Note which object changed and whether it is SubjectUserName's own account or a service account.",
+        "Use SubjectLogonId to correlate with event 4624 on the same DC and get the session's source IP and host.",
+        "Search for more 5136 events on the same ObjectDN and attribute within +/- 15 minutes. Repeated value added and deleted operations (OperationType) suggest C2 polling.",
+        "If read auditing exists, review 4662 events on the object to find other hosts reading it, which may be internal agents.",
+        "On the source endpoint, check which processes open LDAP connections (389/636), such as rundll32, powershell or unsigned binaries, and look for earlier alerts.",
+        "Confirm with the identity or HR team whether any application legitimately fills these attributes."
+      ],
+      "false_positives": [
+        "Organizations or identity management systems that use these default attributes to store personal contact data.",
+        "Directory synchronization (HR, IDM) that copies legacy fax, telex or ISDN numbers into AD."
+      ],
+      "response_steps": [
+        "Preserve the 5136 events and the attribute content as evidence before making any change.",
+        "If you confirm encoded traffic, isolate the identified source and reader hosts and collect memory and process forensics.",
+        "Disable the account used, or reset its password, and review its active sessions.",
+        "Clear the attribute only after you have preserved the evidence. Hunt for similar values on other domain objects.",
+        "If the use is legitimate, document the application and add a narrow exclusion by object or account."
+      ],
+      "severity_rationale": "High fits because these attributes are almost never used, and a value written to them matches a known C2 technique that reaches across the whole domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user account writes a Base64-like chunk to primaryInternationalISDNNumber on its own object, consistent with LDAPFragger.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A1F2",
+          "DSName": "andes.example.com",
+          "DSType": "%%14676",
+          "ObjectDN": "CN=Juan Perez,OU=Usuarios,DC=andes,DC=example,DC=com",
+          "ObjectClass": "user",
+          "AttributeLDAPDisplayName": "primaryInternationalISDNNumber",
+          "AttributeSyntaxOID": "2.5.5.12",
+          "AttributeValue": "TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "OperationType": "%%14674"
+        }
+      },
+      {
+        "description": "A service account adds a long encoded value to otherFacsimileTelephoneNumber.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "SubjectUserName": "svc-backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5B21C9",
+          "ObjectDN": "CN=svc-backup,OU=Servicios,DC=andes,DC=example,DC=com",
+          "ObjectClass": "user",
+          "AttributeLDAPDisplayName": "otherFacsimileTelephoneNumber",
+          "AttributeValue": "aGVsbG8tYmVhY29uLWNodW5rLTAwMDE=",
+          "OperationType": "%%14674"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal HR sync update of the common facsimileTelephoneNumber attribute, which is not in the rule's list.",
+        "event": {
+          "EventID": 5136,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "svc-idm",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN=Maria Lopez,OU=Usuarios,DC=andes,DC=example,DC=com",
+          "ObjectClass": "user",
+          "AttributeLDAPDisplayName": "facsimileTelephoneNumber",
+          "AttributeValue": "+1 555 0100",
+          "OperationType": "%%14674"
+        }
+      },
+      {
+        "description": "A directory object creation event (5137) for the same object, which is the wrong event ID even though the object is related.",
+        "event": {
+          "EventID": 5137,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "admin-ad",
+          "SubjectDomainName": "ANDES",
+          "ObjectDN": "CN=Juan Perez,OU=Usuarios,DC=andes,DC=example,DC=com",
+          "ObjectClass": "user"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

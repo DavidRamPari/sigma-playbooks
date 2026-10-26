@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "dde85b37-40cd-4a94-b00c-0b8794f956b5",
+    "title": "Remote Task Creation via ATSVC Named Pipe - Zeek",
+    "level": "medium",
+    "status": "test",
+    "author": "Samir Bousseaden, @neu5rn",
+    "path": "network/zeek/zeek_smb_converted_win_atsvc_task.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_smb_converted_win_atsvc_task.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró un acceso SMB al named pipe atsvc a través del recurso IPC$. Suele indicar que un equipo remoto crea o consulta tareas programadas en el host de destino.",
+      "what_it_detects": "Registros smb_files de Zeek donde path es el recurso IPC$ y name es 'atsvc'. Es el named pipe del servicio AT/Task Scheduler que usan at.exe, las llamadas a la API de tareas remotas y herramientas como atexec de Impacket.",
+      "why_it_matters": "Crear tareas programadas de forma remota (ATT&CK T1053.002, At) permite ejecutar código en otro equipo, a menudo como SYSTEM. Sirve para movimiento lateral, persistencia y escalamiento de privilegios con credenciales robadas.",
+      "triage_steps": [
+        "Identifique el origen (id.orig_h) y el destino (id.resp_h). Confirme si el origen es un servidor de administración o un jump host conocido, o si es una estación de usuario.",
+        "Use el uid de Zeek para pivotar a dce_rpc.log y revise las operaciones sobre atsvc (por ejemplo NetrJobAdd o SchRpcRegisterTask). Así distingue una creación de tarea de una simple consulta.",
+        "Revise ntlm.log, kerberos.log y smb_mapping.log del mismo uid u origen para determinar la cuenta usada y si es privilegiada.",
+        "En el host de destino, busque los eventos 4698/4702 y los registros de TaskScheduler/Operational en una ventana de +/- 15 minutos. Revise también los archivos nuevos en C:\\Windows\\Tasks o System32\\Tasks.",
+        "Revise la acción de la tarea creada: comandos con cmd.exe /c, redirección a archivos temporales en ADMIN$ o C$, o binarios en rutas inusuales.",
+        "Pivote por el origen: ¿accedió a atsvc, svcctl o ADMIN$ en otros hosts? Revise también si tuvo alertas previas de escaneo o volcado de credenciales."
+      ],
+      "false_positives": [
+        "Administradores que usan schtasks /S, at.exe o la consola del Programador de tareas conectada a un equipo remoto.",
+        "Herramientas de gestión de sistemas, despliegue de software o inventario que programan tareas remotas desde servidores conocidos.",
+        "Scripts de mantenimiento o backup que registran tareas en servidores de forma programada."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o con el equipo de TI si la actividad estaba autorizada y documéntelo.",
+        "Si no estaba autorizada, aísle el host de origen y deshabilite o restablezca la cuenta usada después de confirmar su uso indebido.",
+        "En el destino, exporte la tarea como evidencia antes de eliminarla y analice los binarios o scripts que ejecuta.",
+        "Busque la misma tarea o el mismo patrón de acceso en otros hosts. Agregue a una lista de permitidos los orígenes administrativos legítimos para reducir el ruido."
+      ],
+      "severity_rationale": "Es media porque el acceso a atsvc es un fuerte indicio de ejecución remota, pero también aparece en la administración legítima y requiere contexto para confirmarse."
+    },
+    "en": {
+      "summary": "Zeek logged SMB access to the atsvc named pipe over the IPC$ share. This usually means a remote host is creating or querying scheduled tasks on the target.",
+      "what_it_detects": "Zeek smb_files records where path is the IPC$ share and name is 'atsvc'. This is the AT/Task Scheduler named pipe used by at.exe, remote task APIs and tools such as Impacket's atexec.",
+      "why_it_matters": "Creating scheduled tasks remotely (ATT&CK T1053.002, At) lets an attacker run code on another host, often as SYSTEM. It is used for lateral movement, persistence and privilege escalation with stolen credentials.",
+      "triage_steps": [
+        "Identify the source (id.orig_h) and target (id.resp_h). Check whether the source is a known admin server or jump host, or a user workstation.",
+        "Use the Zeek uid to pivot to dce_rpc.log and review the atsvc operations (for example NetrJobAdd or SchRpcRegisterTask). This separates task creation from a simple query.",
+        "Check ntlm.log, kerberos.log and smb_mapping.log for the same uid or source to find the account used and whether it is privileged.",
+        "On the target, look for events 4698/4702 and TaskScheduler/Operational logs within +/- 15 minutes. Also check for new files in C:\\Windows\\Tasks or System32\\Tasks.",
+        "Review the task's action: cmd.exe /c commands, output redirected to temp files on ADMIN$ or C$, or binaries in unusual paths.",
+        "Pivot on the source: did it access atsvc, svcctl or ADMIN$ on other hosts? Also check for earlier scanning or credential-dumping alerts."
+      ],
+      "false_positives": [
+        "Administrators using schtasks /S, at.exe or the Task Scheduler console connected to a remote computer.",
+        "Systems management, software deployment or inventory tools that schedule remote tasks from known servers.",
+        "Maintenance or backup scripts that register tasks on servers on a schedule."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or IT team whether the activity was authorized, and document the answer.",
+        "If it was not authorized, isolate the source host and disable or reset the account used once misuse is confirmed.",
+        "On the target, export the task as evidence before deleting it, and analyze the binaries or scripts it runs.",
+        "Hunt for the same task or access pattern on other hosts. Allowlist legitimate admin sources to reduce noise."
+      ],
+      "severity_rationale": "Medium, because atsvc access strongly suggests remote execution but also occurs during legitimate administration and needs context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Workstation opens the atsvc named pipe on IPC$ of a file server, as at.exe or atexec would.",
+        "event": {
+          "ts": "2024-10-25T14:03:12.481Z",
+          "uid": "CwT9kq3Xb1pZ7aRe2",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49822,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\*\\IPC$",
+          "name": "atsvc",
+          "size": 0
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same IPC$ share but the srvsvc pipe (share enumeration), not atsvc.",
+        "event": {
+          "ts": "2024-10-25T14:05:40.112Z",
+          "uid": "C8mPq2Lr5VdN1sYt4",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49830,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\*\\IPC$",
+          "name": "srvsvc",
+          "size": 0
+        }
+      },
+      {
+        "description": "Ordinary file access named atsvc on a data share instead of IPC$.",
+        "event": {
+          "ts": "2024-10-25T15:12:03.900Z",
+          "uid": "CzR4hJ8nWq6Ke0uB1",
+          "id.orig_h": "192.0.2.77",
+          "id.orig_p": 50211,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FS-01\\Shared",
+          "name": "atsvc",
+          "size": 2048
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

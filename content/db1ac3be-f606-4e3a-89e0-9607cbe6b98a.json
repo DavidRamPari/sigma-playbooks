@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "db1ac3be-f606-4e3a-89e0-9607cbe6b98a",
+    "title": "Capsh Shell Invocation - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_capsh_shell_invocation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_capsh_shell_invocation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó capsh con una línea de comandos que termina en \" --\", lo que abre un shell interactivo. Puede indicar evasión de un shell restringido o escalamiento de privilegios si capsh corre con sudo o SUID.",
+      "what_it_detects": "Eventos process_creation de Linux donde Image termina en /capsh y CommandLine termina en \" --\". Así es la técnica de GTFOBins para lanzar un shell con capsh, por ejemplo \"capsh --\" o \"capsh --uid=0 --gid=0 --\".",
+      "why_it_matters": "capsh es una utilidad legítima para manejar capabilities, pero puede lanzar /bin/bash. Un atacante la usa para salir de shells restringidos o, con sudo o SUID, para obtener un shell privilegiado (ATT&CK T1059, intérprete de comandos).",
+      "triage_steps": [
+        "Revise CommandLine completo: busque opciones como --uid=0, --gid=0, --caps o --keep, que sugieren intentos de obtener privilegios.",
+        "Identifique el usuario efectivo y el real. Si es root y el usuario original no lo es, verifique si se usó sudo o un capsh con bit SUID.",
+        "Examine ParentImage y la cadena de procesos: ¿viene de sudo, un servicio web, un script de cron o un shell restringido (rbash, lshell)?",
+        "Verifique en el host si capsh tiene SUID (ls -l) o si figura en las reglas de sudoers del usuario.",
+        "Liste los procesos hijos del shell lanzado y los comandos ejecutados en el mismo host durante +/- 15 minutos.",
+        "Busque inicios de sesión SSH del mismo usuario o IP de origen antes del evento y otras alertas previas sobre el host o la cuenta.",
+        "Confirme con el responsable del sistema si había pruebas de capabilities o tareas de hardening programadas."
+      ],
+      "false_positives": [
+        "Administradores que prueban la reducción de capabilities con capsh --drop=... -- de forma interactiva.",
+        "Scripts de contenedores o sandbox que usan capsh para iniciar un shell con capabilities limitadas.",
+        "Ejercicios de seguridad, pentests autorizados o laboratorios CTF que siguen las técnicas de GTFOBins."
+      ],
+      "response_steps": [
+        "Si no hay justificación, aísle el host de la red o restrinja la sesión, y conserve la evidencia (lista de procesos, historial del shell, logs de sudo).",
+        "Termine el shell sospechoso solo después de registrar su árbol de procesos y sus conexiones de red.",
+        "Quite el bit SUID de capsh o las entradas de sudoers que permitan ejecutarlo, si no tienen justificación operativa.",
+        "Restablezca las credenciales de la cuenta implicada y revise si hay persistencia: cron, claves SSH, servicios nuevos o usuarios agregados.",
+        "Documente el hallazgo y ajuste la regla con exclusiones para scripts legítimos ya verificados."
+      ],
+      "severity_rationale": "El nivel high se justifica porque abrir un shell con capsh es poco común en la operación normal y es una técnica conocida de evasión y escalamiento de privilegios."
+    },
+    "en": {
+      "summary": "capsh ran with a command line ending in \" --\", which opens an interactive shell. This may be a restricted-shell breakout or privilege escalation if capsh runs through sudo or SUID.",
+      "what_it_detects": "Linux process_creation events where Image ends with /capsh and CommandLine ends with \" --\". This is the GTFOBins way to spawn a shell with capsh, for example \"capsh --\" or \"capsh --uid=0 --gid=0 --\".",
+      "why_it_matters": "capsh is a legitimate tool for managing capabilities, but it can launch /bin/bash. Attackers use it to escape restricted shells or, through sudo or SUID, to get a privileged shell (ATT&CK T1059, Command and Scripting Interpreter).",
+      "triage_steps": [
+        "Read the full CommandLine. Look for options such as --uid=0, --gid=0, --caps or --keep, which suggest an attempt to gain privileges.",
+        "Identify the effective and real user. If it is root but the original user is not, check whether sudo or a SUID capsh was used.",
+        "Examine ParentImage and the process chain. Did it come from sudo, a web service, a cron script or a restricted shell (rbash, lshell)?",
+        "On the host, check whether capsh has the SUID bit (ls -l) or appears in the user's sudoers rules.",
+        "List the child processes of the spawned shell and the commands run on the same host within +/- 15 minutes.",
+        "Look for SSH logins from the same user or source IP before the event, and for earlier alerts on the host or account.",
+        "Ask the system owner whether capability testing or hardening work was scheduled."
+      ],
+      "false_positives": [
+        "Administrators interactively testing capability drops with capsh --drop=... --.",
+        "Container or sandbox scripts that use capsh to start a shell with reduced capabilities.",
+        "Security training, authorized penetration tests or CTF labs that follow GTFOBins techniques."
+      ],
+      "response_steps": [
+        "If nothing justifies it, isolate the host or restrict the session, and keep the evidence: process list, shell history and sudo logs.",
+        "Terminate the suspicious shell only after you record its process tree and network connections.",
+        "Remove the SUID bit from capsh, or the sudoers entries that allow it, if there is no operational need for them.",
+        "Reset the involved account's credentials and check for persistence: cron jobs, SSH keys, new services or added users.",
+        "Document the finding and add exclusions to the rule for legitimate scripts you have verified."
+      ],
+      "severity_rationale": "High fits because spawning a shell with capsh is rare in normal operations and is a known technique for breakout and privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Plain GTFOBins shell spawn with capsh from a user's interactive session",
+        "event": {
+          "Computer": "bastion-01",
+          "User": "jperez",
+          "ParentImage": "/bin/rbash",
+          "Image": "/usr/sbin/capsh",
+          "CommandLine": "capsh --",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/home/jperez"
+        }
+      },
+      {
+        "description": "capsh run through sudo to get a root shell with uid/gid 0",
+        "event": {
+          "Computer": "app-srv-07",
+          "User": "root",
+          "ParentImage": "/usr/bin/sudo",
+          "Image": "/usr/sbin/capsh",
+          "CommandLine": "/usr/sbin/capsh --uid=0 --gid=0 --",
+          "ProcessId": 51022,
+          "ParentProcessId": 51019,
+          "CurrentDirectory": "/tmp"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator printing the current capability sets, no shell spawned",
+        "event": {
+          "Computer": "app-srv-07",
+          "User": "mrojas",
+          "ParentImage": "/bin/bash",
+          "Image": "/usr/sbin/capsh",
+          "CommandLine": "capsh --print",
+          "ProcessId": 50110,
+          "ParentProcessId": 50098,
+          "CurrentDirectory": "/home/mrojas"
+        }
+      },
+      {
+        "description": "Script running one command with capabilities dropped; the command line does not end in ' --'",
+        "event": {
+          "Computer": "build-03",
+          "User": "ci-runner",
+          "ParentImage": "/usr/bin/bash",
+          "Image": "/usr/sbin/capsh",
+          "CommandLine": "capsh --drop=cap_net_raw -- -c id",
+          "ProcessId": 60231,
+          "ParentProcessId": 60227,
+          "CurrentDirectory": "/opt/ci"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

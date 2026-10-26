@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "9f5c1d59-33be-4e60-bcab-85d2f566effd",
+    "title": "Suspicious Process Access to LSASS with Dbgcore/Dbghelp DLLs",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_susp_dbgcore_dbghelp_load.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_susp_dbgcore_dbghelp_load.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutado desde una carpeta poco común o con permisos de escritura del usuario abrió un handle a lsass.exe, y en el call trace aparecen dbgcore.dll o dbghelp.dll. Esto suele indicar un intento de volcar la memoria de LSASS para robar credenciales.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon Event ID 10) en los que TargetImage termina en \\lsass.exe, CallTrace contiene dbgcore.dll o dbghelp.dll y SourceImage está en carpetas como Temp, Downloads, Desktop, AppData\\Roaming, Users\\Public, Perflogs, $Recycle.Bin o inetpub\\wwwroot.",
+      "why_it_matters": "dbgcore.dll y dbghelp.dll exportan MiniDumpWriteDump, que puede escribir la memoria de LSASS en disco. Ese volcado puede contener hashes, tickets Kerberos y otros secretos (ATT&CK T1003.001, LSASS Memory). La regla también está etiquetada como debilitamiento de defensas, porque estas DLL permiten suspender procesos.",
+      "triage_steps": [
+        "Revise SourceImage, SourceProcessId y SourceUser. Determine quién ejecutó el binario y desde qué ubicación.",
+        "Revise GrantedAccess. Valores como 0x1fffff, 0x1010, 0x1410 o 0x1438 incluyen permisos de lectura de memoria que coinciden con un volcado.",
+        "Busque el evento de creación de SourceProcessId. Revise su CommandLine, ParentImage, hash y firma, y luego consulte el hash en inteligencia de amenazas.",
+        "Busque archivos .dmp nuevos u otros archivos grandes escritos en el host en +/- 15 minutos, sobre todo en Temp, Downloads o ProgramData.",
+        "Busque transferencias salientes o creación de archivos comprimidos desde el host después del acceso, lo que podría indicar exfiltración del volcado.",
+        "Revise alertas previas del host y del usuario, y busque inicios de sesión de la misma cuenta en otros equipos que indiquen movimiento lateral."
+      ],
+      "false_positives": [
+        "Instaladores o actualizadores de software ejecutados desde Temp o Downloads que acceden brevemente a LSASS con librerías de depuración.",
+        "Personal de administración o soporte que ejecuta una herramienta legítima de diagnóstico o de volcado de fallos desde Desktop o Downloads."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del activo si la herramienta era esperada. Si no puede confirmarlo, trate la alerta como robo de credenciales.",
+        "Aísle el host mediante el EDR y recolecte el binario de origen, los volcados y la evidencia volátil antes de limpiar.",
+        "Restablezca las contraseñas de las cuentas que iniciaron sesión en el host, empezando por las privilegiadas. Evalúe restablecer krbtgt si hubo exposición de administradores de dominio.",
+        "Elimine los archivos maliciosos y la persistencia, habilite LSA Protection o Credential Guard donde sea posible y devuelva el host a producción solo tras un escaneo limpio."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque es inusual que un binario en una carpeta escribible por el usuario lea LSASS mediante librerías MiniDump, y un volcado exitoso puede comprometer credenciales de todo el dominio."
+    },
+    "en": {
+      "summary": "A process running from a user-writable or uncommon folder opened a handle to lsass.exe, and dbgcore.dll or dbghelp.dll appeared in the call trace. This often means someone tried to dump LSASS memory to steal credentials.",
+      "what_it_detects": "Process access events (Sysmon Event ID 10) where TargetImage ends with \\lsass.exe, CallTrace contains dbgcore.dll or dbghelp.dll, and SourceImage is in a folder such as Temp, Downloads, Desktop, AppData\\Roaming, Users\\Public, Perflogs, $Recycle.Bin or inetpub\\wwwroot.",
+      "why_it_matters": "dbgcore.dll and dbghelp.dll export MiniDumpWriteDump, which can write LSASS memory to disk. That dump can contain password hashes, Kerberos tickets and other secrets (ATT&CK T1003.001, LSASS Memory). The rule is also tagged for defense impairment because these DLLs can be used to suspend processes.",
+      "triage_steps": [
+        "Check SourceImage, SourceProcessId and SourceUser. Find out who launched the binary, and from where.",
+        "Review GrantedAccess. Values such as 0x1fffff, 0x1010, 0x1410 or 0x1438 include memory-read rights that match dumping.",
+        "Find the process creation event for SourceProcessId. Review its CommandLine, ParentImage, hashes and signer, then check the hash against threat intelligence.",
+        "Look for new .dmp files or other large files written on the host within +/- 15 minutes, especially in Temp, Downloads or ProgramData.",
+        "Look for outbound transfers or archive creation from the host after the access, which could mean the dump was exfiltrated.",
+        "Look at earlier alerts for the host and user, and look for logons from the same account on other hosts that would point to lateral movement."
+      ],
+      "false_positives": [
+        "Software installers or updaters running from Temp or Downloads that briefly touch LSASS with debugging libraries.",
+        "Admin or support staff running a legitimate diagnostic or crash-dump tool from their Desktop or Downloads folder."
+      ],
+      "response_steps": [
+        "Confirm with the user or the asset owner whether the tool was expected. If you can't confirm it, treat the alert as credential theft.",
+        "Isolate the host through EDR, and collect the source binary, any dump files and volatile evidence before you clean up.",
+        "Reset passwords for accounts that logged on to the host, starting with privileged ones. Consider resetting krbtgt if domain admins were exposed.",
+        "Remove the malicious files and persistence, enable LSA protection or Credential Guard where possible, and restore the host to service only after a clean scan."
+      ],
+      "severity_rationale": "High fits because it is unusual for a binary in a user-writable folder to read LSASS through MiniDump libraries, and a successful dump can compromise credentials across the domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown binary in the user's Downloads folder opens LSASS with dbgcore.dll in the call trace (MiniDumpWriteDump).",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6412,
+          "SourceImage": "C:\\Users\\jperez\\Downloads\\memtool.exe",
+          "SourceUser": "ANDES\\jperez",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c0fe|C:\\Windows\\SYSTEM32\\dbgcore.dll+6e1c|C:\\Windows\\SYSTEM32\\dbgcore.dll+1a2b3|C:\\Users\\jperez\\Downloads\\memtool.exe+1532"
+        }
+      },
+      {
+        "description": "Binary in C:\\Windows\\Temp reads LSASS through dbghelp.dll.",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-FS-02.andes.example.com",
+          "SourceProcessId": 3320,
+          "SourceImage": "C:\\Windows\\Temp\\svc_upd.exe",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetProcessId": 684,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "GrantedAccess": "0x1410",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+a0b14|C:\\Windows\\System32\\KERNELBASE.dll+71d2e|C:\\Windows\\SYSTEM32\\dbghelp.dll+3f8a1|C:\\Windows\\Temp\\svc_upd.exe+20a7"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows Error Reporting in System32 uses dbgcore.dll against LSASS, but the source path is not in a suspicious location.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 5120,
+          "SourceImage": "C:\\Windows\\System32\\WerFault.exe",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c0fe|C:\\Windows\\SYSTEM32\\dbgcore.dll+6e1c|C:\\Windows\\System32\\WerFault.exe+4a1f0"
+        }
+      },
+      {
+        "description": "Installer in Downloads queries LSASS but the call trace has no dbgcore.dll or dbghelp.dll.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 7804,
+          "SourceImage": "C:\\Users\\jperez\\Downloads\\setup_client.exe",
+          "SourceUser": "ANDES\\jperez",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+3a1b2|C:\\Users\\jperez\\Downloads\\setup_client.exe+8c31"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

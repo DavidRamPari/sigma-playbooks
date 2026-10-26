@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "e4a74e34-ecde-4aab-b2fb-9112dd01aed0",
+    "title": "Dynamic CSharp Compile Artefact",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/file/file_event/file_event_win_csharp_compile_artefact.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_csharp_compile_artefact.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un archivo con extensión .cmdline, el archivo de respuesta que genera la compilación dinámica de C# (CodeDom) antes de invocar csc.exe. Puede ser legítimo o indicar que se compila y desempaqueta un payload en memoria.",
+      "what_it_detects": "Eventos de creación de archivos (por ejemplo, Sysmon EventID 11) cuyo TargetFilename termina en '.cmdline'. Estos archivos suelen aparecer en carpetas temporales con nombres aleatorios cuando PowerShell Add-Type, CodeDom u otras aplicaciones .NET compilan código C# en tiempo de ejecución.",
+      "why_it_matters": "Un atacante puede enviar código fuente C# ofuscado y compilarlo en el endpoint para evadir firmas estáticas (MITRE ATT&CK T1027.004, Compile After Delivery). El ensamblado resultante puede cargar shellcode, un loader o herramientas de post-explotación.",
+      "triage_steps": [
+        "Identifique el proceso que creó el archivo (Image, ProcessId, User) y su ParentImage. Preste especial atención a powershell.exe, w3wp.exe, binarios de Office, mshta.exe o ejecutables en rutas de usuario.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, la ejecución de csc.exe y cvtres.exe cuyo CommandLine haga referencia a @\"...\\<nombre>.cmdline\".",
+        "Revise la carpeta del TargetFilename: obtenga los archivos .cs, .dll y .out generados y calcule el hash de la DLL compilada para consultarlo en inteligencia de amenazas.",
+        "Si el proceso es PowerShell, revise los logs de Script Block (Event ID 4104) para ver el código pasado a Add-Type, buscando VirtualAlloc, DllImport, cadenas Base64 o descargas.",
+        "Correlacione conexiones de red, inyección de procesos o persistencia del mismo proceso o usuario después de la compilación.",
+        "Consulte alertas previas para el mismo host y usuario, y verifique si el patrón es recurrente y está asociado a un software o script conocido."
+      ],
+      "false_positives": [
+        "Scripts administrativos de PowerShell que usan Add-Type de forma legítima (por ejemplo, herramientas de gestión, DSC o agentes de inventario).",
+        "Aplicaciones .NET Framework que generan ensamblados temporales, como XmlSerializer o compilación dinámica de ASP.NET en w3wp.exe.",
+        "Herramientas de desarrollo, instaladores o productos de seguridad que compilan código C# durante la instalación o la ejecución."
+      ],
+      "response_steps": [
+        "Verifique con el propietario del sistema o del script si la compilación es esperada; si lo es, documente el proceso y la ruta para ajustar la regla.",
+        "Si el código o la DLL resultan maliciosos, aísle el endpoint y conserve los artefactos de la carpeta temporal y la memoria del proceso.",
+        "Termine los procesos maliciosos tras recolectar la evidencia, elimine la persistencia identificada y bloquee los hashes asociados.",
+        "Restablezca las credenciales del usuario afectado si hubo ejecución confirmada y busque el mismo hash o patrón en otros hosts."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque la compilación dinámica de C# es común en software legítimo y solo se vuelve relevante según el proceso creador y el código compilado."
+    },
+    "en": {
+      "summary": "A process created a .cmdline file, the response file written during dynamic C# compilation (CodeDom) before csc.exe runs. This may be benign or may mean a payload is being compiled and unpacked at runtime.",
+      "what_it_detects": "File creation events (for example Sysmon EventID 11) where TargetFilename ends with '.cmdline'. These files usually appear in temp folders with random names when PowerShell Add-Type, CodeDom or other .NET applications compile C# code at runtime.",
+      "why_it_matters": "Attackers can deliver obfuscated C# source and compile it on the endpoint to evade static signatures (MITRE ATT&CK T1027.004, Compile After Delivery). The resulting assembly may load shellcode, a loader or post-exploitation tooling.",
+      "triage_steps": [
+        "Identify the creating process (Image, ProcessId, User) and its ParentImage. Pay close attention to powershell.exe, w3wp.exe, Office binaries, mshta.exe or executables in user-writable paths.",
+        "On the same host within +/- 15 minutes, look for csc.exe and cvtres.exe executions whose CommandLine references @\"...\\<name>.cmdline\".",
+        "Inspect the TargetFilename folder: collect the generated .cs, .dll and .out files and hash the compiled DLL for threat intel lookups.",
+        "If the process is PowerShell, review Script Block logs (Event ID 4104) for the Add-Type source, looking for VirtualAlloc, DllImport, Base64 blobs or downloads.",
+        "Correlate network connections, process injection or persistence by the same process or user after compilation.",
+        "Check earlier alerts for the same host and user, and whether the pattern recurs and maps to known software or scripts."
+      ],
+      "false_positives": [
+        "Administrative PowerShell scripts using Add-Type legitimately (management tools, DSC, inventory agents).",
+        ".NET Framework applications generating temporary assemblies, such as XmlSerializer or ASP.NET dynamic compilation in w3wp.exe.",
+        "Developer tools, installers or security products that compile C# code during installation or runtime."
+      ],
+      "response_steps": [
+        "Confirm with the system or script owner whether compilation is expected; if so, document the process and path to tune the rule.",
+        "If the source or DLL is malicious, isolate the endpoint and preserve the temp folder artefacts and process memory.",
+        "Terminate malicious processes after evidence collection, remove identified persistence and block associated hashes.",
+        "Reset the affected user's credentials if execution is confirmed and hunt for the same hash or pattern on other hosts."
+      ],
+      "severity_rationale": "Low fits because dynamic C# compilation is common in legitimate software and only becomes significant based on the creating process and the compiled code."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell Add-Type writes a CodeDom .cmdline response file in the user's temp folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\x2lmbvq4\\x2lmbvq4.cmdline",
+          "User": "ANDES\\jperez",
+          "UtcTime": "2024-10-25 14:03:12.481"
+        }
+      },
+      {
+        "description": "Unknown executable in a public folder compiles C# dynamically",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Users\\Public\\updater.exe",
+          "ProcessId": 4388,
+          "TargetFilename": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\qk3fz1ud.CMDLINE",
+          "User": "ANDES\\mrojas",
+          "UtcTime": "2024-10-25 15:47:09.102"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same PowerShell compilation, but the event is the .cs source file, not the .cmdline file",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\x2lmbvq4\\x2lmbvq4.0.cs",
+          "User": "ANDES\\jperez",
+          "UtcTime": "2024-10-25 14:03:12.470"
+        }
+      },
+      {
+        "description": "Log file whose name contains 'cmdline' but does not end with .cmdline",
+        "event": {
+          "EventID": 11,
+          "Computer": "bastion-01.andes.example.com",
+          "Image": "C:\\Program Files\\ExampleAgent\\agent.exe",
+          "ProcessId": 2210,
+          "TargetFilename": "C:\\ProgramData\\ExampleAgent\\logs\\cmdline.log",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "UtcTime": "2024-10-25 16:10:44.003"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

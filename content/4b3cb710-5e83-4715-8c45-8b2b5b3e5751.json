@@ -1,0 +1,153 @@
+{
+  "rule": {
+    "id": "4b3cb710-5e83-4715-8c45-8b2b5b3e5751",
+    "title": "Modification of ld.so.preload",
+    "level": "high",
+    "status": "test",
+    "author": "E.M. Anhaus (originally from Atomic Blue Detections, Tony Lambert), oscd.community",
+    "path": "linux/auditd/path/lnx_auditd_ld_so_preload_mod.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/path/lnx_auditd_ld_so_preload_mod.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un acceso auditado a /etc/ld.so.preload, el archivo que obliga al loader dinámico a cargar bibliotecas compartidas en todos los procesos. Una modificación no autorizada indica posible inyección de shared objects o un rootkit en userland.",
+      "what_it_detects": "Registros auditd de tipo PATH cuyo campo name es exactamente /etc/ld.so.preload. Normalmente se generan por una regla watch (-w /etc/ld.so.preload -p wa) cuando un proceso crea, escribe, renombra o elimina el archivo.",
+      "why_it_matters": "Cada biblioteca listada en ld.so.preload se carga en todos los binarios enlazados dinámicamente, incluidos los que corren como root. Permite persistencia, escalamiento de privilegios y ocultar procesos o archivos (ATT&CK T1574.006, Dynamic Linker Hijacking).",
+      "triage_steps": [
+        "Correlacione el PATH con el registro SYSCALL que tiene el mismo ID msg=audit(...:serial) para obtener exe, comm, syscall, success, auid, uid y pid.",
+        "Revise nametype (CREATE, NORMAL, DELETE) y el syscall (openat, rename, unlink) para confirmar si hubo escritura, creación o eliminación.",
+        "Identifique al usuario real con auid y compárelo con cambios aprobados, sesiones SSH o sudo en el mismo host dentro de +/- 15 minutos.",
+        "Lea el contenido actual de /etc/ld.so.preload y verifique cada ruta de biblioteca: propietario, fecha, hash y si pertenece a un paquete (rpm -qf o dpkg -S).",
+        "Busque en el host, +/- 15 minutos, eventos EXECVE, descargas (curl, wget), compilación con gcc o nuevos archivos .so en /tmp, /dev/shm o /usr/local/lib.",
+        "Revise el proceso padre y la cadena de procesos del pid; un shell web, cron o un usuario de servicio es altamente sospechoso.",
+        "Consulte alertas previas del mismo host y del mismo auid, y busque el mismo nombre de biblioteca en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores que configuran temporalmente bibliotecas de diagnóstico o rendimiento (por ejemplo, asignadores de memoria o libfaketime) bajo un cambio aprobado.",
+        "Agentes de seguridad, monitoreo o APM que instalan su propia biblioteca de preload durante su instalación o actualización.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) o imágenes base que gestionan el archivo.",
+        "Escáneres de cumplimiento o forenses que leen el archivo si la regla de auditoría también vigila lecturas."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema si el cambio estaba autorizado antes de actuar; conserve el registro auditd completo.",
+        "Si no está autorizado, aísle el host de la red y preserve una copia de /etc/ld.so.preload y de las bibliotecas referenciadas con sus hashes.",
+        "Tras recolectar evidencia, retire las entradas maliciosas, elimine las bibliotecas asociadas y busque otra persistencia (cron, systemd, llaves SSH).",
+        "Considere herramientas no confiables si hay rootkit; analice desde medios externos o reconstruya el host desde una imagen confiable y rote credenciales expuestas."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque este archivo rara vez cambia en operación normal y su modificación da ejecución de código en todos los procesos, incluso privilegiados."
+    },
+    "en": {
+      "summary": "auditd recorded an audited access to /etc/ld.so.preload, the file that forces the dynamic loader to load shared libraries into every process. An unauthorized change suggests shared object injection or a userland rootkit.",
+      "what_it_detects": "auditd PATH records whose name field is exactly /etc/ld.so.preload. These are usually produced by a watch rule (-w /etc/ld.so.preload -p wa) when a process creates, writes, renames or deletes the file.",
+      "why_it_matters": "Every library listed in ld.so.preload is loaded into all dynamically linked binaries, including root processes. This enables persistence, privilege escalation and hiding processes or files (ATT&CK T1574.006, Dynamic Linker Hijacking).",
+      "triage_steps": [
+        "Join the PATH record with the SYSCALL record sharing the same msg=audit(...:serial) ID to get exe, comm, syscall, success, auid, uid and pid.",
+        "Check nametype (CREATE, NORMAL, DELETE) and the syscall (openat, rename, unlink) to confirm a write, creation or deletion.",
+        "Identify the real user through auid and compare against approved changes, SSH or sudo sessions on the same host within +/- 15 minutes.",
+        "Read the current /etc/ld.so.preload and verify each library path: owner, timestamp, hash and package ownership (rpm -qf or dpkg -S).",
+        "Search the host within +/- 15 minutes for EXECVE events, downloads (curl, wget), gcc compilation or new .so files in /tmp, /dev/shm or /usr/local/lib.",
+        "Review the pid's parent and process chain; a web shell, cron job or service account is highly suspicious.",
+        "Check earlier alerts for the same host and auid, and hunt for the same library name on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators temporarily configuring diagnostic or performance libraries (for example memory allocators or libfaketime) under an approved change.",
+        "Security, monitoring or APM agents installing their own preload library during install or upgrade.",
+        "Configuration management (Ansible, Puppet, Chef) or base images that manage the file.",
+        "Compliance or forensic scanners reading the file if the audit rule also watches reads."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the change was authorized before acting; preserve the full auditd event.",
+        "If unauthorized, isolate the host and preserve copies and hashes of /etc/ld.so.preload and every referenced library.",
+        "After evidence collection, remove malicious entries and libraries, then hunt for other persistence (cron, systemd units, SSH keys).",
+        "Treat local tools as untrusted if a rootkit is suspected; analyze from external media or rebuild from a trusted image and rotate exposed credentials."
+      ],
+      "severity_rationale": "High fits because this file rarely changes in normal operation and modifying it grants code execution in every process, including privileged ones."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PATH record for creation of /etc/ld.so.preload by a shell redirection on a compromised host",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865012.431:5821)",
+          "item": 1,
+          "name": "/etc/ld.so.preload",
+          "inode": 1310742,
+          "dev": "fd:00",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE",
+          "host": "bastion-01",
+          "key": "ld_preload"
+        }
+      },
+      {
+        "description": "PATH record for a write to the existing /etc/ld.so.preload file",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865390.118:5904)",
+          "item": 0,
+          "name": "/etc/ld.so.preload",
+          "inode": 1310742,
+          "dev": "fd:00",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL",
+          "host": "web-07",
+          "key": "ld_preload"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PATH record for /etc/ld.so.conf, a related loader config file that the rule does not cover",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1729865500.002:5950)",
+          "item": 1,
+          "name": "/etc/ld.so.conf",
+          "inode": 1310520,
+          "dev": "fd:00",
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL",
+          "host": "bastion-01",
+          "key": "ld_conf"
+        }
+      },
+      {
+        "description": "SYSCALL record from the same event: correct context but wrong record type, and it has no name field",
+        "event": {
+          "type": "SYSCALL",
+          "msg": "audit(1729865012.431:5821)",
+          "arch": "c000003e",
+          "syscall": 257,
+          "success": "yes",
+          "exe": "/usr/bin/bash",
+          "comm": "bash",
+          "auid": 1001,
+          "uid": 0,
+          "pid": 48211,
+          "ppid": 48190,
+          "host": "bastion-01",
+          "key": "ld_preload"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "f41dada5-3f56-4232-8503-3fb7f9cf2d60",
+    "title": "ESXi Storage Information Discovery Via ESXCLI",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems), Cedric Maurugeon",
+    "path": "linux/process_creation/proc_creation_lnx_esxcli_storage_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_esxcli_storage_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1007",
+      "T1033",
+      "T1059.012"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó esxcli con el namespace storage y una acción get o list en un host Linux/ESXi. Puede ser administración normal, o reconocimiento de datastores antes de cifrar máquinas virtuales.",
+      "what_it_detects": "Eventos de creación de procesos donde Image termina en /esxcli y CommandLine contiene 'storage' junto con ' get' o ' list'. Por ejemplo: 'esxcli storage filesystem list' o 'esxcli storage core device list'.",
+      "why_it_matters": "Los ransomware para ESXi, como DarkSide y LockBit según las referencias de la regla, consultan los volúmenes y datastores para localizar los discos de las VM que van a cifrar. Corresponde a descubrimiento (T1033, T1007) y a ejecución mediante la CLI del hipervisor (T1059.012).",
+      "triage_steps": [
+        "Revise CommandLine para ver qué se consultó (filesystem, core device, vmfs extent, nfs) y si forma parte de una ráfaga de comandos de enumeración.",
+        "Identifique el usuario y el origen de la sesión: SSH, ESXi Shell o DCUI. Correlacione con /var/log/auth.log y /var/log/shell.log del host.",
+        "Revise ParentImage y la cadena de procesos: shell interactiva, script en /tmp o /vmfs/volumes, o un binario desconocido.",
+        "Busque en el mismo host, +/- 15 minutos, 'esxcli vm process list/kill', 'vim-cmd vmsvc/getallvms', cambios de firewall o la habilitación de SSH.",
+        "Verifique si la IP de origen de la sesión corresponde a un jump host o a una estación de administración autorizada.",
+        "Confirme con el equipo de virtualización si había mantenimiento, migración o cambios de almacenamiento planificados.",
+        "Busque alertas previas del mismo usuario, la misma IP o el mismo host, y archivos nuevos o renombrados en los datastores."
+      ],
+      "false_positives": [
+        "Administradores de VMware que revisan datastores, rutas o dispositivos durante tareas de soporte o mantenimiento.",
+        "Scripts de monitoreo, inventario o backup que consultan el estado del almacenamiento de forma periódica.",
+        "Herramientas de diagnóstico del fabricante, por ejemplo la recolección de vm-support."
+      ],
+      "response_steps": [
+        "Si la actividad no está autorizada, aísle el acceso de administración del host (SSH, ESXi Shell) y revoque las credenciales usadas, sin apagar las VM antes de evaluar el impacto.",
+        "Preserve los logs del host (shell.log, auth.log, hostd.log) y los binarios o scripts sospechosos, junto con su hash.",
+        "Revise todos los hosts ESXi y vCenter en busca de la misma cuenta o IP, y de archivos cifrados o notas de rescate.",
+        "Elimine artefactos maliciosos, rote credenciales, deshabilite SSH si no se necesita y verifique que los backups estén íntegros antes de restaurar."
+      ],
+      "severity_rationale": "Medium es apropiado porque es un comando habitual de administración, pero en manos de un atacante suele preceder al cifrado de datastores; en entornos con mucha administración puede bajarse a low."
+    },
+    "en": {
+      "summary": "esxcli was run with the storage namespace and a get or list action on a Linux/ESXi host. This may be routine administration or datastore reconnaissance before encrypting virtual machines.",
+      "what_it_detects": "Process creation events where Image ends with /esxcli and CommandLine contains 'storage' plus ' get' or ' list', for example 'esxcli storage filesystem list' or 'esxcli storage core device list'.",
+      "why_it_matters": "ESXi ransomware such as DarkSide and LockBit, per the rule references, enumerate volumes and datastores to locate VM disks to encrypt. Maps to discovery (T1033, T1007) and execution through the hypervisor CLI (T1059.012).",
+      "triage_steps": [
+        "Read CommandLine to see what was queried (filesystem, core device, vmfs extent, nfs) and whether it is part of a burst of enumeration commands.",
+        "Identify the user and session origin: SSH, ESXi Shell or DCUI. Correlate with /var/log/auth.log and /var/log/shell.log on the host.",
+        "Check ParentImage and the process chain: interactive shell, script in /tmp or /vmfs/volumes, or an unknown binary.",
+        "On the same host within +/- 15 minutes, look for 'esxcli vm process list/kill', 'vim-cmd vmsvc/getallvms', firewall changes or SSH being enabled.",
+        "Verify the session source IP is an authorized jump host or admin workstation.",
+        "Confirm with the virtualization team whether maintenance, migration or storage changes were scheduled.",
+        "Search earlier alerts for the same user, source IP or host, and for new or renamed files on datastores."
+      ],
+      "false_positives": [
+        "VMware administrators reviewing datastores, paths or devices during support or maintenance.",
+        "Monitoring, inventory or backup scripts that query storage status periodically.",
+        "Vendor diagnostic tooling, such as vm-support bundle collection."
+      ],
+      "response_steps": [
+        "If unauthorized, restrict management access to the host (SSH, ESXi Shell) and revoke the credentials used; do not power off VMs before assessing impact.",
+        "Preserve host logs (shell.log, auth.log, hostd.log) and any suspicious binaries or scripts with their hashes.",
+        "Sweep all ESXi hosts and vCenter for the same account or IP, encrypted files or ransom notes.",
+        "Remove malicious artifacts, rotate credentials, disable SSH if not needed and verify backup integrity before restoring."
+      ],
+      "severity_rationale": "Medium fits because this is a common admin command, yet in attacker hands it often precedes datastore encryption; it can be lowered to low in admin-heavy environments."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Datastore enumeration via esxcli storage filesystem list from an SSH shell",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli storage filesystem list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "esxi-01.example.com",
+          "ProcessId": 48213
+        }
+      },
+      {
+        "description": "Script in /tmp listing storage devices with esxcli",
+        "event": {
+          "Image": "/usr/lib/vmware/esxcli/esxcli",
+          "CommandLine": "/bin/esxcli storage core device list",
+          "ParentImage": "/tmp/encryptor",
+          "User": "root",
+          "Computer": "esxi-02.example.com",
+          "ProcessId": 51907
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "esxcli network listing; CommandLine lacks 'storage'",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli network ip interface list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "esxi-01.example.com",
+          "ProcessId": 48300
+        }
+      },
+      {
+        "description": "esxcli storage command that adds an NFS mount, with no get or list action",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli storage nfs add --host=nas01.example.com --share=/vol/ds01 --volume-name=ds01",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "esxi-03.example.com",
+          "ProcessId": 49012
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "9c5037d1-c568-49b3-88c7-9846a5bdc2be",
+    "title": "Suspicious Run Key from Download",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Swachchhanda Shrawan Poude (Nextron Systems)",
+    "path": "windows/registry/registry_event/registry_event_susp_download_run_key.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_susp_download_run_key.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que se ejecuta desde la carpeta Downloads o desde un directorio temporal de adjuntos de Outlook o Internet Explorer creó o modificó una clave Run del registro. Es muy probable que un archivo descargado o recibido por correo esté intentando persistir en el inicio de sesión.",
+      "what_it_detects": "Eventos de registro (Sysmon 12/13/14) en los que Image contiene rutas de Downloads, Olk\\Attachments, Content.Outlook, paquetes de Outlook o Temporary Internet Files, y TargetObject apunta a CurrentVersion\\Run, WOW6432Node\\...\\Run o Policies\\Explorer\\Run.",
+      "why_it_matters": "Las claves Run ejecutan programas en cada inicio de sesión (ATT&CK T1547.001, Registry Run Keys). Cuando quien las escribe es un adjunto o una descarga recién abierta, suele tratarse de malware que se instala para sobrevivir a reinicios.",
+      "triage_steps": [
+        "Revise Image, TargetObject y Details: identifique qué binario escribió la clave, el nombre del valor y la ruta que se ejecutará al iniciar sesión.",
+        "Obtenga el hash de Image y del binario referenciado en Details; consulte reputación, firma digital y fecha de creación del archivo.",
+        "Determine el origen: correo con adjunto (Outlook/Olk) o descarga web; revise Zone.Identifier, historial del navegador y registros del gateway de correo.",
+        "Construya el árbol de procesos: proceso padre de Image (outlook.exe, explorer.exe, navegador) y procesos hijos creados.",
+        "Pivote en el mismo host +/- 15 minutos: conexiones de red, archivos creados en AppData o Temp, tareas programadas y servicios nuevos.",
+        "Busque el mismo hash, nombre de valor o remitente en otros endpoints y alertas previas del mismo usuario."
+      ],
+      "false_positives": [
+        "Instaladores legítimos descargados por el usuario (clientes de VPN, mensajería, actualizadores) que registran un componente de inicio automático.",
+        "Herramientas firmadas ejecutadas directamente desde Downloads que agregan su agente en Run; valide firma y aprobación del área de TI."
+      ],
+      "response_steps": [
+        "Verifique legitimidad con el usuario y la firma del binario antes de actuar.",
+        "Si es malicioso, aísle el endpoint desde el EDR y bloquee el hash y los dominios o IPs asociados.",
+        "Exporte la clave como evidencia, elimine el valor Run y los archivos referenciados, y revise otros mecanismos de persistencia.",
+        "Purgue el correo de otros buzones, restablezca credenciales del usuario si hubo ejecución y documente los IOC."
+      ],
+      "severity_rationale": "Es alta porque un proceso que corre desde una descarga o un adjunto y escribe en una clave Run es un patrón típico de malware que se instala para persistir, y casi nunca es benigno."
+    },
+    "en": {
+      "summary": "A process running from the Downloads folder or a temporary Outlook/Internet Explorer attachment directory created or modified a Run registry key. A downloaded or emailed file is likely trying to persist at logon.",
+      "what_it_detects": "Registry events (Sysmon 12/13/14) where Image contains Downloads, Olk\\Attachments, Content.Outlook, Outlook package or Temporary Internet Files paths, and TargetObject points to CurrentVersion\\Run, WOW6432Node\\...\\Run or Policies\\Explorer\\Run.",
+      "why_it_matters": "Run keys launch programs at every user logon (ATT&CK T1547.001, Registry Run Keys). If a freshly opened attachment or download writes one, it is often malware making sure it survives reboots.",
+      "triage_steps": [
+        "Review Image, TargetObject and Details: which binary wrote the key, the value name, and what path will run at logon.",
+        "Hash Image and the binary referenced in Details; check reputation, digital signature and file creation time.",
+        "Establish the source: email attachment (Outlook/Olk) or web download; check Zone.Identifier, browser history and mail gateway logs.",
+        "Build the process tree: parent of Image (outlook.exe, explorer.exe, browser) and any child processes.",
+        "Pivot on the same host +/- 15 minutes: network connections, files dropped in AppData or Temp, new scheduled tasks or services.",
+        "Hunt the same hash, value name or sender on other endpoints and in earlier alerts for the same user."
+      ],
+      "false_positives": [
+        "Legitimate installers downloaded by the user (VPN clients, chat apps, updaters) that register an autostart component.",
+        "Signed tools run straight from Downloads that add their agent to Run; confirm signature and IT approval."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the user and the binary signature before acting.",
+        "If malicious, isolate the endpoint via EDR and block the hash and related domains or IPs.",
+        "Export the key as evidence, remove the Run value and referenced files, and check for other persistence.",
+        "Purge the email from other mailboxes, reset the user's credentials if code ran, and record IOCs."
+      ],
+      "severity_rationale": "High fits because a process running from a download or attachment that writes a Run key is a classic malware persistence pattern and is rarely benign."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Executable opened from Outlook attachments folder sets an HKCU Run value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6844,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Olk\\Attachments\\factura_0923.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\WinUpdateHelper",
+          "Details": "C:\\Users\\jperez\\AppData\\Roaming\\winhelper\\svc.exe"
+        }
+      },
+      {
+        "description": "Binary run from Downloads writes a WOW6432Node Run key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 3120,
+          "Image": "C:\\Users\\mrojas\\Downloads\\invoice_viewer.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run\\Viewer",
+          "Details": "C:\\ProgramData\\viewer\\viewer.exe -silent"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimately installed application in Program Files sets its Run key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 4410,
+          "Image": "C:\\Program Files\\ExampleVPN\\vpnclient.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\ExampleVPN",
+          "Details": "\"C:\\Program Files\\ExampleVPN\\vpnclient.exe\" /tray"
+        }
+      },
+      {
+        "description": "Process from Downloads writes a non-Run registry key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 5012,
+          "Image": "C:\\Users\\mrojas\\Downloads\\setup_tool.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1188\\Software\\ExampleCorp\\SetupTool\\InstallPath",
+          "Details": "C:\\Users\\mrojas\\AppData\\Local\\SetupTool"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

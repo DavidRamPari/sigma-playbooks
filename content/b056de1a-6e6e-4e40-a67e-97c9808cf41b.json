@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "b056de1a-6e6e-4e40-a67e-97c9808cf41b",
+    "title": "AWS Route 53 Domain Transferred to Another Account",
+    "level": "low",
+    "status": "test",
+    "author": "Elastic, Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_route_53_domain_transferred_to_another_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_route_53_domain_transferred_to_another_account.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "CloudTrail registró una solicitud TransferDomainToAnotherAwsAccount: alguien pidió transferir un dominio registrado en Route 53 a otra cuenta de AWS. Si la cuenta receptora la acepta, esa cuenta pasa a controlar el dominio.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource route53.amazonaws.com y eventName TransferDomainToAnotherAwsAccount, es decir, el inicio de la transferencia de un dominio a otra cuenta de AWS, tanto si se completa como si no.",
+      "why_it_matters": "Si un atacante se lleva un dominio, puede redirigir sitios web y correo, recibir restablecimientos de contraseña o hacerse pasar por la organización. Corresponde a ATT&CK T1098 (Account Manipulation): usa credenciales válidas para conservar el control de un recurso.",
+      "triage_steps": [
+        "Identifique al principal en userIdentity.arn, userIdentity.type y accessKeyId. Determine si es un usuario humano, un rol asumido o una automatización conocida.",
+        "Revise requestParameters.domainName y requestParameters.accountId. Confirme si la cuenta de destino pertenece a su AWS Organization o a un socio autorizado.",
+        "Revise errorCode y responseElements. Un intento fallido también indica intención y debe investigarse.",
+        "Revise sourceIPAddress y userAgent. Compárelos con los valores habituales de ese principal, como la red corporativa o las herramientas de IaC y CLI aprobadas.",
+        "Busque eventos del mismo principal en un rango de +/- 15 minutos: ConsoleLogin, AssumeRole, CreateAccessKey, cambios en IAM, DisableDomainTransferLock y UpdateDomainContact.",
+        "Consulte el estado de la operación con ListOperations o GetOperationDetail para saber si la transferencia sigue pendiente o la cuenta receptora ya la aceptó.",
+        "Busque alertas anteriores sobre el mismo usuario, la misma clave de acceso o la misma IP de origen, y valide si existe un ticket de cambio."
+      ],
+      "false_positives": [
+        "Un administrador de red o de la nube consolida dominios entre cuentas de la misma organización, con un cambio aprobado.",
+        "Una reorganización, fusión o desinversión obliga a mover dominios a cuentas de otra unidad de negocio.",
+        "Una automatización documentada que gestiona el ciclo de vida de los dominios. Si se confirma, puede excluirse por principal y cuenta de destino."
+      ],
+      "response_steps": [
+        "Verifique la solicitud con el responsable del dominio y con el dueño de la cuenta de destino antes de actuar.",
+        "Si no está autorizada y sigue pendiente, cancélela con CancelDomainTransferToAnotherAwsAccount y reactive el bloqueo de transferencia del dominio.",
+        "Desactive o rote las credenciales comprometidas, revoque las sesiones activas del rol y revise los cambios de IAM que hizo el principal.",
+        "Revise los registros DNS, los contactos del dominio y las zonas alojadas en busca de cambios. Si la transferencia ya se completó, contacte a AWS Support.",
+        "Documente el incidente y restrinja route53domains:TransferDomainToAnotherAwsAccount mediante SCP o políticas IAM con privilegio mínimo."
+      ],
+      "severity_rationale": "El nivel es bajo porque los administradores transfieren dominios de forma legítima, pero debe escalarse si el principal, el origen o la cuenta de destino son desconocidos."
+    },
+    "en": {
+      "summary": "CloudTrail recorded a TransferDomainToAnotherAwsAccount request: someone asked to move a Route 53 registered domain to another AWS account. If the receiving account accepts the transfer, that account takes control of the domain.",
+      "what_it_detects": "CloudTrail events with eventSource route53.amazonaws.com and eventName TransferDomainToAnotherAwsAccount. This is the start of a domain transfer to another AWS account, whether or not it succeeds.",
+      "why_it_matters": "An attacker who takes a domain can redirect websites and email, receive password resets or impersonate the organization. This maps to ATT&CK T1098 (Account Manipulation): valid credentials are used to keep control of a resource.",
+      "triage_steps": [
+        "Identify the principal from userIdentity.arn, userIdentity.type and accessKeyId. Decide whether it is a human user, an assumed role or known automation.",
+        "Check requestParameters.domainName and requestParameters.accountId. Confirm whether the destination account belongs to your AWS Organization or an approved partner.",
+        "Check errorCode and responseElements. A failed attempt still shows intent and needs investigation.",
+        "Check sourceIPAddress and userAgent. Compare them with this principal's usual values, such as the corporate network or approved CLI and IaC tooling.",
+        "Look for events from the same principal within +/- 15 minutes: ConsoleLogin, AssumeRole, CreateAccessKey, IAM changes, DisableDomainTransferLock and UpdateDomainContact.",
+        "Query ListOperations or GetOperationDetail to find out whether the transfer is still pending or the receiving account has already accepted it.",
+        "Look for earlier alerts on the same user, access key or source IP, and check whether a change ticket exists."
+      ],
+      "false_positives": [
+        "A cloud or network administrator consolidates domains across accounts in the same organization under an approved change.",
+        "A reorganization, merger or divestiture requires moving domains to accounts owned by another business unit.",
+        "Documented automation that manages the domain lifecycle. Once confirmed, exclude it by principal and destination account."
+      ],
+      "response_steps": [
+        "Confirm the request with the domain owner and the owner of the destination account before you act.",
+        "If the request is unauthorized and still pending, cancel it with CancelDomainTransferToAnotherAwsAccount and turn the domain transfer lock back on.",
+        "Disable or rotate the compromised credentials, revoke the role's active sessions and review any IAM changes made by the principal.",
+        "Check DNS records, domain contacts and hosted zones for changes. If the transfer has already completed, contact AWS Support.",
+        "Document the incident, then restrict route53domains:TransferDomainToAnotherAwsAccount with an SCP or least-privilege IAM policies."
+      ],
+      "severity_rationale": "The level is low because administrators transfer domains for legitimate reasons, but escalate the alert if the principal, the source or the destination account is unfamiliar."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user requests the transfer of a corporate domain to an external AWS account from an unusual IP using the AWS CLI.",
+        "event": {
+          "eventSource": "route53.amazonaws.com",
+          "eventName": "TransferDomainToAnotherAwsAccount",
+          "eventTime": "2024-05-14T03:12:45Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.57",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000JPEREZ",
+          "requestParameters.domainName": "example.com",
+          "requestParameters.accountId": "444455556666",
+          "responseElements.operationId": "op-0a1b2c3d4e5f-example",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "An assumed role tries to transfer a domain from the console, and the request fails with AccessDenied. The event still matches the rule.",
+        "event": {
+          "eventSource": "route53.amazonaws.com",
+          "eventName": "TransferDomainToAnotherAwsAccount",
+          "eventTime": "2024-05-14T03:20:02Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/NetOpsAdmin/mrodriguez",
+          "requestParameters.domainName": "example.org",
+          "requestParameters.accountId": "777788889999",
+          "errorCode": "AccessDenied",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The receiving account accepts a domain transfer. eventSource is the same, but eventName is different, so the event does not match.",
+        "event": {
+          "eventSource": "route53.amazonaws.com",
+          "eventName": "AcceptDomainTransferFromAnotherAwsAccount",
+          "eventTime": "2024-05-14T09:00:10Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::444455556666:user/dns-admin",
+          "requestParameters.domainName": "example.com",
+          "recipientAccountId": "444455556666"
+        }
+      },
+      {
+        "description": "A routine DNS record change in a hosted zone through ChangeResourceRecordSets. The event does not match.",
+        "event": {
+          "eventSource": "route53.amazonaws.com",
+          "eventName": "ChangeResourceRecordSets",
+          "eventTime": "2024-05-14T10:30:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.44",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.7.5",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-runner",
+          "requestParameters.hostedZoneId": "Z0EXAMPLE12345",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

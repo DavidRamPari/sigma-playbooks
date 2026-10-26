@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "8a670c6d-7189-4b1c-8017-a417ca84a086",
+    "title": "Suspicious SQL Error Messages",
+    "level": "high",
+    "status": "test",
+    "author": "Bjoern Kimminich",
+    "path": "application/sql/app_sqlinjection_errors.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/sql/app_sqlinjection_errors.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una aplicación registró un mensaje de error de SQL típico de una entrada mal escapada (Oracle, MySQL, SQL Server o SQLite). Puede indicar que alguien está probando una inyección SQL contra la aplicación.",
+      "what_it_detects": "Líneas de logs de error de aplicaciones que contienen textos de error de sintaxis SQL conocidos: 'quoted string not properly terminated' (Oracle), 'You have an error in your SQL syntax' (MySQL), 'Unclosed quotation mark' (SQL Server), 'near \"…\": syntax error' y errores de columnas desiguales en UNION (SQLite).",
+      "why_it_matters": "Estos errores aparecen cuando una comilla o un UNION inyectado rompe la consulta. Es el paso previo típico a explotar una aplicación expuesta (T1190, Exploit Public-Facing Application) para leer o modificar datos de la base.",
+      "triage_steps": [
+        "Lea el mensaje completo: identifique el motor de base de datos, el componente o DAO que falló y el fragmento de la consulta cerca del error (comillas, UNION, ORDER BY, comentarios).",
+        "Correlacione la marca de tiempo con los logs del servidor web, proxy o WAF (+/- 15 minutos) para hallar la URL, el cs-uri-query, el cuerpo del POST, la IP de origen y el user agent.",
+        "Cuente cuántos errores SQL generó la misma IP o sesión: muchos en poco tiempo, con parámetros variados, sugieren un escáner automatizado.",
+        "Revise el user agent y los patrones de payload buscando herramientas de inyección conocidas o probes de comillas, UNION SELECT y condiciones booleanas.",
+        "Verifique si hubo respuestas exitosas posteriores de la misma IP con tamaños inusuales, o consultas anómalas en los logs de la base de datos que indiquen extracción de datos.",
+        "Descarte el falso positivo de MySQL: confirme si la consulta contiene una cláusula IN() vacía o si hubo un despliegue reciente que introdujo un bug.",
+        "Busque alertas previas para la misma IP de origen, el mismo usuario autenticado y la misma aplicación."
+      ],
+      "false_positives": [
+        "En MySQL, una cláusula IN() vacía en una consulta segura (no dinámica) genera 'You have an error in your SQL syntax'.",
+        "Errores de programación tras un despliegue reciente, por ejemplo consultas armadas por concatenación con datos de usuario legítimos que contienen apóstrofos (O'Brien).",
+        "Escaneos de vulnerabilidades autorizados o pruebas de penetración contra la aplicación."
+      ],
+      "response_steps": [
+        "Confirme con el equipo dueño de la aplicación si hay pruebas autorizadas o cambios recientes antes de escalar.",
+        "Si la actividad es maliciosa, bloquee la IP de origen o la sesión en el WAF o balanceador y aplique reglas para el parámetro vulnerable.",
+        "Revise los logs de la base de datos y de la aplicación para determinar si se accedió o modificó información; si hay indicios, escale como incidente.",
+        "Corrija el código con consultas parametrizadas y validación de entrada, y rote las credenciales de base de datos si pudieron exponerse.",
+        "Monitoree la aplicación y la IP durante los días siguientes para detectar reintentos."
+      ],
+      "severity_rationale": "El nivel high se justifica porque estos errores rara vez ocurren en uso normal y suelen indicar que una entrada de usuario llega sin sanitizar a una consulta SQL expuesta."
+    },
+    "en": {
+      "summary": "An application logged a SQL error message typical of improperly escaped input (Oracle, MySQL, SQL Server or SQLite). It may mean someone is probing the application for SQL injection.",
+      "what_it_detects": "Application error log lines containing well-known SQL syntax error strings: 'quoted string not properly terminated' (Oracle), 'You have an error in your SQL syntax' (MySQL), 'Unclosed quotation mark' (SQL Server), 'near \"…\": syntax error' and mismatched UNION column errors (SQLite).",
+      "why_it_matters": "These errors appear when an injected quote or UNION breaks a query. That is the usual first step in exploiting a public-facing application (T1190) to read or alter database data.",
+      "triage_steps": [
+        "Read the full message: identify the database engine, the failing component or DAO, and the query fragment near the error (quotes, UNION, ORDER BY, comments).",
+        "Correlate the timestamp with web server, proxy or WAF logs (+/- 15 minutes) to find the URL, cs-uri-query, POST body, source IP and user agent.",
+        "Count SQL errors from the same IP or session; many in a short window with varied parameters suggest an automated scanner.",
+        "Check the user agent and payload patterns for known injection tools or quote, UNION SELECT and boolean-condition probes.",
+        "Look for later successful responses from the same IP with unusual sizes, or anomalous queries in database logs, indicating data extraction.",
+        "Rule out the MySQL false positive: check whether the query has an empty IN() clause or a recent deployment introduced a bug.",
+        "Search for earlier alerts for the same source IP, authenticated user and application."
+      ],
+      "false_positives": [
+        "In MySQL, an empty IN() clause in a safe, non-dynamic query raises 'You have an error in your SQL syntax'.",
+        "Coding bugs after a recent deployment, such as concatenated queries failing on legitimate user data containing apostrophes (O'Brien).",
+        "Authorized vulnerability scans or penetration tests against the application."
+      ],
+      "response_steps": [
+        "Confirm with the application owner whether authorized testing or recent changes explain the errors before escalating.",
+        "If malicious, block the source IP or session at the WAF or load balancer and add rules for the vulnerable parameter.",
+        "Review database and application logs to determine whether data was accessed or modified; escalate as an incident if so.",
+        "Fix the code with parameterized queries and input validation; rotate database credentials if they may have been exposed.",
+        "Monitor the application and the source IP over the following days for retries."
+      ],
+      "severity_rationale": "High fits because these errors rarely occur in normal use and usually indicate user input reaching an exposed SQL query unsanitized."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Java application log with a MySQL syntax error triggered by a quote in the id parameter from an external IP.",
+        "event": {
+          "message": "2024-10-25 14:03:12,481 ERROR [http-nio-8080-exec-7] c.example.shop.ProductDao - java.sql.SQLSyntaxErrorException: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ''1''' at line 1 [client=203.0.113.45 uri=/products?id=1']",
+          "host": "web-shop-01",
+          "application": "shop-api",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "Python application log with a SQLite syntax error near an injected UNION keyword.",
+        "event": {
+          "message": "2024-10-25 14:05:40,102 ERROR app.views.search: sqlite3.OperationalError: near \"UNION\": syntax error (remote_addr=198.51.100.23 path=/search?q=test)",
+          "host": "app-int-02",
+          "application": "search-service",
+          "level": "ERROR"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MySQL deadlock error in the same application; a real SQL error but not one of the injection-related strings.",
+        "event": {
+          "message": "2024-10-25 14:10:03,977 ERROR [http-nio-8080-exec-3] c.example.shop.OrderDao - com.mysql.cj.jdbc.exceptions.MySQLTransactionRollbackException: Deadlock found when trying to get lock; try restarting transaction",
+          "host": "web-shop-01",
+          "application": "shop-api",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "SQLite error about a missing table, which contains 'syntax' nowhere and does not match the near \"*\": syntax error pattern.",
+        "event": {
+          "message": "2024-10-25 14:12:18,550 ERROR app.views.report: sqlite3.OperationalError: no such table: monthly_report",
+          "host": "app-int-02",
+          "application": "search-service",
+          "level": "ERROR"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

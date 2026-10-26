@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "7f2bb9d5-6395-4de5-969c-70c11fbe6b12",
+    "title": "Split A File Into Pieces",
+    "level": "low",
+    "status": "test",
+    "author": "Igor Fits, Mikhail Larin, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_split_file_into_pieces.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_split_file_into_pieces.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1030"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario split en un host macOS. Puede ser una tarea administrativa normal o la preparación de datos para exfiltrarlos en fragmentos pequeños.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde Image termina en '/split', es decir, cualquier ejecución de la utilidad split, sin importar sus argumentos.",
+      "why_it_matters": "Un atacante puede dividir un archivo grande en partes para no superar los límites de tamaño de transferencia y pasar desapercibido (MITRE ATT&CK T1030, Data Transfer Size Limits, táctica de exfiltración).",
+      "triage_steps": [
+        "Revise CommandLine: el archivo de entrada, el tamaño de fragmento (-b, -l, -n) y el prefijo o directorio de salida, por ejemplo /tmp o /Users/Shared.",
+        "Identifique qué contiene el archivo de entrada: archivos comprimidos (.zip, .tar.gz, .dmg), bases de datos, llaveros o documentos de usuario aumentan el riesgo.",
+        "Revise ParentImage y la cadena de procesos: Terminal o un script de administración conocido es esperable; osascript, curl, python o un binario desconocido en /tmp es sospechoso.",
+        "Confirme el usuario y si su rol justifica la actividad; compare con alertas previas del mismo usuario y del mismo host.",
+        "Busque en el mismo host, +/- 15 minutos, procesos de compresión o cifrado previos (zip, tar, ditto, openssl) y de transferencia posteriores (curl, scp, nc, rsync).",
+        "Correlacione con telemetría de red del host: conexiones salientes repetidas de tamaño similar o hacia destinos poco comunes o de almacenamiento en la nube."
+      ],
+      "false_positives": [
+        "Actividad administrativa legítima, como dividir respaldos, imágenes de disco o logs grandes para almacenarlos o enviarlos.",
+        "Scripts de desarrollo o de compilación que dividen artefactos o datasets.",
+        "Usuarios avanzados que preparan archivos grandes para subirlos a servicios con límite de tamaño."
+      ],
+      "response_steps": [
+        "Valide con el usuario o con el responsable del host el propósito de la división y el destino previsto de los fragmentos.",
+        "Si no hay justificación, preserve los fragmentos y el archivo original, calcule su hash y registre las rutas para el análisis.",
+        "Si se confirma exfiltración, aísle el endpoint de la red y bloquee los destinos externos identificados.",
+        "Restablezca las credenciales de la cuenta involucrada, elimine los mecanismos de persistencia o scripts maliciosos y evalúe el impacto de los datos expuestos."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque split es una utilidad común y por sí sola no prueba exfiltración; requiere correlación con compresión o transferencia."
+    },
+    "en": {
+      "summary": "The split binary was run on a macOS host. This may be routine admin work or staging data for exfiltration in small chunks.",
+      "what_it_detects": "macOS process creation events where Image ends with '/split', meaning any run of the split utility, regardless of arguments.",
+      "why_it_matters": "Attackers can break large files into pieces to stay under transfer size limits and avoid notice (MITRE ATT&CK T1030, Data Transfer Size Limits, Exfiltration tactic).",
+      "triage_steps": [
+        "Review CommandLine: input file, chunk size (-b, -l, -n) and output prefix or directory, such as /tmp or /Users/Shared.",
+        "Determine what the input file holds: archives (.zip, .tar.gz, .dmg), databases, keychains or user documents raise risk.",
+        "Check ParentImage and the process tree: Terminal or a known admin script is expected; osascript, curl, python or an unknown binary in /tmp is suspicious.",
+        "Confirm the user and whether their role explains the activity; compare with earlier alerts for the same user and host.",
+        "On the same host within +/- 15 minutes, look for prior compression or encryption (zip, tar, ditto, openssl) and later transfer tools (curl, scp, nc, rsync).",
+        "Correlate with host network telemetry: repeated outbound connections of similar size, or to unusual or cloud storage destinations."
+      ],
+      "false_positives": [
+        "Legitimate administrative activity, such as splitting backups, disk images or large logs for storage or shipping.",
+        "Development or build scripts that split artifacts or datasets.",
+        "Power users preparing large files for upload to size-limited services."
+      ],
+      "response_steps": [
+        "Verify with the user or host owner why the file was split and where the pieces were going.",
+        "If unjustified, preserve the pieces and the original file, hash them and record the paths for analysis.",
+        "If exfiltration is confirmed, isolate the endpoint and block the identified external destinations.",
+        "Reset credentials for the involved account, remove persistence or malicious scripts, and assess the impact of exposed data."
+      ],
+      "severity_rationale": "Low fits because split is a common utility and alone does not prove exfiltration; it needs correlation with compression or transfer activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "split cuts a freshly created archive into 5 MB chunks in /tmp, launched from a shell",
+        "event": {
+          "Image": "/usr/bin/split",
+          "CommandLine": "split -b 5m /tmp/docs_backup.zip /tmp/.cache_part_",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "split run by a Python script, cutting a tarball into 100 parts",
+        "event": {
+          "Image": "/usr/bin/split",
+          "CommandLine": "/usr/bin/split -n 100 /Users/Shared/data.tar.gz /Users/Shared/chunk_",
+          "ParentImage": "/usr/bin/python3",
+          "ParentCommandLine": "python3 /tmp/sync.py",
+          "User": "mlopez",
+          "Computer": "MBP-0277",
+          "ProcessId": 9310
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "csplit splits a log file by pattern; Image ends with 'csplit', not '/split'",
+        "event": {
+          "Image": "/usr/bin/csplit",
+          "CommandLine": "csplit /var/log/install.log /Installer/ {5}",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "User": "admin",
+          "Computer": "MBP-0142",
+          "ProcessId": 5120
+        }
+      },
+      {
+        "description": "zip creates a split archive with its own option; the split binary is not run",
+        "event": {
+          "Image": "/usr/bin/zip",
+          "CommandLine": "zip -s 50m -r /tmp/project.zip /Users/jperez/project",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5133
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

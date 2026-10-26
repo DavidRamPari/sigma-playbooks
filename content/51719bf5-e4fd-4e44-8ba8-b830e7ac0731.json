@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "51719bf5-e4fd-4e44-8ba8-b830e7ac0731",
+    "title": "Creation Of A Local User Account",
+    "level": "low",
+    "status": "test",
+    "author": "Alejandro Ortuno, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_create_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_create_account.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1136.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó dscl con un argumento que contiene 'create' o sysadminctl con 'addUser' en un endpoint macOS. Esto puede indicar la creación de una cuenta local o la modificación de sus atributos.",
+      "what_it_detects": "Eventos process_creation de macOS donde Image termina en /dscl y CommandLine contiene 'create', o Image termina en /sysadminctl y CommandLine contiene 'addUser'. Detecta altas de usuarios locales y también la creación de atributos o grupos con dscl.",
+      "why_it_matters": "Una cuenta local creada por un atacante le da persistencia (ATT&CK T1136.001, Create Account: Local Account) sin herramientas de acceso remoto. Si además la agrega al grupo admin, obtiene privilegios elevados y duraderos.",
+      "triage_steps": [
+        "Revise CommandLine y extraiga el nombre de la cuenta, UID, shell, contraseña en texto claro, atributo IsHidden y cualquier opción -admin o grupo 'admin'.",
+        "Identifique el usuario que ejecutó el proceso y ParentImage: un shell interactivo, un script desconocido o un binario en /tmp es más sospechoso que un agente MDM.",
+        "Busque en el mismo host, en un rango de +/- 15 minutos, comandos dscl -append /Groups/admin, dseditgroup, cambios con passwd o ediciones de sudoers.",
+        "Confirme si la cuenta existe con dscl . -list /Users y revise UID inferiores a 500 o cuentas ocultas.",
+        "Compruebe si hay un ticket de cambio o una acción de onboarding que justifique la cuenta, y valídelo con el equipo de TI.",
+        "Revise alertas previas del host y del usuario: acceso inicial, descargas de payloads, LaunchAgents o LaunchDaemons nuevos.",
+        "Revise los inicios de sesión SSH, Screen Sharing o locales que se hicieron después con la nueva cuenta."
+      ],
+      "false_positives": [
+        "Tareas legítimas de administración: TI crea cuentas locales para nuevos empleados o soporte técnico.",
+        "Herramientas MDM o de aprovisionamiento (Jamf, scripts de DEP) que crean cuentas de administración gestionadas.",
+        "Instaladores de software que crean cuentas de servicio con dscl, o scripts que solo modifican atributos de usuarios existentes."
+      ],
+      "response_steps": [
+        "Valide con el propietario del equipo y con TI si la cuenta es autorizada antes de actuar.",
+        "Si no está autorizada, deshabilite la cuenta o cambie su contraseña y quítela del grupo admin; conserve evidencia antes de eliminarla.",
+        "Aísle el host si hay indicios de compromiso y recolecte el historial de shell, los logs unificados y los LaunchAgents/LaunchDaemons.",
+        "Busque cuentas o comandos similares en otros endpoints macOS y rote las credenciales que pudieron exponerse.",
+        "Elimine los mecanismos de persistencia hallados y restaure la configuración de cuentas a su línea base."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque crear cuentas es una tarea administrativa frecuente; la severidad aumenta si la cuenta es oculta, es admin o el proceso padre es inusual."
+    },
+    "en": {
+      "summary": "dscl ran with an argument containing 'create', or sysadminctl ran with 'addUser', on a macOS endpoint. This may mean a local account was created or its attributes were modified.",
+      "what_it_detects": "macOS process_creation events where Image ends with /dscl and CommandLine contains 'create', or Image ends with /sysadminctl and CommandLine contains 'addUser'. It catches local user creation and also dscl attribute or group creation.",
+      "why_it_matters": "An attacker-created local account gives persistence (ATT&CK T1136.001, Create Account: Local Account) without remote access tools. If the account is also added to the admin group, it grants lasting elevated privileges.",
+      "triage_steps": [
+        "Read CommandLine and extract the account name, UID, shell, any cleartext password, the IsHidden attribute and any -admin flag or 'admin' group.",
+        "Identify the executing user and ParentImage: an interactive shell, an unknown script or a binary in /tmp is more suspicious than an MDM agent.",
+        "On the same host within +/- 15 minutes, look for dscl -append /Groups/admin, dseditgroup, passwd changes or sudoers edits.",
+        "Confirm the account exists with dscl . -list /Users and check for UIDs below 500 or hidden accounts.",
+        "Check whether a change ticket or onboarding task justifies the account, and confirm it with IT.",
+        "Review earlier alerts for the host and user: initial access, payload downloads, new LaunchAgents or LaunchDaemons.",
+        "Check for later SSH, Screen Sharing or local logins with the new account."
+      ],
+      "false_positives": [
+        "Legitimate administration: IT creates local accounts for new staff or support access.",
+        "MDM or provisioning tools (Jamf, DEP scripts) that create managed admin accounts.",
+        "Software installers that create service accounts with dscl, or scripts that only modify attributes of existing users."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the device owner and IT whether the account is authorized.",
+        "If it is unauthorized, disable the account or change its password and remove it from admin. Keep evidence before deleting it.",
+        "Isolate the host if compromise is likely, then collect shell history, unified logs and LaunchAgents/LaunchDaemons.",
+        "Hunt for similar accounts or commands on other macOS endpoints and rotate any credentials that may have been exposed.",
+        "Remove any persistence you find and restore account configuration to the baseline."
+      ],
+      "severity_rationale": "Low fits because account creation is routine admin work. Raise the priority if the account is hidden, has admin rights or was created by an unusual parent process."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dscl creates a hidden local user from a shell spawned by a script in /tmp",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -create /Users/svc_update IsHidden 1",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "ProcessId": 4182,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "sysadminctl adds a new admin user",
+        "event": {
+          "Image": "/usr/sbin/sysadminctl",
+          "CommandLine": "sysadminctl -addUser backupadm -fullName \"Backup Admin\" -password Placeholder123 -admin",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 5230,
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "dscl used only to read an existing user record",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -read /Users/jperez UniqueID",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 3011,
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "sysadminctl used to delete a user, not add one",
+        "event": {
+          "Image": "/usr/sbin/sysadminctl",
+          "CommandLine": "sysadminctl -deleteUser tempuser",
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "User": "root",
+          "ProcessId": 6120,
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

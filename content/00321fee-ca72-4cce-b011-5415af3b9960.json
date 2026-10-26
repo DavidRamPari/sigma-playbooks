@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "00321fee-ca72-4cce-b011-5415af3b9960",
+    "title": "MSSQL Destructive Query",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Daniel Degasperi '@d4ns4n_'",
+    "path": "windows/builtin/application/mssqlserver/win_mssql_destructive_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/mssqlserver/win_mssql_destructive_query.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "La auditoría de SQL Server registró una sentencia TRUNCATE TABLE, DROP TABLE o DROP DATABASE. Puede ser mantenimiento legítimo o destrucción deliberada de datos.",
+      "what_it_detects": "Eventos 33205 del proveedor MSSQLSERVER$AUDIT en el log Application de Windows cuyo campo Data contiene 'statement:TRUNCATE TABLE', 'statement:DROP TABLE' o 'statement:DROP DATABASE'. Requiere una auditoría de SQL Server habilitada que escriba en el log Application.",
+      "why_it_matters": "Borrar tablas o bases completas destruye datos y puede interrumpir el negocio (ATT&CK T1485, Data Destruction). Los atacantes lo hacen para sabotear, para borrar rastros o después de exfiltrar datos para extorsionar.",
+      "triage_steps": [
+        "Extraiga de Data los campos statement, database_name, object_name, server_principal_name, session_server_principal_name, succeeded, client_ip y application_name.",
+        "Revise succeeded: si es true, la destrucción ya ocurrió y conviene escalar de inmediato.",
+        "Confirme con el DBA o el equipo dueño si había un cambio, despliegue o ventana de mantenimiento aprobada para esa base y ese objeto.",
+        "Valide que la cuenta sea la esperada: cuentas sa, logins nuevos o usuarios de aplicación ejecutando DDL son sospechosos.",
+        "Busque en el mismo servidor, +/- 15 minutos, otros eventos 33205 de la misma sesión: SELECT masivos, BACKUP hacia rutas inusuales, xp_cmdshell, creación de logins o cambios de permisos.",
+        "Pivote por client_ip y host de origen: inicios de sesión fallidos, alertas previas del endpoint y procesos como sqlcmd.exe u osql.exe con parámetros -Q.",
+        "Determine el alcance: cuántas tablas o bases se afectaron y si existen notas de rescate o tablas nuevas con mensajes de extorsión."
+      ],
+      "false_positives": [
+        "Transacciones legítimas de un sysadmin o DBA durante mantenimiento planificado.",
+        "Scripts de despliegue o migraciones de esquema (CI/CD) que recrean tablas.",
+        "Procesos ETL que vacían tablas de staging con TRUNCATE TABLE de forma recurrente.",
+        "Limpieza de bases de prueba o desarrollo por parte de los equipos dueños."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la base antes de actuar; si no hay justificación, trate el caso como incidente.",
+        "Contenga: deshabilite o cambie la contraseña del login implicado y bloquee el client_ip de origen hacia el servidor SQL.",
+        "Preserve evidencia: exporte los archivos de auditoría, el log de transacciones y los logs de Windows del servidor.",
+        "Recupere los datos desde backups verificados o restauración point-in-time, validando antes su integridad.",
+        "Revise privilegios: limite roles sysadmin y db_owner, y agregue excepciones documentadas para trabajos ETL recurrentes."
+      ],
+      "severity_rationale": "Media porque el DDL destructivo es frecuente en mantenimiento legítimo, pero su impacto potencial es alto y una cuenta o un origen inesperados justifican escalar."
+    },
+    "en": {
+      "summary": "SQL Server auditing recorded a TRUNCATE TABLE, DROP TABLE or DROP DATABASE statement. It may be legitimate maintenance or deliberate data destruction.",
+      "what_it_detects": "Event ID 33205 from provider MSSQLSERVER$AUDIT in the Windows Application log where the Data field contains 'statement:TRUNCATE TABLE', 'statement:DROP TABLE' or 'statement:DROP DATABASE'. Requires a SQL Server audit that writes to the Application log.",
+      "why_it_matters": "Dropping or truncating tables or whole databases destroys data and can halt business operations (ATT&CK T1485, Data Destruction). Attackers do it for sabotage, to cover tracks, or after exfiltration for extortion.",
+      "triage_steps": [
+        "Parse Data for statement, database_name, object_name, server_principal_name, session_server_principal_name, succeeded, client_ip and application_name.",
+        "Check succeeded: if true, the destruction already happened, so escalate quickly.",
+        "Confirm with the DBA or data owner whether an approved change, deployment or maintenance window covered this database and object.",
+        "Validate the account: sa, newly created logins or application accounts running DDL are suspicious.",
+        "On the same server within +/- 15 minutes, look for other 33205 events from the session: bulk SELECTs, BACKUP to unusual paths, xp_cmdshell, new logins or permission changes.",
+        "Pivot on client_ip and source host: failed logons, earlier endpoint alerts, and sqlcmd.exe or osql.exe running with -Q.",
+        "Scope impact: how many tables or databases were affected, and whether ransom notes or new tables with extortion messages exist."
+      ],
+      "false_positives": [
+        "Legitimate transactions by a sysadmin or DBA during planned maintenance.",
+        "Deployment scripts or schema migrations (CI/CD) that recreate tables.",
+        "ETL jobs that routinely empty staging tables with TRUNCATE TABLE.",
+        "Cleanup of test or development databases by their owning teams."
+      ],
+      "response_steps": [
+        "Verify with the database owner before acting; without a justification, handle it as an incident.",
+        "Contain: disable or reset the involved login and block the source client_ip from reaching the SQL server.",
+        "Preserve evidence: export audit files, the transaction log and the server's Windows event logs.",
+        "Recover data from verified backups or a point-in-time restore, checking integrity first.",
+        "Review privileges: restrict sysadmin and db_owner, and add documented exclusions for recurring ETL jobs."
+      ],
+      "severity_rationale": "Medium because destructive DDL is common in legitimate maintenance, but the potential impact is high and an unexpected account or source justifies escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unexpected login drops a customer table on the production instance.",
+        "event": {
+          "Provider_Name": "MSSQLSERVER$AUDIT",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-01.andes.example.com",
+          "Level": 0,
+          "Data": "audit_schema_version:1 event_time:2025-06-10 14:03:12.4521876 sequence_number:1 action_id:DR succeeded:true is_column_permission:false session_id:67 server_principal_id:291 database_principal_id:1 object_id:901578250 class_type:U session_server_principal_name:ANDES\\jperez server_principal_name:ANDES\\jperez database_principal_name:dbo server_instance_name:SQL-PROD-01 database_name:Ventas schema_name:dbo object_name:Clientes statement:DROP TABLE dbo.Clientes additional_information: client_ip:192.0.2.45 application_name:Microsoft SQL Server Management Studio - Query host_name:WS-0142"
+        }
+      },
+      {
+        "description": "sa account drops an entire database from a remote client.",
+        "event": {
+          "Provider_Name": "MSSQLSERVER$AUDIT",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-02.andes.example.com",
+          "Level": 0,
+          "Data": "audit_schema_version:1 event_time:2025-06-11 02:17:40.1100000 sequence_number:1 action_id:DR succeeded:true session_id:72 class_type:DB session_server_principal_name:sa server_principal_name:sa server_instance_name:SQL-PROD-02 database_name:Nomina object_name:Nomina statement:DROP DATABASE Nomina additional_information: client_ip:203.0.113.88 application_name:sqlcmd host_name:UNKNOWN-HOST"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same audit source, but the statement is a routine SELECT, not destructive DDL.",
+        "event": {
+          "Provider_Name": "MSSQLSERVER$AUDIT",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-01.andes.example.com",
+          "Level": 0,
+          "Data": "audit_schema_version:1 event_time:2025-06-10 14:05:01.0000000 sequence_number:1 action_id:SL succeeded:true session_id:67 session_server_principal_name:ANDES\\jperez server_principal_name:ANDES\\jperez server_instance_name:SQL-PROD-01 database_name:Ventas schema_name:dbo object_name:Clientes statement:SELECT TOP 100 * FROM dbo.Clientes additional_information: client_ip:192.0.2.45 application_name:Microsoft SQL Server Management Studio - Query host_name:WS-0142"
+        }
+      },
+      {
+        "description": "Index drop during maintenance: 'statement:DROP INDEX' does not match any listed value.",
+        "event": {
+          "Provider_Name": "MSSQLSERVER$AUDIT",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-01.andes.example.com",
+          "Level": 0,
+          "Data": "audit_schema_version:1 event_time:2025-06-12 22:30:00.0000000 sequence_number:1 action_id:DR succeeded:true session_id:81 session_server_principal_name:ANDES\\dba_mlopez server_principal_name:ANDES\\dba_mlopez server_instance_name:SQL-PROD-01 database_name:Ventas schema_name:dbo object_name:IX_Clientes_Email statement:DROP INDEX IX_Clientes_Email ON dbo.Clientes additional_information: client_ip:198.51.100.10 application_name:SQLAgent - TSQL JobStep host_name:SQL-PROD-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

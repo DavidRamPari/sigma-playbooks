@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "07330162-dba1-4746-8121-a9647d49d297",
+    "title": "AWS Config Disabling Channel/Recorder",
+    "level": "high",
+    "status": "test",
+    "author": "vitaliy0x1",
+    "path": "cloud/aws/cloudtrail/aws_config_disable_recording.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_config_disable_recording.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Alguien detuvo un configuration recorder de AWS Config o eliminó un delivery channel. Desde ese momento la cuenta deja de registrar o entregar los cambios de configuración de sus recursos.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource config.amazonaws.com y eventName StopConfigurationRecorder o DeleteDeliveryChannel, es decir, llamadas a la API que pausan la grabación de AWS Config o eliminan el canal que entrega los snapshots e historiales a S3 o SNS.",
+      "why_it_matters": "AWS Config guarda el historial de cambios y evalúa el cumplimiento. Si se desactiva, los cambios posteriores del atacante quedan sin registrar. Corresponde a debilitar las defensas desactivando herramientas de monitoreo y registro en la nube (ATT&CK T1685.002).",
+      "triage_steps": [
+        "Identifique al actor en userIdentity (arn, type, accessKeyId), además de sourceIPAddress, userAgent y awsRegion. Fíjese si es un rol de automatización o un usuario humano.",
+        "Revise requestParameters para saber qué recorder o channel se afectó y confirme con describe-configuration-recorder-status si sigue detenido.",
+        "Busque un ticket o una ventana de cambio aprobada que justifique la acción, y confírmela con el dueño de la cuenta.",
+        "Revise la actividad del mismo principal o access key en los 15 minutos anteriores y posteriores. Busque StopLogging, DeleteTrail, cambios en GuardDuty o Security Hub, y llamadas a IAM.",
+        "Verifique si sourceIPAddress y userAgent son habituales para ese principal. Desconfíe de IP nuevas, del uso de la consola sin MFA o de herramientas poco comunes.",
+        "Busque alertas previas de la misma identidad, de la misma IP o de la misma cuenta, como fallos de autenticación, ConsoleLogin anómalos o creación de access keys.",
+        "Determine si el evento se repite en varias regiones o cuentas de la organización. Eso indicaría una acción masiva o automatizada."
+      ],
+      "false_positives": [
+        "Cambios válidos en AWS Config: migración a un agregador centralizado, reconfiguración del bucket de entrega o desmantelamiento de una cuenta.",
+        "Pipelines de IaC (Terraform, CloudFormation, CDK) que destruyen y recrean recursos de Config en entornos de prueba.",
+        "Personal que pausa la grabación para reducir costos en cuentas sandbox, con aprobación documentada."
+      ],
+      "response_steps": [
+        "Confirme con el responsable si el cambio estaba autorizado. Si no lo estaba, escale como incidente de seguridad.",
+        "Restablezca la grabación con start-configuration-recorder y vuelva a crear el delivery channel si se eliminó.",
+        "Si sospecha que la identidad está comprometida, desactive o rote sus access keys, revoque las sesiones activas del rol y restrinja sus permisos.",
+        "Use CloudTrail para revisar los cambios hechos mientras Config estuvo inactivo y revierta las modificaciones no autorizadas.",
+        "Aplique una SCP que niegue StopConfigurationRecorder y DeleteDeliveryChannel a los principales no autorizados."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque desactivar Config elimina visibilidad sobre la cuenta, es una acción poco frecuente y suele preceder a otras actividades maliciosas."
+    },
+    "en": {
+      "summary": "Someone stopped an AWS Config configuration recorder or deleted a delivery channel. From that point the account stops recording or delivering resource configuration changes.",
+      "what_it_detects": "CloudTrail events with eventSource config.amazonaws.com and eventName StopConfigurationRecorder or DeleteDeliveryChannel. These API calls pause AWS Config recording or remove the channel that delivers snapshots and history to S3 or SNS.",
+      "why_it_matters": "AWS Config keeps the change history and runs compliance checks. With it disabled, later attacker changes go unrecorded. This is defense impairment by disabling cloud monitoring and logging tools (ATT&CK T1685.002).",
+      "triage_steps": [
+        "Identify the actor from userIdentity (arn, type, accessKeyId), plus sourceIPAddress, userAgent and awsRegion. Note whether it is an automation role or a human user.",
+        "Check requestParameters to see which recorder or channel was affected. Confirm with describe-configuration-recorder-status whether it is still stopped.",
+        "Look for an approved change ticket or maintenance window that explains the action, and confirm it with the account owner.",
+        "Review activity by the same principal or access key within +/- 15 minutes. Look for StopLogging, DeleteTrail, GuardDuty or Security Hub changes, and IAM calls.",
+        "Check whether sourceIPAddress and userAgent are normal for this principal. Be suspicious of new IPs, console use without MFA, or unusual tooling.",
+        "Search for earlier alerts on the same identity, IP or account, such as failed authentications, anomalous ConsoleLogin events or access key creation.",
+        "Check whether the event repeats across regions or organization accounts. That would point to scripted or mass action."
+      ],
+      "false_positives": [
+        "Valid AWS Config changes: migration to a central aggregator, reconfiguring the delivery bucket, or decommissioning an account.",
+        "IaC pipelines (Terraform, CloudFormation, CDK) that tear down and recreate Config resources in test environments.",
+        "Staff pausing recording in sandbox accounts to save cost, with documented approval."
+      ],
+      "response_steps": [
+        "Confirm with the owner whether the change was authorized. If it was not, escalate as a security incident.",
+        "Restore recording with start-configuration-recorder and recreate the delivery channel if it was deleted.",
+        "If the identity may be compromised, deactivate or rotate its access keys, revoke active role sessions and restrict its permissions.",
+        "Use CloudTrail to review the changes made while Config was off, and revert any unauthorized modifications.",
+        "Apply an SCP that denies StopConfigurationRecorder and DeleteDeliveryChannel to unauthorized principals."
+      ],
+      "severity_rationale": "High fits because disabling Config removes visibility into the account, is rarely done legitimately, and often comes before further malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Configuration recorder stopped by an IAM user from an unusual IP using the AWS CLI",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "config.amazonaws.com",
+          "eventName": "StopConfigurationRecorder",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.configurationRecorderName": "default",
+          "recipientAccountId": "111122223333",
+          "eventTime": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "Delivery channel deleted by an assumed role via the console",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "config.amazonaws.com",
+          "eventName": "DeleteDeliveryChannel",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAdmin/mrodriguez",
+          "requestParameters.deliveryChannelName": "default",
+          "recipientAccountId": "111122223333",
+          "eventTime": "2024-10-25T14:07:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Configuration recorder being started, which re-enables recording",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "config.amazonaws.com",
+          "eventName": "StartConfigurationRecorder",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ConfigAutomation/terraform",
+          "requestParameters.configurationRecorderName": "default",
+          "recipientAccountId": "111122223333",
+          "eventTime": "2024-10-25T15:00:00Z"
+        }
+      },
+      {
+        "description": "Read-only describe call on the delivery channels",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "config.amazonaws.com",
+          "eventName": "DescribeDeliveryChannels",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.15",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/auditor",
+          "recipientAccountId": "111122223333",
+          "eventTime": "2024-10-25T15:05:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

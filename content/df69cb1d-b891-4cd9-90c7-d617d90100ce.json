@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "df69cb1d-b891-4cd9-90c7-d617d90100ce",
+    "title": "Suspicious FromBase64String Usage On Gzip Archive - Ps Script",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_frombase64string_archive.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_frombase64string_archive.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1132.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un bloque de script de PowerShell decodificó a un MemoryStream una cadena Base64 que empieza con cabecera Gzip (H4sI). Este patrón suele desempaquetar un payload comprimido para ejecutarlo en memoria.",
+      "what_it_detects": "Eventos de Script Block Logging (ps_script, Event ID 4104) cuyo ScriptBlockText contiene a la vez 'FromBase64String', 'MemoryStream' y 'H4sI', la representación Base64 de los bytes mágicos de Gzip.",
+      "why_it_matters": "Los atacantes ocultan scripts o shellcode comprimiéndolos con gzip y codificándolos en Base64, y luego los descomprimen en memoria para evitar artefactos en disco y firmas simples (T1132.001, codificación estándar de datos). Lo que sigue suele ser un loader o un stager de C2.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si el bloque viene en varias partes, reconstrúyalo con ScriptBlockId y MessageNumber para ver todo el script.",
+        "Extraiga la cadena H4sI..., decodifíquela de Base64 y descomprímala en un sandbox. Revise qué hace: IEX, Reflection.Assembly::Load, VirtualAlloc, Add-Type o llamadas de red.",
+        "Identifique el proceso que lo lanzó (powershell.exe, pwsh.exe, wscript o una app de Office) y su proceso padre en los logs de creación de procesos, +/- 15 minutos.",
+        "Revise el campo Path: un script ejecutado desde Temp, Downloads o AppData, o sin ruta (interactivo o comando codificado), es más sospechoso.",
+        "Busque en el mismo host, +/- 15 minutos, conexiones de red, consultas DNS, archivos nuevos, servicios, tareas programadas o claves Run.",
+        "Identifique al usuario y si suele ejecutar scripts administrativos. Busque alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administración o despliegue que incrustan módulos o configuraciones comprimidas (SCCM, Intune, herramientas RMM).",
+        "Herramientas internas empaquetadas u ofuscadas e instaladores que incluyen recursos comprimidos con gzip dentro del script."
+      ],
+      "response_steps": [
+        "Si el contenido decodificado es malicioso o desconocido y ejecuta código, aísle el endpoint y preserve la memoria y los logs.",
+        "Bloquee los indicadores extraídos (dominios, IP, hashes) y busque en toda la flota el mismo prefijo H4sI o el hash del script.",
+        "Elimine la persistencia creada y restablezca las credenciales del usuario afectado si se sospecha acceso a credenciales.",
+        "Si es benigno, documente al responsable y el propósito del script y agregue una exclusión acotada por hash del script o ruta firmada."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque el patrón es un indicador fuerte de un loader en memoria, pero los scripts administrativos legítimos también incrustan datos comprimidos, así que hay que revisar el contenido decodificado antes de escalar."
+    },
+    "en": {
+      "summary": "A PowerShell script block decoded a Base64 string that starts with a Gzip header (H4sI) into a MemoryStream. This pattern often unpacks a compressed payload to run in memory.",
+      "what_it_detects": "Script Block Logging events (ps_script, Event ID 4104) whose ScriptBlockText contains all of 'FromBase64String', 'MemoryStream' and 'H4sI', the Base64 form of the Gzip magic bytes.",
+      "why_it_matters": "Attackers hide scripts or shellcode by gzip-compressing and Base64-encoding them, then decompress in memory to avoid disk artifacts and simple signatures (T1132.001, standard data encoding). What follows is often a loader or a C2 stager.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Rebuild multi-part blocks using ScriptBlockId and MessageNumber so you see the complete script.",
+        "Extract the H4sI... string, Base64-decode and gunzip it in a sandbox, and check what it does: IEX, Reflection.Assembly::Load, VirtualAlloc, Add-Type or network calls.",
+        "Find the launching process (powershell.exe, pwsh.exe, wscript or an Office app) and its parent in process creation logs within +/- 15 minutes.",
+        "Check the Path field: a script run from Temp, Downloads, AppData or with no path (interactive or encoded command) is more suspicious.",
+        "Pivot on the host within +/- 15 minutes for network connections, DNS queries, new files, services, scheduled tasks or Run keys.",
+        "Identify the user and whether they normally run admin scripts. Look for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Legitimate admin or deployment scripts that embed compressed modules or config blobs (SCCM, Intune, RMM tools).",
+        "Packaged or obfuscated internal tooling and installers that ship gzip-compressed resources inside the script."
+      ],
+      "response_steps": [
+        "If the decoded content is malicious or unknown and runs code, isolate the endpoint and keep memory and logs.",
+        "Block the indicators you extracted (domains, IPs, hashes) and search for the same H4sI prefix or script hash across the fleet.",
+        "Remove persistence that was created and reset credentials for the affected user if credential access is suspected.",
+        "If benign, write down the script's owner and purpose and add a narrow exclusion by script hash or signed path."
+      ],
+      "severity_rationale": "Medium fits because the pattern is a strong in-memory loader indicator, but legitimate admin scripts also embed compressed data, so the decoded content must be checked before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block decompresses a Base64 Gzip blob from a MemoryStream and passes the result to IEX",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f1c2a7e-9b4d-4c11-8e2a-5d6f7a8b9c01",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$d = [Convert]::FromBase64String('H4sIAAAAAAAEAAsJ8fAMAQCMgYL3BQAAAA=='); $ms = New-Object IO.MemoryStream(,$d); $gz = New-Object IO.Compression.GzipStream($ms,[IO.Compression.CompressionMode]::Decompress); $sr = New-Object IO.StreamReader($gz); IEX $sr.ReadToEnd()"
+        }
+      },
+      {
+        "description": "Mixed-case one-liner using System.IO.MemoryStream with a gzip Base64 string run interactively",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ScriptBlockId": "a7e2d9c4-1b3f-4e5a-9c8d-0f1e2d3c4b5a",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "sal a New-Object; $b=[system.convert]::frombase64string(\"H4sIAAAAAAAEAMtIzcnJBwCGphA2BQAAAA==\"); (a System.IO.Compression.GZipStream((a System.IO.memorystream(,$b)),0)).CopyTo(($o=a IO.MemoryStream)); [Text.Encoding]::UTF8.GetString($o.ToArray())"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script decodes a Base64 certificate into a MemoryStream; no Gzip header (H4sI) present",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5b6c7d8e-2f3a-4b1c-8d9e-0a1b2c3d4e5f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Import-Cert.ps1",
+          "ScriptBlockText": "$raw = [Convert]::FromBase64String('MIIDdzCCAl+gAwIBAgIEAgAAuTANBgkqhkiG9w0BAQUFADBa'); $ms = New-Object IO.MemoryStream(,$raw); $cert = New-Object Security.Cryptography.X509Certificates.X509Certificate2(,$ms.ToArray())"
+        }
+      },
+      {
+        "description": "Script contains a gzip Base64 string and FromBase64String but writes to a file instead of using MemoryStream",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ScriptBlockId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Program Files\\Deploy\\extract.ps1",
+          "ScriptBlockText": "$bytes = [Convert]::FromBase64String('H4sIAAAAAAAEAAsJ8fAMAQCMgYL3BQAAAA=='); [IO.File]::WriteAllBytes('C:\\Deploy\\config.gz', $bytes)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

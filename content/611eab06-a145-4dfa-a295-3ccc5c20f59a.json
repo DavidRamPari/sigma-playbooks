@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "611eab06-a145-4dfa-a295-3ccc5c20f59a",
+    "title": "Suspicious Machine Account Replication - DcSync Indicator",
+    "level": "medium",
+    "status": "test",
+    "author": "Benjamin Delpy, Florian Roth (Nextron Systems), Scott Dermett, Sorina Ionescu",
+    "path": "windows/builtin/security/win_security_ad_replication_machine_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_ad_replication_machine_account.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una cuenta de máquina (nombre terminado en '$') solicitó derechos de replicación de Active Directory sobre el dominio. Si esa cuenta no pertenece a un Domain Controller legítimo, puede tratarse de un ataque DCSync para extraer hashes, incluido el de krbtgt.",
+      "what_it_detects": "Eventos 4662 del log Security en los que Properties contiene GUIDs de replicación (DS-Replication-Get-Changes, Get-Changes-All, Synchronize o Get-Changes-In-Filtered-Set), SubjectUserName termina en '$' y SubjectUserSid no es S-1-5-18 (SYSTEM local).",
+      "why_it_matters": "DCSync (ATT&CK T1003.006) imita a un DC para pedir por replicación los secretos de las cuentas del dominio. Con el hash de krbtgt, el atacante puede forjar Golden Tickets. La regla cita CVE-2026-54121, donde se crea una cuenta de máquina temporal que obtiene un certificado de DC y luego ejecuta DCSync.",
+      "triage_steps": [
+        "Verifique si SubjectUserName es un DC real: debe estar en la OU Domain Controllers, con primaryGroupID 516 y la marca SERVER_TRUST_ACCOUNT en userAccountControl.",
+        "Revise si la cuenta se creó hace poco (evento 4741) y quién la creó; tenga en cuenta ms-DS-MachineAccountQuota y las altas hechas por usuarios sin privilegios.",
+        "Correlacione SubjectLogonId con el evento 4624 del mismo DC para obtener IpAddress y WorkstationName; confirme si la IP de origen corresponde a un DC.",
+        "Busque eventos 4768 de esa cuenta con autenticación por certificado (PKINIT) y solicitudes en la CA (4886/4887) que emitan certificados de DC o de Kerberos.",
+        "Revise Properties y AccessMask: la presencia de Get-Changes-All (1131f6ad...) sugiere una extracción de secretos y no una replicación de solo lectura.",
+        "Pivotee en +/- 15 minutos en el mismo DC y la misma IP de origen: logons, cambios en cuentas de máquina y alertas previas de esa entidad."
+      ],
+      "false_positives": [
+        "Replicación legítima entre DCs. Los DCs usan su propia cuenta de máquina con SID de dominio, y el filtro S-1-5-18 no los excluye.",
+        "Promoción o despromoción de un DC nuevo, o un RODC que replica conjuntos filtrados.",
+        "Productos de sincronización o auditoría de identidad que se ejecutan con cuentas de servicio administradas (gMSA, terminadas en '$') con derechos de replicación delegados."
+      ],
+      "response_steps": [
+        "Si la cuenta no es un DC ni un servicio autorizado, trate el evento como compromiso del dominio y escale a respuesta a incidentes de inmediato.",
+        "Deshabilite la cuenta de máquina y aísle el host de la IP de origen; conserve los logs y los artefactos antes de eliminar nada.",
+        "Revoque los certificados emitidos a esa cuenta, revise las plantillas de la CA y aplique los parches del CVE citado.",
+        "Si se confirma el DCSync, restablezca krbtgt dos veces de forma controlada y rote las credenciales privilegiadas expuestas.",
+        "Si es legítimo, documente el DC o la gMSA y agregue una exclusión por SubjectUserSid específico."
+      ],
+      "severity_rationale": "Medium, porque la replicación normal entre DCs puede activar la regla; si se confirma que el origen no es un DC, el caso pasa a crítico."
+    },
+    "en": {
+      "summary": "A machine account (name ending in '$') requested Active Directory replication rights on the domain. If that account is not a legitimate Domain Controller, this may be DCSync dumping credential hashes, including krbtgt.",
+      "what_it_detects": "Security event 4662 where Properties contains replication GUIDs (DS-Replication-Get-Changes, Get-Changes-All, Synchronize or Get-Changes-In-Filtered-Set), SubjectUserName ends in '$', and SubjectUserSid is not S-1-5-18 (local SYSTEM).",
+      "why_it_matters": "DCSync (ATT&CK T1003.006) impersonates a DC and pulls account secrets over replication. The krbtgt hash enables Golden Tickets. The rule cites CVE-2026-54121, where a temporary machine account gets a DC certificate and then performs DCSync.",
+      "triage_steps": [
+        "Check whether SubjectUserName is a real DC: in the Domain Controllers OU, primaryGroupID 516, SERVER_TRUST_ACCOUNT set in userAccountControl.",
+        "Check for recent creation of the account (event 4741) and who created it; consider ms-DS-MachineAccountQuota and additions by unprivileged users.",
+        "Correlate SubjectLogonId with event 4624 on the same DC to get IpAddress and WorkstationName; confirm whether the source IP belongs to a DC.",
+        "Look for 4768 events for the account using certificate (PKINIT) authentication and CA requests (4886/4887) issuing DC or Kerberos certificates.",
+        "Review Properties and AccessMask: Get-Changes-All (1131f6ad...) points to secret extraction rather than read-only replication.",
+        "Pivot +/- 15 minutes on the same DC and source IP: logons, machine account changes and earlier alerts for the entity."
+      ],
+      "false_positives": [
+        "Legitimate DC-to-DC replication. DCs use their own machine account with a domain SID, and the S-1-5-18 filter does not exclude them.",
+        "Promoting or demoting a DC, or an RODC replicating filtered attribute sets.",
+        "Identity sync or auditing products running as group managed service accounts (gMSA, ending in '$') with delegated replication rights."
+      ],
+      "response_steps": [
+        "If the account is neither a DC nor an authorized service, treat this as a domain compromise and escalate to incident response immediately.",
+        "Disable the machine account and isolate the source host; preserve logs and artifacts before deleting anything.",
+        "Revoke certificates issued to the account, review CA templates and apply patches for the cited CVE.",
+        "If DCSync is confirmed, reset krbtgt twice in a controlled way and rotate exposed privileged credentials.",
+        "If legitimate, document the DC or gMSA and add an exclusion for its specific SubjectUserSid."
+      ],
+      "severity_rationale": "Medium because normal DC replication can trigger it; a confirmed non-DC source makes it critical."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Recently created machine account WS-TEMP01$ with a domain SID requests DS-Replication-Get-Changes-All on the domain NC root",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC01.corp.example.com",
+          "SubjectUserSid": "S-1-5-21-1004336348-1177238915-682003330-3121",
+          "SubjectUserName": "WS-TEMP01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5A3F21",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "ObjectName": "%{6f2a1c3e-8b4d-4e5f-9a7b-1c2d3e4f5a6b}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      },
+      {
+        "description": "Machine account requests DS-Replication-Get-Changes with uppercase GUID (case-insensitive match)",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC02.corp.example.com",
+          "SubjectUserSid": "S-1-5-21-1004336348-1177238915-682003330-3188",
+          "SubjectUserName": "FAKEDC$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x7B10C4",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131F6AA-9C07-11D1-F79F-00C04FC2DCD2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Replication access by local SYSTEM (SubjectUserSid S-1-5-18) is excluded by the filter",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC01.corp.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "DC01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      },
+      {
+        "description": "Replication request from a user account (no trailing '$') is outside this rule's scope",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC01.corp.example.com",
+          "SubjectUserSid": "S-1-5-21-1004336348-1177238915-682003330-1450",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x8C21D0",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

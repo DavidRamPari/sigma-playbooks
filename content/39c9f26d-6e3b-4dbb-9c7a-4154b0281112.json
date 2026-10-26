@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "39c9f26d-6e3b-4dbb-9c7a-4154b0281112",
+    "title": "AWS Bucket Deleted",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Ivan Saakov, Nasreddine Bencherchali",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_bucket_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_cloudtrail_bucket_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS eliminó con éxito un bucket de S3, según CloudTrail. Puede ser limpieza autorizada o destrucción de datos y borrado de evidencias por parte de un atacante.",
+      "what_it_detects": "Eventos de CloudTrail con eventName igual a DeleteBucket cuyo errorCode está vacío o es 'Success', es decir, eliminaciones de buckets que se completaron. Los intentos fallidos, como AccessDenied, no se detectan.",
+      "why_it_matters": "Al eliminar un bucket se pierden sus datos de forma permanente y se puede borrar evidencia, como logs de CloudTrail o de acceso guardados en S3. La regla está etiquetada en la táctica Stealth (evasión) de ATT&CK.",
+      "triage_steps": [
+        "Identifique el bucket en requestParameters.bucketName y determine su propósito: logs de CloudTrail, backups, datos de producción o recursos de prueba.",
+        "Revise userIdentity (arn, type, accessKeyId) para saber si es un usuario humano, un rol asumido o una cuenta de servicio, y quién es su responsable.",
+        "Valide sourceIPAddress, userAgent y awsRegion frente a la actividad habitual de esa identidad. Desconfíe de IPs nuevas, de herramientas de CLI inusuales o de regiones atípicas.",
+        "Busque eventos previos de la misma identidad en ±15 minutos: DeleteObjects, PutBucketLifecycleConfiguration, PutBucketPolicy, StopLogging, DeleteTrail o UpdateTrail.",
+        "Verifique si el bucket era destino de algún trail, de logs de acceso o de VPC Flow Logs. Si lo era, trate el caso como posible borrado de evidencias.",
+        "Revise eventos anteriores de la misma sesión: ConsoleLogin, AssumeRole, CreateAccessKey o GetObject masivos que sugieran exfiltración antes del borrado.",
+        "Confirme con el dueño del bucket, o con el ticket de cambio, si la eliminación estaba planificada."
+      ],
+      "false_positives": [
+        "Administradores autorizados que eliminan buckets durante tareas de mantenimiento, limpieza o pruebas.",
+        "Pipelines de IaC (Terraform, CloudFormation, CDK) que destruyen entornos efímeros o de staging.",
+        "Automatizaciones de ciclo de vida que eliminan buckets temporales de builds o de análisis."
+      ],
+      "response_steps": [
+        "Verifique con el responsable de la identidad y del bucket antes de tomar cualquier acción; documente el ticket de cambio si existe.",
+        "Si no está autorizado, desactive las access keys implicadas y revoque las sesiones activas del rol o del usuario.",
+        "Analice toda la actividad de esa identidad en CloudTrail para encontrar persistencia: usuarios, keys o roles nuevos, y cambios en políticas.",
+        "Restaure los datos desde réplicas, AWS Backup o copias externas. Vuelva a crear el bucket para que nadie más pueda registrar ese nombre.",
+        "Restablezca el logging si se vio afectado y limite s3:DeleteBucket mediante SCP o políticas de bucket para los recursos críticos."
+      ],
+      "severity_rationale": "Medium es adecuado: la acción tiene un impacto alto si es maliciosa, pero es una operación administrativa frecuente que requiere contexto para confirmarla."
+    },
+    "en": {
+      "summary": "CloudTrail shows that an AWS identity successfully deleted an S3 bucket. This may be authorized cleanup, or an attacker destroying data and removing evidence.",
+      "what_it_detects": "CloudTrail events with eventName DeleteBucket where errorCode is empty or 'Success', meaning bucket deletions that completed. Failed attempts such as AccessDenied are not matched.",
+      "why_it_matters": "Deleting a bucket permanently removes its data and can wipe evidence such as CloudTrail or access logs stored in S3. The rule is tagged under the ATT&CK Stealth (evasion) tactic.",
+      "triage_steps": [
+        "Identify the bucket from requestParameters.bucketName and its purpose: CloudTrail logs, backups, production data or test resources.",
+        "Review userIdentity (arn, type, accessKeyId) to tell whether it is a human user, an assumed role or a service account, and find the owner.",
+        "Compare sourceIPAddress, userAgent and awsRegion with the identity's usual activity. Treat new IPs, unusual CLI tools or atypical regions as suspicious.",
+        "Search the same identity within +/- 15 minutes for DeleteObjects, PutBucketLifecycleConfiguration, PutBucketPolicy, StopLogging, DeleteTrail or UpdateTrail.",
+        "Check whether the bucket was a destination for a trail, access logs or VPC Flow Logs. If it was, treat the case as possible evidence removal.",
+        "Review earlier events in the same session, such as ConsoleLogin, AssumeRole, CreateAccessKey or bulk GetObject, that would suggest exfiltration before the deletion.",
+        "Confirm with the bucket owner or the change ticket that the deletion was planned."
+      ],
+      "false_positives": [
+        "Authorized administrators deleting buckets during maintenance, cleanup or testing.",
+        "IaC pipelines (Terraform, CloudFormation, CDK) tearing down ephemeral or staging environments.",
+        "Lifecycle automation that removes temporary build or analytics buckets."
+      ],
+      "response_steps": [
+        "Check with the owners of the identity and the bucket before acting, and record the change ticket if there is one.",
+        "If the deletion was not authorized, disable the access keys involved and revoke the role's or user's active sessions.",
+        "Review all CloudTrail activity for that identity to find persistence: new users, keys or roles, and policy changes.",
+        "Restore the data from replicas, AWS Backup or external copies. Recreate the bucket so no one else can register that name.",
+        "Turn logging back on if it was affected, and restrict s3:DeleteBucket on critical resources with SCPs or bucket policies."
+      ],
+      "severity_rationale": "Medium fits: a malicious deletion has high impact, but deleting buckets is a common admin task, so context is needed to confirm it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful DeleteBucket with no errorCode, made by an IAM user through the AWS CLI from an unusual IP",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "DeleteBucket",
+          "errorCode": null,
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.bucketName": "andes-cloudtrail-logs-111122223333",
+          "eventTime": "2025-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "DeleteBucket by an assumed role with errorCode explicitly set to Success",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "DeleteBucket",
+          "errorCode": "Success",
+          "awsRegion": "sa-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "Boto3/1.34.69 Python/3.12.2",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/OpsAdmin/mrodriguez",
+          "requestParameters.bucketName": "andes-backups-prod",
+          "eventTime": "2025-10-25T14:07:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "DeleteBucket attempt that failed with AccessDenied, so neither status selection matches",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "DeleteBucket",
+          "errorCode": "AccessDenied",
+          "errorMessage": "Access Denied",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.bucketName": "andes-backups-prod"
+        }
+      },
+      {
+        "description": "Successful DeleteBucketPolicy, a different event name that only partly matches",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "DeleteBucketPolicy",
+          "errorCode": null,
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-runner",
+          "requestParameters.bucketName": "andes-static-site"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

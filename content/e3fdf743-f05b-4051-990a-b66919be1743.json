@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "e3fdf743-f05b-4051-990a-b66919be1743",
+    "title": "Change User Account Associated with the FAX Service",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_fax_change_service_user.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_fax_change_service_user.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó la cuenta con la que se ejecuta el servicio Fax en el valor de registro ObjectName, y el nuevo valor no es NetworkService (la cuenta predeterminada). Esto puede indicar que alguien prepara el servicio para ejecutar código con más privilegios, por ejemplo como LocalSystem.",
+      "what_it_detects": "Escrituras en HKLM\\System\\CurrentControlSet\\Services\\Fax\\ObjectName (registry_set) cuyo campo Details no contiene NetworkService, es decir, cuando el servicio Fax pasa a ejecutarse con otra cuenta, como LocalSystem o una cuenta de usuario.",
+      "why_it_matters": "Por defecto, el servicio Fax se ejecuta como NetworkService, con privilegios limitados. Si un atacante lo pasa a LocalSystem y luego abusa del servicio, obtiene ejecución como SYSTEM, persistencia o movimiento lateral. Corresponde a la modificación del registro (ATT&CK T1112).",
+      "triage_steps": [
+        "Revise Details para ver la cuenta nueva (LocalSystem, .\\usuario, dominio\\usuario) y la hora exacta del cambio en el host.",
+        "Identifique el proceso en Image. Si es services.exe, busque sc.exe config, Set-Service o llamadas WMI Win32_Service.Change en el mismo host en un margen de +/- 15 minutos.",
+        "Si es reg.exe, regedit.exe o powershell.exe, revise el CommandLine, el ParentImage y el usuario que lo ejecutó.",
+        "Revise si cambiaron otros valores de HKLM\\...\\Services\\Fax, como ImagePath, Start o Parameters, y si los binarios o DLL del servicio son legítimos (hash, firma).",
+        "Busque inicios o reinicios del servicio Fax (eventos 7036, 7040 y 7045 del registro System) y los procesos hijos de la instancia de svchost que lo aloja.",
+        "Revise si hubo inicios de sesión remotos de tipo 3 o 10 cerca del cambio. Anote la IP de origen y la cuenta, y busque esas entidades en otros hosts.",
+        "Confirme si el host usa realmente el rol de Fax y busque alertas anteriores del mismo host o usuario."
+      ],
+      "false_positives": [
+        "La regla indica que no hay falsos positivos conocidos.",
+        "Un administrador reconfigura a propósito un servidor de fax con otra cuenta de servicio, con un cambio documentado.",
+        "Herramientas de hardening, GPO o scripts de imagen que cambian las cuentas de servicio de forma masiva."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si el cambio estaba autorizado y quedó registrado en un ticket de cambio.",
+        "Si no estaba autorizado, aísle el endpoint y conserve evidencia: exporte la clave del servicio Fax, los registros y los binarios sospechosos.",
+        "Restaure ObjectName a NT AUTHORITY\\NetworkService y revierta cualquier otro valor alterado. Si el servicio Fax no se usa, deshabilítelo.",
+        "Si se configuró una cuenta con contraseña, rote esa credencial y revise su uso en otros sistemas.",
+        "Busque el mismo cambio de registro en toda la flota y vigile durante los días siguientes la actividad de la IP o la cuenta de origen."
+      ],
+      "severity_rationale": "Es alta porque este cambio casi nunca es legítimo y permite que el servicio Fax ejecute código como SYSTEM."
+    },
+    "en": {
+      "summary": "The account the Fax service runs as (the ObjectName registry value) was changed to something other than the default, NetworkService. This may mean someone is preparing the service to run code with higher privileges, such as LocalSystem.",
+      "what_it_detects": "Registry writes to HKLM\\System\\CurrentControlSet\\Services\\Fax\\ObjectName where Details does not contain NetworkService, meaning the Fax service now runs as LocalSystem or another account.",
+      "why_it_matters": "By default, the Fax service runs as the low-privilege NetworkService account. If an attacker switches it to LocalSystem and then abuses the service, they get SYSTEM execution, persistence or lateral movement. This is Modify Registry (ATT&CK T1112).",
+      "triage_steps": [
+        "Read Details to see the new account (LocalSystem, .\\user, domain\\user) and note the exact time of the change on the host.",
+        "Check Image. If it is services.exe, look for sc.exe config, Set-Service or WMI Win32_Service.Change on the same host within +/- 15 minutes.",
+        "If Image is reg.exe, regedit.exe or powershell.exe, review the CommandLine, the ParentImage and the user who ran it.",
+        "Check whether other values under the Fax service key changed (ImagePath, Start, Parameters), and verify the service binaries or DLLs by hash and signature.",
+        "Look for Fax service starts or restarts (System events 7036, 7040, 7045) and for child processes of the svchost instance that hosts it.",
+        "Review remote logons (types 3 and 10) around the change. Note the source IP and account, and look for both on other hosts.",
+        "Confirm whether the host actually uses the Fax role, and check for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "An administrator deliberately reconfigures a fax server to use another service account, with the change documented.",
+        "Hardening tools, GPOs or imaging scripts that change service accounts in bulk."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the change was authorized and recorded in a change ticket.",
+        "If it was not authorized, isolate the endpoint and keep evidence: export the Fax service key, the logs and any suspicious binaries.",
+        "Set ObjectName back to NT AUTHORITY\\NetworkService and undo any other changed values. If the Fax service is not used, disable it.",
+        "If an account with a password was configured, rotate that credential and check where else it has been used.",
+        "Search the whole fleet for the same registry change, and watch the source IP or account over the following days."
+      ],
+      "severity_rationale": "High because this change is rarely legitimate and lets the Fax service run code as SYSTEM."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets the Fax service account to LocalSystem",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Fax\\ObjectName",
+          "Details": "LocalSystem"
+        }
+      },
+      {
+        "description": "sc.exe config changes the account through the Service Control Manager, so services.exe writes the value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-03.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Fax\\ObjectName",
+          "Details": "ANDES\\svc_backup"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The Fax service account is set back to the default NetworkService, which the filter excludes",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Fax\\ObjectName",
+          "Details": "NT AUTHORITY\\NetworkService"
+        }
+      },
+      {
+        "description": "A different Fax service value (Start) is changed, not ObjectName",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Fax\\Start",
+          "Details": "DWORD (0x00000003)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

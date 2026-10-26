@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "11701de9-d5a5-44aa-8238-84252f131895",
+    "title": "Docker Container Discovery Via Dockerenv Listing",
+    "level": "low",
+    "status": "test",
+    "author": "Seth Hanford",
+    "path": "linux/process_creation/proc_creation_lnx_susp_dockerenv_recon.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_dockerenv_recon.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1082"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de listado o lectura (ls, cat, find, stat, test, grep) se ejecutó con una línea de comandos que termina en \".dockerenv\". Esto puede indicar que alguien intenta averiguar si está dentro de un contenedor Docker.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /cat, /dir, /find, /ls, /stat, /test o grep, y CommandLine termina en \".dockerenv\", el archivo que Docker crea en la raíz de los contenedores.",
+      "why_it_matters": "Comprobar si existe /.dockerenv es un paso común de reconocimiento (T1082, System Information Discovery). Después de obtener acceso, un atacante lo usa para decidir si intenta escapar del contenedor o adaptar sus herramientas.",
+      "triage_steps": [
+        "Revise CommandLine e Image: identifique la herramienta exacta y la ruta consultada (/.dockerenv u otra ubicación).",
+        "Identifique ParentImage y la cadena de procesos: un shell interactivo, un web server, un intérprete o un entrypoint de contenedor conocido.",
+        "Determine el usuario que ejecutó el comando y si es una cuenta de servicio, de administrador o inesperada.",
+        "Revise la actividad del mismo host +/- 15 minutos: whoami, id, uname, cat /proc/1/cgroup, mount, capsh, consultas a docker.sock.",
+        "Busque conexiones de red salientes o descargas (curl, wget) del mismo proceso padre o la misma sesión.",
+        "Consulte alertas previas del host, del contenedor o del usuario, en especial de ejecución remota o de explotación web.",
+        "Confirme con el equipo responsable si el host o la imagen ejecuta scripts que detectan el entorno de forma legítima."
+      ],
+      "false_positives": [
+        "Administradores que verifican manualmente si están dentro de un contenedor.",
+        "Scripts de entrypoint, instaladores o agentes de monitoreo que revisan /.dockerenv para ajustar su comportamiento.",
+        "Pipelines de CI/CD y herramientas de orquestación que detectan el entorno de ejecución."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el dueño del sistema; si es conocido, documente y cree una exclusión específica por ParentImage o script.",
+        "Si el origen no es claro, preserve los logs de procesos y la línea de tiempo de la sesión antes de cualquier cambio.",
+        "Si hay indicios de compromiso, aísle el contenedor o el host, revoque credenciales expuestas y revise el acceso a docker.sock y los privilegios del contenedor.",
+        "Erradique el punto de entrada (servicio vulnerable, credencial robada) y reconstruya el contenedor desde una imagen confiable."
+      ],
+      "severity_rationale": "Nivel bajo porque es solo reconocimiento y es común en uso legítimo; gana relevancia al correlacionarse con otra actividad sospechosa."
+    },
+    "en": {
+      "summary": "A listing or file-reading utility (ls, cat, find, stat, test, grep) ran with a command line ending in \".dockerenv\". This may mean someone is checking whether they are inside a Docker container.",
+      "what_it_detects": "Linux process creation events where Image ends with /cat, /dir, /find, /ls, /stat, /test or grep, and CommandLine ends with \".dockerenv\", the file Docker places at the root of containers.",
+      "why_it_matters": "Checking for /.dockerenv is a common reconnaissance step (T1082, System Information Discovery). After gaining access, attackers use it to decide whether to attempt a container escape or adapt their tooling.",
+      "triage_steps": [
+        "Review CommandLine and Image: identify the exact tool and the path queried (/.dockerenv or elsewhere).",
+        "Identify ParentImage and the process chain: interactive shell, web server, interpreter or a known container entrypoint.",
+        "Check which user ran the command and whether it is a service, admin or unexpected account.",
+        "Review same-host activity +/- 15 minutes: whoami, id, uname, cat /proc/1/cgroup, mount, capsh, docker.sock access.",
+        "Look for outbound connections or downloads (curl, wget) from the same parent process or session.",
+        "Check earlier alerts for the host, container or user, especially remote execution or web exploitation.",
+        "Confirm with the owning team whether the host or image runs scripts that legitimately detect their environment."
+      ],
+      "false_positives": [
+        "Administrators manually checking whether they are inside a container.",
+        "Entrypoint scripts, installers or monitoring agents that check /.dockerenv to adjust behavior.",
+        "CI/CD pipelines and orchestration tools detecting their runtime environment."
+      ],
+      "response_steps": [
+        "Verify legitimacy with the system owner; if known, document it and add a narrow exclusion by ParentImage or script.",
+        "If the origin is unclear, preserve process logs and the session timeline before making changes.",
+        "If compromise is indicated, isolate the container or host, revoke exposed credentials, and review docker.sock access and container privileges.",
+        "Remove the entry point (vulnerable service, stolen credential) and rebuild the container from a trusted image."
+      ],
+      "severity_rationale": "Low because it is reconnaissance only and common in legitimate use; it becomes significant when correlated with other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ls checking for /.dockerenv spawned from a shell under a web server account",
+        "event": {
+          "Image": "/usr/bin/ls",
+          "CommandLine": "ls -la /.dockerenv",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c ls -la /.dockerenv",
+          "User": "www-data",
+          "ProcessId": 4821,
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-app-03"
+        }
+      },
+      {
+        "description": "cat reading /.dockerenv from an interactive bash session",
+        "event": {
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /.dockerenv",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 7710,
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "bash runs a test for /.dockerenv; Image is bash, not one of the listed utilities",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c test -f /.dockerenv",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "ProcessId": 3302,
+          "CurrentDirectory": "/root",
+          "Computer": "WS-0142"
+        }
+      },
+      {
+        "description": "find searches for .dockerenv but the command line ends with -print, not .dockerenv",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find / -maxdepth 1 -name .dockerenv -print",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 5590,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

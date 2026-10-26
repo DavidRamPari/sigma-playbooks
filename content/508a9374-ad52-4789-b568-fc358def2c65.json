@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "508a9374-ad52-4789-b568-fc358def2c65",
+    "title": "Suspicious History File Operations",
+    "level": "medium",
+    "status": "test",
+    "author": "Mikhail Larin, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_susp_histfile_operations.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_susp_histfile_operations.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en un endpoint macOS se ejecutó con una línea de comandos que hace referencia a un archivo de historial del shell (.bash_history, .zsh_history, fish_history, etc.). Puede tratarse de búsqueda de credenciales o de borrado de rastros.",
+      "what_it_detects": "Eventos de creación de procesos en macOS cuyo CommandLine contiene .bash_history, .zsh_history, .zhistory, .history, .sh_history o fish_history, sin importar el binario ni el usuario.",
+      "why_it_matters": "Los historiales del shell suelen guardar contraseñas, tokens y comandos con secretos escritos en texto plano. Un atacante los lee para obtener credenciales (T1552.003, credenciales en el historial de Bash) o los borra para ocultar su actividad.",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique el archivo de historial, de qué usuario es y la acción (lectura con cat/grep, copia, envío por red, truncado o borrado).",
+        "Compare el usuario que ejecuta el proceso con el dueño del historial; acceder al historial de otro usuario o de root es más sospechoso.",
+        "Examine Image y ParentImage: un shell interactivo de Terminal es habitual; scripts, osascript, curl, python o procesos sin firma como padre son sospechosos.",
+        "Busque búsquedas de palabras clave (password, token, AWS, ssh) o redirecciones hacia /tmp, archivos ocultos o comandos de red.",
+        "Pivote en el mismo host +/- 15 minutos: conexiones salientes, archivos comprimidos, uso de ssh/scp, otros accesos a credenciales (Keychain, ~/.ssh, ~/.aws).",
+        "Revise alertas previas para el mismo usuario y host, y el origen de la sesión (SSH remoto, IP de origen, inicio de sesión inusual).",
+        "Si hubo borrado o truncado (rm, > archivo, unset HISTFILE), considérelo evasión de defensa y busque qué actividad podría estar ocultando."
+      ],
+      "false_positives": [
+        "Administradores revisando su propio historial para soporte o auditoría.",
+        "Software de limpieza, privacidad o gestión de dispositivos (MDM) que vacía o rota los archivos de historial.",
+        "Scripts de dotfiles, respaldo o migración de perfil que copian o enlazan archivos de historial.",
+        "Herramientas de desarrollo o plugins del shell que leen el historial para autocompletado."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o su responsable si la actividad era esperada antes de tomar acciones.",
+        "Si se confirma lectura o exfiltración maliciosa, aísle el endpoint desde el EDR y preserve una copia del historial y de los logs relevantes.",
+        "Rote las credenciales, tokens y llaves que aparezcan en el historial afectado e invalide las sesiones activas del usuario.",
+        "Elimine el mecanismo de acceso del atacante (procesos, persistencia como LaunchAgents) tras verificarlo, y restaure el endpoint desde una imagen confiable si es necesario.",
+        "Recomiende no escribir secretos en la línea de comandos y configurar HISTIGNORE o equivalentes."
+      ],
+      "severity_rationale": "Medium es adecuado porque el acceso al historial puede exponer credenciales, pero también es frecuente en administración y herramientas legítimas, por lo que requiere contexto."
+    },
+    "en": {
+      "summary": "A process on a macOS endpoint ran with a command line referencing a shell history file (.bash_history, .zsh_history, fish_history, etc.). This may be credential hunting or trace cleanup.",
+      "what_it_detects": "macOS process creation events whose CommandLine contains .bash_history, .zsh_history, .zhistory, .history, .sh_history or fish_history, regardless of binary or user.",
+      "why_it_matters": "Shell histories often hold passwords, tokens and secrets typed in clear text. Attackers read them to harvest credentials (T1552.003, Bash History) or wipe them to hide their activity.",
+      "triage_steps": [
+        "Read the full CommandLine: which history file, whose home directory, and what action (cat/grep read, copy, network transfer, truncate or delete).",
+        "Compare the executing user with the history file owner; touching another user's or root's history is more suspicious.",
+        "Check Image and ParentImage: an interactive Terminal shell is common; scripts, osascript, curl, python or unsigned parents are suspicious.",
+        "Look for keyword searches (password, token, AWS, ssh) or output redirected to /tmp, hidden files or network commands.",
+        "Pivot on the same host +/- 15 minutes: outbound connections, archives created, ssh/scp use, other credential access (Keychain, ~/.ssh, ~/.aws).",
+        "Review earlier alerts for the same user and host, and the session origin (remote SSH, source IP, unusual login).",
+        "If the history was deleted or truncated (rm, > file, unset HISTFILE), treat it as defense evasion and hunt for what it may hide."
+      ],
+      "false_positives": [
+        "Administrators reviewing their own history for support or auditing.",
+        "Cleanup, privacy or MDM software clearing or rotating history files.",
+        "Dotfile, backup or profile migration scripts copying or linking history files.",
+        "Developer tools or shell plugins reading history for autocompletion."
+      ],
+      "response_steps": [
+        "Confirm with the user or their manager whether the activity was expected before acting.",
+        "If malicious reading or exfiltration is confirmed, isolate the endpoint via EDR and preserve the history file and relevant logs.",
+        "Rotate credentials, tokens and keys found in the affected history and revoke the user's active sessions.",
+        "After verification, remove attacker access (processes, LaunchAgent persistence) and reimage from a trusted baseline if needed.",
+        "Advise against typing secrets on the command line and configure HISTIGNORE or equivalents."
+      ],
+      "severity_rationale": "Medium fits because history access can expose credentials, but it is also common in administration and legitimate tooling, so context is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User greps another account's zsh history for passwords",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -i password /Users/jperez/.zsh_history",
+          "ParentImage": "/bin/zsh",
+          "User": "mlopez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "Bash history copied to /tmp via cat redirection from a script",
+        "event": {
+          "Image": "/bin/cat",
+          "CommandLine": "cat /Users/jperez/.bash_history",
+          "ParentImage": "/usr/bin/python3",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5133
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Editing the zsh configuration file, not a history file",
+        "event": {
+          "Image": "/usr/bin/vim",
+          "CommandLine": "vim /Users/jperez/.zshrc",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 6002
+        }
+      },
+      {
+        "description": "Listing the SSH directory without touching history files",
+        "event": {
+          "Image": "/bin/ls",
+          "CommandLine": "ls -la /Users/jperez/.ssh",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 6010
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

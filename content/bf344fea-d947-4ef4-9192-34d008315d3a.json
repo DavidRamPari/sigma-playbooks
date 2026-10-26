@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "bf344fea-d947-4ef4-9192-34d008315d3a",
+    "title": "Suspicious Shim Database Patching Activity",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_shim_database_susp_application.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_shim_database_susp_application.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.011"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró una nueva base de datos de shim (.sdb) bajo AppCompatFlags\\Custom dirigida a un proceso crítico de Windows. Es una técnica conocida de persistencia e inyección mediante parches en memoria.",
+      "what_it_detects": "Escrituras de registro (registry_set) cuyo TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom\\ y termina en el nombre de un proceso del sistema, como svchost.exe, explorer.exe, services.exe, winlogon.exe, csrss.exe o WmiPrvSe.exe.",
+      "why_it_matters": "ATT&CK T1546.011 (Application Shimming): un shim malicioso puede parchear secciones de un proceso legítimo o cargar una DLL al iniciarse. Así logra persistencia y ejecución con los privilegios de procesos de alto nivel, a menudo como SYSTEM.",
+      "triage_steps": [
+        "Revise TargetObject, Details e Image: identifique el proceso objetivo, el GUID o nombre del .sdb y el binario que escribió la clave.",
+        "Busque eventos de creación de procesos de sdbinst.exe u otro instalador en el mismo host en una ventana de +/- 15 minutos; revise su CommandLine, ParentImage y usuario.",
+        "Consulte AppCompatFlags\\InstalledSDB\\{GUID}: obtenga DatabasePath y DatabaseDescription y ubique el archivo .sdb, por ejemplo en C:\\Windows\\AppPatch\\Custom.",
+        "Calcule el hash del .sdb y del instalador, revise su reputación y analice el contenido del .sdb con un parser de SDB para detectar entradas de patch o InjectDll.",
+        "Examine el proceso objetivo: módulos cargados inesperados, conexiones de red anómalas o procesos hijos inusuales tras el reinicio.",
+        "Revise alertas previas del mismo host y usuario, y busque la misma clave o el mismo hash en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla indica falsos positivos desconocidos; los shims legítimos rara vez apuntan a procesos del sistema.",
+        "Pruebas de compatibilidad con Application Compatibility Toolkit realizadas por TI, que deben estar documentadas.",
+        "Ejercicios de red team o pruebas de productos de seguridad autorizados."
+      ],
+      "response_steps": [
+        "Confirme con TI si existe un cambio aprobado; si no lo hay, trate el evento como compromiso y aísle el host.",
+        "Preserve como evidencia el .sdb, las claves de registro y la memoria del proceso objetivo antes de cualquier limpieza.",
+        "Desinstale el shim con sdbinst -u después de verificarlo, elimine las claves Custom e InstalledSDB y luego reinicie el host o los servicios afectados.",
+        "Busque el mismo GUID, hash o ruta en toda la flota y restablezca las credenciales expuestas en el host."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque parchear procesos críticos del sistema mediante shims casi nunca es legítimo y otorga persistencia privilegiada."
+    },
+    "en": {
+      "summary": "A new shim database (.sdb) was registered under AppCompatFlags\\Custom for a critical Windows process. This is a known technique for persistence and injection through in-memory patching.",
+      "what_it_detects": "Registry value writes (registry_set) where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom\\ and ends with a system process name such as svchost.exe, explorer.exe, services.exe, winlogon.exe, csrss.exe or WmiPrvSe.exe.",
+      "why_it_matters": "ATT&CK T1546.011 (Application Shimming): a malicious shim can patch sections of a legitimate process or load a DLL when the process starts. This gives the attacker persistence and execution with the privileges of high-level processes, often SYSTEM.",
+      "triage_steps": [
+        "Review TargetObject, Details and Image: identify the targeted process, the .sdb GUID or name, and the binary that wrote the key.",
+        "Look for process creation of sdbinst.exe or another installer on the same host within +/- 15 minutes. Check its CommandLine, ParentImage and user.",
+        "Check AppCompatFlags\\InstalledSDB\\{GUID} for DatabasePath and DatabaseDescription, then locate the .sdb file, for example in C:\\Windows\\AppPatch\\Custom.",
+        "Hash the .sdb and the installer, check their reputation, and parse the .sdb with an SDB parser to look for patch or InjectDll entries.",
+        "Inspect the targeted process for unexpected loaded modules, unusual network connections or odd child processes after restart.",
+        "Review earlier alerts for the same host and user, and search for the same key or hash on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unknown. Legitimate shims rarely target system processes.",
+        "IT compatibility testing with the Application Compatibility Toolkit, which should be documented.",
+        "Authorized red team exercises or security product testing."
+      ],
+      "response_steps": [
+        "Ask IT whether this was an approved change. If it was not, treat it as a compromise and isolate the host.",
+        "Preserve the .sdb, the registry keys and memory of the targeted process as evidence before any cleanup.",
+        "After verification, uninstall the shim with sdbinst -u, delete the Custom and InstalledSDB keys, then restart the host or affected services.",
+        "Hunt for the same GUID, hash or path across the fleet and reset credentials exposed on the host."
+      ],
+      "severity_rationale": "High fits because shim-patching critical system processes is almost never legitimate and gives privileged persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Shim database registered for svchost.exe by sdbinst.exe launched from a user temp folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom\\svchost.exe",
+          "Details": "{8f3c2a1e-5b7d-4e9a-a1c2-0d4e6f8b9a10}.sdb",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Unknown binary writes a Custom shim entry for explorer.exe",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\ProgramData\\Updater\\upd.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom\\explorer.exe",
+          "Details": "{1a2b3c4d-1111-2222-3333-444455556666}.sdb",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate compatibility shim for a line-of-business app, not a monitored system process",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Custom\\legacyerp.exe",
+          "Details": "{2c4e6a8b-0d1f-4a3b-9c5d-7e8f9a0b1c2d}.sdb",
+          "User": "ANDES\\adm.soporte"
+        }
+      },
+      {
+        "description": "InstalledSDB metadata write, outside the Custom key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\sdbinst.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\InstalledSDB\\{2c4e6a8b-0d1f-4a3b-9c5d-7e8f9a0b1c2d}\\DatabasePath",
+          "Details": "C:\\Windows\\AppPatch\\Custom\\{2c4e6a8b-0d1f-4a3b-9c5d-7e8f9a0b1c2d}.sdb",
+          "User": "ANDES\\adm.soporte"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

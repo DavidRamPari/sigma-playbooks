@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "e2feb918-4e77-4608-9697-990a1aaf74c3",
+    "title": "Google Cloud Storage Buckets Enumeration",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_bucket_enumeration.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_bucket_enumeration.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad listó los buckets de Cloud Storage de un proyecto de GCP (storage.buckets.list) o los canales de notificación de buckets (storage.buckets.listChannels). Por sí solo suele ser benigno, pero puede indicar reconocimiento con credenciales comprometidas.",
+      "what_it_detects": "Eventos de GCP Audit Logs cuyo gcp.audit.method_name es storage.buckets.list o storage.buckets.listChannels, es decir, la enumeración de buckets de Cloud Storage desde la consola, gsutil/gcloud, SDK o la API JSON.",
+      "why_it_matters": "Listar buckets es un paso típico de descubrimiento (táctica Discovery, cercana a Cloud Storage Object Discovery, T1619): el atacante identifica dónde hay datos antes de acceder a objetos, exfiltrar o cambiar permisos.",
+      "triage_steps": [
+        "Identifique la identidad que hizo la llamada (authentication_info.principal_email): ¿es un usuario humano, una cuenta de servicio o una cuenta delegada?",
+        "Revise la IP de origen y el user agent: compare con las IP corporativas, rangos de GCP y las herramientas habituales (gcloud, Terraform, consola).",
+        "Confirme el proyecto y la hora; verifique si la identidad suele enumerar buckets en ese proyecto según el historial de los últimos 30 días.",
+        "Pivote sobre la misma identidad +/- 15 minutos: busque storage.objects.list/get, setIamPolicy, creación de claves de cuenta de servicio o llamadas a otros servicios.",
+        "Busque alertas previas de la misma identidad o IP, como inicios de sesión inusuales, MFA fallida o uso de claves desde ubicaciones nuevas.",
+        "Si es una cuenta de servicio, verifique desde qué carga de trabajo se usó y si su clave fue descargada o usada fuera de GCP."
+      ],
+      "false_positives": [
+        "Administradores o ingenieros de plataforma revisando el inventario de buckets desde la consola o gcloud.",
+        "Herramientas de IaC, CSPM, backup o inventario de activos que enumeran buckets de forma programada.",
+        "Pipelines de CI/CD o aplicaciones que listan buckets al iniciar; documente y exceptúe la identidad y el user agent conocidos."
+      ],
+      "response_steps": [
+        "Valide la actividad con el dueño de la identidad o del proyecto; si es legítima, documente y considere una excepción acotada.",
+        "Si no se reconoce, deshabilite temporalmente la cuenta de servicio o revoque las sesiones y claves del usuario tras confirmar con el responsable.",
+        "Revise el acceso posterior a objetos y cambios de IAM en buckets sensibles; evalúe posible exposición de datos.",
+        "Rote las credenciales afectadas, aplique mínimo privilegio y restaure políticas de IAM modificadas."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque enumerar buckets es una operación de lectura frecuente y legítima; solo gana relevancia combinada con identidades, orígenes o actividad posterior inusuales."
+    },
+    "en": {
+      "summary": "An identity listed the Cloud Storage buckets in a GCP project (storage.buckets.list) or the notification channels of buckets (storage.buckets.listChannels). Usually benign alone, but it can indicate reconnaissance with compromised credentials.",
+      "what_it_detects": "GCP Audit Log events where gcp.audit.method_name is storage.buckets.list or storage.buckets.listChannels, meaning Cloud Storage buckets were enumerated through the console, gsutil/gcloud, an SDK or the JSON API.",
+      "why_it_matters": "Listing buckets is a typical discovery step (Discovery tactic, close to Cloud Storage Object Discovery, T1619): an attacker maps where data lives before reading objects, exfiltrating or changing permissions.",
+      "triage_steps": [
+        "Identify the caller (authentication_info.principal_email): human user, service account, or delegated account?",
+        "Review the source IP and user agent; compare against corporate IPs, GCP ranges and usual tooling (gcloud, Terraform, console).",
+        "Confirm the project and time; check whether this identity normally lists buckets in that project over the last 30 days.",
+        "Pivot on the same identity +/- 15 minutes: look for storage.objects.list/get, setIamPolicy, service account key creation or calls to other services.",
+        "Look for earlier alerts on the same identity or IP, such as unusual sign-ins, failed MFA or key use from new locations.",
+        "For a service account, confirm which workload used it and whether its key was downloaded or used outside GCP."
+      ],
+      "false_positives": [
+        "Administrators or platform engineers reviewing bucket inventory from the console or gcloud.",
+        "IaC, CSPM, backup or asset inventory tools that enumerate buckets on a schedule.",
+        "CI/CD pipelines or applications that list buckets at startup; document and exempt the known identity and user agent."
+      ],
+      "response_steps": [
+        "Validate the activity with the identity or project owner; if legitimate, document it and consider a narrow exception.",
+        "If unrecognized, temporarily disable the service account or revoke the user's sessions and keys after confirming with the owner.",
+        "Review subsequent object access and IAM changes on sensitive buckets; assess possible data exposure.",
+        "Rotate affected credentials, enforce least privilege and restore any modified IAM policies."
+      ],
+      "severity_rationale": "Low fits because bucket enumeration is a common, legitimate read-only operation; it matters mainly when combined with unusual identities, origins or follow-on activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user lists buckets with gsutil from an external IP",
+        "event": {
+          "@timestamp": "2024-03-12T02:14:37Z",
+          "gcp.audit.method_name": "storage.buckets.list",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.authentication_info.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/_/buckets",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "apitools Python/3.11.4 gsutil/5.27",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Service account lists bucket notification channels",
+        "event": {
+          "@timestamp": "2024-03-12T02:16:05Z",
+          "gcp.audit.method_name": "storage.buckets.listChannels",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.authentication_info.principal_email": "backup-sa@andes-prod-01.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-finance-reports",
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "google-api-python-client/2.100.0",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Listing objects inside a single bucket, not enumerating buckets",
+        "event": {
+          "@timestamp": "2024-03-12T09:30:11Z",
+          "gcp.audit.method_name": "storage.objects.list",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.authentication_info.principal_email": "etl-sa@andes-prod-01.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-etl-staging",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "gcloud-golang-storage/1.30.1",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Reading metadata of one bucket with storage.buckets.get",
+        "event": {
+          "@timestamp": "2024-03-12T10:05:42Z",
+          "gcp.audit.method_name": "storage.buckets.get",
+          "gcp.audit.service_name": "storage.googleapis.com",
+          "gcp.audit.authentication_info.principal_email": "mrojas@example.com",
+          "gcp.audit.resource_name": "projects/_/buckets/andes-web-assets",
+          "source.ip": "192.0.2.55",
+          "user_agent.original": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Cloud Console",
+          "cloud.project.id": "andes-prod-01",
+          "event.outcome": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

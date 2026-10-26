@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "78a80655-a51e-4669-bc6b-e9d206a462ee",
+    "title": "Install Root Certificate",
+    "level": "low",
+    "status": "test",
+    "author": "Ömer Günal, oscd.community",
+    "path": "linux/process_creation/proc_creation_lnx_install_root_certificate.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_install_root_certificate.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1553.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó update-ca-certificates o update-ca-trust en un host Linux, lo que regenera el almacén de certificados raíz de confianza del sistema. Puede ser administración legítima o la instalación de una CA controlada por un atacante.",
+      "what_it_detects": "Creación de procesos Linux cuyo CommandLine contiene '/update-ca-certificates' (Debian/Ubuntu) o '/update-ca-trust' (RHEL/CentOS/Fedora), es decir, la invocación por ruta de las herramientas que actualizan el almacén de CA raíz.",
+      "why_it_matters": "Un atacante que agrega su propia CA raíz (ATT&CK T1553.004, Install Root Certificate) consigue que el sistema confíe en servidores web, proxies de intercepción TLS o C2 bajo su control sin mostrar advertencias, lo que facilita el robo de credenciales y oculta tráfico malicioso.",
+      "triage_steps": [
+        "Revisar CommandLine, Image, User y ParentImage: identificar quién ejecutó la herramienta y desde qué proceso (shell interactiva, sudo, cron, gestor de paquetes, agente de configuración).",
+        "Buscar en el mismo host, +/- 15 minutos, procesos cp, mv, curl, wget o tee que escriban en /usr/local/share/ca-certificates/ o /etc/pki/ca-trust/source/anchors/.",
+        "Listar los certificados agregados recientemente en esos directorios y revisar subject, issuer, fechas de validez y fingerprint SHA-256.",
+        "Contrastar con tickets de cambio, ejecuciones de Ansible/Puppet/Chef o actualizaciones del paquete ca-certificates en la misma ventana.",
+        "Verificar cambios de proxy (variables http_proxy, /etc/environment, configuración de apt/yum) y conexiones salientes nuevas del host después del evento.",
+        "Revisar si el mismo usuario o la misma ParentImage generó alertas previas, y si otros hosts ejecutaron el mismo comando con el mismo certificado."
+      ],
+      "false_positives": [
+        "Administración legítima: instalación de la CA corporativa interna o de un proxy de inspección TLS aprobado.",
+        "Actualizaciones del paquete ca-certificates o scripts postinst de paquetes que invocan la herramienta automáticamente.",
+        "Herramientas de gestión de configuración, imágenes doradas o construcción de contenedores que despliegan certificados internos."
+      ],
+      "response_steps": [
+        "Confirmar con el dueño del sistema o el equipo de cambios si la instalación del certificado estaba autorizada.",
+        "Si no está autorizada, aislar el host de la red y preservar el certificado, el historial de shell y los logs relevantes como evidencia.",
+        "Retirar el certificado no autorizado del directorio de anclas y volver a ejecutar la herramienta de actualización para regenerar el almacén.",
+        "Investigar el acceso inicial, rotar credenciales usadas en el host y buscar el mismo fingerprint en el resto del parque."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque esta acción es frecuente en administración legítima y requiere correlación con el certificado instalado y el contexto para confirmar abuso."
+    },
+    "en": {
+      "summary": "update-ca-certificates or update-ca-trust ran on a Linux host, rebuilding the system's trusted root certificate store. This may be routine administration or an attacker installing a CA they control.",
+      "what_it_detects": "Linux process creation where CommandLine contains '/update-ca-certificates' (Debian/Ubuntu) or '/update-ca-trust' (RHEL/CentOS/Fedora), meaning the tools that refresh the root CA store were invoked by path.",
+      "why_it_matters": "An attacker who adds their own root CA (ATT&CK T1553.004, Install Root Certificate) makes the system trust their web servers, TLS-intercepting proxies or C2 without warnings, enabling credential theft and hiding malicious traffic.",
+      "triage_steps": [
+        "Review CommandLine, Image, User and ParentImage: who ran the tool and from what process (interactive shell, sudo, cron, package manager, config agent).",
+        "On the same host within +/- 15 minutes, look for cp, mv, curl, wget or tee writing to /usr/local/share/ca-certificates/ or /etc/pki/ca-trust/source/anchors/.",
+        "List recently added certificates in those directories and check subject, issuer, validity dates and SHA-256 fingerprint.",
+        "Match against change tickets, Ansible/Puppet/Chef runs or ca-certificates package updates in the same window.",
+        "Check for proxy changes (http_proxy variables, /etc/environment, apt/yum config) and new outbound connections from the host afterwards.",
+        "Check earlier alerts for the same user or ParentImage, and whether other hosts ran the same command with the same certificate."
+      ],
+      "false_positives": [
+        "Legitimate administration: installing the internal corporate CA or an approved TLS inspection proxy.",
+        "ca-certificates package updates or package postinst scripts that call the tool automatically.",
+        "Configuration management, golden images or container builds that deploy internal certificates."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change team whether the certificate installation was authorized.",
+        "If unauthorized, isolate the host and preserve the certificate, shell history and relevant logs as evidence.",
+        "Remove the unauthorized certificate from the anchors directory and rerun the update tool to rebuild the store.",
+        "Investigate initial access, rotate credentials used on the host and hunt for the same fingerprint across the fleet."
+      ],
+      "severity_rationale": "Low fits because this action is common in legitimate administration and needs correlation with the installed certificate and context to confirm abuse."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Root CA store refreshed on Debian/Ubuntu via full path after a certificate was dropped into /usr/local/share/ca-certificates",
+        "event": {
+          "Image": "/usr/sbin/update-ca-certificates",
+          "CommandLine": "/usr/sbin/update-ca-certificates",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "root",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 48213,
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "CA trust extraction on RHEL/CentOS invoked by path from a shell script",
+        "event": {
+          "Image": "/usr/bin/update-ca-trust",
+          "CommandLine": "/usr/bin/update-ca-trust extract",
+          "ParentImage": "/usr/bin/sh",
+          "ParentCommandLine": "sh /tmp/setup.sh",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 9154,
+          "host": "web-rhel-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Command run by bare name without a leading slash in CommandLine, so the '/update-ca-certificates' substring is absent",
+        "event": {
+          "Image": "/usr/sbin/update-ca-certificates",
+          "CommandLine": "update-ca-certificates --fresh",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo update-ca-certificates --fresh",
+          "User": "root",
+          "ProcessId": 50122,
+          "host": "WS-0142"
+        }
+      },
+      {
+        "description": "Listing trusted anchors with p11-kit trust, which does not invoke the update tools",
+        "event": {
+          "Image": "/usr/bin/trust",
+          "CommandLine": "trust list --filter=ca-anchors",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 7731,
+          "host": "web-rhel-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

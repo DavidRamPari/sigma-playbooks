@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "312b42b1-bded-4441-8b58-163a3af58775",
+    "title": "Potentially Suspicious Execution From Tmp Folder",
+    "level": "medium",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_susp_execution_tmp_folder.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_execution_tmp_folder.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en un host Linux un proceso cuyo ejecutable (Image) está dentro de /tmp/. Muchos implantes y bots, como GobRAT, se ejecutan desde /tmp porque cualquier usuario puede escribir en esa carpeta.",
+      "what_it_detects": "Eventos process_creation de Linux en los que el campo Image empieza con '/tmp/'. Se excluyen los binarios que terminan en '/usr/bin/nextcloud', como el AppImage de Nextcloud montado bajo /tmp.",
+      "why_it_matters": "/tmp permite escritura a todos los usuarios y casi nunca se revisa. Los atacantes descargan ahí sus payloads y los ejecutan con nombres de procesos legítimos (kworker, sshd, apache) para pasar desapercibidos. Esto corresponde a Masquerading (T1036), una técnica de evasión.",
+      "triage_steps": [
+        "Revise Image: nombre del binario, si imita procesos del sistema y si está en un directorio oculto (por ejemplo /tmp/.X11-unix, /tmp/.font-unix).",
+        "Analice CommandLine y User. Confirme si el usuario normalmente ejecuta software y si hay argumentos con IP, puertos o rutas de configuración.",
+        "Revise ParentImage y su línea de comandos. Un shell lanzado por un servicio web, cron o sshd es más sospechoso que una sesión interactiva conocida.",
+        "En el mismo host, busque curl, wget, scp, chmod +x o base64 en un rango de +/- 15 minutos para saber cómo llegó el archivo.",
+        "Obtenga el hash, el propietario, el tamaño y la fecha del archivo. Consulte el hash en su plataforma de threat intelligence y búsquelo en otros endpoints.",
+        "Revise las conexiones de red del proceso y los cambios de persistencia: crontab, unidades systemd, rc.local y authorized_keys.",
+        "Busque alertas anteriores del mismo host, el mismo usuario y el mismo hash."
+      ],
+      "false_positives": [
+        "Instaladores de proveedores que extraen y ejecutan binarios temporales en /tmp.",
+        "AppImages montadas en /tmp/.mount_* que no son Nextcloud.",
+        "Binarios compilados por 'go run' (/tmp/go-build*) o pruebas de pipelines CI y herramientas de desarrollo.",
+        "Scripts de administración o agentes de gestión que copian y ejecutan herramientas en /tmp."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o del usuario si la ejecución era esperada antes de tomar acción.",
+        "Si es malicioso, aísle el host de la red y preserve el binario (copia y hash) y, si es posible, la memoria del proceso.",
+        "Termine el proceso, elimine el binario y la persistencia que encuentre, y bloquee las IP o dominios de C2 que identifique.",
+        "Rote las credenciales del usuario afectado y de las cuentas de servicio expuestas, y revise los accesos SSH recientes.",
+        "Como medida de endurecimiento, evalúe montar /tmp con noexec y recupere el sistema desde una fuente confiable si quedó comprometido."
+      ],
+      "severity_rationale": "La severidad media es adecuada: ejecutar desde /tmp es una señal fuerte de abuso, pero también lo hacen instaladores y herramientas de desarrollo legítimos, así que hay que validar el contexto."
+    },
+    "en": {
+      "summary": "A process was created on a Linux host from an executable (Image) located under /tmp/. Many implants and bots, such as GobRAT, run from /tmp because any user can write there.",
+      "what_it_detects": "Linux process_creation events where the Image field starts with '/tmp/'. Binaries ending in '/usr/bin/nextcloud' are excluded, such as the Nextcloud AppImage mounted under /tmp.",
+      "why_it_matters": "Every user can write to /tmp and it is rarely inspected. Attackers drop payloads there and run them under legitimate-looking process names (kworker, sshd, apache) to blend in. This maps to Masquerading (T1036), a defense-evasion technique.",
+      "triage_steps": [
+        "Inspect Image: the binary name, whether it imitates a system process, and whether it sits in a hidden directory such as /tmp/.X11-unix or /tmp/.font-unix.",
+        "Review CommandLine and User. Check whether this user normally runs software, and look for arguments containing IPs, ports or config paths.",
+        "Review ParentImage and its command line. A shell spawned by a web service, cron or sshd is more suspicious than a known interactive session.",
+        "On the same host, search for curl, wget, scp, chmod +x or base64 within +/- 15 minutes to see how the file arrived.",
+        "Collect the file's hash, owner, size and timestamps. Check the hash against threat intel and hunt for it on other endpoints.",
+        "Check the process's network connections and any persistence changes: crontab, systemd units, rc.local and authorized_keys.",
+        "Look for earlier alerts on the same host, user or hash."
+      ],
+      "false_positives": [
+        "Vendor installers that extract and run temporary binaries in /tmp.",
+        "AppImages mounted at /tmp/.mount_* other than Nextcloud.",
+        "Binaries built by 'go run' (/tmp/go-build*), CI pipeline tests and developer tooling.",
+        "Admin scripts or management agents that copy tools to /tmp and run them."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the host or user owner whether the execution was expected.",
+        "If it is malicious, isolate the host and preserve the binary (copy and hash) and, if possible, the process memory.",
+        "Kill the process, remove the binary and any persistence you found, and block the C2 IPs or domains you identified.",
+        "Rotate credentials for the affected user and any exposed service accounts, and review recent SSH access.",
+        "As hardening, consider mounting /tmp with noexec. If the system was compromised, rebuild it from a trusted source."
+      ],
+      "severity_rationale": "Medium fits because running from /tmp is a strong abuse signal, but legitimate installers and developer tools do it too, so context must be checked."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Binary disguised as a kernel worker, run from a hidden /tmp directory by a shell under the web server account",
+        "event": {
+          "Image": "/tmp/.font-unix/kworker",
+          "CommandLine": "/tmp/.font-unix/kworker -c 203.0.113.45:443",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash -c cd /tmp/.font-unix && ./kworker -c 203.0.113.45:443",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/tmp/.font-unix",
+          "Computer": "web-07.example.com"
+        }
+      },
+      {
+        "description": "Downloaded payload with a daemon-like name, run directly from /tmp by root via cron",
+        "event": {
+          "Image": "/tmp/apached",
+          "CommandLine": "/tmp/apached",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "/bin/sh -c /tmp/apached",
+          "User": "root",
+          "ProcessId": 3021,
+          "ParentProcessId": 3019,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Nextcloud desktop AppImage mounted under /tmp, excluded by filter_optional_nextcloud",
+        "event": {
+          "Image": "/tmp/.mount_NextclA1b2C3/usr/bin/nextcloud",
+          "CommandLine": "/tmp/.mount_NextclA1b2C3/usr/bin/nextcloud --background",
+          "ParentImage": "/home/jperez/Applications/Nextcloud.AppImage",
+          "User": "jperez",
+          "ProcessId": 7712,
+          "ParentProcessId": 7701,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "WS-0142"
+        }
+      },
+      {
+        "description": "Python interpreter running a script in /tmp; the Image itself is in /usr/bin, so it does not match",
+        "event": {
+          "Image": "/usr/bin/python3",
+          "CommandLine": "/usr/bin/python3 /tmp/report_cleanup.py",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 9120,
+          "ParentProcessId": 9101,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

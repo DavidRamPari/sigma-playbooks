@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "6e2a900a-ced9-4e4a-a9c2-13e706f9518a",
+    "title": "HackTool - Potential Remote Credential Dumping Activity Via CrackMapExec Or Impacket-Secretsdump",
+    "level": "high",
+    "status": "test",
+    "author": "SecurityAura",
+    "path": "windows/file/file_event/file_event_win_hktl_remote_cred_dump.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_hktl_remote_cred_dump.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso svchost.exe creó en C:\\Windows\\System32 un archivo con nombre aleatorio de 8 caracteres alfanuméricos y extensión .tmp. Es el patrón que dejan Impacket-secretsdump y CrackMapExec al extraer de forma remota las colmenas del registro con credenciales.",
+      "what_it_detects": "Eventos de creación de archivos (Sysmon EventID 11) donde Image termina en \\svchost.exe y TargetFilename coincide con \\Windows\\System32\\[a-zA-Z0-9]{8}.tmp. Cuando la herramienta pide al servicio RemoteRegistry, alojado en svchost, que guarde SAM, SECURITY o SYSTEM, estas colmenas quedan en System32 con nombre aleatorio.",
+      "why_it_matters": "Indica un posible volcado remoto de credenciales (ATT&CK T1003, OS Credential Dumping): hashes de cuentas locales, secretos LSA y credenciales en caché. Con ellos, el atacante puede moverse lateralmente mediante pass-the-hash y escalar privilegios en el dominio.",
+      "triage_steps": [
+        "Confirma Image, TargetFilename, ProcessId y Computer. Si es posible, verifica que el svchost.exe padre aloja el servicio RemoteRegistry (CommandLine con -s RemoteRegistry).",
+        "En el mismo host, dentro de +/- 15 minutos, busca otros archivos .tmp de 8 caracteres en System32: tres casi simultáneos (SAM, SECURITY, SYSTEM) refuerzan la sospecha.",
+        "Revisa los eventos 7036/7040 de RemoteRegistry: un servicio que arranca o cambia su tipo de inicio justo antes del evento es un indicador fuerte.",
+        "Identifica la sesión de origen: logon 4624 tipo 3 con cuenta privilegiada y su IP de origen, y accesos 5145 al recurso ADMIN$ para leer el .tmp.",
+        "Comprueba si el archivo se borró pocos segundos después (Sysmon 23/26), algo típico de estas herramientas.",
+        "Pivota por la IP de origen y la cuenta: busca autenticaciones SMB hacia otros hosts y alertas anteriores de esas entidades.",
+        "Investiga el equipo de origen por si hay Python, Impacket o CrackMapExec instalados, y valida con el equipo de TI si hay un pentest autorizado."
+      ],
+      "false_positives": [
+        "Las reglas de SigmaHQ no documentan falsos positivos conocidos.",
+        "Pruebas de penetración o ejercicios de red team autorizados que usan Impacket o CrackMapExec.",
+        "Copias de seguridad remotas del registro hechas por administradores con reg save a través de RemoteRegistry.",
+        "Algún servicio legítimo alojado en svchost que genera archivos temporales con nombre aleatorio en System32. Verifica el proceso y repite el análisis para descartarlo."
+      ],
+      "response_steps": [
+        "Valida con el responsable del host y con seguridad si hay una actividad autorizada. Conserva el archivo .tmp, si aún existe, y los logs relevantes.",
+        "Si no está autorizado, aísla el host afectado y bloquea la IP de origen. Deshabilita la cuenta usada en el logon remoto.",
+        "Restablece las contraseñas de las cuentas locales expuestas (rota LAPS), de las cuentas con credenciales en caché y de las cuentas de servicio con secretos LSA.",
+        "Si el host es un controlador de dominio, escala el incidente y evalúa restablecer krbtgt dos veces.",
+        "Investiga el equipo de origen y busca pass-the-hash con los hashes comprometidos. Detén RemoteRegistry donde no haga falta."
+      ],
+      "severity_rationale": "El nivel alto es adecuado: el patrón es muy específico de herramientas ofensivas y anticipa el robo de credenciales privilegiadas y el movimiento lateral."
+    },
+    "en": {
+      "summary": "svchost.exe created a randomly named file in C:\\Windows\\System32 with an 8-character alphanumeric name and a .tmp extension. Impacket-secretsdump and CrackMapExec leave this pattern when they dump credential registry hives remotely.",
+      "what_it_detects": "File creation events (Sysmon EventID 11) where Image ends with \\svchost.exe and TargetFilename matches \\Windows\\System32\\[a-zA-Z0-9]{8}.tmp. These tools ask the RemoteRegistry service, which runs inside svchost, to save the SAM, SECURITY or SYSTEM hives to System32 under random names.",
+      "why_it_matters": "This points to possible remote credential dumping (ATT&CK T1003, OS Credential Dumping): local account hashes, LSA secrets and cached domain credentials. An attacker can use them for pass-the-hash, lateral movement and privilege escalation.",
+      "triage_steps": [
+        "Confirm Image, TargetFilename, ProcessId and Computer. If you can, check that the svchost.exe instance hosts RemoteRegistry (CommandLine contains -s RemoteRegistry).",
+        "On the same host within +/- 15 minutes, look for other 8-character .tmp files in System32. Three created almost together (SAM, SECURITY, SYSTEM) make this more suspicious.",
+        "Check events 7036/7040 for RemoteRegistry. If the service started or changed start type just before the event, that is a strong indicator.",
+        "Find the source session: a 4624 type 3 logon by a privileged account, its source IP, and 5145 access to the ADMIN$ share to read the .tmp file.",
+        "Check whether the file was deleted seconds later (Sysmon 23/26), which these tools typically do.",
+        "Pivot on the source IP and account: look for SMB authentications to other hosts and earlier alerts for these entities.",
+        "Examine the source machine for Python, Impacket or CrackMapExec, and check with IT whether a penetration test was authorized."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives (Unknown).",
+        "Authorized penetration tests or red team exercises that use Impacket or CrackMapExec.",
+        "Administrators taking remote registry backups with reg save through RemoteRegistry.",
+        "A legitimate svchost-hosted service that writes randomly named temp files to System32. Check whether it happens again and which service causes it."
+      ],
+      "response_steps": [
+        "Check with the host owner and the security team whether the activity was authorized. Keep the .tmp file if it still exists, along with the relevant logs.",
+        "If it was not authorized, isolate the affected host, block the source IP and disable the account used for the remote logon.",
+        "Reset passwords for exposed local accounts (rotate LAPS), accounts with cached credentials, and service accounts whose secrets are stored as LSA secrets.",
+        "If the host is a domain controller, escalate the incident and consider resetting krbtgt twice.",
+        "Investigate the source machine and hunt for pass-the-hash with the stolen hashes. Turn off RemoteRegistry where it is not needed."
+      ],
+      "severity_rationale": "High fits because this pattern is very specific to offensive tooling and comes right before theft of privileged credentials and lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "The RemoteRegistry svchost saves a hive to System32 with a random 8-character .tmp name during a secretsdump run",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1876,
+          "TargetFilename": "C:\\Windows\\System32\\qWxZbTkL.tmp",
+          "User": "NT AUTHORITY\\LOCAL SERVICE",
+          "UtcTime": "2024-10-25 14:03:12.481"
+        }
+      },
+      {
+        "description": "Second hive dump on the same host with a mixed alphanumeric random name",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1876,
+          "TargetFilename": "C:\\Windows\\System32\\aB3dE9fK.tmp",
+          "User": "NT AUTHORITY\\LOCAL SERVICE",
+          "UtcTime": "2024-10-25 14:03:13.022"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "svchost writes an 8-character .tmp file to C:\\Windows\\Temp instead of System32, so the regex does not match",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1204,
+          "TargetFilename": "C:\\Windows\\Temp\\qWxZbTkL.tmp",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "UtcTime": "2024-10-25 09:12:40.117"
+        }
+      },
+      {
+        "description": "TiWorker.exe writes a random .tmp file to System32. The Image is not svchost.exe, so the selection fails",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.4585_none_7e1b8f3c2a7d4f11\\TiWorker.exe",
+          "ProcessId": 5520,
+          "TargetFilename": "C:\\Windows\\System32\\Hk7Lp2Qz.tmp",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "UtcTime": "2024-10-25 03:00:05.640"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

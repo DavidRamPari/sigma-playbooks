@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "a07f0359-4c90-4dc4-a681-8ffea40b4f47",
+    "title": "Service Binary in Suspicious Folder",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), frack113",
+    "path": "windows/registry/registry_set/registry_set_creation_service_susp_folder.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_creation_service_susp_folder.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó o modificó un servicio de Windows cuyo binario (ImagePath) está en una carpeta de escritura pública o temporal, o un proceso que corre desde esa carpeta configuró el arranque automático de un servicio.",
+      "what_it_detects": "Eventos registry_set bajo HKLM\\System\\CurrentControlSet\\Services\\ donde: (a) el valor ImagePath (Details) apunta a \\Users\\Public\\, \\Perflogs\\, \\ADMIN$\\ o \\Temp\\; o (b) un proceso (Image) ubicado en esas rutas pone Start en 0, 1 o 2 (boot, system, automático). Se excluyen instaladores conocidos de Avast y Malwarebytes.",
+      "why_it_matters": "Los servicios corren como SYSTEM y sobreviven a reinicios, por eso son un mecanismo común de persistencia y ejecución remota (PsExec y similares usan ADMIN$). Cambiar el valor Start también sirve para reactivar o alterar servicios y debilitar defensas. Técnica ATT&CK T1112 (modificación del registro).",
+      "triage_steps": [
+        "Lea TargetObject para identificar el nombre del servicio y si el cambio fue en ImagePath o en Start; revise Details para la ruta completa del binario o el valor DWORD.",
+        "Identifique el proceso que escribió (Image, ProcessId, User). services.exe indica creación vía SCM; otro binario en Temp o Public es más sospechoso.",
+        "Obtenga el hash del binario referenciado en Details o Image, revise firma digital, fecha de creación y reputación.",
+        "Busque en el mismo host, +/- 15 minutos, eventos 7045/4697 de instalación de servicios, ejecuciones de sc.exe o reg.exe y la creación del archivo binario.",
+        "Si la ruta incluye ADMIN$ o el servicio tiene nombre aleatorio, revise inicios de sesión de red (4624 tipo 3) y la IP de origen para detectar ejecución remota tipo PsExec.",
+        "Revise los procesos hijos del servicio y sus conexiones de red después de arrancar.",
+        "Consulte alertas previas del mismo host, usuario y hash en otros equipos para medir alcance."
+      ],
+      "false_positives": [
+        "Instaladores o actualizadores legítimos que extraen un servicio temporal en %TEMP% durante la instalación (similar a los casos de Avast y Malwarebytes ya filtrados).",
+        "Herramientas de administración remota o de soporte de TI que copian un servicio a ADMIN$ o C:\\Windows\\Temp.",
+        "Agentes de inventario o despliegue de software que se ejecutan desde carpetas temporales."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o de TI si la instalación del servicio estaba autorizada y documentada.",
+        "Si no es legítimo, aísle el endpoint desde el EDR y preserve el binario, la clave del registro y los logs relevantes.",
+        "Detenga y deshabilite el servicio solo después de recolectar evidencia; elimine el binario y la clave una vez validado el alcance.",
+        "Restablezca credenciales de cuentas usadas para la instalación remota y bloquee el hash en el EDR.",
+        "Busque el mismo nombre de servicio, ruta y hash en toda la flota y documente hallazgos."
+      ],
+      "severity_rationale": "Nivel alto: un servicio que ejecuta como SYSTEM desde una carpeta pública o temporal rara vez es legítimo y suele indicar persistencia o movimiento lateral."
+    },
+    "en": {
+      "summary": "A Windows service was created or modified with its binary (ImagePath) in a world-writable or temporary folder, or a process running from such a folder set a service to start automatically.",
+      "what_it_detects": "registry_set events under HKLM\\System\\CurrentControlSet\\Services\\ where (a) ImagePath (Details) points to \\Users\\Public\\, \\Perflogs\\, \\ADMIN$\\ or \\Temp\\; or (b) a process (Image) in those paths sets Start to 0, 1 or 2 (boot, system, automatic). Known Avast and Malwarebytes installers are excluded.",
+      "why_it_matters": "Services run as SYSTEM and survive reboots, making them a common persistence and remote execution method (PsExec-style tools use ADMIN$). Changing Start can also re-enable or alter services to weaken defenses. ATT&CK T1112 (Modify Registry).",
+      "triage_steps": [
+        "Read TargetObject to get the service name and whether ImagePath or Start changed; check Details for the full binary path or DWORD value.",
+        "Identify the writing process (Image, ProcessId, User). services.exe means SCM creation; another binary in Temp or Public is more suspicious.",
+        "Hash the binary referenced in Details or Image; check signature, creation time and reputation.",
+        "On the same host within +/- 15 minutes, look for service install events 7045/4697, sc.exe or reg.exe executions, and the binary's file creation.",
+        "If the path includes ADMIN$ or the service name looks random, review network logons (4624 type 3) and source IP for PsExec-style remote execution.",
+        "Review child processes of the service and its network connections after start.",
+        "Check earlier alerts for the same host, user and hash across other endpoints to scope."
+      ],
+      "false_positives": [
+        "Legitimate installers or updaters that drop a temporary service in %TEMP% during setup (like the Avast and Malwarebytes cases already filtered).",
+        "Remote administration or IT support tools that copy a service binary to ADMIN$ or C:\\Windows\\Temp.",
+        "Inventory or software deployment agents executing from temporary folders."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or IT whether the service install was authorized and documented.",
+        "If not legitimate, isolate the endpoint via EDR and preserve the binary, registry key and relevant logs.",
+        "Stop and disable the service only after collecting evidence; remove the binary and key once scope is validated.",
+        "Reset credentials used for remote installation and block the hash in the EDR.",
+        "Hunt for the same service name, path and hash fleet-wide and document findings."
+      ],
+      "severity_rationale": "High: a SYSTEM service running from a public or temporary folder is rarely legitimate and often signals persistence or lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service ImagePath set to a binary in C:\\Users\\Public via the Service Control Manager",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "ProcessId": 712,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\UpdSvcHost\\ImagePath",
+          "Details": "C:\\Users\\Public\\updsvc.exe",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Process running from user Temp folder sets a service Start value to Automatic",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_x64.exe",
+          "ProcessId": 5480,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\WinTelemetrySvc\\Start",
+          "Details": "DWORD (0x00000002)",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Malwarebytes installer service in Temp written by services.exe, excluded by filter_optional_mbamservice",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "ProcessId": 712,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\MBAMInstallerService\\ImagePath",
+          "Details": "\"C:\\Users\\jperez\\AppData\\Local\\Temp\\MBAMInstallerService.exe\"",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Process in Temp sets a service Start value to Manual (3), which is not in the selected values",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_x64.exe",
+          "ProcessId": 5480,
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\WinTelemetrySvc\\Start",
+          "Details": "DWORD (0x00000003)",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

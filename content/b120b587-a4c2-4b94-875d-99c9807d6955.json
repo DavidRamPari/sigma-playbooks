@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "b120b587-a4c2-4b94-875d-99c9807d6955",
+    "title": "Credentials from Password Stores - Keychain",
+    "level": "medium",
+    "status": "test",
+    "author": "Tim Ismilyaev, oscd.community, Florian Roth (Nextron Systems)",
+    "path": "macos/process_creation/proc_creation_macos_creds_from_keychain.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_creds_from_keychain.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1555.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario security de macOS con argumentos que exportan certificados o vuelcan el contenido de un Keychain. Puede indicar robo de credenciales almacenadas en el llavero del usuario o del sistema.",
+      "what_it_detects": "Creación de procesos en macOS donde Image es /usr/bin/security y CommandLine contiene 'find-certificate' o ' export ', o donde cualquier CommandLine contiene ' dump-keychain ' o ' login-keychain '.",
+      "why_it_matters": "El Keychain guarda contraseñas, tokens, claves privadas y certificados. Volcarlo o exportarlo permite al atacante reutilizar credenciales para moverse lateralmente o acceder a servicios en la nube (ATT&CK T1555.001, Credentials from Password Stores: Keychain).",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique el subcomando (dump-keychain, export, find-certificate), si usa -d (descifra secretos) y qué archivo de keychain y ruta de salida aparecen.",
+        "Identifique el usuario que ejecutó el proceso y confirme si es administrador o personal de TI con motivo documentado.",
+        "Examine ParentImage y la cadena de procesos: sospeche si proviene de Terminal lanzado por osascript, curl, python, un script en /tmp o una app no firmada.",
+        "Revise el mismo host en una ventana de +/- 15 minutos: archivos .p12, .pem o .txt nuevos, compresión de archivos y conexiones salientes hacia destinos desconocidos.",
+        "Verifique si aparecieron cuadros de autorización del Keychain o eventos de securityd; varios accesos seguidos sugieren automatización.",
+        "Busque alertas previas para el mismo host y usuario, y ejecuciones similares de security en otros endpoints de la flota."
+      ],
+      "false_positives": [
+        "Administradores que exportan certificados o identidades para migrar equipos o renovar configuraciones de VPN y Wi-Fi.",
+        "Scripts de MDM o herramientas de gestión que consultan certificados con find-certificate para inventario o cumplimiento.",
+        "Desarrolladores que exportan certificados de firma de código en pipelines de compilación de macOS."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con TI si la actividad fue autorizada; si no hay justificación, trate el evento como incidente.",
+        "Aísle el endpoint desde el EDR y preserve los archivos de salida, el historial de shell y los binarios del proceso padre.",
+        "Rote las contraseñas, tokens y certificados presentes en el Keychain afectado y revoque sesiones activas del usuario.",
+        "Elimine la persistencia o herramientas identificadas tras verificarlas y restaure el equipo a una línea base confiable antes de reincorporarlo."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el comando es un claro indicio de acceso a credenciales, aunque administradores y herramientas de gestión también lo usan de forma legítima."
+    },
+    "en": {
+      "summary": "The macOS security binary ran with arguments that export certificates or dump a Keychain. This may indicate theft of credentials stored in the user or system keychain.",
+      "what_it_detects": "macOS process creation where Image is /usr/bin/security and CommandLine contains 'find-certificate' or ' export ', or where any CommandLine contains ' dump-keychain ' or ' login-keychain '.",
+      "why_it_matters": "The Keychain stores passwords, tokens, private keys and certificates. Dumping or exporting it lets an attacker reuse credentials for lateral movement or cloud access (ATT&CK T1555.001, Credentials from Password Stores: Keychain).",
+      "triage_steps": [
+        "Read the full CommandLine: note the subcommand (dump-keychain, export, find-certificate), whether -d (decrypt secrets) is used, the keychain file and any output path.",
+        "Identify the executing user and confirm whether they are an admin or IT staff with a documented reason.",
+        "Review ParentImage and the process tree: be suspicious of osascript, curl, python, scripts in /tmp or unsigned apps as ancestors.",
+        "Check the same host within +/- 15 minutes for new .p12, .pem or .txt files, archiving activity and outbound connections to unknown destinations.",
+        "Look for Keychain authorization prompts or securityd events; many rapid accesses suggest automation.",
+        "Search earlier alerts for the same host and user, and similar security executions on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators exporting certificates or identities during device migration or VPN and Wi-Fi reconfiguration.",
+        "MDM or management scripts querying certificates with find-certificate for inventory or compliance.",
+        "Developers exporting code-signing certificates in macOS build pipelines."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the activity was authorized; if not justified, handle it as an incident.",
+        "Isolate the endpoint via EDR and preserve output files, shell history and parent process binaries.",
+        "Rotate passwords, tokens and certificates held in the affected Keychain and revoke the user's active sessions.",
+        "After verification, remove identified tools or persistence and restore the host to a trusted baseline before returning it to service."
+      ],
+      "severity_rationale": "Medium fits because the command clearly indicates credential access, yet admins and management tools also use it legitimately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Keychain dump with decryption of the user's login keychain (matches selection2).",
+        "event": {
+          "Image": "/usr/bin/security",
+          "CommandLine": "security dump-keychain -d /Users/jperez/Library/Keychains/login.keychain-db",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "/bin/zsh -c /tmp/.u/run.sh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "Export of all certificates from the System keychain via find-certificate (matches selection1).",
+        "event": {
+          "Image": "/usr/bin/security",
+          "CommandLine": "/usr/bin/security find-certificate -a -p /Library/Keychains/System.keychain",
+          "ParentImage": "/usr/bin/python3",
+          "ParentCommandLine": "python3 /Users/mrojas/Downloads/helper.py",
+          "User": "mrojas",
+          "Computer": "MBA-0077",
+          "ProcessId": 9310
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate listing of keychains with the security binary; no matching subcommand.",
+        "event": {
+          "Image": "/usr/bin/security",
+          "CommandLine": "security list-keychains -d user",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /usr/local/mdm/inventory.sh",
+          "User": "root",
+          "Computer": "MBP-0142",
+          "ProcessId": 2204
+        }
+      },
+      {
+        "description": "Shell setting an environment variable with ' export ' but Image is not /usr/bin/security, so selection1 fails.",
+        "event": {
+          "Image": "/bin/zsh",
+          "CommandLine": "/bin/zsh -c export PATH=/opt/homebrew/bin:$PATH",
+          "ParentImage": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5120
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

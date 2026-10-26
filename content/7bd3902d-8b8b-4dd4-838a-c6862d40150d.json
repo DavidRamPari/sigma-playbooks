@@ -1,0 +1,121 @@
+{
+  "rule": {
+    "id": "7bd3902d-8b8b-4dd4-838a-c6862d40150d",
+    "title": "DNS HybridConnectionManager Service Bus",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/dns_query/dns_query_win_hybridconnectionmgr_servicebus.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/dns_query/dns_query_win_hybridconnectionmgr_servicebus.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1554"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de Azure Hybrid Connection Manager (HCM) en el endpoint resolvió un dominio de Azure Service Bus (servicebus.windows.net). Puede tratarse de un uso legítimo o de un túnel de relay no autorizado hacia recursos internos.",
+      "what_it_detects": "Consultas DNS (Sysmon Event ID 22) en las que Image contiene 'HybridConnectionManager' y QueryName contiene 'servicebus.windows.net', es decir, el agente HCM conectándose a un namespace de Azure Relay/Service Bus.",
+      "why_it_matters": "HCM abre conexiones salientes hacia Azure Relay y expone servicios internos (host:puerto) a aplicaciones en Azure. Un atacante puede instalarlo o reconfigurarlo para mantener acceso persistente y evadir el firewall perimetral. La regla lo asocia a T1554 (Compromise Host Software Binary), táctica de persistencia.",
+      "triage_steps": [
+        "Revise Image y su ruta: confirme que es el binario instalado de HCM (normalmente en Program Files\\Microsoft\\HybridConnectionManager) y valide su firma digital y hash.",
+        "Identifique el namespace en QueryName y compruebe si pertenece a una suscripción Azure de la organización y a un proyecto aprobado.",
+        "Verifique en el inventario si el host tiene autorizado HCM y quién es su responsable; un servidor o estación sin justificación eleva la prioridad.",
+        "Busque cuándo se instaló el servicio HCM (Event ID 7045, MSI 11707) y qué usuario lo hizo; compare con tickets de cambio.",
+        "Revise la configuración de HCM (Get-HybridConnection o la UI) para conocer los host:puerto internos expuestos, como RDP, SMB o bases de datos.",
+        "Pivote en el mismo host +/- 15 minutos: procesos padre e hijos, descargas del instalador, PowerShell y nuevas conexiones de red.",
+        "Busque alertas previas del mismo host o usuario y otros endpoints que consulten el mismo namespace de servicebus.windows.net."
+      ],
+      "false_positives": [
+        "Uso legítimo de Azure Hybrid Connection Manager con App Service o Azure Functions para acceder a recursos locales.",
+        "Equipos de desarrollo o integración que prueban Hybrid Connections en entornos no productivos documentados.",
+        "Actualizaciones o reinstalaciones de HCM que restablecen la conexión con namespaces ya aprobados."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema y del namespace Azure si el uso está aprobado; si lo está, agregue una exclusión acotada por host y namespace.",
+        "Si no está autorizado, aísle el endpoint o bloquee el namespace de servicebus.windows.net en el proxy o firewall tras validar el impacto.",
+        "Deshabilite las Hybrid Connections no autorizadas en Azure, rote claves SAS del relay y revise los registros de actividad de la suscripción.",
+        "Desinstale HCM solo después de preservar evidencia (configuración, logs, hash) y revise los servicios internos expuestos en busca de accesos indebidos."
+      ],
+      "severity_rationale": "Es alta porque un relay no autorizado ofrece acceso persistente desde Internet a servicios internos evadiendo el perímetro, aunque conviene ajustar la regla para los usos legítimos conocidos."
+    },
+    "en": {
+      "summary": "An Azure Hybrid Connection Manager (HCM) process on the endpoint resolved an Azure Service Bus domain (servicebus.windows.net). This may be legitimate or an unauthorized relay tunnel into internal resources.",
+      "what_it_detects": "DNS queries (Sysmon Event ID 22) where Image contains 'HybridConnectionManager' and QueryName contains 'servicebus.windows.net', meaning the HCM agent is reaching an Azure Relay/Service Bus namespace.",
+      "why_it_matters": "HCM makes outbound connections to Azure Relay and exposes internal host:port endpoints to Azure applications. An attacker can install or reconfigure it for persistent access that bypasses perimeter firewalls. The rule maps it to T1554 (Compromise Host Software Binary) under persistence.",
+      "triage_steps": [
+        "Check Image and its path: confirm it is the installed HCM binary (usually Program Files\\Microsoft\\HybridConnectionManager) and validate signature and hash.",
+        "Identify the namespace in QueryName and verify it belongs to an organizational Azure subscription and an approved project.",
+        "Check the asset inventory for whether HCM is authorized on this host and who owns it; an unjustified server or workstation raises priority.",
+        "Find when the HCM service was installed (Event ID 7045, MSI 11707) and by which user; compare with change tickets.",
+        "Review the HCM configuration (Get-HybridConnection or the UI) for exposed internal host:port pairs such as RDP, SMB or databases.",
+        "Pivot on the same host +/- 15 minutes: parent and child processes, installer downloads, PowerShell activity and new network connections.",
+        "Look for earlier alerts for the same host or user, and other endpoints querying the same servicebus.windows.net namespace."
+      ],
+      "false_positives": [
+        "Legitimate Azure Hybrid Connection Manager use with App Service or Azure Functions to reach on-premises resources.",
+        "Development or integration teams testing Hybrid Connections in documented non-production environments.",
+        "HCM upgrades or reinstalls re-establishing connections to already approved namespaces."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and Azure namespace owner that use is approved; if so, add a narrow exclusion by host and namespace.",
+        "If unauthorized, isolate the endpoint or block the servicebus.windows.net namespace at proxy or firewall after validating impact.",
+        "Disable unauthorized Hybrid Connections in Azure, rotate relay SAS keys and review subscription activity logs.",
+        "Uninstall HCM only after preserving evidence (configuration, logs, hash) and review exposed internal services for misuse."
+      ],
+      "severity_rationale": "High because an unauthorized relay grants persistent Internet-to-internal access that bypasses the perimeter, though known legitimate deployments should be tuned out."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "HCM listener service resolves an Azure Relay namespace under servicebus.windows.net",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Program Files\\Microsoft\\HybridConnectionManager 0.7\\Microsoft.HybridConnectionManager.Listener.exe",
+          "QueryName": "hcm-relay-01.servicebus.windows.net",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.25;",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 4120
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same HCM binary resolving an Azure AD login endpoint, not Service Bus",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Program Files\\Microsoft\\HybridConnectionManager 0.7\\Microsoft.HybridConnectionManager.Listener.exe",
+          "QueryName": "login.microsoftonline.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:198.51.100.40;",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 4120
+        }
+      },
+      {
+        "description": "Line-of-business app (not HCM) querying a Service Bus namespace",
+        "event": {
+          "EventID": 22,
+          "Computer": "APP-SRV-07.andes.example.com",
+          "Image": "C:\\Program Files\\Contoso\\OrderSync\\OrderSync.exe",
+          "QueryName": "orders-prod.servicebus.windows.net",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.60;",
+          "User": "ANDES\\svc_ordersync",
+          "ProcessId": 2876
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

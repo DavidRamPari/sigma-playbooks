@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "e074832a-eada-4fd7-94a1-10642b130e16",
+    "title": "HackTool - SafetyKatz Dump Indicator",
+    "level": "high",
+    "status": "test",
+    "author": "Markus Neis",
+    "path": "windows/file/file_event/file_event_win_hktl_safetykatz.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_hktl_safetykatz.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un archivo llamado debug.bin dentro de una carpeta Temp. Es el nombre por defecto que usa SafetyKatz para el volcado de memoria de LSASS, así que podría tratarse de un intento de robo de credenciales.",
+      "what_it_detects": "Eventos de creación de archivos (file_event) cuyo TargetFilename termina en '\\Temp\\debug.bin'. SafetyKatz, de GhostPack, vuelca la memoria de lsass.exe con MiniDumpWriteDump en C:\\Windows\\Temp\\debug.bin, carga Mimikatz en memoria para extraer las credenciales y después borra el volcado.",
+      "why_it_matters": "Un volcado de LSASS expone hashes NTLM, tickets Kerberos y, a veces, contraseñas en texto claro de los usuarios con sesión iniciada (ATT&CK T1003.001). Generarlo requiere privilegios de administrador o SYSTEM y suele preceder al movimiento lateral.",
+      "triage_steps": [
+        "Revise TargetFilename, Image, ProcessId y User del evento. Un Image desconocido, firmado por nadie o ubicado en rutas de usuario, Public o Temp es una señal fuerte.",
+        "Obtenga el hash del Image y la línea de comandos (Sysmon 1 o 4688). Busque el hash en su inteligencia de amenazas y en el resto de los endpoints.",
+        "Construya el árbol de procesos del Image: el proceso padre y los hijos, y si se lanzó desde cmd, PowerShell, WMI, PsExec o una tarea programada.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, accesos a lsass.exe (Sysmon 10 con GrantedAccess 0x1fffff o 0x1010) y la eliminación de debug.bin (Sysmon 23/26).",
+        "Revise los inicios de sesión del User en ese periodo (4624/4672): tipo de logon, IP de origen y si la cuenta es administrativa.",
+        "Después de la alerta, busque indicios de uso de credenciales robadas: logons tipo 3 o 10 desde este host, pass-the-hash y solicitudes Kerberos anómalas.",
+        "Consulte alertas anteriores del mismo host y del mismo usuario, en especial de herramientas ofensivas o de evasión del antivirus."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas, poco comunes, que escriben un archivo de depuración llamado debug.bin en la carpeta Temp del usuario o del sistema.",
+        "Ejercicios autorizados de red team o pruebas de penetración que usan SafetyKatz. Confírmelo con el responsable del ejercicio."
+      ],
+      "response_steps": [
+        "Verifique el binario y su contexto. Si no es legítimo, aísle el endpoint desde el EDR y conserve el archivo, su hash y, de ser posible, un volcado de memoria.",
+        "Considere comprometidas todas las cuentas con sesión en el host. Restablezca sus contraseñas, empezando por las privilegiadas, y revoque sesiones y tickets Kerberos.",
+        "Elimine la herramienta y cualquier mecanismo de persistencia. Investigue cómo se obtuvieron los privilegios administrativos.",
+        "Recupere el host desde una imagen confiable si hay dudas sobre su integridad. Active Credential Guard o RunAsPPL para LSASS."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el nombre de archivo corresponde a una herramienta ofensiva de volcado de credenciales y casi no tiene usos legítimos."
+    },
+    "en": {
+      "summary": "A file named debug.bin was created in a Temp folder. That is SafetyKatz's default name for its LSASS memory dump, so this may be a credential theft attempt.",
+      "what_it_detects": "File creation events (file_event) where TargetFilename ends with '\\Temp\\debug.bin'. GhostPack's SafetyKatz dumps lsass.exe memory with MiniDumpWriteDump to C:\\Windows\\Temp\\debug.bin, loads Mimikatz in memory to pull out credentials, then deletes the dump.",
+      "why_it_matters": "An LSASS dump exposes NTLM hashes, Kerberos tickets and sometimes cleartext passwords for logged-on users (ATT&CK T1003.001). Creating one needs admin or SYSTEM rights, and it usually comes before lateral movement.",
+      "triage_steps": [
+        "Check the event's TargetFilename, Image, ProcessId and User. An unknown or unsigned Image, or one running from a user, Public or Temp path, is a strong signal.",
+        "Get the Image hash and command line (Sysmon 1 or 4688). Look up the hash in threat intel and search for it on other endpoints.",
+        "Build the Image's process tree: its parent, its children, and whether it was launched by cmd, PowerShell, WMI, PsExec or a scheduled task.",
+        "On the same host within +/- 15 minutes, look for lsass.exe access (Sysmon 10 with GrantedAccess 0x1fffff or 0x1010) and for debug.bin being deleted (Sysmon 23/26).",
+        "Review the User's logons in that window (4624/4672): logon type, source IP and whether the account is privileged.",
+        "After the alert, look for stolen credentials being used: type 3 or 10 logons from this host, pass-the-hash, and unusual Kerberos requests.",
+        "Check earlier alerts for the same host and user, especially ones for offensive tooling or AV evasion."
+      ],
+      "false_positives": [
+        "Rare legitimate applications that write a debug file named debug.bin to the user or system Temp folder.",
+        "Authorized red team or penetration tests that use SafetyKatz. Confirm with whoever owns the engagement."
+      ],
+      "response_steps": [
+        "Check the binary and its context. If it is not legitimate, isolate the endpoint through EDR and keep the file, its hash and a memory image if you can.",
+        "Treat every account logged on to the host as compromised. Reset their passwords, privileged accounts first, and revoke sessions and Kerberos tickets.",
+        "Remove the tool and any persistence. Find out how the attacker got admin rights.",
+        "Rebuild the host from a trusted image if its integrity is in doubt. Turn on Credential Guard or LSASS RunAsPPL."
+      ],
+      "severity_rationale": "High fits because the filename belongs to an offensive credential-dumping tool and has almost no legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SafetyKatz running from a public folder writes its default LSASS dump to C:\\Windows\\Temp\\debug.bin",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\adm-jperez",
+          "Image": "C:\\Users\\Public\\SafetyKatz.exe",
+          "ProcessId": 6412,
+          "TargetFilename": "C:\\Windows\\Temp\\debug.bin",
+          "CreationUtcTime": "2024-10-25 14:03:12.418"
+        }
+      },
+      {
+        "description": "A renamed loader writes debug.bin to the user's Temp folder, which still matches the \\Temp\\debug.bin suffix",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0088.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "Image": "C:\\Users\\mlopez\\AppData\\Local\\Temp\\upd.exe",
+          "ProcessId": 3020,
+          "TargetFilename": "C:\\Users\\mlopez\\AppData\\Local\\Temp\\debug.bin",
+          "CreationUtcTime": "2024-10-25 16:41:05.102"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A vendor application writes debug.bin to its own logs folder, which is not under Temp",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\ExampleVendor\\Agent\\agent.exe",
+          "ProcessId": 2284,
+          "TargetFilename": "C:\\Program Files\\ExampleVendor\\Agent\\logs\\debug.bin",
+          "CreationUtcTime": "2024-10-25 09:12:44.730"
+        }
+      },
+      {
+        "description": "A file in Temp whose name only starts with debug.bin, so it does not end with \\Temp\\debug.bin",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\ExampleVendor\\Tools\\diag.exe",
+          "ProcessId": 5120,
+          "TargetFilename": "C:\\Windows\\Temp\\debug.bin.log",
+          "CreationUtcTime": "2024-10-25 10:20:01.004"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

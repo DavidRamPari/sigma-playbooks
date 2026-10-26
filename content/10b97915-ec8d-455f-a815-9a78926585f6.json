@@ -1,0 +1,153 @@
+{
+  "rule": {
+    "id": "10b97915-ec8d-455f-a815-9a78926585f6",
+    "title": "Kubernetes Rolebinding Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "kelnage",
+    "path": "application/kubernetes/audit/kubernetes_audit_rolebinding_modification.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_rolebinding_modification.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó o eliminó un RoleBinding o ClusterRoleBinding de Kubernetes. Esto puede otorgar o retirar permisos RBAC y debe confirmarse que fue un cambio autorizado.",
+      "what_it_detects": "Eventos de auditoría del API server de Kubernetes con objectRef.apiGroup rbac.authorization.k8s.io, objectRef.resource rolebindings o clusterrolebindings y verb create, delete, patch, replace o update.",
+      "why_it_matters": "Un atacante con permisos para editar bindings puede asignarse roles como cluster-admin y escalar privilegios (táctica de escalamiento de privilegios). Eliminar bindings también puede interrumpir servicios o borrar rastros.",
+      "triage_steps": [
+        "Identifique user.username, user.groups, sourceIPs y userAgent del evento; determine si es una persona, una cuenta de servicio o un controlador conocido (GitOps, operador).",
+        "Revise objectRef.name, objectRef.namespace y verb; un ClusterRoleBinding nuevo o modificado tiene mayor impacto que un RoleBinding en un namespace.",
+        "Obtenga el cuerpo de la solicitud (requestObject) o consulte el binding actual: qué roleRef se asigna (cluster-admin, edit, roles con verbos '*') y a qué subjects.",
+        "Verifique responseStatus.code; un 403 indica un intento fallido que aún merece revisión, un 2xx indica que el cambio se aplicó.",
+        "Busque otros eventos del mismo usuario o sourceIPs en +/- 15 minutos: creación de roles, secrets leídos, pods exec, tokens de cuentas de servicio solicitados.",
+        "Confirme con el responsable del clúster o con tickets de cambio y commits del repositorio GitOps si el cambio estaba planificado.",
+        "Revise alertas previas para la misma cuenta o IP y si la cuenta de servicio fue usada desde fuera del clúster."
+      ],
+      "false_positives": [
+        "Administradores que otorgan o revocan accesos como parte de su trabajo habitual.",
+        "Herramientas de despliegue (Helm, Argo CD, Flux, Terraform) que crean bindings al instalar o actualizar aplicaciones.",
+        "Operadores y controladores del clúster que gestionan bindings automáticamente, por ejemplo al crear namespaces."
+      ],
+      "response_steps": [
+        "Si el cambio no está autorizado, documente el binding actual y luego reviértalo o elimínelo, priorizando bindings hacia cluster-admin.",
+        "Suspenda o rote credenciales del usuario o cuenta de servicio implicada, incluidos kubeconfig y tokens.",
+        "Revise las acciones realizadas con los permisos obtenidos y busque persistencia: nuevas cuentas de servicio, roles, webhooks o workloads.",
+        "Restrinja quién puede usar los verbos bind, escalate y la edición de bindings, y ajuste exclusiones para automatizaciones legítimas verificadas."
+      ],
+      "severity_rationale": "Medium es adecuado porque los cambios de bindings son frecuentes en operación normal, pero pueden otorgar privilegios elevados y requieren verificación."
+    },
+    "en": {
+      "summary": "A Kubernetes RoleBinding or ClusterRoleBinding was created, changed or deleted. This can grant or remove RBAC permissions and should be confirmed as an authorized change.",
+      "what_it_detects": "Kubernetes API server audit events where objectRef.apiGroup is rbac.authorization.k8s.io, objectRef.resource is rolebindings or clusterrolebindings, and verb is create, delete, patch, replace or update.",
+      "why_it_matters": "An attacker able to edit bindings can assign themselves roles such as cluster-admin and escalate privileges. Deleting bindings can also disrupt workloads or remove evidence of access.",
+      "triage_steps": [
+        "Identify user.username, user.groups, sourceIPs and userAgent; decide whether it is a person, a service account or a known controller (GitOps, operator).",
+        "Check objectRef.name, objectRef.namespace and verb; a new or changed ClusterRoleBinding has wider impact than a namespaced RoleBinding.",
+        "Get the requestObject or inspect the current binding: which roleRef is granted (cluster-admin, edit, roles with '*' verbs) and to which subjects.",
+        "Check responseStatus.code; a 403 is a failed attempt still worth reviewing, a 2xx means the change was applied.",
+        "Pivot on the same user or sourceIPs within +/- 15 minutes: role creation, secret reads, pod exec, service account token requests.",
+        "Confirm with the cluster owner, change tickets or GitOps repository commits whether the change was planned.",
+        "Review earlier alerts for the same account or IP and whether a service account token was used from outside the cluster."
+      ],
+      "false_positives": [
+        "Administrators granting or revoking access as part of normal work.",
+        "Deployment tools (Helm, Argo CD, Flux, Terraform) creating bindings when installing or upgrading applications.",
+        "Cluster operators and controllers that manage bindings automatically, for example when namespaces are created."
+      ],
+      "response_steps": [
+        "If unauthorized, record the current binding, then revert or delete it, prioritizing bindings to cluster-admin.",
+        "Suspend or rotate credentials of the involved user or service account, including kubeconfig files and tokens.",
+        "Review actions taken with the gained permissions and hunt for persistence: new service accounts, roles, webhooks or workloads.",
+        "Limit who can use bind, escalate and binding edits, and tune exclusions for verified legitimate automation."
+      ],
+      "severity_rationale": "Medium fits because binding changes are common in normal operations, yet they can grant high privileges and need verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Human user creates a ClusterRoleBinding granting cluster-admin from an external IP via kubectl",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "RequestResponse",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.apiGroup": "rbac.authorization.k8s.io",
+          "objectRef.resource": "clusterrolebindings",
+          "objectRef.name": "dev-temp-admin",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "requestURI": "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings",
+          "responseStatus.code": 201
+        }
+      },
+      {
+        "description": "Service account patches a namespaced RoleBinding",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "patch",
+          "objectRef.apiGroup": "rbac.authorization.k8s.io",
+          "objectRef.resource": "rolebindings",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "payments-editors",
+          "user.username": "system:serviceaccount:payments:ci-runner",
+          "sourceIPs": "198.51.100.23",
+          "userAgent": "Go-http-client/2.0",
+          "requestURI": "/apis/rbac.authorization.k8s.io/v1/namespaces/payments/rolebindings/payments-editors",
+          "responseStatus.code": 200
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of RoleBindings (verb list is not in the rule)",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "objectRef.apiGroup": "rbac.authorization.k8s.io",
+          "objectRef.resource": "rolebindings",
+          "objectRef.namespace": "payments",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "Creation of a Role (not a binding) in the same API group",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.apiGroup": "rbac.authorization.k8s.io",
+          "objectRef.resource": "roles",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "pod-reader",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 201
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

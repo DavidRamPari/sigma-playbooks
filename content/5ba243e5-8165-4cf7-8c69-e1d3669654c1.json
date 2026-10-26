@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "5ba243e5-8165-4cf7-8c69-e1d3669654c1",
+    "title": "Potential DLL Sideloading Of MpSvc.DLL",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems), Wietze Beukema",
+    "path": "windows/image_load/image_load_side_load_mpsvc.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_side_load_mpsvc.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cargó un archivo llamado MpSvc.dll desde una ruta distinta a las carpetas legítimas de Microsoft Defender o WinSxS. Esto puede indicar DLL sideloading, es decir, un binario confiable que carga una DLL maliciosa ubicada junto a él.",
+      "what_it_detects": "Eventos de carga de imagen (por ejemplo, Sysmon EventID 7) donde ImageLoaded termina en \\MpSvc.dll y no empieza con C:\\Program Files\\Windows Defender\\, C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\ ni C:\\Windows\\WinSxS\\.",
+      "why_it_matters": "MpSvc.dll es un componente de Microsoft Defender. Un atacante puede copiar un ejecutable firmado de Defender, como MsMpEng.exe, a una carpeta con permisos de escritura y colocar a su lado una MpSvc.dll maliciosa. Así ejecuta código bajo un proceso confiable (T1574.001, DLL Search Order Hijacking/Sideloading) para lograr persistencia, escalar privilegios o evadir la detección.",
+      "triage_steps": [
+        "Revise ImageLoaded e Image: ¿qué ejecutable cargó la DLL y desde qué carpeta? Las rutas de usuario, Temp, Public o ProgramData no estándar son sospechosas.",
+        "Compruebe la firma y el hash de la DLL cargada (campos Signed, Signature, Hashes). Si no está firmada por Microsoft, trátela como sospechosa y búsquela en reputación interna.",
+        "Verifique si Image es una copia de MsMpEng.exe u otro binario de Defender fuera de su ruta original, o un binario renombrado.",
+        "Identifique el proceso padre y la línea de comandos de Image en los eventos de creación de procesos del mismo host.",
+        "Busque en el host, en una ventana de +/- 15 minutos, la creación de los archivos (EXE y DLL), descargas, conexiones de red salientes y procesos hijos.",
+        "Busque el mismo hash o la misma ruta de MpSvc.dll en otros endpoints y revise alertas previas del host y del usuario."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas que incluyen su propia versión de MpSvc.dll en su directorio de instalación.",
+        "Herramientas de despliegue, imágenes de prueba o laboratorios de análisis que copian componentes de Defender a rutas temporales.",
+        "Instalaciones de Defender en rutas no estándar o en otra unidad, como plataformas gestionadas o entornos VDI."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad con el propietario del equipo o con TI antes de actuar; documente rutas, hashes y firmas.",
+        "Si la DLL no está firmada o es desconocida, aísle el endpoint y termine el proceso que la cargó.",
+        "Preserve muestras del EXE y la DLL para análisis; luego elimínelas y retire cualquier mecanismo de persistencia asociado (servicios, tareas, claves Run).",
+        "Revise credenciales del usuario afectado, busque el IOC en toda la flota y verifique que Microsoft Defender siga íntegro y actualizado."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la carga fuera de rutas de Defender es un indicio sólido de sideloading, pero existen copias legítimas que requieren verificación."
+    },
+    "en": {
+      "summary": "A process loaded a file named MpSvc.dll from outside the legitimate Microsoft Defender or WinSxS folders. This may indicate DLL sideloading, where a trusted binary loads a malicious DLL placed next to it.",
+      "what_it_detects": "Image load events (for example Sysmon EventID 7) where ImageLoaded ends with \\MpSvc.dll and does not start with C:\\Program Files\\Windows Defender\\, C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\ or C:\\Windows\\WinSxS\\.",
+      "why_it_matters": "MpSvc.dll is a Microsoft Defender component. Attackers can copy a signed Defender executable such as MsMpEng.exe to a writable folder and drop a malicious MpSvc.dll beside it, running code inside a trusted process (T1574.001, DLL search order hijacking/sideloading) for persistence, privilege escalation or stealth.",
+      "triage_steps": [
+        "Review ImageLoaded and Image: which executable loaded the DLL and from which folder? User profiles, Temp, Public or unusual ProgramData paths are suspicious.",
+        "Check the loaded DLL's signature and hash (Signed, Signature, Hashes). Treat anything not signed by Microsoft as suspicious and check internal reputation.",
+        "Determine whether Image is a copy of MsMpEng.exe or another Defender binary outside its original path, or a renamed binary.",
+        "Find the parent process and command line of Image in process creation events on the same host.",
+        "On the host, within +/- 15 minutes, look for creation of the EXE and DLL, downloads, outbound network connections and child processes.",
+        "Hunt for the same MpSvc.dll hash or path on other endpoints and review earlier alerts for the host and user."
+      ],
+      "false_positives": [
+        "Legitimate applications shipping their own MpSvc.dll in their install directory.",
+        "Deployment tools, test images or analysis labs copying Defender components to temporary paths.",
+        "Defender installed in non-standard paths or on another drive, such as managed platforms or VDI environments."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the host owner or IT before acting; record paths, hashes and signatures.",
+        "If the DLL is unsigned or unknown, isolate the endpoint and terminate the loading process.",
+        "Preserve the EXE and DLL for analysis, then remove them and any related persistence (services, scheduled tasks, Run keys).",
+        "Review the affected user's credentials, sweep the fleet for the IOC and verify Microsoft Defender is intact and updated."
+      ],
+      "severity_rationale": "Medium fits because loading outside Defender paths is a solid sideloading signal, but legitimate copies exist and need verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Copied MsMpEng.exe in C:\\Users\\Public\\Documents loads an unsigned MpSvc.dll from the same folder.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\Public\\Documents\\MsMpEng.exe",
+          "ImageLoaded": "C:\\Users\\Public\\Documents\\MpSvc.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      },
+      {
+        "description": "Renamed binary in a non-standard ProgramData folder loads MpSvc.dll from that folder.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0217.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\ProgramData\\WinUpdate\\updater.exe",
+          "ImageLoaded": "C:\\ProgramData\\WinUpdate\\MpSvc.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000002"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Defender platform process loads MpSvc.dll from the Defender Platform folder (excluded by filter).",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24050.7-0\\MsMpEng.exe",
+          "ImageLoaded": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24050.7-0\\MpSvc.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid"
+        }
+      },
+      {
+        "description": "Defender loads a similarly named but different DLL (MpClient.dll) from a user folder; does not end with \\MpSvc.dll.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0300.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Program Files\\Windows Defender\\MpCmdRun.exe",
+          "ImageLoaded": "C:\\Program Files\\Windows Defender\\MpClient.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

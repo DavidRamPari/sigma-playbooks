@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "a05baa88-e922-4001-bc4d-8738135f27de",
+    "title": "Process Monitor Driver Creation By Non-Sysinternals Binary",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_sysinternals_procmon_driver_susp_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_sysinternals_procmon_driver_susp_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto de Process Monitor (procmon.exe, procmon64.exe o procmon64a.exe) escribió en disco un archivo .sys cuya ruta contiene '\\procmon'. Puede indicar que alguien suelta el driver firmado de Procmon para cargarlo con otra herramienta.",
+      "what_it_detects": "Eventos de creación de archivos (por ejemplo, Sysmon Event ID 11) en los que TargetFilename contiene '\\procmon' y termina en '.sys', y el Image que lo crea no termina en procmon.exe, procmon64.exe ni procmon64a.exe.",
+      "why_it_matters": "El driver de Procmon está firmado y corre en modo kernel. Si una herramienta ajena lo deja en disco, puede intentar abusar de él para escalar privilegios o persistir (ATT&CK T1068, explotación para escalamiento de privilegios).",
+      "triage_steps": [
+        "Revise Image, TargetFilename, User y el host. Confirme si el binario creador es un Procmon renombrado comparando su hash, firma y metadatos (OriginalFileName) con la versión oficial de Sysinternals.",
+        "Analice el proceso padre y la línea de comandos del Image creador (Sysmon Event ID 1) para identificar cómo y quién lo ejecutó.",
+        "Busque en el mismo host, +/- 15 minutos, la carga del driver (Sysmon Event ID 6) y la creación de servicios (7045 o claves HKLM\\SYSTEM\\CurrentControlSet\\Services\\PROCMON*).",
+        "Calcule el hash del .sys creado y compárelo con el driver legítimo de Procmon; una diferencia indica un archivo falso o alterado.",
+        "Revise la actividad posterior del proceso: terminación de procesos de seguridad, accesos a LSASS o tareas programadas nuevas.",
+        "Busque alertas previas para el mismo usuario, host y hash del Image creador en otros endpoints."
+      ],
+      "false_positives": [
+        "Binarios legítimos de Process Monitor renombrados por administradores o herramientas de soporte.",
+        "Herramientas de diagnóstico, sandbox o recolección forense autorizadas que incluyen e instalan el driver de Procmon."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o el equipo de TI si había una sesión de diagnóstico autorizada.",
+        "Si no está autorizada, aísle el endpoint desde el EDR y conserve el binario creador, el .sys y los registros relevantes.",
+        "Detenga y deshabilite el servicio del driver solo después de confirmar que es malicioso; elimine los artefactos y mecanismos de persistencia identificados.",
+        "Restablezca las credenciales del usuario involucrado y revise el alcance en otros hosts con el mismo hash.",
+        "Si es legítimo, documente la herramienta y considere una exclusión específica por ruta y hash."
+      ],
+      "severity_rationale": "Medium es adecuado porque la creación es inusual y puede preceder al abuso de un driver de kernel, pero los Procmon renombrados y herramientas de diagnóstico generan casos benignos."
+    },
+    "en": {
+      "summary": "A process other than Process Monitor (procmon.exe, procmon64.exe or procmon64a.exe) wrote a .sys file whose path contains '\\procmon'. This may mean someone is dropping the signed Procmon driver to load it with another tool.",
+      "what_it_detects": "File creation events (for example Sysmon Event ID 11) where TargetFilename contains '\\procmon' and ends with '.sys', and the creating Image does not end with procmon.exe, procmon64.exe or procmon64a.exe.",
+      "why_it_matters": "The Procmon driver is signed and runs in kernel mode. A foreign tool dropping it may try to abuse it for privilege escalation or persistence (ATT&CK T1068, Exploitation for Privilege Escalation).",
+      "triage_steps": [
+        "Review Image, TargetFilename, User and host. Check whether the creator is a renamed Procmon by comparing hash, signature and OriginalFileName with the official Sysinternals build.",
+        "Inspect the parent process and command line of the creating Image (Sysmon Event ID 1) to learn how and by whom it was launched.",
+        "On the same host, +/- 15 minutes, look for the driver load (Sysmon Event ID 6) and service creation (7045 or HKLM\\SYSTEM\\CurrentControlSet\\Services\\PROCMON* keys).",
+        "Hash the created .sys and compare it with the legitimate Procmon driver; a mismatch points to a fake or tampered file.",
+        "Check follow-on activity: security processes terminated, LSASS access, or new scheduled tasks.",
+        "Search for earlier alerts on the same user, host and creator hash across other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate Process Monitor binaries renamed by administrators or support tools.",
+        "Authorized diagnostic, sandbox or forensic collection tools that bundle and install the Procmon driver."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether an authorized troubleshooting session took place.",
+        "If unauthorized, isolate the endpoint via EDR and preserve the creator binary, the .sys file and relevant logs.",
+        "Stop and disable the driver service only after confirming malice; remove the identified artifacts and persistence.",
+        "Reset credentials of the involved user and scope other hosts with the same hash.",
+        "If benign, document the tool and consider a narrow exclusion by path and hash."
+      ],
+      "severity_rationale": "Medium fits because this creation is unusual and can precede kernel driver abuse, yet renamed Procmon copies and diagnostic tools produce benign hits."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown binary in a public folder drops the Procmon driver into the drivers directory.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6312,
+          "Image": "C:\\Users\\Public\\Libraries\\svcupd.exe",
+          "TargetFilename": "C:\\Windows\\System32\\drivers\\PROCMON24.SYS",
+          "CreationUtcTime": "2024-03-14 10:22:41.512"
+        }
+      },
+      {
+        "description": "Renamed tool in Temp writes a procmon-named driver file.",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-FS01.andes.example.com",
+          "User": "ANDES\\adm_lgomez",
+          "ProcessId": 4120,
+          "Image": "C:\\Windows\\Temp\\diag.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\procmon23.sys",
+          "CreationUtcTime": "2024-03-14 11:05:09.004"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Procmon64.exe from Sysinternals extracts its own driver; excluded by the filter.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7720,
+          "Image": "C:\\Tools\\Sysinternals\\Procmon64.exe",
+          "TargetFilename": "C:\\Windows\\System32\\drivers\\PROCMON24.SYS",
+          "CreationUtcTime": "2024-03-14 09:12:30.118"
+        }
+      },
+      {
+        "description": "Process Explorer driver created; path does not contain '\\procmon', so selection does not match.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0200.andes.example.com",
+          "User": "ANDES\\mrios",
+          "ProcessId": 5544,
+          "Image": "C:\\Tools\\Sysinternals\\procexp64.exe",
+          "TargetFilename": "C:\\Windows\\System32\\drivers\\PROCEXP152.SYS",
+          "CreationUtcTime": "2024-03-14 09:40:02.771"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

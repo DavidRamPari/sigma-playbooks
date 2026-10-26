@@ -1,0 +1,116 @@
+{
+  "rule": {
+    "id": "bd33d2aa-497e-4651-9893-5c5364646595",
+    "title": "Suspicious TCP Tunnel Via PowerShell Script",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_proxy_scripts.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_proxy_scripts.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1090"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un script block de PowerShell que combina una solicitud web HTTP con un listener TCP que acepta conexiones de clientes. Este patrón coincide con scripts que tunelizan o hacen proxy de tráfico TCP sobre HTTP.",
+      "what_it_detects": "Eventos de Script Block Logging (Event ID 4104) cuyo ScriptBlockText contiene a la vez '[System.Net.HttpWebRequest]', 'System.Net.Sockets.TcpListener' y 'AcceptTcpClient', como en scripts públicos de proxy tunnel tipo proxyTunnel.ps1.",
+      "why_it_matters": "Un listener local que reenvía conexiones por HTTP permite tunelizar tráfico de C2 o de movimiento lateral a través de proxies web y evadir controles de red (ATT&CK T1090, Proxy).",
+      "triage_steps": [
+        "Revise el ScriptBlockText completo. Si el script viene en varias partes, reconstrúyalo con ScriptBlockId y MessageNumber. Identifique el puerto de escucha y la URL HTTP remota o el proxy.",
+        "Identifique el proceso PowerShell (desde el evento 4104 o el EDR). Revise usuario, ParentImage, CommandLine y si usó -EncodedCommand o ventana oculta.",
+        "Verifique con netstat o la telemetría de red del EDR si el host escucha en el puerto del script y qué equipos se conectaron.",
+        "Busque en los logs de proxy y firewall tráfico HTTP/HTTPS saliente del host hacia el destino del script, incluidas solicitudes CONNECT.",
+        "Revise el mismo host en +/- 15 minutos: descargas, servicios o tareas programadas nuevos, acceso a credenciales, y RDP o SMB sobre localhost.",
+        "Busque el mismo contenido o hash del script en otros hosts y revise alertas previas del mismo usuario y del mismo host."
+      ],
+      "false_positives": [
+        "La regla indica Unknown. Administradores o desarrolladores podrían usar scripts propios de port forwarding o de pruebas de proxy. Valide con el responsable y con un registro de cambios.",
+        "Ejercicios autorizados de red team o pentest que usan scripts públicos de tunelización."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable si la actividad está autorizada. Si no lo está, trate el host como comprometido.",
+        "Aísle el host o bloquee el endpoint HTTP remoto y el puerto de escucha. Si es posible, preserve el texto del script y la memoria.",
+        "Termine el proceso PowerShell, elimine el script y cualquier persistencia, y restablezca las credenciales de las cuentas afectadas.",
+        "Busque el mismo destino y el mismo script en todo el entorno. Restaure el host cuando esté limpio."
+      ],
+      "severity_rationale": "Medium es adecuado porque la combinación sugiere fuertemente tunelización pero requiere contexto para confirmarla, ya que en casos raros herramientas administrativas podrían usar las mismas clases .NET."
+    },
+    "en": {
+      "summary": "A PowerShell script block that combines an HTTP web request with a TCP listener that accepts client connections was logged. This pattern matches scripts that tunnel or proxy TCP traffic over HTTP.",
+      "what_it_detects": "Script Block Logging events (Event ID 4104) where ScriptBlockText contains all of '[System.Net.HttpWebRequest]', 'System.Net.Sockets.TcpListener' and 'AcceptTcpClient', as in public proxy tunnel scripts such as proxyTunnel.ps1.",
+      "why_it_matters": "A local listener that relays connections through HTTP lets an attacker tunnel C2 or lateral movement traffic through web proxies and past network controls (ATT&CK T1090, Proxy).",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Rebuild multi-part scripts using ScriptBlockId and MessageNumber, then note the listening port and the remote HTTP URL or proxy.",
+        "Find the PowerShell process (from the 4104 event or EDR) and check its user, ParentImage, CommandLine, and whether it used -EncodedCommand or hidden window flags.",
+        "Use netstat or EDR network telemetry to check whether the host is listening on the script's port and who connected to it.",
+        "Check proxy and firewall logs for outbound HTTP/HTTPS from the host to the destination in the script, including any CONNECT requests.",
+        "Look at the same host for +/- 15 minutes: downloads, new services or scheduled tasks, credential access, RDP or SMB over localhost.",
+        "Search other hosts for the same script content or hash, and review earlier alerts for this user and host."
+      ],
+      "false_positives": [
+        "The rule lists Unknown. Admins or developers might run custom port-forwarding or proxy test scripts. Confirm with the owner and a change record.",
+        "Authorized red team or penetration test exercises using public tunneling scripts."
+      ],
+      "response_steps": [
+        "Confirm with the user or owner whether the activity is authorized. If it is not, treat the host as compromised.",
+        "Isolate the host, or block the remote HTTP endpoint and the listening port. Preserve the script text and memory if you can.",
+        "Kill the PowerShell process, remove the script file and any persistence, and reset credentials for affected accounts.",
+        "Hunt across the environment for the same destination and script. Restore the host once it is clean."
+      ],
+      "severity_rationale": "Medium fits because the combination strongly suggests tunneling but needs context to confirm, since admin tooling could in rare cases contain the same .NET classes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Proxy tunnel script that sets up a TcpListener, accepts clients and relays them through HttpWebRequest",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "6f1c2a9e-3b4d-4e8a-9c11-2a7b5d0e4f31",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\pt.ps1",
+          "ScriptBlockText": "$listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 8443); $listener.Start(); $client = $listener.AcceptTcpClient(); $req = [System.Net.HttpWebRequest]::Create('http://203.0.113.10/tunnel'); $req.Method = 'CONNECT'"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script with a TcpListener health-check responder that accepts clients but never makes an HttpWebRequest",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-02.andes.example.com",
+          "ScriptBlockId": "a2d4e6f8-1b3c-4d5e-8f90-123456789abc",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\HealthProbe.ps1",
+          "ScriptBlockText": "$listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, 9000); $listener.Start(); $client = $listener.AcceptTcpClient(); $client.Close()"
+        }
+      },
+      {
+        "description": "Ordinary web call that uses HttpWebRequest with no socket listener",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "c3e5a7b9-2d4f-4a6b-8c0d-abcdef012345",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockText": "$req = [System.Net.HttpWebRequest]::Create('https://intranet.example.com/api/status'); $resp = $req.GetResponse(); $resp.StatusCode"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

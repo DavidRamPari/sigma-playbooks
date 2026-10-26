@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "055fb148-60f8-462d-ad16-26926ce050f1",
+    "title": "AWS User Login Profile Was Modified",
+    "level": "high",
+    "status": "test",
+    "author": "toffeebr33k",
+    "path": "cloud/aws/cloudtrail/aws_update_login_profile.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_update_login_profile.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad IAM llamó a UpdateLoginProfile y cambió la contraseña de consola AWS de otro usuario IAM. Puede ser administración legítima o la toma de control de una cuenta de consola por parte de un atacante.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource iam.amazonaws.com y eventName UpdateLoginProfile. La regla descarta los eventos donde userIdentity.arn coincide con requestParameters.userName, así que quedan los cambios hechos sobre el perfil de otro usuario.",
+      "why_it_matters": "Con iam:UpdateLoginProfile, un atacante puede fijar una contraseña conocida a cualquier usuario que ya tenga acceso a la consola e iniciar sesión como ese usuario. Así logra persistencia y posible escalamiento de privilegios (T1098, manipulación de cuentas).",
+      "triage_steps": [
+        "Identifique al actor en userIdentity.arn, userIdentity.type y accessKeyId. Si es un rol asumido, revise sessionContext.sessionIssuer para saber qué rol y qué sesión hicieron el cambio.",
+        "Identifique al usuario objetivo en requestParameters.userName. Revise sus grupos, sus políticas adjuntas y si tiene privilegios administrativos.",
+        "Revise requestParameters.passwordResetRequired. Si vale false, el actor conserva una contraseña utilizable, lo que es más sospechoso.",
+        "Analice sourceIPAddress y userAgent. Compárelos con las ubicaciones y herramientas habituales del actor, como la consola o una automatización conocida.",
+        "Busque un ticket de cambio o una solicitud de mesa de ayuda que autorice este restablecimiento para el usuario objetivo.",
+        "Pivotee sobre el actor en +/- 15 minutos. Busque CreateAccessKey, AttachUserPolicy, PutUserPolicy, CreateLoginProfile, DeactivateMFADevice o llamadas fallidas con errorCode AccessDenied.",
+        "Busque eventos ConsoleLogin del usuario objetivo posteriores al cambio, sobre todo desde IP nuevas o sin MFA.",
+        "Revise alertas previas del mismo ARN de actor, de la misma IP de origen y del mismo usuario objetivo."
+      ],
+      "false_positives": [
+        "Administradores o la mesa de ayuda restableciendo una contraseña olvidada a pedido del usuario.",
+        "Automatizaciones de identidad o flujos de alta de usuarios que asignan contraseñas a usuarios IAM.",
+        "Rotación de contraseñas programada que hace una cuenta administrativa central."
+      ],
+      "response_steps": [
+        "Confirme el cambio con el responsable del usuario objetivo y con el del actor antes de tomar cualquier acción.",
+        "Si no estaba autorizado, restablezca la contraseña del usuario objetivo, exija MFA y revoque las sesiones activas con una política de denegación basada en aws:TokenIssueTime.",
+        "Desactive las access keys del actor o restrinja el rol mientras investiga. Revise en CloudTrail todo lo que hicieron el actor y el usuario objetivo.",
+        "Elimine los permisos iam:UpdateLoginProfile innecesarios y revierta cualquier persistencia que encuentre, como claves, políticas o perfiles de inicio de sesión."
+      ],
+      "severity_rationale": "La severidad alta es adecuada porque un cambio inesperado de contraseña sobre otro usuario puede darle al atacante acceso interactivo a la consola, posiblemente con privilegios elevados."
+    },
+    "en": {
+      "summary": "An IAM identity called UpdateLoginProfile and changed the AWS console password of another IAM user. This can be routine administration, or an attacker taking over a console account.",
+      "what_it_detects": "CloudTrail events with eventSource iam.amazonaws.com and eventName UpdateLoginProfile. The rule drops events where userIdentity.arn equals requestParameters.userName, which leaves changes made to someone else's login profile.",
+      "why_it_matters": "With iam:UpdateLoginProfile an attacker can set a known password on any user who already has console access, then log in as that user. That gives them persistence and possibly higher privileges (T1098, Account Manipulation).",
+      "triage_steps": [
+        "Identify the actor in userIdentity.arn, userIdentity.type and accessKeyId. For assumed roles, check sessionContext.sessionIssuer to see which role and session made the change.",
+        "Identify the target in requestParameters.userName. Note its group memberships, its attached policies and whether it has administrative rights.",
+        "Check requestParameters.passwordResetRequired. If it is false, the actor keeps a usable password, which is more suspicious.",
+        "Review sourceIPAddress and userAgent. Compare them with the actor's usual locations and tools, such as the console or known automation.",
+        "Look for a change ticket or a helpdesk request that authorizes this password reset for the target user.",
+        "Pivot on the actor within +/- 15 minutes. Look for CreateAccessKey, AttachUserPolicy, PutUserPolicy, CreateLoginProfile, DeactivateMFADevice or failed calls with errorCode AccessDenied.",
+        "Search for ConsoleLogin by the target user after the change, especially from new IPs or without MFA.",
+        "Check earlier alerts for the same actor ARN, source IP and target user."
+      ],
+      "false_positives": [
+        "Administrators or the helpdesk resetting a forgotten password at the user's request.",
+        "Identity automation or onboarding pipelines that set passwords for IAM users.",
+        "Routine password rotation done by a central admin account."
+      ],
+      "response_steps": [
+        "Confirm the change with the target user's owner and the actor's owner before taking action.",
+        "If it was unauthorized, reset the target user's password, require MFA and revoke active sessions with a deny policy based on aws:TokenIssueTime.",
+        "Disable the actor's access keys or restrict the role while you investigate. Review everything the actor and target did in CloudTrail.",
+        "Remove unneeded iam:UpdateLoginProfile permissions and undo any persistence you find, such as keys, policies or login profiles."
+      ],
+      "severity_rationale": "High fits because an unexpected password change on another user can hand an attacker interactive console access, possibly with privileged rights."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user changes the console password of another user (mgarcia) and sets passwordResetRequired to false.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T02:17:43Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "UpdateLoginProfile",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/5.15.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::123456789012:user/ops-automation",
+          "userIdentity.accountId": "123456789012",
+          "userIdentity.accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+          "requestParameters.userName": "mgarcia",
+          "requestParameters.passwordResetRequired": false,
+          "recipientAccountId": "123456789012"
+        }
+      },
+      {
+        "description": "An assumed role resets the console password of the admin user jperez.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T09:05:11Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "UpdateLoginProfile",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.80 Python/3.10.12",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::123456789012:assumed-role/DevDeployRole/session-4821",
+          "userIdentity.accountId": "123456789012",
+          "requestParameters.userName": "jperez",
+          "requestParameters.passwordResetRequired": true,
+          "recipientAccountId": "123456789012"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An UpdateLoginProfile event where userIdentity.arn equals requestParameters.userName, so the filter_main_user_identity filter excludes it.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T11:30:02Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "UpdateLoginProfile",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::123456789012:user/lrojas",
+          "userIdentity.accountId": "123456789012",
+          "requestParameters.userName": "arn:aws:iam::123456789012:user/lrojas",
+          "recipientAccountId": "123456789012"
+        }
+      },
+      {
+        "description": "A user changes their own password with ChangePassword, a different eventName that the selection does not match.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T12:44:19Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "ChangePassword",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.55",
+          "userAgent": "AWS Internal",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::123456789012:user/mgarcia",
+          "userIdentity.accountId": "123456789012",
+          "recipientAccountId": "123456789012"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

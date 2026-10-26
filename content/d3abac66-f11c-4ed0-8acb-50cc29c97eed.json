@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "d3abac66-f11c-4ed0-8acb-50cc29c97eed",
+    "title": "NetNTLM Downgrade Attack",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), wagga",
+    "path": "windows/builtin/security/win_security_net_ntlm_downgrade.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_net_ntlm_downgrade.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó uno de los valores de registro que controlan la autenticación NTLM bajo HKLM\\SYSTEM\\...\\Control\\Lsa. El cambio puede degradar el equipo para que envíe respuestas NetNTLMv1 o LM, que son fáciles de crackear.",
+      "what_it_detects": "Eventos 4657 (se modificó un valor del registro) en los que ObjectName contiene \\REGISTRY\\MACHINE\\SYSTEM, ControlSet y \\Control\\Lsa, y ObjectValueName es LmCompatibilityLevel, NtlmMinClientSec o RestrictSendingNTLMTraffic. Requiere auditoría de registro (Success) y SACL sobre la clave.",
+      "why_it_matters": "Con un nivel de compatibilidad bajo o sin restricciones NTLM, un atacante puede obtener respuestas NetNTLMv1 de usuarios conectados (por ejemplo con la técnica Internal Monologue) y crackearlas o reutilizarlas. Corresponde a Modify Registry (T1112) y al debilitamiento de controles de seguridad (T1685).",
+      "triage_steps": [
+        "Revise ObjectValueName, OldValue y NewValue: un LmCompatibilityLevel de 0 a 2, NtlmMinClientSec en 0 o RestrictSendingNTLMTraffic en 0 indican una degradación.",
+        "Identifique ProcessName y SubjectUserName/SubjectDomainName. reg.exe, powershell.exe o un binario desconocido son más sospechosos que el servicio de directivas de grupo (svchost.exe).",
+        "Busque un segundo evento 4657 en el mismo valor minutos después que restaure OldValue, un patrón típico de herramientas que degradan, capturan y revierten.",
+        "En el mismo host, en una ventana de +/- 15 minutos, revise la creación de procesos (4688 o Sysmon 1) del proceso y su padre, y la línea de comandos usada.",
+        "Compruebe si existe un GPO o un cambio aprobado que defina estos valores y compare con la configuración de referencia del dominio.",
+        "Revise los inicios de sesión de la cuenta (4624, 4648) y las alertas previas del host y del usuario en busca de privilegios elevados o movimiento lateral."
+      ],
+      "false_positives": [
+        "Aplicación de GPO o líneas base de seguridad que fijan estos valores, normalmente mediante svchost.exe (gpsvc) y con valores más restrictivos.",
+        "Scripts de hardening o herramientas de gestión (SCCM, Intune) que suben el nivel de seguridad NTLM.",
+        "Ajustes aprobados para compatibilidad con aplicaciones o dispositivos heredados que solo admiten NTLMv1."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o con el equipo de cambios si la modificación estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint y conserve el evento, el binario y la memoria del proceso responsable.",
+        "Restaure LmCompatibilityLevel a 5 y los demás valores según la línea base, y refuércelos con GPO.",
+        "Restablezca las contraseñas de las cuentas que iniciaron sesión en el host durante la ventana afectada y busque la misma actividad en otros equipos."
+      ],
+      "severity_rationale": "Es alta porque degradar NTLM en un equipo casi siempre requiere privilegios administrativos y sirve directamente para robar credenciales, y los cambios legítimos son poco frecuentes y suelen estar documentados."
+    },
+    "en": {
+      "summary": "A registry value that controls NTLM authentication under HKLM\\SYSTEM\\...\\Control\\Lsa was modified. The change can downgrade the host so it sends NetNTLMv1 or LM responses, which are easy to crack.",
+      "what_it_detects": "Event 4657 (registry value modified) where ObjectName contains \\REGISTRY\\MACHINE\\SYSTEM, ControlSet and \\Control\\Lsa, and ObjectValueName is LmCompatibilityLevel, NtlmMinClientSec or RestrictSendingNTLMTraffic. It needs registry auditing (Success) and a SACL on the key.",
+      "why_it_matters": "With a low compatibility level or no NTLM restrictions, an attacker can collect NetNTLMv1 responses from logged-on users (for example with the Internal Monologue technique), then crack or relay them. This maps to Modify Registry (T1112) and impairing defenses (T1685).",
+      "triage_steps": [
+        "Check ObjectValueName, OldValue and NewValue. LmCompatibilityLevel of 0 to 2, NtlmMinClientSec of 0 or RestrictSendingNTLMTraffic of 0 means a downgrade.",
+        "Identify ProcessName and SubjectUserName/SubjectDomainName. reg.exe, powershell.exe or an unknown binary is more suspicious than the Group Policy service (svchost.exe).",
+        "Look for a second 4657 on the same value minutes later that restores OldValue. Tools that downgrade, capture and revert leave this pattern.",
+        "On the same host within +/- 15 minutes, review process creation (4688 or Sysmon 1) for the process, its parent and the command line.",
+        "Check whether a GPO or an approved change sets these values, and compare them with the domain baseline.",
+        "Review logons for the account (4624, 4648) and earlier alerts for the host and user for signs of privilege escalation or lateral movement."
+      ],
+      "false_positives": [
+        "GPO or security baseline enforcement, usually through svchost.exe (gpsvc), that sets more restrictive values.",
+        "Hardening scripts or management tools (SCCM, Intune) that raise the NTLM security level.",
+        "Approved changes for legacy applications or devices that only support NTLMv1."
+      ],
+      "response_steps": [
+        "Ask the system owner or change management whether the change was authorized.",
+        "If it was not, isolate the endpoint and preserve the event, the binary and the memory of the responsible process.",
+        "Set LmCompatibilityLevel back to 5 and the other values to the baseline, and enforce them by GPO.",
+        "Reset passwords for accounts that logged on to the host during the affected window, and hunt for the same activity on other hosts."
+      ],
+      "severity_rationale": "High fits because downgrading NTLM usually needs admin rights and leads directly to credential theft, while legitimate changes are rare and normally documented."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe lowers LmCompatibilityLevel from 5 to 2, which allows NTLMv1 responses",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Control\\Lsa",
+          "ObjectValueName": "LmCompatibilityLevel",
+          "OperationType": "%%1905",
+          "OldValueType": "%%1876",
+          "OldValue": "5",
+          "NewValueType": "%%1876",
+          "NewValue": "2",
+          "ProcessName": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": "0x1a2c"
+        }
+      },
+      {
+        "description": "PowerShell sets RestrictSendingNTLMTraffic to 0 under CurrentControlSet\\Control\\Lsa\\MSV1_0",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "SRV-FS01.andes.example.com",
+          "SubjectUserName": "adm.mrojas",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\MSV1_0",
+          "ObjectValueName": "RestrictSendingNTLMTraffic",
+          "OperationType": "%%1905",
+          "OldValue": "2",
+          "NewValue": "0",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": "0x2f10"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same LSA key, but the modified value is RunAsPPL, which the rule does not watch",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Control\\Lsa",
+          "ObjectValueName": "RunAsPPL",
+          "OperationType": "%%1905",
+          "OldValue": "0",
+          "NewValue": "1",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": "0x4c8"
+        }
+      },
+      {
+        "description": "LmCompatibilityLevel changed in a non-SYSTEM hive path (a test key under SOFTWARE), so the ObjectName conditions fail",
+        "event": {
+          "EventID": 4657,
+          "Channel": "Security",
+          "Computer": "WS-0207.andes.example.com",
+          "SubjectUserName": "lgomez",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\ExampleCorp\\Lab\\Lsa",
+          "ObjectValueName": "LmCompatibilityLevel",
+          "OperationType": "%%1905",
+          "OldValue": "5",
+          "NewValue": "3",
+          "ProcessName": "C:\\Windows\\regedit.exe",
+          "ProcessId": "0x1b40"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

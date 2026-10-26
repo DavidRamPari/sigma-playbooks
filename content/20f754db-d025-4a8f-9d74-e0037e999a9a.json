@@ -1,0 +1,153 @@
+{
+  "rule": {
+    "id": "20f754db-d025-4a8f-9d74-e0037e999a9a",
+    "title": "SES Identity Has Been Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Janantha Marasinghe",
+    "path": "cloud/aws/cloudtrail/aws_delete_identity.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_delete_identity.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminó una identidad de Amazon SES (dominio o dirección de correo) mediante la API DeleteIdentity. Puede ser limpieza legítima o un atacante borrando la identidad que usó para enviar correo malicioso.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ses.amazonaws.com y eventName DeleteIdentity, es decir, la eliminación de una identidad verificada de SES (API clásica v1).",
+      "why_it_matters": "Con credenciales comprometidas, un atacante puede verificar identidades en SES, enviar phishing o spam y luego borrarlas para ocultar el rastro. Esto corresponde a ATT&CK T1070, eliminación de indicadores.",
+      "triage_steps": [
+        "Identifique quién hizo la llamada: userIdentity.arn, tipo de identidad, access key ID y si la sesión se creó con un rol asumido o con MFA.",
+        "Revise requestParameters.identity: ¿qué dominio o correo se borró? ¿Es una identidad conocida de la organización o una creada hace poco?",
+        "Busque en CloudTrail VerifyEmailIdentity, VerifyDomainIdentity o CreateEmailIdentity de esa identidad y quién la creó.",
+        "Revise sourceIPAddress y userAgent: compare con las IP, regiones y herramientas habituales de ese principal (consola, Terraform, SDK).",
+        "Busque actividad del mismo principal y la misma IP +/- 15 minutos: SendEmail, SendRawEmail, UpdateAccountSendingEnabled, GetSendQuota, ListIdentities, cambios en IAM.",
+        "Revise las métricas y el historial de envíos de SES (CloudWatch, rebotes, quejas) en la región afectada en busca de picos recientes.",
+        "Consulte alertas anteriores sobre ese usuario, access key o IP y confirme con el dueño de la cuenta si hubo un cambio planificado."
+      ],
+      "false_positives": [
+        "Bajas planificadas de dominios o remitentes que ya no se usan, hechas por el equipo de correo o de plataforma.",
+        "Pipelines de IaC (Terraform, CloudFormation) que destruyen recursos SES en entornos de prueba o al desmontar un stack.",
+        "Limpieza de identidades de prueba creadas por desarrolladores en cuentas sandbox."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del principal y de la identidad si la eliminación fue autorizada y documentada.",
+        "Si no fue autorizada, desactive o rote la access key implicada y revoque las sesiones activas del rol o usuario.",
+        "Revise y limite los permisos ses:* del principal; considere pausar el envío de SES en la cuenta mientras investiga.",
+        "Determine el alcance: correos enviados, identidades creadas, usuarios o claves IAM nuevos, y elimine solo los artefactos confirmados como maliciosos.",
+        "Restaure las identidades legítimas borradas, vuelva a verificarlas y documente los hallazgos y los indicadores."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque borrar identidades suele ser una tarea administrativa, pero en una cuenta comprometida puede ocultar el abuso de SES y requiere verificarlo."
+    },
+    "en": {
+      "summary": "An Amazon SES identity (domain or email address) was deleted through the DeleteIdentity API. This may be routine cleanup or an attacker removing an identity used to send malicious email.",
+      "what_it_detects": "CloudTrail events with eventSource ses.amazonaws.com and eventName DeleteIdentity, meaning a verified SES identity was removed through the classic v1 API.",
+      "why_it_matters": "With stolen credentials, attackers can verify SES identities, send phishing or spam, and then delete those identities to hide their tracks. This maps to ATT&CK T1070, Indicator Removal.",
+      "triage_steps": [
+        "Identify the caller: userIdentity.arn, identity type, access key ID, and whether the session came from an assumed role or used MFA.",
+        "Check requestParameters.identity: which domain or address was deleted? Is it a known corporate identity or one created recently?",
+        "Search CloudTrail for VerifyEmailIdentity, VerifyDomainIdentity or CreateEmailIdentity for that identity, and note who created it.",
+        "Review sourceIPAddress and userAgent against the principal's usual IPs, regions and tooling (console, Terraform, SDK).",
+        "Pivot on the same principal and IP within +/- 15 minutes: SendEmail, SendRawEmail, UpdateAccountSendingEnabled, GetSendQuota, ListIdentities, IAM changes.",
+        "Review SES sending metrics and history (CloudWatch, bounces, complaints) in the affected region for recent spikes.",
+        "Check earlier alerts for the same user, access key or IP, and ask the account owner whether a change was planned."
+      ],
+      "false_positives": [
+        "Planned retirement of unused domains or sender addresses by the email or platform team.",
+        "IaC pipelines (Terraform, CloudFormation) destroying SES resources in test environments or during stack teardown.",
+        "Developers cleaning up test identities in sandbox accounts."
+      ],
+      "response_steps": [
+        "Confirm with the principal's owner and the identity's owner that the deletion was authorized and documented.",
+        "If not authorized, deactivate or rotate the access key involved and revoke active sessions for the role or user.",
+        "Review and restrict the principal's ses:* permissions; consider pausing SES sending for the account during the investigation.",
+        "Scope the activity: email sent, identities created, new IAM users or keys. Remove only artifacts you have confirmed are malicious.",
+        "Restore and re-verify any legitimate identities that were deleted, then document findings and indicators."
+      ],
+      "severity_rationale": "Medium fits because deleting identities is often administrative, but in a compromised account it can hide SES abuse, so it needs to be verified."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user's access key deletes a recently verified SES email identity from an unfamiliar IP using the AWS CLI",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ses.amazonaws.com",
+          "eventName": "DeleteIdentity",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-03-14T02:17:45Z",
+          "sourceIPAddress": "203.0.113.47",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15.0 exe/x86_64.ubuntu.22",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-mailer",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE7QXZ2K4M",
+          "requestParameters.identity": "billing-notice@example.org",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "An assumed role deletes an SES domain identity through the SDK",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ses.amazonaws.com",
+          "eventName": "DeleteIdentity",
+          "awsRegion": "eu-west-1",
+          "eventTime": "2024-03-14T02:19:02Z",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.40 md/Botocore#1.34.40 Python/3.10.12",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ops-automation/session-4821",
+          "requestParameters.identity": "mail.example.com",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The same principal lists SES identities, which is reconnaissance but not a deletion",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ses.amazonaws.com",
+          "eventName": "ListIdentities",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-03-14T02:16:30Z",
+          "sourceIPAddress": "203.0.113.47",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/5.15.0 exe/x86_64.ubuntu.22",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-mailer",
+          "requestParameters.identityType": "EmailAddress",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "An IAM user is deleted with a similar-sounding API from a different service (iam.amazonaws.com DeleteUser), so it does not match the SES selection",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "DeleteUser",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-03-14T03:05:11Z",
+          "sourceIPAddress": "192.0.2.15",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.userName": "temp-contractor",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

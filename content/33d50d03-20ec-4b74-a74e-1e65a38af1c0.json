@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "33d50d03-20ec-4b74-a74e-1e65a38af1c0",
+    "title": "AWS EKS Cluster Created or Deleted",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer",
+    "path": "cloud/aws/cloudtrail/aws_eks_cluster_created_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_eks_cluster_created_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en CloudTrail una llamada CreateCluster o DeleteCluster a Amazon EKS. Puede ser un cambio de infraestructura legítimo o una acción no autorizada que destruye cargas de trabajo o crea cómputo para abuso.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource eks.amazonaws.com y eventName CreateCluster o DeleteCluster, es decir, la creación o eliminación de un clúster de Kubernetes administrado por EKS.",
+      "why_it_matters": "Eliminar un clúster corresponde a destrucción de datos (ATT&CK T1485, Impact): se detienen servicios y se pierden cargas de trabajo. Crear clústeres no autorizados puede servir para cryptomining o persistencia usando la cuenta comprometida.",
+      "triage_steps": [
+        "Identifique el eventName, el nombre del clúster en requestParameters, awsRegion y recipientAccountId para saber qué se creó o eliminó y dónde.",
+        "Revise userIdentity (arn, type, sessionContext) para determinar si fue un usuario IAM, un rol asumido o una identidad federada, y quién asumió el rol.",
+        "Valide sourceIPAddress y userAgent: compárelos con pipelines de IaC conocidos (Terraform, eksctl, CloudFormation) y con IP corporativas habituales.",
+        "Busque un ticket de cambio o despliegue aprobado que justifique la acción en esa cuenta y región.",
+        "Revise la actividad de la misma identidad en +/- 15 minutos: AssumeRole, CreateAccessKey, cambios en IAM, DeleteNodegroup, eliminación de snapshots o de logs.",
+        "Verifique si errorCode está presente; intentos fallidos repetidos sugieren reconocimiento o permisos insuficientes de un atacante.",
+        "Consulte alertas previas para la misma identidad, la misma IP de origen y la misma cuenta."
+      ],
+      "false_positives": [
+        "Administradores de plataforma creando o eliminando clústeres como parte de su trabajo habitual.",
+        "Pipelines de CI/CD o IaC (Terraform, eksctl, CloudFormation) que crean y destruyen clústeres efímeros de pruebas.",
+        "Limpieza programada de entornos de desarrollo o laboratorios de capacitación."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del clúster o del pipeline si el cambio fue autorizado antes de tomar acciones.",
+        "Si no fue autorizado, revoque las sesiones activas y desactive las access keys de la identidad involucrada, preservando los logs de CloudTrail.",
+        "Para clústeres creados sin autorización, documente su configuración y luego elimínelos junto con nodegroups y recursos asociados.",
+        "Para clústeres eliminados, restaure desde IaC y copias de seguridad, y evalúe el impacto en los servicios dependientes.",
+        "Ajuste políticas IAM o SCP para restringir eks:CreateCluster y eks:DeleteCluster a roles aprobados, y agregue excepciones para automatización conocida."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque crear y eliminar clústeres es una tarea administrativa frecuente; la severidad aumenta solo si la identidad, el origen o el contexto no son esperados."
+    },
+    "en": {
+      "summary": "CloudTrail recorded an Amazon EKS CreateCluster or DeleteCluster call. It may be a legitimate infrastructure change or an unauthorized action that destroys workloads or spins up compute for abuse.",
+      "what_it_detects": "CloudTrail events with eventSource eks.amazonaws.com and eventName CreateCluster or DeleteCluster, meaning a managed Kubernetes cluster was created or deleted.",
+      "why_it_matters": "Deleting a cluster is data destruction (ATT&CK T1485, Impact): services stop and workloads are lost. Unauthorized clusters can be used for cryptomining or persistence with a compromised account.",
+      "triage_steps": [
+        "Note eventName, the cluster name in requestParameters, awsRegion and recipientAccountId to know what changed and where.",
+        "Review userIdentity (arn, type, sessionContext) to see whether an IAM user, assumed role or federated identity acted, and who assumed the role.",
+        "Check sourceIPAddress and userAgent against known IaC pipelines (Terraform, eksctl, CloudFormation) and usual corporate IPs.",
+        "Look for an approved change ticket or deployment covering this account and region.",
+        "Review the same identity's activity within +/- 15 minutes: AssumeRole, CreateAccessKey, IAM changes, DeleteNodegroup, snapshot or log deletion.",
+        "Check for errorCode; repeated failures suggest an attacker probing permissions.",
+        "Search earlier alerts for the same identity, source IP and account."
+      ],
+      "false_positives": [
+        "Platform administrators creating or deleting clusters as routine work.",
+        "CI/CD or IaC pipelines (Terraform, eksctl, CloudFormation) that build and tear down ephemeral test clusters.",
+        "Scheduled cleanup of development or training environments."
+      ],
+      "response_steps": [
+        "Confirm with the cluster or pipeline owner that the change was authorized before acting.",
+        "If unauthorized, revoke active sessions and disable the identity's access keys, preserving CloudTrail logs.",
+        "For rogue clusters, document their configuration, then delete them along with nodegroups and related resources.",
+        "For deleted clusters, rebuild from IaC and backups and assess impact on dependent services.",
+        "Tighten IAM policies or SCPs so only approved roles can call eks:CreateCluster and eks:DeleteCluster; exempt known automation."
+      ],
+      "severity_rationale": "Low fits because cluster creation and deletion are common admin tasks; severity rises only when the identity, origin or context is unexpected."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unexpected IAM user deletes a production EKS cluster from an unfamiliar IP",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "eks.amazonaws.com",
+          "eventName": "DeleteCluster",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.name": "prod-payments",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Assumed role creates a new EKS cluster in an unused region",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "eks.amazonaws.com",
+          "eventName": "CreateCluster",
+          "awsRegion": "ap-southeast-2",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "eksctl/0.170.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/DevOpsRole/mlopez",
+          "requestParameters.name": "compute-tmp-01",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only DescribeCluster call on EKS",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "eks.amazonaws.com",
+          "eventName": "DescribeCluster",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.name": "prod-payments",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "ECS DeleteCluster call, same eventName but different eventSource",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ecs.amazonaws.com",
+          "eventName": "DeleteCluster",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.15",
+          "userAgent": "terraform/1.6.5",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformRole/ci-runner",
+          "requestParameters.cluster": "staging-ecs",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

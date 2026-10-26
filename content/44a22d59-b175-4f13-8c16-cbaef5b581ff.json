@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "44a22d59-b175-4f13-8c16-cbaef5b581ff",
+    "title": "New File Association Using Exefile",
+    "level": "high",
+    "status": "test",
+    "author": "Andreas Hunkeler (@Karneades)",
+    "path": "windows/registry/registry_set/registry_set_file_association_exefile.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_file_association_exefile.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se estableció un valor de registro bajo una clave Classes\\.<extensión> con el valor 'exefile', por lo que los archivos con esa extensión ahora se abren como ejecutables de Windows. Esto permite ejecutar un PE renombrado evadiendo controles basados en extensión.",
+      "what_it_detects": "Eventos de modificación de registro (por ejemplo, Sysmon Event ID 13) donde TargetObject contiene 'Classes\\.' (una clave de extensión en HKLM o en HKCU/HKU Classes) y Details es exactamente 'exefile', el handler propio de los archivos .exe.",
+      "why_it_matters": "Asociar una extensión inofensiva a exefile permite entregar y ejecutar binarios llamados, por ejemplo, payload.foo, evadiendo filtros de correo, proxy o EDR que bloquean .exe. Es evasión de defensas, similar a Change Default File Association (T1546.001).",
+      "triage_steps": [
+        "Revise TargetObject para identificar la extensión modificada y el hive (HKLM para todo el equipo o la clave _Classes de un usuario).",
+        "Identifique el proceso que escribió el valor (Image, ProcessId) y su proceso padre; reg.exe, powershell.exe, cmd.exe o binarios desconocidos requieren análisis.",
+        "Obtenga el evento de creación de ese proceso y revise el CommandLine completo y el usuario que lo ejecutó.",
+        "Busque en el equipo y en el historial de descargas archivos con la extensión recién asociada; obtenga sus hashes y verifique reputación.",
+        "Busque ejecuciones de archivos con esa extensión o lanzados por explorer.exe dentro de +/- 15 minutos.",
+        "Pivotee por el mismo usuario y equipo buscando alertas previas, descargas recientes, adjuntos de correo o extracción de archivos comprimidos.",
+        "Busque el mismo TargetObject y Details en otros equipos para detectar una campaña más amplia."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos; el software legítimo casi nunca asocia una extensión de datos a exefile.",
+        "Instaladores antiguos o herramientas internas que registran una extensión propia como ejecutable; confírmelo con el responsable de la aplicación y los registros de cambios."
+      ],
+      "response_steps": [
+        "Verifique que el cambio no esté autorizado confirmando el proceso y el usuario con el responsable del equipo.",
+        "Aísle el equipo si se ejecutó algún archivo con la nueva extensión o si el proceso que escribió el valor es malicioso.",
+        "Restaure la asociación original de la extensión (o elimine la clave maliciosa) después de exportarla como evidencia.",
+        "Ponga en cuarentena los archivos relacionados, bloquee sus hashes y elimine cualquier persistencia encontrada.",
+        "Restablezca las credenciales del usuario afectado si hubo ejecución y busque el mismo patrón en toda la flota."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque asociar una extensión a exefile prácticamente no tiene uso legítimo y habilita ejecución que evade defensas basadas en extensión."
+    },
+    "en": {
+      "summary": "A registry value under a Classes\\.<extension> key was set to 'exefile', so files with that extension now open as Windows executables. This can let a renamed PE file run while bypassing extension-based security controls.",
+      "what_it_detects": "Registry set events (for example Sysmon Event ID 13) where TargetObject contains 'Classes\\.' (an extension key in HKLM or HKCU/HKU Classes) and Details is exactly 'exefile', the handler normally reserved for .exe files.",
+      "why_it_matters": "Mapping a harmless-looking extension to exefile lets an attacker deliver and run executables named, for example, payload.foo, evading mail, proxy or EDR filters that block .exe. This is defense evasion and resembles Change Default File Association (T1546.001).",
+      "triage_steps": [
+        "Read TargetObject to identify the extension changed and the hive (HKLM machine-wide versus a user's _Classes key).",
+        "Identify the writing process (Image, ProcessId) and its parent; reg.exe, powershell.exe, cmd.exe or an unknown binary all deserve scrutiny.",
+        "Pull the process creation event for that process and review the full CommandLine and the user that ran it.",
+        "Search the host's file system and download history for files with the newly associated extension; collect hashes and check reputation.",
+        "Look for process creation of files with that extension or explorer.exe launching them within +/- 15 minutes.",
+        "Pivot on the same user and host for earlier alerts, recent downloads, email attachments or archive extraction.",
+        "Check other hosts for the same TargetObject and Details to find a wider campaign."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; legitimate software almost never maps a data extension to exefile.",
+        "Rare legacy installers or internal tooling that register a custom extension as executable; confirm with the application owner and change records."
+      ],
+      "response_steps": [
+        "Verify the change is unauthorized by confirming the writing process and user with the asset owner.",
+        "Isolate the host if any file with the new extension was executed or the writing process is malicious.",
+        "Restore the extension's original association (or delete the rogue key) after exporting it as evidence.",
+        "Quarantine the related files, block their hashes and remove any persistence found during triage.",
+        "Reset credentials of the affected user if execution occurred, and hunt for the same pattern fleet-wide."
+      ],
+      "severity_rationale": "High fits because mapping an extension to exefile has essentially no benign use and directly enables execution that evades extension-based defenses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe maps the custom .foo extension in the user's Classes hive to exefile",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 14:03:12.481",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\.foo\\(Default)",
+          "Details": "exefile"
+        }
+      },
+      {
+        "description": "Unknown binary sets machine-wide .pdfx association to exefile",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 15:20:45.002",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Users\\mlopez\\AppData\\Local\\Temp\\setup_helper.exe",
+          "ProcessId": 4432,
+          "User": "ANDES\\mlopez",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\.pdfx\\(Default)",
+          "Details": "exefile"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate .txt association to txtfile; Details is not exefile",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 09:11:02.330",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1288,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\.txt\\(Default)",
+          "Details": "txtfile"
+        }
+      },
+      {
+        "description": "Update to the exefile handler's own open command; TargetObject lacks 'Classes\\.' and Details is not exefile",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 10:42:17.905",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 3980,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\exefile\\shell\\open\\command\\(Default)",
+          "Details": "\"%1\" %*"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "d223b46b-5621-4037-88fe-fda32eead684",
+    "title": "New Root or CA or AuthRoot Certificate to Store",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_install_root_or_ca_certificat.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_install_root_or_ca_certificat.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1490"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor Blob de un certificado en un almacén de confianza de Windows (Root, CA o AuthRoot). Eso suele indicar que se instaló un certificado raíz o intermedio nuevo en el equipo o en el perfil de un usuario.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject apunta a \\SystemCertificates, \\Policies\\...\\SystemCertificates o \\EnterpriseCertificates dentro de los almacenes Root, CA o AuthRoot, termina en \\Blob y Details es 'Binary Data'.",
+      "why_it_matters": "Un atacante que instala su propia CA raíz puede interceptar tráfico TLS sin generar advertencias y hacer que el sistema confíe en código firmado por él (Install Root Certificate, T1553.004). La regla también lleva la etiqueta T1490.",
+      "triage_steps": [
+        "Revise Image, User y el hive de TargetObject (HKU = solo ese usuario; HKLM o Policies = todo el equipo) para saber quién agregó el certificado y con qué alcance.",
+        "Tome el thumbprint de TargetObject (la carpeta que está antes de \\Blob) y búsquelo con 'certutil -store Root <thumbprint>' o en Cert:\\ para ver el subject, el issuer y la vigencia.",
+        "Verifique si el emisor corresponde a la PKI corporativa, a un producto aprobado (proxy, EDR) o a la actualización automática de Microsoft.",
+        "Busque los procesos padre e hijo de Image en el mismo host +/- 15 minutos: certutil -addstore, Import-Certificate, PowerShell codificado o binarios en carpetas temporales.",
+        "En la misma ventana, revise si hubo cambios de proxy (Internet Settings, WinHTTP) o instalaciones de software que justifiquen una inspección TLS.",
+        "Busque el mismo thumbprint en otros endpoints y revise las alertas anteriores de ese host y de ese usuario."
+      ],
+      "false_positives": [
+        "Actualización automática de raíces de Microsoft (AuthRoot) a cargo de svchost/CryptSvc.",
+        "Distribución de la CA corporativa por GPO, Intune u otro MDM.",
+        "Instaladores de productos con inspección TLS: antivirus, DLP, proxies o VPN.",
+        "Herramientas de desarrollo o depuración (Fiddler, mitmproxy, certificados locales de IIS Express o dotnet dev-certs)."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el área de TI si la instalación estaba autorizada y documente el thumbprint, el subject y el proceso.",
+        "Si no estaba autorizada, aísle el endpoint y conserve evidencia (exportación del registro y del certificado) antes de cambiar algo.",
+        "Elimine el certificado con 'certutil -delstore' en el almacén afectado y agregue el thumbprint a Untrusted Certificates por GPO.",
+        "Investigue y elimine el proceso o el malware que lo instaló, y revise los cambios de proxy relacionados.",
+        "Si sospecha que se interceptó TLS, cambie las credenciales usadas desde el equipo y revise las sesiones activas."
+      ],
+      "severity_rationale": "Un nivel medio es razonable: las instalaciones legítimas son frecuentes, pero una CA raíz no autorizada permite interceptar TLS y abusar de la confianza en firmas."
+    },
+    "en": {
+      "summary": "A certificate Blob was written to a Windows trust store (Root, CA or AuthRoot). This usually means a new root or intermediate certificate was installed on the machine or in a user's profile.",
+      "what_it_detects": "registry_set events where TargetObject points to the Root, CA or AuthRoot store under \\SystemCertificates, \\Policies\\...\\SystemCertificates or \\EnterpriseCertificates, ends in \\Blob, and Details is 'Binary Data'.",
+      "why_it_matters": "An attacker who installs their own root CA can intercept TLS without browser warnings and get their signed code trusted (Install Root Certificate, T1553.004). The rule is also tagged T1490.",
+      "triage_steps": [
+        "Check Image, User and the TargetObject hive (HKU means only that user; HKLM or Policies means the whole machine) to see who added the certificate and how far it applies.",
+        "Take the thumbprint from TargetObject (the key just before \\Blob) and look it up with 'certutil -store Root <thumbprint>' or in Cert:\\ to see subject, issuer and validity.",
+        "Check whether the issuer is corporate PKI, an approved product (proxy, EDR) or Microsoft's automatic root update.",
+        "Look at the parent and child processes of Image on the same host within +/- 15 minutes: certutil -addstore, Import-Certificate, encoded PowerShell, or binaries in temp folders.",
+        "In the same time window, look for proxy changes (Internet Settings, WinHTTP) or software installs that would explain TLS inspection.",
+        "Search other endpoints for the same thumbprint and review earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Microsoft automatic root updates (AuthRoot) by svchost/CryptSvc.",
+        "Corporate CA rolled out through GPO, Intune or another MDM.",
+        "Installers for TLS-inspecting products: antivirus, DLP, proxies or VPN clients.",
+        "Developer or debugging tools (Fiddler, mitmproxy, IIS Express or dotnet dev-certs)."
+      ],
+      "response_steps": [
+        "Ask the user or IT whether the install was authorized. Record the thumbprint, subject and process.",
+        "If it was not authorized, isolate the endpoint and save evidence (registry export and certificate) before changing anything.",
+        "Remove the certificate from the affected store with 'certutil -delstore' and add the thumbprint to Untrusted Certificates through GPO.",
+        "Find and remove the installing process or malware, and undo any related proxy changes.",
+        "If you suspect TLS interception, reset credentials used from the host and review active sessions."
+      ],
+      "severity_rationale": "Medium fits because legitimate installs are common, yet a rogue root CA lets an attacker intercept TLS and abuse signature trust."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell installs a root certificate into the current user's Root store (Atomic T1553.004 style).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\SystemCertificates\\Root\\Certificates\\1F3A9C0E5B7D2468ACE13579BDF02468ACE13579\\Blob",
+          "Details": "Binary Data"
+        }
+      },
+      {
+        "description": "certutil adds a certificate to the machine-wide AuthRoot store from a temp folder.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\certutil.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\SystemCertificates\\AuthRoot\\Certificates\\9B8A7C6D5E4F30211203F4E5D6C7B8A9F0E1D2C3\\Blob",
+          "Details": "Binary Data"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Personal (My) store certificate import: the store is not Root, CA or AuthRoot.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\mmc.exe",
+          "ProcessId": 5012,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\SystemCertificates\\My\\Certificates\\AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12\\Blob",
+          "Details": "Binary Data"
+        }
+      },
+      {
+        "description": "Root store path but a DWORD value that is not Blob (store metadata update).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1324,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\SystemCertificates\\Root\\Certificates\\1F3A9C0E5B7D2468ACE13579BDF02468ACE13579\\Flags",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "rule": {
+    "id": "e31bae15-83ed-473e-bf31-faf4f8a17d36",
+    "title": "New Kubernetes Service Account Created",
+    "level": "low",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_serviceaccount_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_serviceaccount_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1136"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó una nueva service account de Kubernetes. Por lo general es una operación rutinaria, pero un atacante puede crear una identidad propia para mantener persistencia en el clúster.",
+      "what_it_detects": "Eventos de auditoría de Kubernetes con verb 'create' y objectRef.resource 'serviceaccounts', es decir, cualquier solicitud al API server para crear una service account en cualquier namespace.",
+      "why_it_matters": "Con una service account nueva, sobre todo si después recibe permisos de RBAC y un token, el atacante tiene una credencial duradera que no depende de usuarios humanos. Corresponde a persistencia mediante creación de cuentas (ATT&CK T1136).",
+      "triage_steps": [
+        "Identifique quién hizo la solicitud: user.username, user.groups, sourceIPs y userAgent. Distinga un controlador, un pipeline o una herramienta de GitOps de un usuario humano o un pod.",
+        "Revise objectRef.namespace y objectRef.name. Desconfíe de kube-system o de otros namespaces privilegiados y de nombres que imitan componentes del sistema.",
+        "Confirme en responseStatus.code que la creación tuvo éxito; un 403 sugiere que alguien está probando permisos.",
+        "Busque eventos de la misma identidad en +/- 15 minutos: creación de rolebindings o clusterrolebindings que apunten a la nueva service account.",
+        "Busque solicitudes de token (serviceaccounts/token), secrets de tipo service-account-token o pods y deployments que usen esa service account.",
+        "Compare con los registros de cambios: manifiestos en Git, releases de Helm, aplicaciones de ArgoCD/Flux o tickets aprobados.",
+        "Revise alertas anteriores de la misma identidad o de la misma IP de origen, por ejemplo exec en pods o accesos anónimos."
+      ],
+      "false_positives": [
+        "Despliegues con Helm, ArgoCD, Flux u operadores que crean service accounts para las aplicaciones.",
+        "Pipelines de CI/CD que aprovisionan namespaces y cuentas de servicio.",
+        "Al crear un namespace, el controlador de service accounts crea automáticamente la cuenta 'default'.",
+        "Administradores que configuran cargas de trabajo nuevas de forma manual y documentada."
+      ],
+      "response_steps": [
+        "Valide con el dueño del namespace o con el equipo de plataforma si la service account estaba planificada.",
+        "Si no está autorizada, conserve la evidencia (manifiesto, bindings, logs de auditoría) antes de cualquier cambio.",
+        "Elimine los bindings asociados y la service account, invalide sus tokens y detenga los pods que la usen tras confirmarlo.",
+        "Revoque o rote las credenciales de la identidad que la creó y revise sus permisos de RBAC.",
+        "Busque otras cuentas, bindings o cargas de trabajo creadas por la misma identidad y refuerce las políticas de admisión."
+      ],
+      "severity_rationale": "El nivel es bajo porque crear service accounts es normal en clústeres activos; la alerta gana importancia al correlacionarla con bindings privilegiados, tokens o un origen inusual."
+    },
+    "en": {
+      "summary": "A new Kubernetes service account was created. This is usually routine, but an attacker can create their own identity to keep persistence in the cluster.",
+      "what_it_detects": "Kubernetes audit events with verb 'create' and objectRef.resource 'serviceaccounts', meaning any API server request that creates a service account in any namespace.",
+      "why_it_matters": "A new service account, especially one that later gets RBAC permissions and a token, gives an attacker a long-lived credential that does not depend on human users. This is persistence through account creation (ATT&CK T1136).",
+      "triage_steps": [
+        "Identify the requester: user.username, user.groups, sourceIPs and userAgent. Tell a controller, pipeline or GitOps tool apart from a human user or a pod.",
+        "Check objectRef.namespace and objectRef.name. Be suspicious of kube-system or other privileged namespaces, and of names that mimic system components.",
+        "Confirm in responseStatus.code that the creation succeeded; a 403 suggests someone is probing permissions.",
+        "Look for events from the same identity within +/- 15 minutes, such as rolebindings or clusterrolebindings that reference the new service account.",
+        "Look for token requests (serviceaccounts/token), service-account-token secrets, or pods and deployments that use this service account.",
+        "Compare against change records: Git manifests, Helm releases, ArgoCD or Flux applications, or approved tickets.",
+        "Check earlier alerts for the same identity or source IP, such as pod exec or anonymous access."
+      ],
+      "false_positives": [
+        "Helm, ArgoCD, Flux or operator deployments that create service accounts for applications.",
+        "CI/CD pipelines that provision namespaces and service accounts.",
+        "When a namespace is created, the service account controller automatically creates the 'default' account.",
+        "Administrators setting up new workloads manually, with documentation."
+      ],
+      "response_steps": [
+        "Check with the namespace owner or platform team whether the service account was planned.",
+        "If it was not authorized, keep the evidence (manifest, bindings, audit logs) before making any change.",
+        "After confirming, remove the related bindings and the service account, invalidate its tokens and stop pods that use it.",
+        "Revoke or rotate the creating identity's credentials and review its RBAC permissions.",
+        "Hunt for other accounts, bindings or workloads created by the same identity, and tighten admission policies."
+      ],
+      "severity_rationale": "Low fits because creating service accounts is normal in active clusters. The alert matters more when it lines up with privileged bindings, tokens or an unusual source."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An interactive user from an external IP creates a service account named like a system component in kube-system",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "serviceaccounts",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "kube-proxy-sync",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "requestURI": "/api/v1/namespaces/kube-system/serviceaccounts",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T14:03:12.418Z"
+        }
+      },
+      {
+        "description": "A Helm deployment creates an application service account (a legitimate creation that still triggers the rule)",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "serviceaccounts",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "payments-api",
+          "objectRef.apiVersion": "v1",
+          "user.username": "system:serviceaccount:ci:deployer",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "Helm/3.14.0",
+          "requestURI": "/api/v1/namespaces/payments/serviceaccounts",
+          "responseStatus.code": 201,
+          "requestReceivedTimestamp": "2024-10-25T09:15:40.002Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Listing service accounts uses verb list, not create",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "objectRef.resource": "serviceaccounts",
+          "objectRef.namespace": "kube-system",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "requestURI": "/api/v1/namespaces/kube-system/serviceaccounts",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "Creating a rolebinding is a different resource, so it does not match",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "rolebindings",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "payments-api-read",
+          "objectRef.apiGroup": "rbac.authorization.k8s.io",
+          "user.username": "system:serviceaccount:ci:deployer",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "Helm/3.14.0",
+          "requestURI": "/apis/rbac.authorization.k8s.io/v1/namespaces/payments/rolebindings",
+          "responseStatus.code": 201
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

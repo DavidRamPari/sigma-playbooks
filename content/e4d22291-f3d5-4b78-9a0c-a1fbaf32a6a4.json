@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "e4d22291-f3d5-4b78-9a0c-a1fbaf32a6a4",
+    "title": "Potentially Suspicious ODBC Driver Registered",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_odbc_driver_registered_susp.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_odbc_driver_registered_susp.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un driver ODBC cuyo valor Driver o Setup apunta a una DLL en una ruta de escritura común o temporal. Esto indica una posible persistencia o ejecución de código mediante el subsistema ODBC.",
+      "what_it_detects": "Escrituras en el registro bajo \\SOFTWARE\\ODBC\\ODBCINST.INI\\<driver>\\Driver o \\Setup donde Details contiene rutas sospechosas como ProgramData, Users\\Public, Temp, AppData\\Roaming o carpetas de System32 con permisos de escritura.",
+      "why_it_matters": "Cualquier proceso que use ese driver ODBC carga la DLL registrada, y herramientas como odbcconf.exe pueden registrarla y ejecutarla. Esto sirve para persistencia y ejecución encubierta. La regla lo etiqueta como persistencia y acceso a credenciales (T1003).",
+      "triage_steps": [
+        "Revise TargetObject para identificar el nombre del driver y si el valor modificado es Driver o Setup.",
+        "Revise Details: ruta completa de la DLL. Obtenga su hash, firma digital, fecha de creación y propietario del archivo.",
+        "Identifique Image y el usuario que escribió el valor; odbcconf.exe, rundll32.exe, powershell.exe o reg.exe con parent inusual aumentan la sospecha.",
+        "Revise la creación de procesos en el mismo host +/- 15 minutos: busque CommandLine de odbcconf con /A, REGSVR o INSTALLDRIVER, y descargas previas.",
+        "Busque cargas de imagen (ImageLoad) de esa DLL y qué procesos la cargaron después del registro.",
+        "Consulte el hash y el nombre del driver en otros endpoints y revise alertas previas del mismo host y usuario.",
+        "Verifique si existe instalación de software legítimo asociado (MSI, inventario, ticket de cambio)."
+      ],
+      "false_positives": [
+        "La regla indica que es improbable; casos raros: software empaquetado que instala drivers ODBC desde ProgramData o AppData.",
+        "Instaladores portables o pruebas de desarrollo de drivers ODBC ejecutadas desde carpetas Temp."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema si el driver es esperado; si no, aísle el endpoint de la red.",
+        "Preserve la DLL y exporte la clave ODBCINST.INI afectada antes de cualquier cambio.",
+        "Tras validar, elimine la entrada del driver y la DLL maliciosa, y termine procesos que la tengan cargada.",
+        "Busque otros mecanismos de persistencia y, si hubo ejecución, restablezca las credenciales expuestas en el host.",
+        "Bloquee el hash en el EDR y busque el mismo indicador en toda la flota."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque registrar drivers ODBC desde rutas temporales o públicas es muy poco común en entornos legítimos y permite ejecutar código arbitrario."
+    },
+    "en": {
+      "summary": "An ODBC driver was registered whose Driver or Setup value points to a DLL in a commonly writable or temporary path. This suggests possible persistence or code execution through the ODBC subsystem.",
+      "what_it_detects": "Registry writes to \\SOFTWARE\\ODBC\\ODBCINST.INI\\<driver>\\Driver or \\Setup where Details contains suspicious paths such as ProgramData, Users\\Public, Temp, AppData\\Roaming or writable System32 subfolders.",
+      "why_it_matters": "Any process that uses the ODBC driver loads the registered DLL, and tools such as odbcconf.exe can register and run it. Attackers can use this for persistence and stealthy execution. The rule tags it as persistence and credential access (T1003).",
+      "triage_steps": [
+        "Check TargetObject for the driver name and whether the Driver or Setup value changed.",
+        "Check Details for the full DLL path. Collect the hash, digital signature, creation time and file owner.",
+        "Identify the Image and user that wrote the value. Suspicion goes up for odbcconf.exe, rundll32.exe, powershell.exe or reg.exe with an unusual parent.",
+        "Review process creation on the same host +/- 15 minutes. Look for odbcconf CommandLine with /A, REGSVR or INSTALLDRIVER, and for earlier downloads.",
+        "Search ImageLoad events for the DLL and note which processes loaded it after it was registered.",
+        "Look up the hash and driver name on other endpoints. Review earlier alerts for the same host and user.",
+        "Check for a matching legitimate install: MSI logs, software inventory or a change ticket."
+      ],
+      "false_positives": [
+        "The rule rates false positives as unlikely. A rare case is packaged software that installs ODBC drivers from ProgramData or AppData.",
+        "Portable installers or ODBC driver development tests run from Temp folders."
+      ],
+      "response_steps": [
+        "Ask the system owner whether the driver is expected. If not, isolate the endpoint.",
+        "Preserve the DLL and export the affected ODBCINST.INI key before you change anything.",
+        "After validation, remove the driver entry and the malicious DLL, and kill any process that has it loaded.",
+        "Hunt for other persistence. If the DLL ran, reset any credentials exposed on the host.",
+        "Block the hash in EDR and sweep the fleet for the same indicator."
+      ],
+      "severity_rationale": "High fits because legitimate software rarely registers ODBC drivers from temporary or public paths, and doing so allows arbitrary code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "odbcconf.exe registers a driver DLL placed in C:\\Users\\Public",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\odbcconf.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\Acme Data Driver\\Driver",
+          "Details": "C:\\Users\\Public\\acmeodbc.dll"
+        }
+      },
+      {
+        "description": "reg.exe sets the Setup value to a DLL in the user's AppData\\Roaming",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\Sync Helper\\Setup",
+          "Details": "C:\\Users\\mrojas\\AppData\\Roaming\\synchelp.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate PostgreSQL ODBC driver installed under Program Files",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-DB-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\PostgreSQL Unicode(x64)\\Driver",
+          "Details": "C:\\Program Files\\psqlODBC\\bin\\psqlodbc35w.dll"
+        }
+      },
+      {
+        "description": "Suspicious path, but the value written is UsageCount, not Driver or Setup",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\odbcconf.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\Acme Data Driver\\UsageCount",
+          "Details": "DWORD (0x00000001) C:\\ProgramData\\note"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

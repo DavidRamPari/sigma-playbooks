@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "234f9f48-904b-4736-a34c-55d23919e4b7",
+    "title": "Google Cloud Re-identifies Sensitive Information",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_dlp_re_identifies_sensitive_information.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_dlp_re_identifies_sensitive_information.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1565"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad llamó a la API de Cloud DLP para reidentificar contenido (projects.content.reidentify) y revertir una desidentificación previa. Esto puede volver a exponer datos sensibles originales, como PII o números de tarjeta.",
+      "what_it_detects": "Registros de GCP Audit Logs en los que gcp.audit.method_name es exactamente projects.content.reidentify. Es el método de Cloud DLP que revierte transformaciones reversibles, como el cifrado determinista o FPE con claves de KMS, y devuelve el valor original.",
+      "why_it_matters": "La reidentificación anula los controles de seudonimización. Si quien la usa es un atacante o un insider con acceso a la clave, puede recuperar datos protegidos en masa. Se asocia con ATT&CK T1565 (manipulación de datos, impacto) y con riesgo de exposición de datos regulados.",
+      "triage_steps": [
+        "Identifique al principal (principal_email o service account) y si su función de negocio justifica la reidentificación.",
+        "Revise la IP de origen (caller_ip) y el user agent. Compárelos con rangos corporativos, runners de CI/CD y ubicaciones habituales.",
+        "Examine la solicitud: proyecto, plantilla de reidentificación, tipos de infoType y clave KMS envuelta usada.",
+        "Mida el volumen y la frecuencia de llamadas reidentify del mismo principal y compárelos con su línea base histórica. ¿Es la primera vez?",
+        "Pivote sobre el mismo principal +/- 15 minutos: llamadas Decrypt de Cloud KMS, cambios IAM, creación de claves de service account y lecturas o exportaciones de BigQuery o Cloud Storage.",
+        "Busque alertas previas para el mismo principal, la misma IP o el mismo proyecto.",
+        "Confirme con el dueño de los datos o del pipeline si existe un ticket o un proceso aprobado."
+      ],
+      "false_positives": [
+        "Pipelines de datos autorizados que reidentifican registros para procesos de negocio legítimos.",
+        "Pruebas de configuración DLP realizadas por ingenieros de datos o de privacidad.",
+        "Flujos de soporte o atención que recuperan datos originales bajo aprobación documentada."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el dueño del recurso antes de actuar y preserve los registros de auditoría relevantes.",
+        "Si no está autorizado, deshabilite o rote las claves de la service account y revoque los roles de DLP del principal.",
+        "Restrinja los permisos cryptoKeyDecrypter sobre la clave KMS usada en la desidentificación.",
+        "Determine qué datos se reidentificaron y hacia dónde se movieron. Escale a privacidad o legal según la política.",
+        "Restablezca los accesos con mínimo privilegio y agregue la identidad a la línea base si el uso resulta legítimo."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el método tiene usos legítimos, pero puede exponer datos sensibles y requiere validación oportuna."
+    },
+    "en": {
+      "summary": "An identity called the Cloud DLP API to re-identify content (projects.content.reidentify), reversing a prior de-identification. This can re-expose original sensitive data such as PII or card numbers.",
+      "what_it_detects": "GCP Audit Log entries where gcp.audit.method_name is exactly projects.content.reidentify. This Cloud DLP method reverses reversible transformations, such as deterministic encryption or FPE with KMS keys, and returns the original values.",
+      "why_it_matters": "Re-identification undoes pseudonymization controls. An attacker or insider with key access can recover protected data at scale. It maps to ATT&CK T1565 (Data Manipulation, Impact) and creates regulated data exposure risk.",
+      "triage_steps": [
+        "Identify the principal (principal_email or service account) and whether its business role justifies re-identification.",
+        "Review the source IP (caller_ip) and user agent. Compare them with corporate ranges, CI/CD runners and usual locations.",
+        "Inspect the request: project, re-identify template, infoTypes and the wrapped KMS key used.",
+        "Measure the volume and frequency of reidentify calls by this principal against its historical baseline. Is this the first time?",
+        "Pivot on the same principal +/- 15 minutes: Cloud KMS Decrypt calls, IAM changes, service account key creation, BigQuery or Cloud Storage reads and exports.",
+        "Check earlier alerts for the same principal, IP or project.",
+        "Confirm with the data or pipeline owner whether a ticket or an approved process exists."
+      ],
+      "false_positives": [
+        "Authorized data pipelines that re-identify records for legitimate business processes.",
+        "DLP configuration testing by data or privacy engineers.",
+        "Support workflows that retrieve original data under documented approval."
+      ],
+      "response_steps": [
+        "Verify legitimacy with the resource owner before acting, and preserve the relevant audit logs.",
+        "If unauthorized, disable or rotate the service account keys and revoke the principal's DLP roles.",
+        "Restrict cryptoKeyDecrypter permissions on the KMS key used for de-identification.",
+        "Determine which data was re-identified and where it went. Escalate to privacy or legal per policy.",
+        "Restore access with least privilege, and baseline the identity if the activity is confirmed legitimate."
+      ],
+      "severity_rationale": "Medium fits because the method has legitimate uses but can expose sensitive data and needs prompt validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A service account re-identifies DLP-tokenized content from an unfamiliar IP",
+        "event": {
+          "gcp.audit.method_name": "projects.content.reidentify",
+          "gcp.audit.service_name": "dlp.googleapis.com",
+          "gcp.audit.principal_email": "etl-runner@andes-data.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-data-prod",
+          "gcp.audit.request_metadata.caller_ip": "203.0.113.45",
+          "gcp.audit.request_metadata.caller_supplied_user_agent": "google-api-python-client/2.86.0",
+          "gcp.audit.status.code": 0,
+          "timestamp": "2024-03-12T14:03:12Z"
+        }
+      },
+      {
+        "description": "A human user re-identifies data from the console",
+        "event": {
+          "gcp.audit.method_name": "projects.content.reidentify",
+          "gcp.audit.service_name": "dlp.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-analytics",
+          "gcp.audit.request_metadata.caller_ip": "198.51.100.23",
+          "gcp.audit.status.code": 0,
+          "timestamp": "2024-03-12T22:41:05Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The normal de-identification call, which does not reverse protection",
+        "event": {
+          "gcp.audit.method_name": "projects.content.deidentify",
+          "gcp.audit.service_name": "dlp.googleapis.com",
+          "gcp.audit.principal_email": "etl-runner@andes-data.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-data-prod",
+          "gcp.audit.request_metadata.caller_ip": "192.0.2.10",
+          "gcp.audit.status.code": 0,
+          "timestamp": "2024-03-12T14:00:01Z"
+        }
+      },
+      {
+        "description": "A DLP content inspection without re-identification",
+        "event": {
+          "gcp.audit.method_name": "projects.content.inspect",
+          "gcp.audit.service_name": "dlp.googleapis.com",
+          "gcp.audit.principal_email": "privacy-scan@andes-data.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-data-prod",
+          "gcp.audit.request_metadata.caller_ip": "192.0.2.11",
+          "gcp.audit.status.code": 0,
+          "timestamp": "2024-03-12T13:55:40Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

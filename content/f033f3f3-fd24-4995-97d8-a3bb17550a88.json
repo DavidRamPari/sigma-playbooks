@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "f033f3f3-fd24-4995-97d8-a3bb17550a88",
+    "title": "WMI Persistence - Security",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Gleb Sukhodolskiy, Timur Zinniatullin oscd.community",
+    "path": "windows/builtin/security/win_security_wmi_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_wmi_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un acceso auditado (evento 4662) al namespace WMI root\\subscription, donde se guardan las suscripciones permanentes de eventos WMI. Puede indicar que se creó, modificó o consultó un filtro, consumidor o binding usado para persistencia.",
+      "what_it_detects": "Eventos de Security 4662 con ObjectType 'WMI Namespace' y un ObjectName que contiene 'subscription'. Esto requiere una SACL configurada sobre ese namespace. El evento no muestra el contenido de la suscripción.",
+      "why_it_matters": "Las suscripciones WMI permanentes (T1546.003) enlazan un __EventFilter con un consumidor (CommandLineEventConsumer o ActiveScriptEventConsumer) que ejecuta código como SYSTEM cuando ocurre un evento. Así se logran persistencia y escalamiento de privilegios sin archivos visibles en las ubicaciones de inicio habituales.",
+      "triage_steps": [
+        "Revise SubjectUserName, SubjectDomainName y SubjectLogonId. Confirme si es una cuenta de servicio conocida o un usuario interactivo inesperado.",
+        "Revise AccessMask y AccessList para saber si hubo escritura (por ejemplo, permisos de escritura de proveedor o de clase) o solo lectura.",
+        "Correlacione SubjectLogonId con el evento 4624 para obtener el tipo de logon, el IP de origen y la estación de trabajo.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque eventos 5861 de WMI-Activity/Operational y eventos 19, 20 y 21 de Sysmon que muestren el filtro y el consumidor.",
+        "Liste las suscripciones con Get-CimInstance -Namespace root/subscription para las clases __EventFilter, CommandLineEventConsumer, ActiveScriptEventConsumer y __FilterToConsumerBinding.",
+        "Analice la consulta del filtro y el CommandLineTemplate o ScriptText del consumidor. Sospeche de PowerShell codificado, rutas en carpetas temporales y descargas.",
+        "Busque procesos hijos de WmiPrvSE.exe o scrcons.exe y alertas previas para el mismo usuario o host."
+      ],
+      "false_positives": [
+        "Agentes de gestión como SCCM/ConfigMgr que registran o consultan suscripciones WMI.",
+        "Agentes de EDR, antivirus, monitoreo o backup que usan suscripciones permanentes de forma legítima.",
+        "Utilidades del fabricante (Dell, HP, Lenovo) y scripts administrativos documentados.",
+        "Herramientas de inventario o auditoría que solo leen root\\subscription."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o con el equipo de TI si la suscripción y la cuenta corresponden a software autorizado.",
+        "Si es maliciosa, aísle el endpoint y exporte el filtro, el consumidor y el binding como evidencia antes de cambiar nada.",
+        "Elimine el binding, el consumidor y el filtro maliciosos, y también los payloads relacionados, una vez documentados.",
+        "Restablezca las credenciales de la cuenta usada y revise movimiento lateral desde el IP de origen.",
+        "Busque suscripciones similares en toda la flota y mantenga la SACL del namespace activa en los hosts críticos."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque el acceso a root\\subscription es un fuerte indicio de persistencia, pero el software legítimo también usa ese namespace y el evento no revela el contenido."
+    },
+    "en": {
+      "summary": "An audited access (event 4662) hit the WMI root\\subscription namespace, which stores permanent WMI event subscriptions. It may mean a filter, consumer or binding used for persistence was created, changed or read.",
+      "what_it_detects": "Security event 4662 where ObjectType is 'WMI Namespace' and ObjectName contains 'subscription'. A SACL must be set on that namespace for this event to appear. The event does not show what the subscription contains.",
+      "why_it_matters": "Permanent WMI subscriptions (T1546.003) link an __EventFilter to a consumer, either CommandLineEventConsumer or ActiveScriptEventConsumer, that runs code as SYSTEM when an event fires. This gives persistence and privilege escalation without the usual autorun artifacts.",
+      "triage_steps": [
+        "Check SubjectUserName, SubjectDomainName and SubjectLogonId. Is this a known service account or an unexpected interactive user?",
+        "Check AccessMask and AccessList to tell write access, such as provider or class writes, apart from read-only access.",
+        "Match SubjectLogonId to event 4624 to get the logon type, source IP and workstation.",
+        "On the same host within +/- 15 minutes, look for WMI-Activity/Operational event 5861 and Sysmon events 19, 20 and 21 that show the filter and consumer.",
+        "List subscriptions with Get-CimInstance -Namespace root/subscription for __EventFilter, CommandLineEventConsumer, ActiveScriptEventConsumer and __FilterToConsumerBinding.",
+        "Review the filter query and the consumer's CommandLineTemplate or ScriptText. Watch for encoded PowerShell, temp-folder paths and downloads.",
+        "Look for child processes of WmiPrvSE.exe or scrcons.exe and for earlier alerts on the same user or host."
+      ],
+      "false_positives": [
+        "Management agents such as SCCM/ConfigMgr that register or query WMI subscriptions.",
+        "EDR, antivirus, monitoring or backup agents that use permanent subscriptions legitimately.",
+        "OEM utilities (Dell, HP, Lenovo) and documented admin scripts.",
+        "Inventory or audit tools that only read root\\subscription."
+      ],
+      "response_steps": [
+        "Ask the system owner or IT whether the subscription and the account belong to approved software.",
+        "If it is malicious, isolate the endpoint and export the filter, consumer and binding as evidence before changing anything.",
+        "Once documented, remove the malicious binding, consumer and filter, plus any related payloads.",
+        "Reset credentials for the account involved and check the source IP for lateral movement.",
+        "Hunt for similar subscriptions across the fleet and keep the namespace SACL enabled on critical hosts."
+      ],
+      "severity_rationale": "Medium fits because root\\subscription access strongly suggests persistence, but legitimate software also uses this namespace and the event does not show the subscription's content."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User account writes to the ROOT\\subscription WMI namespace",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "WMI",
+          "ObjectType": "WMI Namespace",
+          "ObjectName": "ROOT\\subscription",
+          "OperationType": "Object Access",
+          "AccessList": "%%1552 %%1553",
+          "AccessMask": "0x6"
+        }
+      },
+      {
+        "description": "Access to the subscription namespace with mixed-case ObjectName",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "SubjectUserName": "svc-deploy",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x8F1C02",
+          "ObjectServer": "WMI",
+          "ObjectType": "WMI Namespace",
+          "ObjectName": "root\\Subscription",
+          "OperationType": "Object Access",
+          "AccessMask": "0x1"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Access to the ROOT\\CIMV2 WMI namespace, not the subscription namespace",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "WMI",
+          "ObjectType": "WMI Namespace",
+          "ObjectName": "ROOT\\CIMV2",
+          "OperationType": "Object Access",
+          "AccessMask": "0x1"
+        }
+      },
+      {
+        "description": "Directory service object access event 4662 that is not a WMI namespace",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "DC-01$",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "ObjectName": "%{6d3c1f2a-1b2c-4d5e-8f90-0a1b2c3d4e5f}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x100"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "70f00d10-60b2-4f34-b9a0-dc3df3fe762a",
+    "title": "Suspicious Service Installation Script",
+    "level": "high",
+    "status": "test",
+    "author": "pH-T (Nextron Systems)",
+    "path": "windows/builtin/system/service_control_manager/win_system_susp_service_installation_script.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_susp_service_installation_script.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un nuevo servicio de Windows (evento 7045) cuyo ImagePath ejecuta un intérprete de scripts o un LOLBin (PowerShell, mshta, rundll32, regsvr32, wscript o cscript) con un switch de ejecución de comando como -c, -r o -k. Es un patrón típico de persistencia o de ejecución remota con privilegios SYSTEM.",
+      "what_it_detects": "Eventos 7045 del proveedor Service Control Manager en el log System donde ImagePath contiene uno de los binarios cscript, mshta, powershell, pwsh, regsvr32, rundll32 o wscript, y además una opción ' -c ', ' -r ' o ' -k ' (también con '/' u otros guiones, por ejemplo 'cmd /c').",
+      "why_it_matters": "Los servicios legítimos casi nunca ejecutan comandos inline mediante intérpretes. Los atacantes crean servicios para persistir o escalar a SYSTEM (ATT&CK T1543.003, Windows Service), y herramientas de movimiento lateral suelen instalar servicios temporales con este formato.",
+      "triage_steps": [
+        "Revise ServiceName, ImagePath, StartType y AccountName del evento 7045; decodifique cualquier comando codificado en base64 sin ejecutarlo.",
+        "Identifique URLs, IPs, rutas o DLL referenciadas en ImagePath (por ejemplo C:\\Users\\Public o ProgramData) y obtenga su hash.",
+        "Busque logons de red (4624 tipo 3) y eventos 4697 en el mismo host +/- 15 minutos para identificar la cuenta y la IP de origen que creó el servicio.",
+        "Revise procesos hijos de services.exe en el host (Sysmon 1 o EDR) y su actividad de red y archivos posterior.",
+        "Verifique si el mismo ServiceName o ImagePath aparece en otros hosts, lo que indicaría movimiento lateral o despliegue masivo.",
+        "Consulte alertas previas del mismo host, de la cuenta de origen y de la IP de origen.",
+        "Confirme con el equipo de TI si existe un cambio o despliegue autorizado que justifique el servicio."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Herramientas de administración o despliegue de software que instalan servicios temporales que invocan PowerShell con -c.",
+        "Agentes de monitoreo o scripts internos mal empaquetados que usan cmd /c powershell como servicio."
+      ],
+      "response_steps": [
+        "Si no hay justificación legítima, aísle el endpoint desde el EDR y preserve evidencia (logs System y Security, binarios y scripts referenciados).",
+        "Deshabilite y luego elimine el servicio tras documentar su configuración; bloquee hashes, dominios e IPs asociados.",
+        "Restablezca las credenciales de la cuenta que creó el servicio y revise su uso en otros sistemas.",
+        "Busque el mismo indicador en toda la flota, elimine persistencias adicionales y restaure el host si hay compromiso confirmado."
+      ],
+      "severity_rationale": "Nivel alto porque un servicio que ejecuta intérpretes con comandos inline otorga ejecución como SYSTEM y rara vez es legítimo."
+    },
+    "en": {
+      "summary": "A new Windows service was installed (event 7045) whose ImagePath runs a script interpreter or LOLBin (PowerShell, mshta, rundll32, regsvr32, wscript or cscript) with a command switch such as -c, -r or -k. This is a common persistence or remote SYSTEM-level execution pattern.",
+      "what_it_detects": "Service Control Manager event 7045 in the System log where ImagePath contains one of cscript, mshta, powershell, pwsh, regsvr32, rundll32 or wscript, plus an option ' -c ', ' -r ' or ' -k ' (dash may also be '/' or similar, e.g. 'cmd /c').",
+      "why_it_matters": "Legitimate services rarely run inline commands through interpreters. Attackers create services to persist or escalate to SYSTEM (ATT&CK T1543.003, Windows Service), and lateral movement tools often install temporary services shaped like this.",
+      "triage_steps": [
+        "Review ServiceName, ImagePath, StartType and AccountName in the 7045 event; decode any base64-encoded command without executing it.",
+        "Extract URLs, IPs, paths or DLLs referenced in ImagePath (e.g. C:\\Users\\Public, ProgramData) and collect their hashes.",
+        "Look for network logons (4624 type 3) and 4697 events on the same host +/- 15 minutes to find the account and source IP that created the service.",
+        "Review child processes of services.exe on the host (Sysmon 1 or EDR) and their subsequent network and file activity.",
+        "Check whether the same ServiceName or ImagePath appears on other hosts, indicating lateral movement or mass deployment.",
+        "Check earlier alerts for the same host, source account and source IP.",
+        "Confirm with IT whether an authorized change or deployment explains the service."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Administration or software deployment tools installing temporary services that call PowerShell with -c.",
+        "Monitoring agents or poorly packaged internal scripts registered as services via cmd /c powershell."
+      ],
+      "response_steps": [
+        "If no legitimate reason exists, isolate the endpoint via EDR and preserve evidence (System and Security logs, referenced binaries and scripts).",
+        "Document the service configuration, then disable and remove it; block related hashes, domains and IPs.",
+        "Reset credentials of the account that created the service and review its use on other systems.",
+        "Hunt for the same indicators fleet-wide, remove additional persistence and rebuild the host if compromise is confirmed."
+      ],
+      "severity_rationale": "High because a service running interpreters with inline commands grants SYSTEM execution and is rarely legitimate."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed that runs PowerShell with an inline -c command",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "WinUpdSvc",
+          "ImagePath": "%COMSPEC% /c powershell.exe -nop -w hidden -c \"Start-Process C:\\ProgramData\\upd.exe\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service installed that launches rundll32 through cmd /k",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "SRV-FS02.andes.example.com",
+          "ServiceName": "svcHelper01",
+          "ImagePath": "cmd.exe /k rundll32.exe C:\\Users\\Public\\helper.dll,Start",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service running a PowerShell script file without -c, -r or -k switches",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "InventoryAgent",
+          "ImagePath": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -File C:\\Program Files\\Inventory\\agent.ps1",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Standard svchost service with -k but no script interpreter or LOLBin",
+        "event": {
+          "EventID": 7045,
+          "Provider_Name": "Service Control Manager",
+          "Channel": "System",
+          "Computer": "SRV-FS02.andes.example.com",
+          "ServiceName": "ExampleNetSvc",
+          "ImagePath": "%SystemRoot%\\System32\\svchost.exe -k netsvcs -p",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

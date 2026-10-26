@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "350dfb37-3706-4cdc-9e2e-5e24bc3a46df",
+    "title": "MSSQL Disable Audit Settings",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/application/mssqlserver/win_mssql_disable_audit_settings.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/mssqlserver/win_mssql_disable_audit_settings.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una instancia de SQL Server registró en el log Application (evento 33205) una sentencia ALTER SERVER AUDIT o DROP SERVER AUDIT. Esto puede indicar que alguien desactivó, modificó o eliminó la auditoría del servidor para ocultar su actividad.",
+      "what_it_detects": "Eventos 33205 de un proveedor cuyo Provider_Name contiene 'MSSQL', cuyo campo Data incluye 'statement:ALTER SERVER AUDIT' o 'statement:DROP SERVER AUDIT'. Requiere que la auditoría de SQL Server escriba en el log Application de Windows.",
+      "why_it_matters": "Desactivar o borrar la auditoría elimina la visibilidad sobre logins, cambios de permisos y ejecución de código en la base de datos. Corresponde a Impair Defenses (deshabilitar o modificar el registro): suele preceder a persistencia, como stored procedures de inicio, o a exfiltración.",
+      "triage_steps": [
+        "En Data, revise statement: ¿es STATE = OFF, DROP, o un cambio de destino (TO FILE/APPLICATION_LOG), filtro (WHERE) o QUEUE_DELAY? Anote action_id (AL o DR) y succeeded.",
+        "Identifique server_principal_name, session_server_principal_name, client_ip, host_name y application_name del evento. ¿Es un DBA conocido usando SSMS desde su estación habitual?",
+        "Busque un ticket de cambio o una ventana de mantenimiento aprobada para esa instancia y fecha.",
+        "Revise otros eventos 33205 de la misma instancia en ±15 minutos: CREATE LOGIN, ALTER SERVER ROLE, sp_configure xp_cmdshell, sp_procoption o CREATE ASSEMBLY.",
+        "Verifique el estado actual de la auditoría (sys.server_audits, sys.dm_server_audit_status) y si el destino de archivos o los registros previos se eliminaron.",
+        "Pivote por client_ip y por el usuario: logins fallidos, autenticación inusual o alertas previas del mismo host o cuenta en Windows Security y el ERRORLOG de SQL Server."
+      ],
+      "false_positives": [
+        "Un DBA ajusta la auditoría de forma planificada: rotación de archivos, cambio de destino o reconfiguración tras la instalación.",
+        "Scripts de despliegue, herramientas de cumplimiento o parches que recrean la auditoría con DROP y CREATE SERVER AUDIT.",
+        "Parada temporal de la auditoría durante una migración o actualización documentada."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la instancia si el cambio fue autorizado; si lo fue, documéntelo y cierre la alerta.",
+        "Si no está autorizado, reactive o recree la auditoría (ALTER SERVER AUDIT ... WITH (STATE = ON)) y preserve los archivos de auditoría y logs existentes.",
+        "Deshabilite o restablezca las credenciales del principal implicado, tras verificarlo, y bloquee la client_ip de origen si no es legítima.",
+        "Busque persistencia: stored procedures de inicio, nuevos logins o miembros sysadmin, jobs del Agent, assemblies CLR y xp_cmdshell habilitado; elimínela tras validar.",
+        "Escale a respuesta a incidentes y amplíe la búsqueda a otras instancias SQL accesibles con la misma cuenta."
+      ],
+      "severity_rationale": "Es alta porque deshabilitar la auditoría ciega a los defensores y rara vez ocurre de forma legítima una vez que la auditoría está configurada."
+    },
+    "en": {
+      "summary": "A SQL Server instance logged an ALTER SERVER AUDIT or DROP SERVER AUDIT statement (event 33205) in the Application log. Someone may have disabled, changed or deleted server auditing to hide their activity.",
+      "what_it_detects": "Event 33205 from a provider whose Provider_Name contains 'MSSQL', with Data containing 'statement:ALTER SERVER AUDIT' or 'statement:DROP SERVER AUDIT'. SQL Server audit must write to the Windows Application log.",
+      "why_it_matters": "Disabling or dropping auditing removes visibility of logins, permission changes and code execution in the database. This is Impair Defenses (disable or modify logging), and it often comes before persistence, such as startup procedures, or exfiltration.",
+      "triage_steps": [
+        "In Data, read the statement: STATE = OFF, DROP, or a change to the target (TO FILE/APPLICATION_LOG), filter (WHERE) or QUEUE_DELAY? Note action_id (AL or DR) and succeeded.",
+        "Get server_principal_name, session_server_principal_name, client_ip, host_name and application_name. Is this a known DBA using SSMS from their usual workstation?",
+        "Look for an approved change ticket or maintenance window for this instance and time.",
+        "Review other 33205 events on the same instance within ±15 minutes: CREATE LOGIN, ALTER SERVER ROLE, sp_configure xp_cmdshell, sp_procoption, CREATE ASSEMBLY.",
+        "Check the current audit state (sys.server_audits, sys.dm_server_audit_status) and whether audit files or earlier records were deleted.",
+        "Pivot on client_ip and the user: failed logins, unusual authentication and earlier alerts for the same host or account in Windows Security and the SQL Server ERRORLOG."
+      ],
+      "false_positives": [
+        "A DBA tunes auditing as planned: file rollover, target change or post-install reconfiguration.",
+        "Deployment scripts, compliance tools or patches that rebuild the audit with DROP and CREATE SERVER AUDIT.",
+        "Auditing paused briefly during a documented migration or upgrade."
+      ],
+      "response_steps": [
+        "Ask the instance owner whether the change was authorized. If it was, document it and close the alert.",
+        "If it was not, re-enable or recreate the audit (ALTER SERVER AUDIT ... WITH (STATE = ON)) and preserve existing audit files and logs.",
+        "After verification, disable or reset the principal's credentials and block the source client_ip if it is not legitimate.",
+        "Hunt for persistence: startup procedures, new logins or sysadmin members, Agent jobs, CLR assemblies, enabled xp_cmdshell. Remove what you find after validating it.",
+        "Escalate to incident response and extend the hunt to other SQL instances the same account can reach."
+      ],
+      "severity_rationale": "High fits because disabling auditing blinds defenders, and once auditing is set up it rarely happens for legitimate reasons."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Audit disabled with ALTER SERVER AUDIT ... STATE = OFF from an unusual client",
+        "event": {
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-01.andes.example.com",
+          "Level": "Information",
+          "Data": "Audit event: event_time:2024-06-26 14:03:12.4410000 sequence_number:1 action_id:AL succeeded:true is_column_permission:false session_id:61 server_principal_id:267 database_principal_id:0 target_server_principal_id:0 target_database_principal_id:0 object_id:65536 class_type:A session_server_principal_name:ANDES\\jperez server_principal_name:ANDES\\jperez server_instance_name:SQL-PROD-01 database_name:master schema_name: object_name:Audit-Prod statement:ALTER SERVER AUDIT [Audit-Prod] WITH (STATE = OFF) additional_information: client_ip:192.0.2.45 application_name:Microsoft SQL Server Management Studio - Query host_name:WS-0142"
+        }
+      },
+      {
+        "description": "Audit removed with DROP SERVER AUDIT on a named instance",
+        "event": {
+          "Provider_Name": "MSSQL$FINANZAS",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-FIN-02.andes.example.com",
+          "Level": "Information",
+          "Data": "Audit event: event_time:2024-06-26 22:41:07.1020000 sequence_number:1 action_id:DR succeeded:true session_id:58 class_type:A session_server_principal_name:svc_report server_principal_name:svc_report server_instance_name:SQL-FIN-02\\FINANZAS database_name:master object_name:Audit-Finanzas statement:DROP SERVER AUDIT [Audit-Finanzas] additional_information: client_ip:203.0.113.77 application_name:sqlcmd host_name:UNKNOWN-HOST"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine 33205 audit record for a CREATE SERVER AUDIT during initial setup (no ALTER/DROP)",
+        "event": {
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-01.andes.example.com",
+          "Level": "Information",
+          "Data": "Audit event: event_time:2024-06-20 09:15:44.0000000 sequence_number:1 action_id:CR succeeded:true session_id:55 class_type:A server_principal_name:ANDES\\dba_mlopez server_instance_name:SQL-PROD-01 database_name:master object_name:Audit-Prod statement:CREATE SERVER AUDIT [Audit-Prod] TO APPLICATION_LOG WITH (QUEUE_DELAY = 1000) additional_information: client_ip:198.51.100.20 application_name:Microsoft SQL Server Management Studio host_name:WS-0201"
+        }
+      },
+      {
+        "description": "ALTER SERVER AUDIT text appears but the event comes from a non-MSSQL provider with a different event ID",
+        "event": {
+          "Provider_Name": "Application Error",
+          "EventID": 1000,
+          "Channel": "Application",
+          "Computer": "SQL-PROD-01.andes.example.com",
+          "Level": "Error",
+          "Data": "Faulting application name: deploytool.exe, script step statement:ALTER SERVER AUDIT [Audit-Prod] WITH (STATE = ON) failed"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

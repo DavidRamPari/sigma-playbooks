@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "c0aac16a-b1e7-4330-bab0-3c27bb4987c7",
+    "title": "Remote Thread Creation In Mstsc.Exe From Suspicious Location",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/create_remote_thread/create_remote_thread_win_mstsc_susp_location.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_remote_thread/create_remote_thread_win_mstsc_susp_location.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutado desde una ruta sospechosa (Temp, Users\\Public, PerfLogs, Windows\\Tasks) creó un hilo remoto en mstsc.exe. Esto puede indicar inyección de código para enganchar APIs y robar credenciales RDP.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon EventID 8) en los que TargetImage termina en \\mstsc.exe y SourceImage está en una carpeta temporal o de escritura pública, como :\\Temp\\, \\AppData\\Local\\Temp\\ o :\\Windows\\Tasks\\.",
+      "why_it_matters": "Herramientas como RDPCredentialStealer inyectan una DLL en mstsc.exe para enganchar APIs de autenticación y capturar usuario y contraseña cuando se abre una sesión RDP. Es acceso a credenciales mediante inyección en procesos y facilita el movimiento lateral.",
+      "triage_steps": [
+        "Revise SourceImage, SourceProcessId y StartAddress/StartModule: anote la ruta, el nombre del binario y el módulo inyectado.",
+        "Obtenga el hash del SourceImage, verifique la firma digital y consulte su reputación en la inteligencia de amenazas interna.",
+        "Identifique el proceso padre y la línea de comandos del SourceImage en los eventos de creación de procesos del mismo host.",
+        "Busque cargas de DLL no firmadas en mstsc.exe (ImageLoad) y archivos creados en la misma carpeta, en una ventana de +/- 15 minutos.",
+        "Determine qué usuario ejecutaba mstsc.exe y a qué servidores RDP se conectó durante y después de la inyección.",
+        "Revise alertas previas del host y del usuario: descarga inicial, persistencia o volcado de credenciales.",
+        "Busque el mismo hash o la misma ruta de SourceImage en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Software de accesibilidad, grabación de pantalla o soporte remoto que se ejecuta desde Temp durante su instalación e interactúa con mstsc.exe; valide la firma y el proveedor.",
+        "Ejercicios autorizados de red team o pruebas de penetración."
+      ],
+      "response_steps": [
+        "Si se confirma la actividad maliciosa, aísle el endpoint de la red y conserve la memoria del proceso mstsc.exe y del proceso origen.",
+        "Termine los procesos involucrados y ponga en cuarentena el binario origen y las DLL asociadas después de recolectar evidencia.",
+        "Restablezca las credenciales usadas en sesiones RDP desde el host y revise inicios de sesión en los servidores destino.",
+        "Elimine los mecanismos de persistencia encontrados y bloquee el hash en el EDR.",
+        "Restaure el host desde una imagen confiable si no puede garantizar su integridad."
+      ],
+      "severity_rationale": "Es alta porque inyectar código en mstsc.exe desde una carpeta temporal casi nunca es legítimo y expone directamente las credenciales RDP."
+    },
+    "en": {
+      "summary": "A process running from a suspicious path (Temp, Users\\Public, PerfLogs, Windows\\Tasks) created a remote thread in mstsc.exe. This may mean code injection to hook APIs and steal RDP credentials.",
+      "what_it_detects": "Remote thread creation events (Sysmon EventID 8) where TargetImage ends with \\mstsc.exe and SourceImage sits in a temp or world-writable folder such as :\\Temp\\, \\AppData\\Local\\Temp\\ or :\\Windows\\Tasks\\.",
+      "why_it_matters": "Tools such as RDPCredentialStealer inject a DLL into mstsc.exe to hook authentication APIs and capture usernames and passwords when an RDP session opens. This is credential access through process injection and enables lateral movement.",
+      "triage_steps": [
+        "Review SourceImage, SourceProcessId and StartAddress/StartModule; note the path, binary name and injected module.",
+        "Get the SourceImage hash, check its digital signature and look up its reputation in internal threat intelligence.",
+        "Find the parent process and command line of SourceImage in process creation events on the same host.",
+        "Look for unsigned DLL loads into mstsc.exe (ImageLoad) and files written to the same folder within +/- 15 minutes.",
+        "Determine which user ran mstsc.exe and which RDP servers they connected to during and after the injection.",
+        "Check earlier alerts for the host and user: initial download, persistence or credential dumping.",
+        "Hunt for the same SourceImage hash or path on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Accessibility, screen recording or remote support software running from Temp during installation and touching mstsc.exe; validate the signature and vendor.",
+        "Authorized red team exercises or penetration tests."
+      ],
+      "response_steps": [
+        "If malicious, isolate the endpoint and preserve memory of mstsc.exe and the source process.",
+        "Kill the involved processes and quarantine the source binary and related DLLs after collecting evidence.",
+        "Reset credentials used in RDP sessions from the host and review logons on the destination servers.",
+        "Remove any persistence found and block the hash in the EDR.",
+        "Reimage the host if its integrity cannot be assured."
+      ],
+      "severity_rationale": "High because injecting into mstsc.exe from a temp folder is rarely legitimate and directly exposes RDP credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned injector in the user's AppData\\Local\\Temp creates a remote thread in mstsc.exe",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\APIHookInjectorBin.exe",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\System32\\mstsc.exe",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "LoadLibraryW",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Binary in C:\\Users\\Public injects into mstsc.exe",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 7716,
+          "SourceImage": "C:\\Users\\Public\\update.exe",
+          "TargetProcessId": 5032,
+          "TargetImage": "C:\\Windows\\System32\\mstsc.exe",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "LoadLibraryA",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote thread into mstsc.exe from a legitimate Program Files location",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 2940,
+          "SourceImage": "C:\\Program Files\\ExampleVendor\\Agent\\agent.exe",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\System32\\mstsc.exe",
+          "StartModule": "C:\\Windows\\System32\\ntdll.dll",
+          "StartFunction": "RtlUserThreadStart",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Process in Temp creates a remote thread in a process other than mstsc.exe",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_helper.exe",
+          "TargetProcessId": 3312,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "LoadLibraryW",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

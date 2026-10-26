@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "4f6c43e2-f989-4ea5-bcd8-843b49a0317c",
+    "title": "UAC Bypass Using WOW64 Logger DLL Hijack",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_uac_bypass_wow64_logger.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_uac_bypass_wow64_logger.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de 32 bits ubicado en C:\\Windows\\SysWOW64 abrió otro proceso con acceso total (0x1fffff) desde código que no pertenece a ningún módulo cargado. Este patrón corresponde al bypass de UAC por secuestro de la DLL del logger de WoW64 (UACMe método 30).",
+      "what_it_detects": "Eventos de acceso a procesos de Sysmon (Event ID 10) con SourceImage bajo \\Windows\\SysWOW64\\, GrantedAccess igual a 0x1fffff (PROCESS_ALL_ACCESS) y un CallTrace que empieza con dos marcos UNKNOWN(0000000000000000). Esto indica que la llamada salió de memoria no asociada a ningún módulo.",
+      "why_it_matters": "Si un atacante coloca una wow64log.dll maliciosa en System32, logra ejecutar código dentro de procesos de 32 bits, incluso los que se autoelevan. Así evade el Control de cuentas de usuario y obtiene integridad alta sin que aparezca ningún aviso (ATT&CK T1548.002, Bypass UAC).",
+      "triage_steps": [
+        "Revise SourceImage, TargetImage, SourceProcessId, TargetProcessId y SourceUser. Verifique si el origen es un binario que se autoeleva y si el destino corre con integridad alta.",
+        "Compruebe si existe C:\\Windows\\System32\\wow64log.dll, que no viene en las instalaciones estándar de Windows. Obtenga su hash, el firmante y la fecha de creación.",
+        "Busque eventos de Sysmon de creación de archivos (Event ID 11) y de carga de imágenes (Event ID 7) de wow64log.dll en el mismo host, +/- 15 minutos.",
+        "Reconstruya el árbol de procesos: el padre del origen, el proceso que inició la elevación y los hijos con integridad alta, como cmd.exe o powershell.exe.",
+        "Pivotee por SourceUser: confirme si la cuenta es administradora local, desde dónde inició sesión y qué ejecutó justo antes de la alerta.",
+        "Busque alertas previas de bypass de UAC, de UACMe o de DLL sospechosas para el mismo host y el mismo usuario."
+      ],
+      "false_positives": [
+        "El autor de la regla no documenta ninguno. Descarte shims de compatibilidad o herramientas de seguridad que inyectan código en procesos de 32 bits y generan pilas de llamadas sin módulo.",
+        "Pruebas autorizadas de red team o de UAC con UACMe en equipos de laboratorio o de producción."
+      ],
+      "response_steps": [
+        "Confirme el hallazgo: una wow64log.dll no estándar o procesos hijos con integridad alta que no tengan una justificación legítima.",
+        "Si se confirma, aísle el endpoint y conserve la memoria, la DLL y los registros relevantes antes de modificar algo.",
+        "Con la evidencia ya preservada, elimine la wow64log.dll maliciosa y cualquier persistencia asociada. Después termine los procesos elevados que haya creado.",
+        "Restablezca las credenciales del usuario afectado. Configure UAC en Notificar siempre y retire los privilegios de administrador local que no hagan falta.",
+        "Revise el resto de los endpoints en busca de wow64log.dll en System32 y del mismo hash."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque este patrón concreto apunta a una escalada de privilegios mediante bypass de UAC y casi nunca aparece en actividad legítima."
+    },
+    "en": {
+      "summary": "A 32-bit process from C:\\Windows\\SysWOW64 opened another process with full access (0x1fffff) from code with no backing module. This matches the WoW64 logger DLL hijack UAC bypass (UACMe method 30).",
+      "what_it_detects": "Sysmon process access events (Event ID 10) where SourceImage is under \\Windows\\SysWOW64\\, GrantedAccess is 0x1fffff (PROCESS_ALL_ACCESS) and CallTrace starts with two UNKNOWN(0000000000000000) frames, meaning the call came from memory not mapped to any loaded module.",
+      "why_it_matters": "Attackers who plant a malicious wow64log.dll in System32 get code execution inside 32-bit processes, including auto-elevated ones. That lets them bypass User Account Control and run with high integrity without a prompt (ATT&CK T1548.002, Bypass UAC).",
+      "triage_steps": [
+        "Review SourceImage, TargetImage, SourceProcessId, TargetProcessId and SourceUser. Note whether the source is an auto-elevating binary and whether the target runs at high integrity.",
+        "Check whether C:\\Windows\\System32\\wow64log.dll exists. Standard Windows installs do not ship it. Get its hash, signer and creation time.",
+        "Look for Sysmon file creation (Event ID 11) and image load (Event ID 7) events for wow64log.dll on the same host within +/- 15 minutes.",
+        "Build the process tree: the source's parent, the process that started the elevation, and any high-integrity children such as cmd.exe or powershell.exe.",
+        "Pivot on SourceUser: is the account a local administrator, and what did it log on from and run just before the alert?",
+        "Search for earlier UAC bypass, UACMe or suspicious DLL drop alerts for this host and user."
+      ],
+      "false_positives": [
+        "None documented by the rule author. Rule out compatibility shims or security tools that inject into 32-bit processes and produce unbacked call stacks.",
+        "Sanctioned red team or UAC testing with UACMe on lab or production hosts."
+      ],
+      "response_steps": [
+        "Confirm the finding: a non-standard wow64log.dll, or high-integrity children with no legitimate explanation.",
+        "If confirmed, isolate the endpoint and preserve memory, the DLL and the relevant event logs before changing anything.",
+        "Once evidence is collected, remove the malicious wow64log.dll and any persistence it created. Then kill the elevated processes it spawned.",
+        "Reset credentials for the affected user. Set UAC to Always Notify and remove unneeded local admin rights.",
+        "Sweep other endpoints for wow64log.dll in System32 and for the same hash."
+      ],
+      "severity_rationale": "High fits because this exact pattern points to privilege escalation through a UAC bypass, and benign matches are rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An auto-elevated 32-bit binary from SysWOW64 opens a process with PROCESS_ALL_ACCESS from an unbacked call stack after loading a planted wow64log.dll.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\SysWOW64\\wusa.exe",
+          "SourceProcessId": 6120,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\SysWOW64\\cmd.exe",
+          "TargetProcessId": 6344,
+          "TargetUser": "ANDES\\jperez",
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "UNKNOWN(0000000000000000)|UNKNOWN(0000000000000000)|C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\wow64log.dll+1a2f"
+        }
+      },
+      {
+        "description": "A different SysWOW64 binary on drive D: with full access and the same unbacked call trace prefix.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "D:\\Windows\\SysWOW64\\dccw.exe",
+          "SourceProcessId": 4410,
+          "SourceUser": "ANDES\\mrojas",
+          "TargetImage": "D:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetProcessId": 4528,
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "UNKNOWN(0000000000000000)|UNKNOWN(0000000000000000)|UNKNOWN(00000000772A1C3B)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A legitimate 32-bit SysWOW64 process opens a child with full access, but the call trace is backed by ntdll and kernelbase.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\SysWOW64\\msiexec.exe",
+          "SourceProcessId": 3012,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\SysWOW64\\msiexec.exe",
+          "TargetProcessId": 3188,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\SysWOW64\\msiexec.exe+1a2b"
+        }
+      },
+      {
+        "description": "A 64-bit System32 process with an unbacked call trace and limited access rights, so both SourceImage and GrantedAccess fail.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\svchost.exe",
+          "SourceProcessId": 1288,
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "TargetProcessId": 712,
+          "GrantedAccess": "0x1000",
+          "CallTrace": "UNKNOWN(0000000000000000)|UNKNOWN(0000000000000000)|C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

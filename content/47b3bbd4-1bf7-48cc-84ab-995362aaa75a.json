@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "47b3bbd4-1bf7-48cc-84ab-995362aaa75a",
+    "title": "Shell Execution via Git - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_git_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_git_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El binario git, ejecutado con paginador forzado (-p) y el subcomando help, inició un shell interactivo (bash, dash o sh con 0<&1). Es la técnica de escape de GTFOBins para obtener un shell desde git.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde ParentImage termina en /git, ParentCommandLine contiene ' -p ' y 'help', y CommandLine contiene 'bash 0<&1', 'dash 0<&1' o 'sh 0<&1'. El paginador de la ayuda de git permite lanzar un shell con '!'.",
+      "why_it_matters": "Corresponde a ATT&CK T1059 (Command and Scripting Interpreter). Si git se ejecuta vía sudo o en un entorno restringido, el shell resultante hereda esos privilegios y permite escalar privilegios o salir de la restricción.",
+      "triage_steps": [
+        "Revisar CommandLine, ParentCommandLine y el usuario efectivo: confirmar si el shell corre como root o como otra cuenta distinta del usuario que inició sesión.",
+        "Buscar en los logs de sudo (auth.log o secure) del mismo host, +/- 15 minutos, una línea COMMAND= con git para ese usuario.",
+        "Revisar /etc/sudoers y /etc/sudoers.d para ver si el usuario tiene git permitido con NOPASSWD o en una shell restringida (rbash).",
+        "Reconstruir el árbol de procesos: el proceso padre de git (sesión SSH, servicio web, cron) y todos los procesos hijos del shell.",
+        "Listar los comandos ejecutados desde el shell: lectura de /etc/shadow, creación de usuarios, cambios en sudoers, conexiones de red o descargas.",
+        "Buscar alertas previas del mismo usuario, host o IP de origen de la sesión SSH, sobre todo otros abusos de GTFOBins."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Un administrador podría abrir un shell desde el paginador de git help por comodidad, aunque es poco común.",
+        "Ejercicios de pentesting, red team o laboratorios de capacitación autorizados que prueban técnicas de GTFOBins."
+      ],
+      "response_steps": [
+        "Confirmar con el usuario y su responsable si la actividad fue legítima; si no hay justificación, tratarla como incidente.",
+        "Contener: terminar la sesión y el shell, bloquear temporalmente la cuenta y aislar el host si hubo acciones como root.",
+        "Erradicar: quitar git de las reglas de sudo o de los entornos restringidos y revertir cambios hechos desde el shell (usuarios, claves SSH, cron).",
+        "Recuperar: rotar las credenciales expuestas, verificar la integridad del sistema y vigilar la reincidencia en la cuenta y el host."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque casi no existe uso legítimo de esta combinación y suele indicar escalamiento de privilegios o escape de un entorno restringido."
+    },
+    "en": {
+      "summary": "The git binary, run with a forced pager (-p) and the help subcommand, spawned an interactive shell (bash, dash or sh with 0<&1). This is the GTFOBins escape technique for getting a shell from git.",
+      "what_it_detects": "Linux process creation events where ParentImage ends with /git, ParentCommandLine contains ' -p ' and 'help', and CommandLine contains 'bash 0<&1', 'dash 0<&1' or 'sh 0<&1'. The pager used by git help lets the user launch a shell with '!'.",
+      "why_it_matters": "Maps to ATT&CK T1059 (Command and Scripting Interpreter). If git runs through sudo or inside a restricted environment, the shell inherits that context, which allows privilege escalation or escaping the restriction.",
+      "triage_steps": [
+        "Review CommandLine, ParentCommandLine and the effective user. Check whether the shell runs as root or under a different account than the logged-in user.",
+        "Search sudo logs (auth.log or secure) on the same host within +/- 15 minutes for a COMMAND= line running git by that user.",
+        "Check /etc/sudoers and /etc/sudoers.d for a git entry for this user, especially NOPASSWD, and check whether the user is in a restricted shell (rbash).",
+        "Rebuild the process tree: git's parent (SSH session, web service, cron) and every child of the spawned shell.",
+        "List the commands run from the shell, such as reading /etc/shadow, adding users, editing sudoers, opening network connections or downloading files.",
+        "Look for earlier alerts for the same user, host or SSH source IP, especially other GTFOBins abuse."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. An administrator might open a shell from the git help pager for convenience, but this is rare.",
+        "Authorized penetration tests, red team work or training labs that exercise GTFOBins techniques."
+      ],
+      "response_steps": [
+        "Ask the user and their manager whether the activity was legitimate. If nobody can justify it, treat it as an incident.",
+        "Contain: end the session and the shell, temporarily lock the account, and isolate the host if anything ran as root.",
+        "Eradicate: remove git from sudo rules and restricted environments, and revert changes made from the shell (users, SSH keys, cron jobs).",
+        "Recover: rotate any exposed credentials, check system integrity, and watch the account and host for a repeat."
+      ],
+      "severity_rationale": "High fits because this combination has almost no legitimate use and usually means privilege escalation or an escape from a restricted environment."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "git -p help config run via sudo; the user escapes the pager and spawns bash attached to the terminal.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "/bin/sh -c bash 0<&1",
+          "ParentImage": "/usr/bin/git",
+          "ParentCommandLine": "git -p help config",
+          "User": "root",
+          "LogonId": "0",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Same technique using dash from a restricted user's session.",
+        "event": {
+          "Image": "/usr/bin/dash",
+          "CommandLine": "sh -c dash 0<&1 2>&1",
+          "ParentImage": "/usr/local/bin/git",
+          "ParentCommandLine": "/usr/local/bin/git -p help status",
+          "User": "mrodriguez",
+          "ProcessId": 5121,
+          "ParentProcessId": 5098,
+          "CurrentDirectory": "/srv/repos",
+          "Computer": "build-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "git -p help config starting its normal pager (less). No shell redirection, so CommandLine does not match.",
+        "event": {
+          "Image": "/usr/bin/less",
+          "CommandLine": "/bin/sh -c less",
+          "ParentImage": "/usr/bin/git",
+          "ParentCommandLine": "git -p help config",
+          "User": "jperez",
+          "ProcessId": 48300,
+          "ParentProcessId": 48290,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "A git hook runs a shell script during a normal commit. ParentCommandLine has no -p or help.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash 0<&1 .git/hooks/pre-commit",
+          "ParentImage": "/usr/bin/git",
+          "ParentCommandLine": "git commit -m update",
+          "User": "jperez",
+          "ProcessId": 49001,
+          "ParentProcessId": 48995,
+          "CurrentDirectory": "/home/jperez/project",
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "rule": {
+    "id": "fe5ce7eb-dad8-467c-84a9-31ec23bd644a",
+    "title": "SyncAppvPublishingServer Bypass Powershell Restriction - PS Module",
+    "level": "medium",
+    "status": "test",
+    "author": "Ensar Şamil, @sblmsrsn, OSCD Community",
+    "path": "windows/powershell/powershell_module/posh_pm_syncappvpublishingserver_exe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_syncappvpublishingserver_exe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El registro de módulos de PowerShell (evento 4103) muestra que SyncAppvPublishingServer.exe hospedó la ejecución de PowerShell. Puede indicar que se usó este binario firmado de App-V para ejecutar comandos sin pasar por powershell.exe.",
+      "what_it_detects": "Eventos de PowerShell Module Logging cuyo campo ContextInfo contiene 'SyncAppvPublishingServer.exe', normalmente en la línea 'Host Application', lo que indica que ese binario hospedó el runspace de PowerShell que ejecutó el comando registrado.",
+      "why_it_matters": "SyncAppvPublishingServer.exe es un binario de Microsoft documentado en LOLBAS. Si se le pasa un argumento como '\"n; <comando>\"', ejecuta PowerShell arbitrario. Esto permite evadir bloqueos aplicados a powershell.exe y ocultar la actividad (ATT&CK T1218, ejecución mediante binario de sistema firmado).",
+      "triage_steps": [
+        "Lea la línea 'Host Application' del ContextInfo y extraiga el argumento que sigue a SyncAppvPublishingServer.exe. Si contiene '\"n;' seguido de comandos, es casi seguro que se trata de abuso.",
+        "Revise el campo Payload y los eventos 4103/4104 del mismo host en un rango de +/- 15 minutos para reconstruir el script completo ejecutado.",
+        "Identifique al usuario del ContextInfo ('User') y valide si su puesto usa App-V o si es administrador de paquetes App-V.",
+        "Busque en Sysmon o en el evento 4688 el proceso SyncAppvPublishingServer.exe y su ParentImage. Si el proceso padre es Office, wscript, mshta o un navegador, el caso es sospechoso.",
+        "Busque procesos hijos, conexiones de red, descargas o archivos creados por ese proceso dentro de la misma ventana de tiempo.",
+        "Revise alertas previas del mismo host y del mismo usuario, y si se usó el mismo argumento en otros endpoints."
+      ],
+      "false_positives": [
+        "Clientes App-V legítimos que sincronizan con un servidor de publicación, normalmente con argumentos de URL del servidor y sin comandos encadenados.",
+        "Scripts de administración o despliegue de App-V (SCCM/Intune) que invocan la sincronización de paquetes."
+      ],
+      "response_steps": [
+        "Verifique si se trata de abuso: compare el argumento con una sincronización App-V normal y confirme con el dueño del equipo o el equipo de escritorio.",
+        "Si se confirma el abuso, aísle el endpoint y preserve los registros de PowerShell, Sysmon y la memoria del proceso.",
+        "Bloquee indicadores derivados del Payload (dominios, hashes, archivos) y busque los mismos en toda la flota.",
+        "Restablezca las credenciales del usuario afectado si hubo ejecución de comandos de robo de credenciales o persistencia.",
+        "Considere restringir SyncAppvPublishingServer.exe con WDAC/AppLocker en equipos que no usan App-V."
+      ],
+      "severity_rationale": "Es de nivel medio porque el binario tiene usos legítimos en entornos App-V, pero si aparece hospedando PowerShell fuera de ese contexto es un indicador fuerte de evasión."
+    },
+    "en": {
+      "summary": "PowerShell module logging (event 4103) shows that SyncAppvPublishingServer.exe hosted PowerShell execution. This may mean the signed App-V binary was used to run commands without going through powershell.exe.",
+      "what_it_detects": "PowerShell Module Logging events whose ContextInfo field contains 'SyncAppvPublishingServer.exe', usually in the 'Host Application' line. This means that binary hosted the PowerShell runspace that ran the logged command.",
+      "why_it_matters": "SyncAppvPublishingServer.exe is a Microsoft binary listed in LOLBAS. An argument like '\"n; <command>\"' makes it run arbitrary PowerShell, which evades powershell.exe blocking and hides the activity (ATT&CK T1218, signed binary proxy execution).",
+      "triage_steps": [
+        "Read the ContextInfo 'Host Application' line and extract the argument after SyncAppvPublishingServer.exe. A '\"n;' followed by commands is a strong sign of abuse.",
+        "Review the Payload field plus 4103/4104 events on the same host within +/- 15 minutes to rebuild the full script.",
+        "Identify the ContextInfo 'User' and confirm whether this host or user legitimately uses or manages App-V.",
+        "Find the SyncAppvPublishingServer.exe process in Sysmon or 4688 events and check ParentImage. Office, wscript, mshta or browser parents are suspicious.",
+        "Look for child processes, network connections, downloads or files created by that process in the same window.",
+        "Check earlier alerts for the same host and user, and whether the same argument appears on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate App-V clients syncing with a publishing server, usually with a server URL argument and no chained commands.",
+        "App-V administration or deployment scripts (SCCM/Intune) that trigger package sync."
+      ],
+      "response_steps": [
+        "Verify: compare the argument with normal App-V sync and confirm with the host owner or desktop team.",
+        "If abuse is confirmed, isolate the endpoint and preserve PowerShell and Sysmon logs and process memory.",
+        "Block indicators found in the Payload (domains, hashes, files) and hunt for them across the fleet.",
+        "Reset the user's credentials if credential theft or persistence commands ran.",
+        "Consider restricting SyncAppvPublishingServer.exe with WDAC/AppLocker on hosts that do not use App-V."
+      ],
+      "severity_rationale": "Medium fits because the binary has legitimate App-V uses, but it is a strong evasion indicator when it hosts PowerShell outside that context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SyncAppvPublishingServer.exe hosting PowerShell with a chained command after \"n;\"",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational\n Host Name = Default Host\n Host Version = 5.1.19041.1\n Host ID = 3f2a9c1e-7b4d-4e2a-9a61-0c5d8e7f1b22\n Host Application = C:\\Windows\\System32\\SyncAppvPublishingServer.exe \"n; Write-Output test\"\n Engine Version = 5.1.19041.1\n Runspace ID = 8d1e4b7a-2c3f-4a5b-9e6d-1f2a3b4c5d6e\n Pipeline ID = 1\n Command Name = Write-Output\n Command Type = Cmdlet\n User = ANDES\\jperez\n Connected User = \n Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Write-Output): \"Write-Output\"\nParameterBinding(Write-Output): name=\"InputObject\"; value=\"test\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal PowerShell session querying App-V packages, hosted by powershell.exe",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational\n Host Name = ConsoleHost\n Host Version = 5.1.19041.1\n Host Application = C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command Get-AppvClientPackage\n Engine Version = 5.1.19041.1\n Command Name = Get-AppvClientPackage\n Command Type = Cmdlet\n User = ANDES\\jperez\n Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Get-AppvClientPackage): \"Get-AppvClientPackage\""
+        }
+      },
+      {
+        "description": "Host application is the VBS variant SyncAppvPublishingServer.vbs, which does not contain the .exe string",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0187.andes.example.com",
+          "ContextInfo": "Severity = Informational\n Host Name = ConsoleHost\n Host Application = powershell.exe -NonInteractive -Command C:\\Windows\\System32\\SyncAppvPublishingServer.vbs\n Command Name = Write-Output\n Command Type = Cmdlet\n User = ANDES\\mrojas\n Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Write-Output): \"Write-Output\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "e2072cab-8c9a-459b-b63c-40ae79e27031",
+    "title": "Decode Base64 Encoded Text",
+    "level": "low",
+    "status": "test",
+    "author": "Daniil Yugoslavskiy, oscd.community",
+    "path": "linux/process_creation/proc_creation_lnx_base64_decode.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_base64_decode.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó la utilidad base64 de Linux con una opción de decodificación (-d o --decode). Puede ser administración rutinaria, pero también se usa para revelar payloads o comandos ofuscados.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en '/base64' y CommandLine contiene '-d'. Esto cubre '-d', '--decode' y cualquier otro argumento que incluya '-d', como un nombre de archivo con '-d'.",
+      "why_it_matters": "Los atacantes codifican scripts, binarios o comandos en base64 para evadir controles y revisiones (MITRE ATT&CK T1027, archivos o información ofuscados). Decodificarlos suele ser el paso previo a ejecutar el contenido, por ejemplo con '| sh' o escribiéndolo a disco.",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique si decodifica un archivo, una cadena en línea o stdin, y si la salida se redirige a un archivo o a un intérprete.",
+        "Examine ParentImage y ParentCommandLine para ver la tubería completa; busque curl, wget, echo, bash -c, python o una conexión remota como origen del dato.",
+        "Si la cadena codificada es visible, decodifíquela en un entorno aislado y evalúe el contenido sin ejecutarlo.",
+        "Identifique al usuario y la sesión: ¿es una cuenta de servicio, un administrador conocido o un usuario web como www-data?",
+        "Revise procesos hijos y hermanos en el mismo host dentro de +/- 15 minutos: shells, chmod +x, ejecución desde /tmp o /dev/shm, conexiones de red salientes.",
+        "Busque archivos creados en ese intervalo y calcule su hash; verifique persistencia nueva en cron, systemd o authorized_keys.",
+        "Consulte alertas previas del mismo host y usuario, y si el mismo comando aparece en otros equipos."
+      ],
+      "false_positives": [
+        "Actividad legítima: administradores decodificando certificados, claves, tokens o secretos de Kubernetes con base64 -d.",
+        "Scripts de despliegue, cloud-init, Ansible o pipelines de CI/CD que decodifican configuraciones o variables de entorno.",
+        "Coincidencias accidentales porque un nombre de archivo o argumento contiene '-d'."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o del script si la ejecución era esperada antes de actuar.",
+        "Si el contenido decodificado es malicioso, aísle el host y preserve los artefactos: archivos decodificados, historial de shell y memoria si es posible.",
+        "Termine los procesos maliciosos relacionados y elimine persistencia o archivos descargados solo tras documentarlos.",
+        "Rote credenciales de la cuenta implicada y busque el mismo indicador en el resto de la flota.",
+        "Si es legítimo y recurrente, documente la excepción por host, usuario y ParentImage específicos."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque decodificar base64 es muy común en administración legítima; solo gana relevancia combinado con ejecución, descargas o un contexto de usuario inusual."
+    },
+    "en": {
+      "summary": "The Linux base64 utility ran with a decode option (-d or --decode). This is often routine, but it is also used to reveal obfuscated payloads or commands.",
+      "what_it_detects": "Linux process creation events where Image ends with '/base64' and CommandLine contains '-d'. This covers '-d', '--decode' and any argument containing '-d', such as a filename.",
+      "why_it_matters": "Attackers encode scripts, binaries or commands in base64 to evade controls and review (MITRE ATT&CK T1027, Obfuscated Files or Information). Decoding usually precedes execution, such as piping to sh or writing to disk.",
+      "triage_steps": [
+        "Read the full CommandLine: is it decoding a file, an inline string or stdin, and is output redirected to a file or interpreter?",
+        "Check ParentImage and ParentCommandLine for the full pipeline; look for curl, wget, echo, bash -c, python or a remote session feeding data.",
+        "If the encoded string is visible, decode it in an isolated environment and assess the content without executing it.",
+        "Identify the user and session: service account, known administrator, or a web user such as www-data?",
+        "Review child and sibling processes on the same host within +/- 15 minutes: shells, chmod +x, execution from /tmp or /dev/shm, outbound connections.",
+        "Look for files created in that window and hash them; check for new persistence in cron, systemd or authorized_keys.",
+        "Check earlier alerts for the same host and user, and whether the same command appears on other hosts."
+      ],
+      "false_positives": [
+        "Legitimate activity: administrators decoding certificates, keys, tokens or Kubernetes secrets with base64 -d.",
+        "Deployment scripts, cloud-init, Ansible or CI/CD pipelines decoding configuration or environment variables.",
+        "Accidental matches because a filename or argument contains '-d'."
+      ],
+      "response_steps": [
+        "Confirm with the system or script owner whether the execution was expected before acting.",
+        "If the decoded content is malicious, isolate the host and preserve artifacts: decoded files, shell history and memory where possible.",
+        "Kill related malicious processes and remove persistence or downloaded files only after documenting them.",
+        "Rotate credentials for the involved account and hunt for the same indicator across the fleet.",
+        "If legitimate and recurring, document a tuned exception scoped to the specific host, user and ParentImage."
+      ],
+      "severity_rationale": "Low fits because base64 decoding is very common in legitimate administration; it only becomes significant alongside execution, downloads or unusual user context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "base64 -d decoding a hidden file in /tmp, launched from an interactive bash shell by www-data.",
+        "event": {
+          "Image": "/usr/bin/base64",
+          "CommandLine": "base64 -d /tmp/.cache/update.b64",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash -i",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/tmp",
+          "Computer": "web-02.example.com"
+        }
+      },
+      {
+        "description": "Inline string decoded with --decode inside a pipeline that feeds a shell.",
+        "event": {
+          "Image": "/usr/bin/base64",
+          "CommandLine": "base64 --decode",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash -c echo ZWNobyBoZWxsbw== | base64 --decode | sh",
+          "User": "jperez",
+          "ProcessId": 51077,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "base64 used to encode a file (no decode option), so CommandLine does not contain '-d'.",
+        "event": {
+          "Image": "/usr/bin/base64",
+          "CommandLine": "base64 -w 0 /etc/hostname",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash",
+          "User": "jperez",
+          "ProcessId": 50110,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Decoding with openssl instead of the base64 binary; Image does not end with '/base64'.",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl base64 -d -in /home/jperez/cert.b64 -out /home/jperez/cert.der",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash",
+          "User": "jperez",
+          "ProcessId": 50342,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

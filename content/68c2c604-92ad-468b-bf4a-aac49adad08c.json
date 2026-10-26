@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "68c2c604-92ad-468b-bf4a-aac49adad08c",
+    "title": "HTTP Request to Low Reputation TLD or Suspicious File Extension",
+    "level": "medium",
+    "status": "experimental",
+    "author": "@signalblur, Corelight",
+    "path": "network/zeek/zeek_http_susp_file_ext_from_susp_tld.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_http_susp_file_ext_from_susp_tld.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un host interno hizo una petición HTTP a un dominio con TLD de baja reputación (.xyz, .top, .ru, etc.) y descargó lo que parece un ejecutable o script, según la extensión del URI o el MIME de la respuesta.",
+      "what_it_detects": "Registros Zeek http.log donde host termina en un TLD de baja reputación Y además el uri termina en una extensión riesgosa (.exe, .dll, .hta, .ps1, .iso, etc.) o resp_mime_types contiene un tipo ejecutable (application/x-dosexec, x-sh, x-elf, etc.). Deben cumplirse las dos condiciones.",
+      "why_it_matters": "Suele indicar acceso inicial por descarga de malware o la entrega de un payload de segunda etapa desde infraestructura de comando y control. Los dominios en TLD baratos o poco controlados se usan con frecuencia para alojar este tipo de archivos.",
+      "triage_steps": [
+        "Revise host, uri, method, status_code y resp_mime_types. Un status 200 con un MIME ejecutable indica que la descarga probablemente se completó.",
+        "Identifique el equipo origen (id.orig_h) y su usuario asignado mediante DHCP, inventario o logs de autenticación.",
+        "Revise user_agent: PowerShell, curl, certutil, bitsadmin o Python apuntan a ejecución por script y no a navegación manual.",
+        "Busque el uid de Zeek en files.log para obtener el hash (MD5/SHA1/SHA256) y consúltelo en su plataforma de threat intelligence.",
+        "Revise dns.log y conn.log del mismo origen durante +/- 15 minutos para ver el referrer, redirecciones y conexiones nuevas al mismo id.resp_h.",
+        "Busque otros hosts internos que hayan contactado el mismo dominio o la misma IP de destino.",
+        "En el EDR del endpoint, verifique si el archivo se escribió en disco o se ejecutó, y qué proceso padre lo descargó."
+      ],
+      "false_positives": [
+        "Descargas legítimas poco frecuentes de software alojado en TLD de baja calidad, como herramientas de proveedores regionales o proyectos open source.",
+        "Servicios legítimos en .tv o .ru (streaming, actualizaciones de software) que entregan instaladores o scripts.",
+        "Analistas de seguridad o sandboxes que descargan muestras a propósito."
+      ],
+      "response_steps": [
+        "Verifique con el usuario y la telemetría del EDR si la descarga fue intencional y si el archivo se ejecutó.",
+        "Si el hash es malicioso o desconocido y se ejecutó, aísle el endpoint y capture la evidencia volátil.",
+        "Bloquee el dominio y la IP de destino en el proxy, el DNS y el firewall tras confirmar que no son legítimos.",
+        "Elimine el archivo y los mecanismos de persistencia relacionados; restablezca las credenciales del usuario si hubo ejecución.",
+        "Documente los IOC y busque el mismo hash o dominio en toda la flota."
+      ],
+      "severity_rationale": "Nivel medio: combinar un TLD de baja reputación con un tipo de archivo ejecutable es sospechoso, pero también hay descargas legítimas que lo cumplen."
+    },
+    "en": {
+      "summary": "An internal host made an HTTP request to a domain on a low-reputation TLD (.xyz, .top, .ru, etc.) and fetched what looks like an executable or script, based on the URI extension or response MIME type.",
+      "what_it_detects": "Zeek http.log records where host ends in a low-reputation TLD AND either uri ends in a risky extension (.exe, .dll, .hta, .ps1, .iso, etc.) or resp_mime_types is an executable type (application/x-dosexec, x-sh, x-elf, etc.). Both conditions must be true.",
+      "why_it_matters": "This often points to initial access through a malware download, or to a second-stage payload delivered from command-and-control infrastructure. Cheap or loosely managed TLDs are often used to host these files.",
+      "triage_steps": [
+        "Review host, uri, method, status_code and resp_mime_types. A 200 status with an executable MIME type suggests the download probably finished.",
+        "Identify the source machine (id.orig_h) and its user from DHCP, asset inventory or authentication logs.",
+        "Check user_agent: PowerShell, curl, certutil, bitsadmin or Python suggest a script did the download, not a person browsing.",
+        "Look up the Zeek uid in files.log to get the file hash (MD5/SHA1/SHA256) and check it against threat intelligence.",
+        "Review dns.log and conn.log for the same source within +/- 15 minutes for the referrer, redirects and new connections to the same id.resp_h.",
+        "Look for other internal hosts that contacted the same domain or destination IP.",
+        "In EDR, check whether the file was written to disk or run, and which parent process downloaded it."
+      ],
+      "false_positives": [
+        "Rare legitimate software downloads from low-quality TLDs, such as regional vendor tools or open-source projects.",
+        "Legitimate .tv or .ru services (streaming, software updates) that serve installers or scripts.",
+        "Security analysts or sandboxes downloading samples on purpose."
+      ],
+      "response_steps": [
+        "Check with the user and EDR telemetry whether the download was intended and whether the file ran.",
+        "If the hash is malicious or unknown and the file ran, isolate the endpoint and capture volatile evidence.",
+        "Once you confirm the domain and destination IP are not legitimate, block them at the proxy, DNS and firewall.",
+        "Remove the file and any related persistence. Reset the user's credentials if the file ran.",
+        "Record the IOCs and search the whole fleet for the same hash or domain."
+      ],
+      "severity_rationale": "Medium: a low-reputation TLD combined with an executable file type is suspicious, but some legitimate downloads also match."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An .exe downloaded by PowerShell from a .xyz domain (TLD and URI extension both match)",
+        "event": {
+          "ts": "2025-03-10T14:03:12.441Z",
+          "uid": "CHhAvVGS1DHFjwGM9",
+          "id.orig_h": "10.20.30.41",
+          "id.orig_p": 51544,
+          "id.resp_h": "203.0.113.50",
+          "id.resp_p": 80,
+          "method": "GET",
+          "host": "update-cdn.example.xyz",
+          "uri": "/files/invoice_0310.exe",
+          "user_agent": "Mozilla/5.0 (Windows NT; Windows NT 10.0; en-US) WindowsPowerShell/5.1.19041.1",
+          "status_code": 200,
+          "resp_mime_types": "application/x-dosexec"
+        }
+      },
+      {
+        "description": "A request to a .top domain with no file extension in the URI that returns a Windows executable (TLD and MIME type both match)",
+        "event": {
+          "ts": "2025-03-10T09:47:55.102Z",
+          "uid": "C4J4Th3PJpwUYZZ6gc",
+          "id.orig_h": "10.20.30.77",
+          "id.orig_p": 49822,
+          "id.resp_h": "198.51.100.23",
+          "id.resp_p": 80,
+          "method": "GET",
+          "host": "files.example.top",
+          "uri": "/dl?id=4821",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+          "status_code": 200,
+          "resp_mime_types": "application/x-msdownload"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A legitimate installer from a .com domain: the extension and MIME type match, but the TLD is not on the list",
+        "event": {
+          "ts": "2025-03-10T11:15:02.330Z",
+          "uid": "CwFs1P2UcUdlSxD9Ka",
+          "id.orig_h": "10.20.30.41",
+          "id.orig_p": 51601,
+          "id.resp_h": "192.0.2.10",
+          "id.resp_p": 80,
+          "method": "GET",
+          "host": "downloads.example.com",
+          "uri": "/tools/setup.exe",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+          "status_code": 200,
+          "resp_mime_types": "application/x-dosexec"
+        }
+      },
+      {
+        "description": "Ordinary HTML page from a .ru domain: the TLD matches, but neither the URI nor the MIME type does",
+        "event": {
+          "ts": "2025-03-10T12:22:40.871Z",
+          "uid": "CmES5u32sYpV7JYN",
+          "id.orig_h": "10.20.30.88",
+          "id.orig_p": 50311,
+          "id.resp_h": "198.51.100.61",
+          "id.resp_p": 80,
+          "method": "GET",
+          "host": "news.example.ru",
+          "uri": "/index.html",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+          "status_code": 200,
+          "resp_mime_types": "text/html"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

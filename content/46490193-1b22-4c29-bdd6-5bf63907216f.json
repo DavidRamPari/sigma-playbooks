@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "46490193-1b22-4c29-bdd6-5bf63907216f",
+    "title": "VBScript Payload Stored in Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_vbs_payload_stored.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_vbs_payload_stored.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió en una clave bajo Software\\Microsoft\\Windows\\CurrentVersion un valor con contenido de script (vbscript:, jscript:, mshtml,RunHTMLApplication, Execute(, CreateObject o window.close). Es una técnica para guardar un payload sin archivo en el registro y ejecutarlo después.",
+      "what_it_detects": "Eventos registry_set (Sysmon 13) en los que TargetObject contiene Software\\Microsoft\\Windows\\CurrentVersion y Details contiene palabras clave de VBScript, JScript o HTA. Excluye las claves Run* y las escrituras de msiexec.exe en Installer\\UserData que referencian Microsoft.mshtml.dll.",
+      "why_it_matters": "Guardar script en el registro permite persistencia y ejecución sin archivos (T1547.001); la referencia de la regla describe este uso por UNC2452. Normalmente lo lanza un loader como mshta.exe, rundll32.exe o una tarea programada.",
+      "triage_steps": [
+        "Lea el valor completo de Details y decodifique cualquier contenido ofuscado o en base64 para identificar qué ejecuta o descarga el script.",
+        "Revise Image y User: ¿qué proceso escribió el valor? Un shell, wscript, mshta, powershell o un binario en carpetas de usuario es muy sospechoso.",
+        "Ubique la clave exacta en TargetObject y confirme si sigue existiendo en el endpoint con reg query, sin modificarla todavía.",
+        "Busque en el mismo host, +/- 15 minutos, ejecuciones de mshta.exe, rundll32.exe con mshtml,RunHTMLApplication, wscript o cscript que lean esa clave.",
+        "Revise tareas programadas, suscripciones WMI y servicios recientes que referencien la ruta de la clave o lancen mshta/rundll32.",
+        "Identifique el proceso padre de Image y la cadena de ejecución hasta el acceso inicial (correo, descarga, sesión remota).",
+        "Busque conexiones de red salientes del host y consulte alertas previas para el mismo host, usuario y hash del proceso escritor."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Instaladores o software heredado que guardan fragmentos de script o HTA en su configuración bajo CurrentVersion; valide proveedor, firma y ruta del binario.",
+        "Herramientas de administración o pruebas de red team autorizadas; confirme con el equipo responsable."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa revisando el script decodificado y el proceso escritor antes de actuar.",
+        "Aísle el endpoint de la red si el script es malicioso o hay un loader activo.",
+        "Exporte la clave como evidencia y luego elimínela junto con la tarea, suscripción WMI o servicio que la ejecuta.",
+        "Termine los procesos asociados, bloquee los hashes e indicadores de red, y busque la misma clave en otros hosts.",
+        "Restablezca las credenciales del usuario afectado y monitoree el host para detectar reincidencia."
+      ],
+      "severity_rationale": "Nivel alto porque guardar VBScript o JScript en CurrentVersion es raro en software legítimo y es una técnica conocida de persistencia sin archivos."
+    },
+    "en": {
+      "summary": "A process wrote a value under Software\\Microsoft\\Windows\\CurrentVersion containing script content (vbscript:, jscript:, mshtml,RunHTMLApplication, Execute(, CreateObject or window.close). This is a way to store a fileless payload in the registry for later execution.",
+      "what_it_detects": "registry_set events (Sysmon 13) where TargetObject contains Software\\Microsoft\\Windows\\CurrentVersion and Details contains VBScript, JScript or HTA keywords. Run* keys are excluded, as are msiexec.exe writes to Installer\\UserData that reference Microsoft.mshtml.dll.",
+      "why_it_matters": "Storing script in the registry enables fileless persistence and execution (T1547.001); the rule's reference describes UNC2452 doing this. A loader such as mshta.exe, rundll32.exe or a scheduled task usually runs it.",
+      "triage_steps": [
+        "Read the full Details value and decode any obfuscated or base64 content to see what the script runs or downloads.",
+        "Check Image and User: which process wrote the value? A shell, wscript, mshta, powershell or a binary in user folders is highly suspicious.",
+        "Note the exact key in TargetObject and confirm with reg query that it still exists on the endpoint, without changing it yet.",
+        "On the same host, +/- 15 minutes, look for mshta.exe, rundll32.exe with mshtml,RunHTMLApplication, wscript or cscript reading that key.",
+        "Review recent scheduled tasks, WMI subscriptions and services that reference the key path or launch mshta/rundll32.",
+        "Identify the parent of Image and trace the chain back to initial access (email, download, remote session).",
+        "Check outbound network connections from the host and earlier alerts for the same host, user and writer process hash."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Installers or legacy software storing script or HTA fragments in configuration under CurrentVersion; verify vendor, signature and binary path.",
+        "Authorized admin tooling or red team exercises; confirm with the owning team."
+      ],
+      "response_steps": [
+        "Confirm malicious activity by reviewing the decoded script and the writer process before acting.",
+        "Isolate the endpoint if the script is malicious or a loader is active.",
+        "Export the key as evidence, then delete it along with the task, WMI subscription or service that runs it.",
+        "Kill related processes, block hashes and network indicators, and hunt for the same key on other hosts.",
+        "Reset the affected user's credentials and monitor the host for recurrence."
+      ],
+      "severity_rationale": "High because VBScript or JScript stored under CurrentVersion is rare in legitimate software and is a known fileless persistence technique."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell stores a VBScript/HTA loader string in a custom value under CurrentVersion\\Explorer (not a Run key).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CacheData\\Config",
+          "Details": "vbscript:Execute(\"Set o=CreateObject(\"\"WScript.Shell\"\"):window.close\")"
+        }
+      },
+      {
+        "description": "Unknown binary in AppData writes a JScript string to an HKLM CurrentVersion subkey.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 3388,
+          "Image": "C:\\Users\\Public\\AppData\\updsvc.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\UpdateCache\\Settings",
+          "Details": "jscript:new ActiveXObject('WScript.Shell')"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same kind of script value written to a Run key, excluded by the Run filter (covered by other rules).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater",
+          "Details": "mshta.exe vbscript:Execute(\"window.close\")"
+        }
+      },
+      {
+        "description": "msiexec.exe registering the Microsoft.mshtml interop assembly under Installer\\UserData, excluded by filter_dotnet.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 4512,
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\S-1-5-18\\Components\\8A1B2C3D4E5F60718293A4B5C6D7E8F9\\0F1E2D3C4B5A69788796A5B4C3D2E1F0",
+          "Details": "<\\Microsoft.mshtml,fileVersion=\"7.0.3300.0\",version=\"7.0.3300.0\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

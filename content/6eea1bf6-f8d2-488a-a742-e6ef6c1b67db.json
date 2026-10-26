@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "6eea1bf6-f8d2-488a-a742-e6ef6c1b67db",
+    "title": "OMIGOD SCX RunAsProvider ExecuteScript",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research), MSTIC",
+    "path": "linux/process_creation/proc_creation_lnx_omigod_scx_runasprovider_executescript.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_omigod_scx_runasprovider_executescript.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068",
+      "T1190",
+      "T1203"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutado como root (LogonId 0) desde /var/opt/microsoft/scx/tmp invocó un script temporal scx* en /etc/opt/microsoft/scx/conf/tmpdir/, lo que es típico de SCX RunAsProvider ExecuteScript. Puede tratarse de una tarea de administración legítima o de una explotación de OMIGOD en el agente OMI.",
+      "what_it_detects": "Eventos de process_creation en Linux con User root, LogonId 0, CurrentDirectory /var/opt/microsoft/scx/tmp y un CommandLine que contiene /etc/opt/microsoft/scx/conf/tmpdir/scx. Estos valores corresponden a un script que el proveedor RunAsProvider de SCXcore ejecuta con /bin/sh.",
+      "why_it_matters": "OMI/SCX viene instalado en muchas VM Linux de Azure y en agentes de monitoreo. OMIGOD permite ejecutar comandos remotos como root a través de ExecuteScript. Corresponde a explotación de aplicaciones expuestas (T1190), escalamiento de privilegios (T1068) y ejecución mediante explotación (T1203).",
+      "triage_steps": [
+        "Revise el CommandLine completo y obtenga el contenido del script scx* en /etc/opt/microsoft/scx/conf/tmpdir/ o /tmp, si todavía existe. Calcule su hash.",
+        "Confirme el proceso padre. Lo esperado es omiagent/omiengine; cualquier otro padre es sospechoso.",
+        "Liste los procesos hijos del script y la actividad del mismo host en +/- 15 minutos: descargas (curl, wget), shells reversas, usuarios nuevos o cambios en cron o SSH.",
+        "Revise las conexiones entrantes a los puertos de OMI (5985, 5986, 1270) y verifique si provienen de IPs externas o no autorizadas.",
+        "Pregunte a los equipos de Azure, SCOM u OMS si hubo ejecuciones programadas de ExecuteScript en ese momento.",
+        "Verifique la versión instalada del paquete omi y si tiene los parches de OMIGOD.",
+        "Busque alertas anteriores de esta regla en el mismo host y en otros, con la misma IP de origen."
+      ],
+      "false_positives": [
+        "Uso legítimo de SCX RunAsProvider ExecuteScript desde SCOM, Azure Automation u OMS para tareas de administración.",
+        "Scripts de monitoreo o remediación que el equipo de operaciones ejecuta periódicamente a través del agente."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema si la ejecución estaba autorizada. Guarde el script, los logs de omiserver y la lista de procesos.",
+        "Si no estaba autorizada, aísle la VM o bloquee el acceso a los puertos de OMI desde redes no confiables.",
+        "Actualice el paquete omi a una versión corregida y deshabilite la escucha remota de OMI si no se necesita.",
+        "Elimine la persistencia que encuentre (cron, llaves SSH, usuarios, binarios) y rote las credenciales del host.",
+        "Restaure el host desde una imagen confiable si se confirma que fue comprometido como root."
+      ],
+      "severity_rationale": "Es high porque implica ejecución arbitraria como root a través de un agente que se explotó ampliamente, aunque los administradores también usan esta función de forma legítima."
+    },
+    "en": {
+      "summary": "A root process (LogonId 0) running from /var/opt/microsoft/scx/tmp executed a temporary scx* script in /etc/opt/microsoft/scx/conf/tmpdir/. This is the pattern SCX RunAsProvider ExecuteScript leaves, whether from legitimate administration or from OMIGOD exploitation of the OMI agent.",
+      "what_it_detects": "Linux process_creation events with User root, LogonId 0, CurrentDirectory /var/opt/microsoft/scx/tmp, and a CommandLine that contains /etc/opt/microsoft/scx/conf/tmpdir/scx. These values match a script that the SCXcore RunAsProvider runs through /bin/sh.",
+      "why_it_matters": "OMI/SCX is installed on many Azure Linux VMs and monitoring agents. OMIGOD lets attackers run remote commands as root through ExecuteScript. This maps to public-facing application exploitation (T1190), privilege escalation (T1068) and exploitation for execution (T1203).",
+      "triage_steps": [
+        "Read the full CommandLine. If the scx* script still exists in /etc/opt/microsoft/scx/conf/tmpdir/ or /tmp, collect it and hash it.",
+        "Confirm the parent process. It should be omiagent or omiengine; any other parent is suspicious.",
+        "List the script's child processes and the host's activity within +/- 15 minutes: downloads (curl, wget), reverse shells, new users, cron or SSH changes.",
+        "Check inbound connections to OMI ports (5985, 5986, 1270) for external or unapproved source IPs.",
+        "Ask the Azure, SCOM or OMS owners whether a scheduled ExecuteScript job ran at that time.",
+        "Check which omi package version is installed and whether it includes the OMIGOD fixes.",
+        "Search for earlier alerts from this rule on this host and on other hosts with the same source IP."
+      ],
+      "false_positives": [
+        "Legitimate use of SCX RunAsProvider ExecuteScript from SCOM, Azure Automation or OMS for administrative tasks.",
+        "Monitoring or remediation scripts that operations teams run through the agent on a schedule."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the run was authorized. Preserve the script, the omiserver logs and the process list.",
+        "If it was not authorized, isolate the VM or block OMI ports from untrusted networks.",
+        "Upgrade omi to a fixed version and turn off OMI remote listening if it is not needed.",
+        "Remove any persistence you find (cron jobs, SSH keys, users, binaries) and rotate the host's credentials.",
+        "Rebuild the host from a trusted image if a root compromise is confirmed."
+      ],
+      "severity_rationale": "High fits because this is arbitrary root execution through a widely exploited agent, though administrators also use the feature legitimately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "OMI agent runs a temporary scx script as root through /bin/sh from the SCX tmp directory",
+        "event": {
+          "User": "root",
+          "LogonId": 0,
+          "CurrentDirectory": "/var/opt/microsoft/scx/tmp",
+          "Image": "/bin/sh",
+          "CommandLine": "/bin/sh /etc/opt/microsoft/scx/conf/tmpdir/scxQ7a2Kd",
+          "ParentImage": "/opt/omi/bin/omiagent",
+          "ProcessId": 48213,
+          "Computer": "az-web-03"
+        }
+      },
+      {
+        "description": "ExecuteScript invocation with additional shell arguments",
+        "event": {
+          "User": "root",
+          "LogonId": 0,
+          "CurrentDirectory": "/var/opt/microsoft/scx/tmp",
+          "Image": "/usr/bin/sh",
+          "CommandLine": "sh -c /etc/opt/microsoft/scx/conf/tmpdir/scx9fLm01 arg1",
+          "ParentImage": "/opt/omi/bin/omiagent",
+          "ProcessId": 50112,
+          "Computer": "az-db-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate scxadmin status check run by root from a different working directory",
+        "event": {
+          "User": "root",
+          "LogonId": 0,
+          "CurrentDirectory": "/root",
+          "Image": "/opt/microsoft/scx/bin/tools/scxadmin",
+          "CommandLine": "/opt/microsoft/scx/bin/tools/scxadmin -status",
+          "ParentImage": "/bin/bash",
+          "ProcessId": 3321,
+          "Computer": "az-web-03"
+        }
+      },
+      {
+        "description": "Process in the SCX tmp directory that is not root and does not invoke a tmpdir scx script",
+        "event": {
+          "User": "omi",
+          "LogonId": 1001,
+          "CurrentDirectory": "/var/opt/microsoft/scx/tmp",
+          "Image": "/bin/cat",
+          "CommandLine": "cat /etc/opt/microsoft/scx/conf/scxlog.conf",
+          "ParentImage": "/opt/omi/bin/omiagent",
+          "ProcessId": 4410,
+          "Computer": "az-web-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "b7916c2a-fa2f-4795-9477-32b731f70f11",
+    "title": "Registry Persistence via Explorer Run Key",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), oscd.community",
+    "path": "windows/registry/registry_set/registry_set_susp_reg_persist_explorer_run.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_susp_reg_persist_explorer_run.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor en la clave de registro Policies\\Explorer\\Run que apunta a un archivo en una carpeta temporal o con permisos de escritura para usuarios. Es un probable intento de persistencia por autoarranque.",
+      "what_it_detects": "Eventos de modificación de registro donde TargetObject termina en \\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run y Details contiene una ruta en $Recycle.bin, ProgramData, Temp, Users\\Default, Users\\Public, Windows\\Temp o AppData\\Local\\Temp.",
+      "why_it_matters": "La clave Run de Explorer basada en políticas ejecuta programas al iniciar sesión el usuario (ATT&CK T1547.001, Registry Run Keys). Se vigila menos que las claves Run habituales, y los payloads en carpetas temporales o públicas son típicos de droppers.",
+      "triage_steps": [
+        "Revise Details para obtener la ruta completa y los argumentos, y TargetObject para saber si es HKLM (todos los usuarios, requiere privilegios de administrador) o HKU/HKCU (un solo usuario).",
+        "Identifique el proceso que escribió el valor con Image y ProcessGuid, y revise su proceso padre y su línea de comandos en los eventos de creación de procesos.",
+        "Obtenga el archivo referenciado: hash, firma, fecha de creación y reputación en threat intelligence o sandbox.",
+        "Busque en el mismo host, +/- 15 minutos, creación de archivos en esa carpeta, descargas, ejecución de scripts o conexiones de red desde Image.",
+        "Busque otra persistencia en el host, como otras claves Run, tareas programadas o servicios creados en el mismo periodo.",
+        "Pivotee por el usuario y el hash para encontrar alertas previas o el mismo valor de Details en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos; el software legítimo rara vez usa Policies\\Explorer\\Run.",
+        "Instaladores mal empaquetados o herramientas internas que registran binarios de autoarranque desde ProgramData o Temp, siempre que el responsable del software lo confirme.",
+        "Administradores o pruebas de GPO que configuran esta clave de política de forma intencional."
+      ],
+      "response_steps": [
+        "Confirme que es malicioso con el análisis del archivo y de la cadena de procesos antes de hacer cualquier cambio.",
+        "Aísle el endpoint mediante EDR si el binario es malicioso, o si es desconocido y no está firmado.",
+        "Exporte el valor de registro como evidencia; después elimínelo y ponga en cuarentena el archivo referenciado y los artefactos relacionados.",
+        "Restablezca las credenciales del usuario afectado si se confirma el compromiso, y busque el hash y la ruta en toda la flota.",
+        "Restaure el host a un estado confiable si la limpieza no es segura, y siga monitoreándolo por si hay reinfección."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque escribir una clave Run de políticas que apunta a una carpeta temporal o pública rara vez es legítimo y da al atacante persistencia en cada inicio de sesión."
+    },
+    "en": {
+      "summary": "A process wrote a value under the Policies\\Explorer\\Run registry key that points to a file in a user-writable or temporary folder. This is a likely autostart persistence attempt.",
+      "what_it_detects": "Registry set events where TargetObject ends with \\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run and Details contains a path under $Recycle.bin, ProgramData, Temp, Users\\Default, Users\\Public, Windows\\Temp or AppData\\Local\\Temp.",
+      "why_it_matters": "The policy-based Explorer Run key launches programs at user logon (ATT&CK T1547.001, Registry Run Keys). It is less monitored than the usual Run keys, and payloads staged in temp or public folders are typical of malware droppers.",
+      "triage_steps": [
+        "Read Details for the full path and arguments, and TargetObject to tell HKLM (all users, needs admin rights) apart from HKU/HKCU (one user).",
+        "Identify the writing process from Image and ProcessGuid, then review its parent process and command line in process creation events.",
+        "Get the referenced file: hash, signature, creation time, and reputation in threat intelligence or a sandbox.",
+        "Check the same host within +/- 15 minutes for file creation in the referenced folder, downloads, script execution or network connections from Image.",
+        "Look for other persistence on the host, such as other Run keys, scheduled tasks or services created around the same time.",
+        "Pivot on the user and the file hash for earlier alerts or the same Details value on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; legitimate software rarely uses Policies\\Explorer\\Run.",
+        "Poorly packaged installers or in-house tools that register autostart binaries from ProgramData or Temp, confirmed by the software owner.",
+        "Administrators or GPO testing that deliberately configure this policy key."
+      ],
+      "response_steps": [
+        "Confirm maliciousness from the file analysis and the process chain before you change anything.",
+        "Isolate the endpoint through EDR if the binary is malicious or unknown and unsigned.",
+        "Export the registry value as evidence, then delete it and quarantine the referenced file and related artifacts.",
+        "Reset credentials for the affected user if compromise is confirmed, and hunt for the hash and path across the fleet.",
+        "Restore the host from a known-good state if a full cleanup is uncertain, and keep monitoring it for reinfection."
+      ],
+      "severity_rationale": "High fits because writing a policy-based Run key that points to a temporary or public folder is rarely legitimate and gives the attacker persistence at every logon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unsigned binary in ProgramData writes the HKLM policy Explorer Run key so that a payload in ProgramData runs at logon.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessGuid": "{4f1c2a3b-1d2e-6563-a401-000000001200}",
+          "Image": "C:\\ProgramData\\svchelper\\setup.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run",
+          "Details": "C:\\ProgramData\\svchelper\\svchelper.exe -silent"
+        }
+      },
+      {
+        "description": "A PowerShell process sets the per-user policy Explorer Run key so that it points to a file in the user's AppData\\Local\\Temp folder.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0187.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run",
+          "Details": "C:\\Users\\mrodriguez\\AppData\\Local\\Temp\\upd4721.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The same policy Explorer Run key points to a signed agent under Program Files, which is not one of the suspicious folders.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run",
+          "Details": "C:\\Program Files\\Contoso\\Agent\\contosoagent.exe"
+        }
+      },
+      {
+        "description": "The standard CurrentVersion\\Run key, not the Policies\\Explorer\\Run key, points to a Temp file, so TargetObject does not match.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0155.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Users\\lgomez\\AppData\\Local\\Temp\\installer.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1210\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater",
+          "Details": "C:\\Users\\lgomez\\AppData\\Local\\Temp\\updater.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

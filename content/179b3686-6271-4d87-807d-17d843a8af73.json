@@ -1,0 +1,123 @@
+{
+  "rule": {
+    "id": "179b3686-6271-4d87-807d-17d843a8af73",
+    "title": "Suspicious Filename with Embedded Base64 Commands",
+    "level": "high",
+    "status": "experimental",
+    "author": "@kostastsale",
+    "path": "linux/file_event/file_event_lnx_susp_filename_with_embedded_base64_command.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/file_event/file_event_lnx_susp_filename_with_embedded_base64_command.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en un host Linux un archivo cuyo nombre contiene fragmentos de comandos de shell ('{echo' o '{base64,-d}'), típicos de un payload Base64 oculto en el nombre del archivo. Si un script procesa ese nombre de forma insegura, la shell puede decodificar y ejecutar el comando.",
+      "what_it_detects": "Eventos file_event en los que TargetFilename contiene '{echo' o '{base64,-d}'. Esta sintaxis de brace expansion permite armar comandos sin espacios, por ejemplo {echo,<base64>}|{base64,-d}|bash, dentro del propio nombre del archivo.",
+      "why_it_matters": "Es una técnica de ejecución (T1059.004, Unix Shell) combinada con ofuscación (T1027): el comando real va codificado en Base64 dentro del nombre. La referencia de la regla describe su uso en campañas de VShell para lograr ejecución sin archivos.",
+      "triage_steps": [
+        "Revise el TargetFilename completo, extraiga la cadena Base64 y decodifíquela en un entorno aislado, sin ejecutarla, para conocer el comando previsto.",
+        "Identifique el proceso que creó el archivo (Image, ProcessId) y su usuario: gestor de descargas, cliente de correo, unzip/unrar, navegador o shell.",
+        "Determine el origen del archivo: descarga, adjunto, archivo comprimido extraído o transferencia por SCP/SFTP. Revise los archivos hermanos en el mismo directorio.",
+        "Busque en el mismo host, en +/- 15 minutos, ejecuciones de bash, sh, base64, curl o wget cuyo CommandLine contenga partes del nombre o del contenido decodificado.",
+        "Revise conexiones salientes del host hacia IP o dominios que aparezcan en el comando decodificado y procesos nuevos con conexiones persistentes.",
+        "Busque el mismo nombre de archivo o la misma cadena Base64 en otros hosts y consulte alertas anteriores del mismo usuario y host."
+      ],
+      "false_positives": [
+        "Archivos legítimos con nombres que incluyen llaves y 'echo', como fixtures de pruebas de seguridad o de análisis de shell (muy poco probable).",
+        "Investigación interna o ejercicios de red team que reproducen la técnica de forma autorizada."
+      ],
+      "response_steps": [
+        "Confirme si el comando decodificado se ejecutó, revisando la telemetría de procesos y el historial de shell antes de actuar.",
+        "Si hubo ejecución o el payload es malicioso, aísle el host de la red y preserve el archivo, la memoria y los logs relevantes.",
+        "Bloquee los indicadores extraídos (dominios, IP, hash) y elimine el archivo y cualquier binario o mecanismo de persistencia descargado.",
+        "Restablezca las credenciales del usuario afectado si hubo ejecución, y corrija los scripts que procesan nombres de archivo sin comillas o con eval."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque estos nombres casi nunca son legítimos y apuntan a un intento deliberado de ejecución ofuscada, aunque la creación del archivo por sí sola no confirma que se haya ejecutado."
+    },
+    "en": {
+      "summary": "A file was created on a Linux host with a name containing shell command fragments ('{echo' or '{base64,-d}'), typical of a Base64 payload hidden in a filename. If a script handles that name unsafely, the shell may decode and run it.",
+      "what_it_detects": "file_event records where TargetFilename contains '{echo' or '{base64,-d}'. This brace-expansion syntax builds space-free commands, such as {echo,<base64>}|{base64,-d}|bash, inside the filename itself.",
+      "why_it_matters": "It combines execution through a Unix shell (T1059.004) with obfuscation (T1027): the real command is Base64-encoded inside the filename. The rule's reference describes its use in VShell campaigns for fileless execution.",
+      "triage_steps": [
+        "Review the full TargetFilename, extract the Base64 string and decode it in an isolated environment, without running it, to learn the intended command.",
+        "Identify the process that created the file (Image, ProcessId) and its user: downloader, mail client, unzip/unrar, browser or shell.",
+        "Determine where the file came from: download, attachment, extracted archive or SCP/SFTP transfer. Check sibling files in the same directory.",
+        "On the same host, +/- 15 minutes, look for bash, sh, base64, curl or wget executions whose CommandLine contains parts of the filename or decoded content.",
+        "Check outbound connections from the host to IPs or domains in the decoded command, and new processes holding long-lived connections.",
+        "Search for the same filename or Base64 string on other hosts and review earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate files with names containing braces and 'echo', such as security test fixtures or shell-parsing test cases (very unlikely).",
+        "Authorized internal research or red team exercises reproducing the technique."
+      ],
+      "response_steps": [
+        "Confirm whether the decoded command ran, using process telemetry and shell history, before taking action.",
+        "If it ran or the payload is malicious, isolate the host and preserve the file, memory and relevant logs.",
+        "Block extracted indicators (domains, IPs, hashes) and remove the file and any downloaded binaries or persistence.",
+        "Reset the affected user's credentials if execution occurred, and fix scripts that process filenames unquoted or through eval."
+      ],
+      "severity_rationale": "High fits because such filenames are almost never legitimate and indicate a deliberate obfuscated execution attempt, though file creation alone does not prove execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "File extracted by unrar whose name embeds a brace-expanded Base64 command piped to bash (decodes to a harmless 'echo hello').",
+        "event": {
+          "Computer": "ws-0142",
+          "User": "jperez",
+          "Image": "/usr/bin/unrar",
+          "ProcessId": 48213,
+          "TargetFilename": "/home/jperez/Downloads/invoice.pdf`{echo,ZWNobyBoZWxsbw==}|{base64,-d}|bash`",
+          "EventID": 11
+        }
+      },
+      {
+        "description": "File created by wget under /tmp whose name contains only the '{base64,-d}' fragment.",
+        "event": {
+          "Computer": "bastion-01",
+          "User": "www-data",
+          "Image": "/usr/bin/wget",
+          "ProcessId": 9921,
+          "TargetFilename": "/tmp/data_$(printf ZWNobyBoZWxsbw==|{base64,-d}|sh).txt",
+          "EventID": 11
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate script with 'echo' and 'base64' in its name but no braced command syntax.",
+        "event": {
+          "Computer": "ws-0142",
+          "User": "jperez",
+          "Image": "/usr/bin/vim.basic",
+          "ProcessId": 30117,
+          "TargetFilename": "/home/jperez/scripts/echo_base64_decode_test.sh",
+          "EventID": 11
+        }
+      },
+      {
+        "description": "Template file with braces in its name that does not contain '{echo' or '{base64,-d}'.",
+        "event": {
+          "Computer": "bastion-01",
+          "User": "deploy",
+          "Image": "/usr/bin/cp",
+          "ProcessId": 5520,
+          "TargetFilename": "/opt/app/templates/{env}-config.yaml",
+          "EventID": 11
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

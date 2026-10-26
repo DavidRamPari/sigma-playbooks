@@ -1,0 +1,147 @@
+{
+  "rule": {
+    "id": "9a4ff3b8-6187-4fd2-8e8b-e0eae1129495",
+    "title": "SysKey Registry Keys Access",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/builtin/security/win_security_syskey_registry_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_syskey_registry_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1012"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso solicitó un handle o accedió a las claves de registro Lsa\\JD, Lsa\\GBG, Lsa\\Skew1 o Lsa\\Data, que en conjunto sirven para calcular la SysKey (boot key). Esto suele preceder a la extracción de hashes del SAM o de secretos LSA.",
+      "what_it_detects": "Eventos de seguridad 4656 (solicitud de handle) o 4663 (acceso a objeto) con ObjectType 'key' y un ObjectName que termina en lsa\\JD, lsa\\GBG, lsa\\Skew1 o lsa\\Data. Requiere una SACL de auditoría configurada sobre esas claves.",
+      "why_it_matters": "Los nombres de clase de esas cuatro claves forman la SysKey, que permite descifrar los hashes de cuentas locales del SAM y los secretos LSA. Corresponde a ATT&CK T1012 (Query Registry) y suele ser un paso previo al robo de credenciales.",
+      "triage_steps": [
+        "Identifique el proceso (ProcessName/ProcessId) y la cuenta (SubjectUserName, SubjectDomainName) que generaron el evento 4656 o 4663.",
+        "Verifique si el proceso es un binario esperado del sistema o de un producto de seguridad conocido; revise ruta, firma y hash.",
+        "Confirme cuántas de las cuatro claves (JD, GBG, Skew1, Data) se accedieron en segundos; el acceso a las cuatro indica cálculo de SysKey.",
+        "Revise en el mismo host, +/- 15 minutos, la creación de procesos (4688 o Sysmon 1) del proceso y su proceso padre, buscando herramientas de volcado de credenciales.",
+        "Busque accesos al hive SAM o SECURITY, comandos 'reg save' de SAM/SYSTEM/SECURITY o acceso a lsass en la misma ventana.",
+        "Revise el tipo de inicio de sesión (SubjectLogonId, evento 4624) para saber si fue local, remoto o por una cuenta de servicio.",
+        "Consulte alertas previas para el mismo host y usuario, y verifique si la cuenta inició sesión en otros equipos después."
+      ],
+      "false_positives": [
+        "Software de respaldo, forense o de auditoría autorizado que lee el hive SYSTEM completo.",
+        "Productos EDR o escáneres de vulnerabilidades que inspeccionan la configuración de LSA.",
+        "Ejercicios de red team o pentesting aprobados."
+      ],
+      "response_steps": [
+        "Valide con el responsable del activo si existe una actividad autorizada que explique el acceso.",
+        "Si no está autorizado, aísle el endpoint de la red y preserve evidencia (memoria, archivos de hive guardados, binarios sospechosos).",
+        "Asuma compromiso de credenciales locales: rote contraseñas de cuentas locales y de administrador (por ejemplo con LAPS) y los secretos LSA de cuentas de servicio.",
+        "Elimine las herramientas y la persistencia identificadas, y busque movimiento lateral con los hashes extraídos.",
+        "Restaure el equipo a un estado confiable y monitoree nuevos accesos a estas claves."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el acceso a estas claves casi no ocurre en operación normal y habilita directamente el descifrado de credenciales locales."
+    },
+    "en": {
+      "summary": "A process requested a handle to or accessed the Lsa\\JD, Lsa\\GBG, Lsa\\Skew1 or Lsa\\Data registry keys, which together are used to calculate the SysKey (boot key). This commonly precedes dumping SAM hashes or LSA secrets.",
+      "what_it_detects": "Security events 4656 (handle requested) or 4663 (object accessed) with ObjectType 'key' and an ObjectName ending in lsa\\JD, lsa\\GBG, lsa\\Skew1 or lsa\\Data. Requires an auditing SACL on those keys.",
+      "why_it_matters": "The class names of these four keys form the SysKey, which decrypts local account hashes in the SAM and LSA secrets. This maps to ATT&CK T1012 (Query Registry) and is usually a step before credential theft.",
+      "triage_steps": [
+        "Identify the process (ProcessName/ProcessId) and account (SubjectUserName, SubjectDomainName) behind the 4656 or 4663 event.",
+        "Check whether the process is an expected system binary or known security product; review path, signature and hash.",
+        "Confirm how many of the four keys (JD, GBG, Skew1, Data) were accessed within seconds; all four indicates SysKey calculation.",
+        "On the same host, +/- 15 minutes, review process creation (4688 or Sysmon 1) for the process and its parent, looking for credential dumping tools.",
+        "Look for SAM or SECURITY hive access, 'reg save' of SAM/SYSTEM/SECURITY, or lsass access in the same window.",
+        "Check the logon session (SubjectLogonId, event 4624) to learn whether it was local, remote or a service account.",
+        "Review earlier alerts for the same host and user, and whether the account later logged on to other machines."
+      ],
+      "false_positives": [
+        "Authorized backup, forensic or audit software reading the full SYSTEM hive.",
+        "EDR products or vulnerability scanners inspecting LSA configuration.",
+        "Approved red team or penetration testing exercises."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner whether authorized activity explains the access.",
+        "If unauthorized, isolate the endpoint and preserve evidence (memory, saved hive files, suspicious binaries).",
+        "Assume local credentials are compromised: rotate local and administrator passwords (for example with LAPS) and service account LSA secrets.",
+        "Remove identified tools and persistence, and hunt for lateral movement using the extracted hashes.",
+        "Restore the host to a trusted state and monitor for new access to these keys."
+      ],
+      "severity_rationale": "High fits because access to these keys is rare in normal operation and directly enables decryption of local credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown binary reads the Lsa\\JD key (4663) to compute the SysKey",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "Channel": "Security",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Control\\Lsa\\JD",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.exe",
+          "AccessMask": "0x1",
+          "AccessList": "%%4432"
+        }
+      },
+      {
+        "description": "Handle request (4656) for the Lsa\\Skew1 key",
+        "event": {
+          "EventID": 4656,
+          "Computer": "WS-0142.andes.example.com",
+          "Channel": "Security",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Control\\Lsa\\Skew1",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.exe",
+          "AccessMask": "0x20019"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Access to a different LSA subkey (Kerberos) that is not part of the SysKey",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "Channel": "Security",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Control\\Lsa\\Kerberos",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "AccessMask": "0x1"
+        }
+      },
+      {
+        "description": "File object whose path ends in a similar name, not a registry key",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "Channel": "Security",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Projects\\lsa\\Data",
+          "ProcessName": "C:\\Windows\\explorer.exe",
+          "AccessMask": "0x1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

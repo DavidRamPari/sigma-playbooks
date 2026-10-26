@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "175997c5-803c-4b08-8bb0-70b099f47595",
+    "title": "Invoke-Obfuscation COMPRESS OBFUSCATION - System",
+    "level": "medium",
+    "status": "test",
+    "author": "Timur Zinniatullin, oscd.community",
+    "path": "windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_via_compress_services.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_via_compress_services.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (evento 7045) cuyo ImagePath contiene un comando de PowerShell que descomprime y ejecuta código con la técnica COMPRESS de Invoke-Obfuscation. Es un patrón típico de ejecución remota o persistencia maliciosa.",
+      "what_it_detects": "Eventos 7045 del Service Control Manager donde ImagePath incluye 'new-object', 'text.encoding]::ascii' y 'readtoend', junto con 'system.io.streamreader' o ':system.io.compression.deflatestream'. Corresponde a un payload comprimido con Deflate, codificado en base64 y leído con StreamReader para ejecutarlo en memoria.",
+      "why_it_matters": "Los atacantes ofuscan PowerShell (T1027) para evadir firmas y lo ejecutan (T1059.001) mediante un servicio, a menudo con privilegios SYSTEM. Suele aparecer en movimiento lateral con herramientas tipo PsExec o en frameworks de post-explotación.",
+      "triage_steps": [
+        "Revise ImagePath completo, ServiceName, AccountName y StartType; nombres aleatorios de servicio o cuenta LocalSystem aumentan la sospecha.",
+        "Extraiga la cadena base64, descomprímala con Deflate en un entorno aislado y analice el script resultante sin ejecutarlo.",
+        "Busque en el mismo host, +/- 15 minutos, inicios de sesión tipo 3 (4624) y el origen de la conexión para identificar movimiento lateral.",
+        "Revise eventos 4104 de Script Block Logging y procesos hijos de services.exe que lancen powershell.exe o cmd.exe.",
+        "Busque conexiones de red salientes del host tras la instalación del servicio; anote IP y dominios contactados.",
+        "Pivotee por el usuario y la IP de origen en otros hosts: mismo ServiceName o ImagePath similar en eventos 7045.",
+        "Consulte alertas previas del mismo host o cuenta en Centinela."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; este patrón rara vez es legítimo.",
+        "Ejercicios autorizados de red team o pruebas de penetración que usan Invoke-Obfuscation o frameworks similares.",
+        "Herramientas internas de administración que empaquetan scripts comprimidos; valide con el equipo responsable."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host si la instalación del servicio era esperada; si no, trátelo como incidente.",
+        "Aísle el endpoint de la red y deshabilite el servicio tras preservar evidencia (evento, ImagePath, memoria si es posible).",
+        "Restablezca credenciales de la cuenta usada para el acceso remoto y revise su uso en otros sistemas.",
+        "Bloquee IP y dominios identificados en el payload y busque los mismos indicadores en toda la flota.",
+        "Elimine el servicio y artefactos asociados una vez verificados, y restaure el host a un estado conocido."
+      ],
+      "severity_rationale": "Nivel medio porque el patrón es muy sospechoso pero requiere confirmar el contenido del payload y el contexto antes de escalar a crítico."
+    },
+    "en": {
+      "summary": "A Windows service was installed (event 7045) whose ImagePath holds a PowerShell command that decompresses and runs code using Invoke-Obfuscation's COMPRESS technique. This is a common pattern for malicious remote execution or persistence.",
+      "what_it_detects": "Service Control Manager 7045 events where ImagePath contains 'new-object', 'text.encoding]::ascii' and 'readtoend', plus 'system.io.streamreader' or ':system.io.compression.deflatestream'. This matches a Deflate-compressed, base64-encoded payload read through StreamReader and executed in memory.",
+      "why_it_matters": "Attackers obfuscate PowerShell (T1027) to evade signatures and execute it (T1059.001) through a service, often as SYSTEM. It is typical of lateral movement with PsExec-style tools or post-exploitation frameworks.",
+      "triage_steps": [
+        "Review the full ImagePath, ServiceName, AccountName and StartType; random service names or LocalSystem raise suspicion.",
+        "Extract the base64 string, Deflate-decompress it in a sandbox and analyze the resulting script without running it.",
+        "On the same host within +/- 15 minutes, look for type 3 logons (4624) and their source to identify lateral movement.",
+        "Check 4104 Script Block Logging events and services.exe child processes spawning powershell.exe or cmd.exe.",
+        "Look for outbound network connections from the host after the service install; record IPs and domains.",
+        "Pivot on the user and source IP across other hosts: same ServiceName or similar ImagePath in 7045 events.",
+        "Check prior Centinela alerts for the same host or account."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; this pattern is rarely legitimate.",
+        "Authorized red team or penetration tests using Invoke-Obfuscation or similar frameworks.",
+        "Internal admin tooling that ships compressed scripts; confirm with the owning team."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether the service install was expected; if not, treat it as an incident.",
+        "Isolate the endpoint and disable the service after preserving evidence (event, ImagePath, memory if possible).",
+        "Reset credentials of the account used for remote access and review its use on other systems.",
+        "Block IPs and domains found in the payload and hunt for the same indicators fleet-wide.",
+        "Remove the service and related artifacts once verified, and restore the host to a known-good state."
+      ],
+      "severity_rationale": "Medium because the pattern is highly suspicious but the payload and context must be confirmed before escalating to critical."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with a COMPRESS-obfuscated PowerShell launcher using System.IO.StreamReader, DeflateStream, ASCII encoding and ReadToEnd.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "xKq7TbVz",
+          "ImagePath": "%COMSPEC% /b /c start /b /min powershell -nop -w hidden -c \"&(New-Object System.IO.StreamReader((New-Object System.IO.Compression.DeflateStream([System.IO.MemoryStream][Convert]::FromBase64String('UEFZTE9BRA=='),[System.IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::ASCII)).ReadToEnd()|iex\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PowerShell service using StreamReader and ReadToEnd but with UTF8 encoding, so 'text.encoding]::ascii' is absent.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ServiceName": "ConfigLoader",
+          "ImagePath": "powershell.exe -nop -c \"$r = New-Object System.IO.StreamReader('C:\\ProgramData\\Example\\config.txt',[Text.Encoding]::UTF8); $r.ReadToEnd() | Out-File C:\\ProgramData\\Example\\out.txt\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Legitimate agent service installation with a plain executable path.",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ExampleAgent",
+          "ImagePath": "\"C:\\Program Files\\Example Agent\\agent.exe\" --service",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T03:07:27+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

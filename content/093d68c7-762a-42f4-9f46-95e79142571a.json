@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "093d68c7-762a-42f4-9f46-95e79142571a",
+    "title": "Shell Execution via Nice - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_nice_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_nice_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario nice con una línea de comandos que termina en una shell (/bin/bash, /bin/sh, /bin/dash, /bin/zsh o /bin/fish). Puede indicar un escape de shell restringida o una escalada de privilegios mediante nice.",
+      "what_it_detects": "Eventos process_creation de Linux en los que Image termina en '/nice' y CommandLine termina en la ruta de una shell, como 'nice /bin/sh'. Es la técnica de escape de shell documentada en GTFOBins para nice.",
+      "why_it_matters": "nice sirve para ajustar la prioridad de un proceso, pero puede lanzar una shell interactiva. Si nice puede ejecutarse con sudo, SUID o desde un entorno restringido, el atacante consigue una shell sin restricciones o con más privilegios. La regla la etiqueta como T1083 (descubrimiento de archivos y directorios).",
+      "triage_steps": [
+        "Revise CommandLine e Image: confirme qué shell se lanzó, si nice se ejecutó desde /usr/bin y si hay opciones como -n con valores negativos.",
+        "Identifique el User y si es root o tiene un UID efectivo distinto al real; determine si nice se invocó con sudo o a través de un binario SUID.",
+        "Examine ParentImage y ParentCommandLine: sudo, rbash, lshell, un servicio web o un shell restringido como padre son señales de alerta.",
+        "Revise /etc/sudoers y /etc/sudoers.d buscando reglas que permitan ejecutar nice, y verifique si /usr/bin/nice tiene el bit SUID activo.",
+        "Analice los procesos hijos de la shell en el mismo host +/- 15 minutos: enumeración de archivos, lectura de /etc/shadow, descargas o persistencia.",
+        "Correlacione con inicios de sesión SSH y logs de sudo (auth.log o secure) del mismo usuario e IP de origen.",
+        "Busque alertas previas del mismo usuario o host, especialmente otros escapes GTFOBins (find, awk, env, vim)."
+      ],
+      "false_positives": [
+        "Administradores que lanzan una shell interactiva con baja prioridad, por ejemplo 'nice -n 19 /bin/bash', para tareas largas de mantenimiento.",
+        "Scripts de operaciones o herramientas de orquestación que abren una shell mediante nice para limitar el consumo de CPU.",
+        "Ejercicios autorizados de pentesting o red team que prueban técnicas de GTFOBins."
+      ],
+      "response_steps": [
+        "Verifique con el usuario y su responsable si la ejecución fue legítima y esperada en ese host.",
+        "Si no está justificada, aísle el endpoint de la red y termine la sesión y la shell sospechosas tras preservar evidencia (árbol de procesos, historial de shell).",
+        "Elimine reglas de sudoers que permitan nice sin necesidad y quite el bit SUID de /usr/bin/nice si estuviera activo.",
+        "Rote credenciales del usuario afectado y revise cuentas, claves SSH y tareas cron creadas durante la sesión.",
+        "Restaure la configuración del host desde una línea base conocida y monitoree escapes similares en otros servidores."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque usar nice solo para lanzar una shell es poco común en operación normal y suele indicar un escape de restricciones o una escalada de privilegios."
+    },
+    "en": {
+      "summary": "The nice binary ran with a command line ending in a shell (/bin/bash, /bin/sh, /bin/dash, /bin/zsh or /bin/fish). This may be a restricted-shell breakout or privilege escalation through nice.",
+      "what_it_detects": "Linux process_creation events where Image ends with '/nice' and CommandLine ends with a shell path, such as 'nice /bin/sh'. This is the shell escape GTFOBins documents for nice.",
+      "why_it_matters": "nice is meant to adjust process priority, but it can also spawn an interactive shell. If nice runs through sudo, SUID or a restricted environment, an attacker gets an unrestricted or more privileged shell. The rule tags it T1083 (File and Directory Discovery).",
+      "triage_steps": [
+        "Review CommandLine and Image: confirm which shell was spawned, that nice ran from /usr/bin, and whether options such as negative -n values were used.",
+        "Identify the User and whether it is root or the effective UID differs from the real one; check if nice ran via sudo or SUID.",
+        "Examine ParentImage and ParentCommandLine: sudo, rbash, lshell, a web service or another restricted shell as parent is suspicious.",
+        "Check /etc/sudoers and /etc/sudoers.d for rules allowing nice, and whether /usr/bin/nice has the SUID bit set.",
+        "Review child processes of the shell on the same host +/- 15 minutes: file enumeration, reading /etc/shadow, downloads or persistence.",
+        "Correlate with SSH logins and sudo logs (auth.log or secure) for the same user and source IP.",
+        "Look for earlier alerts on the same user or host, especially other GTFOBins escapes (find, awk, env, vim)."
+      ],
+      "false_positives": [
+        "Administrators starting a low-priority interactive shell, for example 'nice -n 19 /bin/bash', for long maintenance work.",
+        "Operations scripts or orchestration tools that open a shell through nice to limit CPU usage.",
+        "Authorized penetration tests or red team exercises testing GTFOBins techniques."
+      ],
+      "response_steps": [
+        "Confirm with the user and their manager whether the execution was legitimate and expected on that host.",
+        "If unjustified, isolate the endpoint and terminate the suspicious session and shell after preserving evidence (process tree, shell history).",
+        "Remove unneeded sudoers rules allowing nice and remove the SUID bit from /usr/bin/nice if set.",
+        "Rotate the affected user's credentials and review accounts, SSH keys and cron jobs created during the session.",
+        "Restore host configuration from a known-good baseline and monitor for similar escapes on other servers."
+      ],
+      "severity_rationale": "High fits because using nice just to spawn a shell is rare in normal operations and usually means a restriction bypass or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GTFOBins-style shell escape: nice spawns /bin/sh from a restricted shell",
+        "event": {
+          "Image": "/usr/bin/nice",
+          "CommandLine": "nice /bin/sh",
+          "ParentImage": "/usr/bin/rbash",
+          "ParentCommandLine": "-rbash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "nice run through sudo to obtain a root bash shell",
+        "event": {
+          "Image": "/usr/bin/nice",
+          "CommandLine": "/usr/bin/nice -n -5 /bin/bash",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo /usr/bin/nice -n -5 /bin/bash",
+          "User": "root",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 51007,
+          "Computer": "app-srv-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "nice runs a backup script with bash; CommandLine does not end with the shell path",
+        "event": {
+          "Image": "/usr/bin/nice",
+          "CommandLine": "nice -n 19 /bin/bash /opt/scripts/backup.sh",
+          "ParentImage": "/usr/sbin/cron",
+          "ParentCommandLine": "/usr/sbin/CRON -f",
+          "User": "backup",
+          "CurrentDirectory": "/var/backups",
+          "ProcessId": 39120,
+          "Computer": "app-srv-03"
+        }
+      },
+      {
+        "description": "nice used legitimately to lower priority of a compression job",
+        "event": {
+          "Image": "/usr/bin/nice",
+          "CommandLine": "nice -n 10 /usr/bin/tar -czf /var/backups/logs.tar.gz /var/log/app",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "mrodriguez",
+          "CurrentDirectory": "/home/mrodriguez",
+          "ProcessId": 40211,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

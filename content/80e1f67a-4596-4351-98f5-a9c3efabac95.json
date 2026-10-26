@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "80e1f67a-4596-4351-98f5-a9c3efabac95",
+    "title": "Suspicious Scheduled Task Write to System32 Tasks",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_susp_task_write.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_susp_task_write.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que se ejecuta desde una ubicación sospechosa (AppData, C:\\PerfLogs o el perfil systemprofile) escribió un archivo en C:\\Windows\\System32\\Tasks. Esto suele indicar que se creó o modificó una tarea programada para persistencia o ejecución.",
+      "what_it_detects": "Eventos file_event cuyo TargetFilename contiene \\Windows\\System32\\Tasks y cuyo Image contiene \\AppData\\, C:\\PerfLogs o \\Windows\\System32\\config\\systemprofile.",
+      "why_it_matters": "Las tareas programadas (ATT&CK T1053) permiten ejecutar código al iniciar sesión, al arrancar o de forma periódica, a menudo como SYSTEM. Que un binario de una carpeta escribible por el usuario o poco común las registre es una señal típica de malware que busca persistencia o escalamiento de privilegios.",
+      "triage_steps": [
+        "Revise Image: ruta completa, hash, firma digital y fecha de creación del binario. Busque el hash en su inteligencia de amenazas y mida su prevalencia en la flota.",
+        "Abra el archivo indicado en TargetFilename y lea el XML de la tarea: Actions (comando y argumentos), Triggers, Principal/RunLevel y Author.",
+        "Identifique el proceso padre de Image y la línea de comandos con los eventos de creación de procesos del mismo host.",
+        "Revise el host en +/- 15 minutos: ejecuciones de schtasks.exe, eventos 4698/4702 de Security y 106/140 del registro TaskScheduler/Operational.",
+        "Verifique el usuario que ejecutó el proceso y si es habitual que instale software en ese equipo.",
+        "Busque conexiones de red, descargas o archivos nuevos creados por Image, y otras alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Actualizadores o instaladores de software instalados por usuario que se ejecutan desde AppData y registran su propia tarea de actualización.",
+        "Herramientas de despliegue o agentes de gestión que corren como SYSTEM desde \\Windows\\System32\\config\\systemprofile\\AppData durante una instalación autorizada.",
+        "Scripts de administración ubicados temporalmente en C:\\PerfLogs por el equipo de TI."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el equipo de TI si la instalación o la tarea es legítima antes de actuar.",
+        "Si es maliciosa, aísle el endpoint, exporte el XML de la tarea como evidencia y luego deshabilítela.",
+        "Recolecte el binario de Image y los archivos referenciados en Actions; elimínelos tras preservar la evidencia.",
+        "Restablezca credenciales del usuario afectado y busque el mismo hash, nombre de tarea o ruta en el resto de la flota.",
+        "Restaure el equipo a un estado conocido y documente indicadores para nuevas detecciones."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque escribir directamente en System32\\Tasks desde estas rutas es poco común en software legítimo y apunta a persistencia con posibles privilegios elevados."
+    },
+    "en": {
+      "summary": "A process running from a suspicious location (AppData, C:\\PerfLogs or the systemprofile folder) wrote a file under C:\\Windows\\System32\\Tasks. This usually means a scheduled task was created or changed for persistence or execution.",
+      "what_it_detects": "file_event records where TargetFilename contains \\Windows\\System32\\Tasks and Image contains \\AppData\\, C:\\PerfLogs or \\Windows\\System32\\config\\systemprofile.",
+      "why_it_matters": "Scheduled tasks (ATT&CK T1053) run code at logon, boot or on a schedule, often as SYSTEM. A binary from a user-writable or unusual folder registering one is a common malware pattern for persistence or privilege escalation.",
+      "triage_steps": [
+        "Check Image: full path, hash, signature and creation time. Look up the hash in threat intel and check its prevalence across the fleet.",
+        "Open the TargetFilename file and read the task XML: Actions (command and arguments), Triggers, Principal/RunLevel and Author.",
+        "Identify the parent process of Image and its command line from process creation events on the same host.",
+        "Review the host within +/- 15 minutes: schtasks.exe runs, Security events 4698/4702, TaskScheduler/Operational events 106/140.",
+        "Verify the user that ran the process and whether they normally install software on this host.",
+        "Look for network connections, downloads or new files from Image, and earlier alerts for the same host or user."
+      ],
+      "false_positives": [
+        "Per-user installed software updaters running from AppData that register their own update task.",
+        "Deployment tools or management agents running as SYSTEM from \\Windows\\System32\\config\\systemprofile\\AppData during an approved install.",
+        "Admin scripts temporarily staged in C:\\PerfLogs by IT."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether the install or task is legitimate before acting.",
+        "If malicious, isolate the endpoint, export the task XML as evidence, then disable the task.",
+        "Collect the Image binary and files referenced in Actions; remove them after evidence is preserved.",
+        "Reset the affected user's credentials and hunt for the same hash, task name or path fleet-wide.",
+        "Restore the host to a known-good state and record indicators for new detections."
+      ],
+      "severity_rationale": "High fits because direct writes to System32\\Tasks from these paths are rare for legitimate software and point to persistence with possibly elevated privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's AppData Temp folder drops a task file into System32\\Tasks.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6412,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\updater.exe",
+          "TargetFilename": "C:\\Windows\\System32\\Tasks\\OneDriveUpdateCheck",
+          "CreationUtcTime": "2024-03-11 14:03:12.421"
+        }
+      },
+      {
+        "description": "Process running from C:\\PerfLogs writes a task under the Microsoft task subfolder.",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-FS-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 3120,
+          "Image": "C:\\PerfLogs\\svchelper.exe",
+          "TargetFilename": "C:\\Windows\\System32\\Tasks\\Microsoft\\Windows\\SystemHealthMonitor",
+          "CreationUtcTime": "2024-03-11 02:17:45.010"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Task Scheduler service (svchost.exe in System32) writes the task file; Image is not in a suspicious location.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 1460,
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetFilename": "C:\\Windows\\System32\\Tasks\\GoogleUpdateTaskMachineUA",
+          "CreationUtcTime": "2024-03-11 09:30:02.774"
+        }
+      },
+      {
+        "description": "Application in AppData writes to its own profile folder, not to System32\\Tasks.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0187.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "ProcessId": 8840,
+          "Image": "C:\\Users\\mlopez\\AppData\\Local\\Programs\\ExampleChat\\ExampleChat.exe",
+          "TargetFilename": "C:\\Users\\mlopez\\AppData\\Roaming\\ExampleChat\\settings.json",
+          "CreationUtcTime": "2024-03-11 10:05:51.203"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

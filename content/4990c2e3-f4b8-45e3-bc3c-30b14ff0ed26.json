@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "4990c2e3-f4b8-45e3-bc3c-30b14ff0ed26",
+    "title": "AWS Glue Development Endpoint Activity",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/aws/cloudtrail/aws_passed_role_to_glue_development_endpoint.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_passed_role_to_glue_development_endpoint.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad AWS creó, actualizó o eliminó un endpoint de desarrollo de AWS Glue. Puede ser administración normal. También puede indicar escalamiento de privilegios: se asigna un rol IAM privilegiado al endpoint o se agrega una llave SSH para obtener sus credenciales.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource glue.amazonaws.com y eventName CreateDevEndpoint, UpdateDevEndpoint o DeleteDevEndpoint, sin importar la identidad, la región ni el resultado de la llamada.",
+      "why_it_matters": "Si una identidad tiene iam:PassRole y glue:CreateDevEndpoint, puede crear un endpoint con un rol más privilegiado, entrar por SSH y usar las credenciales de ese rol. Con UpdateDevEndpoint puede agregar su llave a un endpoint que ya existe. Se trata de escalamiento de privilegios (TA0004). DeleteDevEndpoint puede servir para borrar evidencia.",
+      "triage_steps": [
+        "Identifique eventName, userIdentity.arn, userIdentity.type, sourceIPAddress, userAgent y awsRegion. Confirme si errorCode está vacío, es decir, si la llamada tuvo éxito.",
+        "En CreateDevEndpoint, revise requestParameters.roleArn. Compare los permisos de ese rol con los del solicitante y busque políticas administrativas o comodines.",
+        "En UpdateDevEndpoint, revise requestParameters.addPublicKeys, publicKey y customLibraries. Una llave SSH nueva de origen desconocido es una señal fuerte.",
+        "Verifique si el usuario o rol suele trabajar con Glue. Busque eventos de Glue anteriores con el mismo userIdentity.arn en los últimos 30 días.",
+        "Busque actividad del mismo usuario o de la misma IP en +/- 15 minutos: iam:PassRole, cambios en políticas, ListRoles, GetDevEndpoint(s) o AssumeRole.",
+        "Busque llamadas a la API hechas con las credenciales del rol del endpoint desde IPs o servicios inesperados después de la creación.",
+        "Revise si la IP de origen y el user agent corresponden a la consola, a herramientas IaC conocidas o a redes corporativas. Revise también alertas previas de la misma identidad."
+      ],
+      "false_positives": [
+        "Ingenieros de datos o administradores que crean o actualizan endpoints de Glue para desarrollar ETL.",
+        "Pipelines de IaC, como Terraform o CloudFormation, que despliegan o eliminan endpoints en ambientes de desarrollo.",
+        "Limpieza programada de endpoints que no se usan para reducir costos."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la identidad y con el equipo de datos si el cambio estaba autorizado y respondía a un ticket.",
+        "Si no estaba autorizado, retire las llaves SSH agregadas o elimine el endpoint, después de preservar su configuración y los logs.",
+        "Revoque las sesiones activas del rol del endpoint y rote las credenciales de la identidad que hizo la llamada.",
+        "Restrinja iam:PassRole y glue:*DevEndpoint con privilegio mínimo y condiciones sobre iam:PassedToService.",
+        "Investigue lo que hicieron las credenciales del rol comprometido y documente el alcance antes de cerrar el caso."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estas acciones de Glue suelen ser administración legítima. Se vuelven relevantes cuando hay roles privilegiados, llaves SSH nuevas o identidades inusuales."
+    },
+    "en": {
+      "summary": "An AWS identity created, updated or deleted an AWS Glue development endpoint. This can be routine administration. It can also be privilege escalation, by attaching a privileged IAM role or adding an SSH key to obtain the role's credentials.",
+      "what_it_detects": "CloudTrail events with eventSource glue.amazonaws.com and eventName CreateDevEndpoint, UpdateDevEndpoint or DeleteDevEndpoint, whatever the identity, region or call outcome.",
+      "why_it_matters": "An identity with iam:PassRole and glue:CreateDevEndpoint can create an endpoint with a more privileged role, SSH into it and use that role's credentials. UpdateDevEndpoint lets it add its own key to an existing endpoint. This is privilege escalation (TA0004). DeleteDevEndpoint can be used to remove evidence.",
+      "triage_steps": [
+        "Record eventName, userIdentity.arn, userIdentity.type, sourceIPAddress, userAgent and awsRegion. Check whether errorCode is empty, meaning the call succeeded.",
+        "For CreateDevEndpoint, inspect requestParameters.roleArn. Compare that role's permissions with the caller's own and look for admin policies or wildcards.",
+        "For UpdateDevEndpoint, inspect requestParameters.addPublicKeys, publicKey and customLibraries. A new SSH key from an unknown source is a strong signal.",
+        "Check whether this user or role normally works with Glue. Search for earlier Glue events from the same userIdentity.arn over the last 30 days.",
+        "Look at activity from the same user or source IP within +/- 15 minutes: iam:PassRole, policy changes, ListRoles, GetDevEndpoint(s) or AssumeRole.",
+        "Look for API calls made with the endpoint role's credentials from unexpected IPs or services after the endpoint was created.",
+        "Check whether the source IP and user agent match the console, known IaC tooling or corporate networks. Review earlier alerts for the same identity."
+      ],
+      "false_positives": [
+        "Data engineers or administrators creating or updating Glue endpoints for ETL development.",
+        "IaC pipelines, such as Terraform or CloudFormation, that deploy or tear down endpoints in development environments.",
+        "Scheduled cleanup that deletes unused endpoints to cut costs."
+      ],
+      "response_steps": [
+        "Confirm with the identity owner and the data team that the change was authorized and tied to a ticket.",
+        "If it was not authorized, remove the added SSH keys or delete the endpoint after preserving its configuration and logs.",
+        "Revoke active sessions for the endpoint's role and rotate the calling identity's credentials.",
+        "Restrict iam:PassRole and glue:*DevEndpoint to least privilege, with conditions on iam:PassedToService.",
+        "Investigate what the compromised role's credentials did and document the scope before closing the case."
+      ],
+      "severity_rationale": "Low fits because these Glue actions are usually legitimate administration. They matter when they involve privileged roles, new SSH keys or unusual identities."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CreateDevEndpoint with a privileged role passed by an IAM user from an unusual IP",
+        "event": {
+          "eventSource": "glue.amazonaws.com",
+          "eventName": "CreateDevEndpoint",
+          "eventTime": "2024-05-14T02:17:43Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "requestParameters.endpointName": "dev-test-01",
+          "requestParameters.roleArn": "arn:aws:iam::111122223333:role/AdminGlueRole",
+          "errorCode": null
+        }
+      },
+      {
+        "description": "UpdateDevEndpoint adding a new SSH public key to an existing endpoint",
+        "event": {
+          "eventSource": "glue.amazonaws.com",
+          "eventName": "UpdateDevEndpoint",
+          "eventTime": "2024-05-14T02:25:10Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.69 Python/3.10.12",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/DataEngineer/mlopez",
+          "requestParameters.endpointName": "etl-dev-endpoint",
+          "requestParameters.addPublicKeys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ-placeholder user@example.com",
+          "errorCode": null
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only GetDevEndpoints call, which is not in the eventName list",
+        "event": {
+          "eventSource": "glue.amazonaws.com",
+          "eventName": "GetDevEndpoints",
+          "eventTime": "2024-05-14T02:15:02Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.5.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez"
+        }
+      },
+      {
+        "description": "Glue CreateJob: same service but a different, non-matching API call",
+        "event": {
+          "eventSource": "glue.amazonaws.com",
+          "eventName": "CreateJob",
+          "eventTime": "2024-05-14T09:40:11Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-internal/3 terraform/1.7.5",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/TerraformDeploy/ci-runner",
+          "requestParameters.name": "nightly-etl",
+          "requestParameters.role": "arn:aws:iam::111122223333:role/GlueJobRole"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

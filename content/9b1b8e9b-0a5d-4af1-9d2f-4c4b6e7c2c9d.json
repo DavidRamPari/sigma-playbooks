@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "9b1b8e9b-0a5d-4af1-9d2f-4c4b6e7c2c9d",
+    "title": "AWS STS GetCallerIdentity Enumeration Via TruffleHog",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Adan Alvarez @adanalvarez",
+    "path": "cloud/aws/cloudtrail/aws_sts_getcalleridentity_trufflehog.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_sts_getcalleridentity_trufflehog.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1087.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una llamada a STS GetCallerIdentity se hizo con un user agent que contiene \"TruffleHog\", la herramienta de búsqueda de secretos. Puede significar que alguien está comprobando si una access key de AWS expuesta todavía funciona.",
+      "what_it_detects": "Eventos de CloudTrail en los que eventSource es sts.amazonaws.com, eventName es GetCallerIdentity y el campo userAgent contiene la cadena TruffleHog. TruffleHog usa esta llamada para verificar si las credenciales AWS que encuentra son válidas.",
+      "why_it_matters": "GetCallerIdentity no requiere permisos y devuelve la cuenta y el ARN de la identidad. Por eso sirve para validar una key robada antes de usarla. Corresponde a la etapa de descubrimiento de cuentas cloud (T1087.004) y suele preceder al acceso no autorizado.",
+      "triage_steps": [
+        "Identifique la credencial: userIdentity.accessKeyId, userIdentity.arn, userIdentity.type y recipientAccountId. Determine quién es dueño de la key o del rol.",
+        "Revise sourceIPAddress: compárelo con los rangos de escáneres internos, CI/CD y VPN corporativa; consulte ASN, geolocalización y si es hosting o VPS.",
+        "Confirme con el equipo de seguridad o AppSec si había un escaneo de TruffleHog autorizado en ese horario y desde ese origen.",
+        "Pivotee por accessKeyId y sourceIPAddress en +/- 15 minutos y las 24 horas siguientes: busque ListBuckets, iam:List*, CreateUser, CreateAccessKey, ec2:Describe* o errores AccessDenied.",
+        "Revise errorCode y responseElements para saber si la validación fue exitosa y qué cuenta se expuso.",
+        "Busque dónde pudo filtrarse la key: repositorios, logs de pipelines, buckets públicos o tickets. Verifique antigüedad y último uso de la key en IAM.",
+        "Busque alertas previas para la misma identidad, la misma IP o las demás cuentas de la organización."
+      ],
+      "false_positives": [
+        "Escaneos internos de secretos autorizados que usan TruffleHog con verificación activa, desde roles, IP o runners de CI conocidos.",
+        "Ejercicios de red team o pentest aprobados que validan credenciales encontradas.",
+        "Desarrolladores que prueban TruffleHog de forma local con sus propias credenciales."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la credencial y con seguridad si la actividad está autorizada antes de actuar.",
+        "Si no está autorizada, desactive la access key (estado Inactive, sin borrarla) o revoque las sesiones activas del rol para conservar evidencia.",
+        "Revise y revierta cambios hechos con la credencial: nuevos usuarios, keys, políticas, recursos creados o datos accedidos.",
+        "Rote la credencial, elimine el secreto del lugar donde estaba expuesto, incluido el historial de git, y actualice las aplicaciones afectadas.",
+        "Si es un escaneo legítimo, documéntelo y agregue un filtro por rol, cuenta o rango de IP del escáner."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la validación por sí sola no modifica recursos, pero indica que un tercero tiene una key funcional; escale si hay actividad posterior."
+    },
+    "en": {
+      "summary": "An STS GetCallerIdentity call was made with a user agent containing \"TruffleHog\", the secret-scanning tool. Someone may be checking whether an exposed AWS access key still works.",
+      "what_it_detects": "CloudTrail events where eventSource is sts.amazonaws.com, eventName is GetCallerIdentity and userAgent contains TruffleHog. TruffleHog makes this call to verify whether AWS credentials it finds are valid.",
+      "why_it_matters": "GetCallerIdentity needs no permissions and returns the account and identity ARN, which makes it a convenient way to validate a stolen key before using it. This is cloud account discovery (T1087.004) and often comes before unauthorized access.",
+      "triage_steps": [
+        "Identify the credential: userIdentity.accessKeyId, userIdentity.arn, userIdentity.type and recipientAccountId. Find the owner of the key or role.",
+        "Check sourceIPAddress against internal scanner, CI/CD and corporate VPN ranges; look up ASN, geolocation and whether it is hosting or VPS space.",
+        "Ask the security or AppSec team whether an authorized TruffleHog scan ran at that time from that source.",
+        "Pivot on accessKeyId and sourceIPAddress for +/- 15 minutes and the next 24 hours: look for ListBuckets, iam:List*, CreateUser, CreateAccessKey, ec2:Describe* or AccessDenied errors.",
+        "Check errorCode and responseElements to see whether validation succeeded and which account was revealed.",
+        "Find where the key may have leaked: repositories, pipeline logs, public buckets, tickets. Check key age and last use in IAM.",
+        "Look for earlier alerts for the same identity, the same IP, or other accounts in the organization."
+      ],
+      "false_positives": [
+        "Authorized internal secret scans running TruffleHog with live verification from known roles, IPs or CI runners.",
+        "Approved red team or penetration tests that validate discovered credentials.",
+        "Developers testing TruffleHog locally against their own credentials."
+      ],
+      "response_steps": [
+        "Confirm with the credential owner and security team whether the activity was authorized before acting.",
+        "If unauthorized, deactivate the access key (set Inactive, do not delete) or revoke active role sessions to preserve evidence.",
+        "Review and roll back changes made with the credential: new users, keys, policies, created resources or accessed data.",
+        "Rotate the credential, remove the secret from where it was exposed, including git history, and update dependent applications.",
+        "If the scan is legitimate, document it and add a filter for the scanner role, account or IP range."
+      ],
+      "severity_rationale": "Medium fits because validation alone changes nothing, but it shows a third party holds a working key; escalate if follow-on activity appears."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GetCallerIdentity from an external IP with a TruffleHog user agent using a long-term IAM user key",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2025-10-14T03:12:45Z",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.57",
+          "userAgent": "TruffleHog aws-sdk-go/1.55.5 (go1.22.5; linux; amd64)",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE7QXZ4ABCD",
+          "recipientAccountId": "111122223333",
+          "readOnly": true,
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "Same call with lowercase tool name in user agent (case-insensitive match) from an assumed role",
+        "event": {
+          "eventTime": "2025-10-14T09:40:02Z",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "trufflehog/3.82.6",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deploy/session-42",
+          "userIdentity.accessKeyId": "ASIAEXAMPLE2MNOP9XYZ",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine GetCallerIdentity from the AWS CLI by an administrator; user agent does not contain TruffleHog",
+        "event": {
+          "eventTime": "2025-10-14T10:05:11Z",
+          "eventSource": "sts.amazonaws.com",
+          "eventName": "GetCallerIdentity",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.17.20 md/awscrt#0.20.11 ua/2.0 os/linux#6.5.0 md/arch#x86_64 lang/python#3.11.9",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLEJPEREZ001",
+          "recipientAccountId": "111122223333",
+          "eventType": "AwsApiCall"
+        }
+      },
+      {
+        "description": "TruffleHog user agent but a different API (IAM ListUsers), so eventSource and eventName do not match",
+        "event": {
+          "eventTime": "2025-10-14T03:13:20Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "ListUsers",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.57",
+          "userAgent": "TruffleHog aws-sdk-go/1.55.5 (go1.22.5; linux; amd64)",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE7QXZ4ABCD",
+          "recipientAccountId": "111122223333",
+          "errorCode": "AccessDenied",
+          "eventType": "AwsApiCall"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

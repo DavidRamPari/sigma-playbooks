@@ -1,0 +1,150 @@
+{
+  "rule": {
+    "id": "92f84194-8d9a-4ee0-8699-c30bfac59780",
+    "title": "AWS Key Pair Import Activity",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Ivan Saakov",
+    "path": "cloud/aws/cloudtrail/aws_ec2_import_key_pair_activity.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_ec2_import_key_pair_activity.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS llamó a la API ImportKeyPair de EC2 y registró en la región una clave pública SSH propia. Puede ser una tarea administrativa normal o un atacante que prepara acceso persistente a instancias.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ec2.amazonaws.com y eventName ImportKeyPair, es decir, la importación de una clave pública SSH generada fuera de AWS para usarla al lanzar instancias EC2.",
+      "why_it_matters": "Si un atacante con credenciales válidas (T1078, Valid Accounts) importa su propia clave, puede lanzar instancias o asociarla a ellas y entrar por SSH. Así logra acceso inicial, persistencia o escalamiento de privilegios sin necesidad de robar claves privadas existentes.",
+      "triage_steps": [
+        "Identifique al actor en userIdentity.arn, userIdentity.type y accessKeyId. Determine si es un usuario IAM, un rol asumido o root, y si esa identidad suele administrar EC2.",
+        "Revise sourceIPAddress y userAgent. Compare con las IP corporativas, las de CI/CD y las herramientas habituales, como Terraform, la consola o AWS CLI.",
+        "Anote requestParameters.keyName y awsRegion. Busque nombres de clave genéricos o engañosos, o una región que la organización no usa.",
+        "Consulte en CloudTrail, para la misma identidad y +/- 15 minutos, las llamadas RunInstances, ModifyInstanceAttribute, AuthorizeSecurityGroupIngress, CreateAccessKey y ConsoleLogin.",
+        "Verifique si alguna instancia usa ya esa clave (DescribeInstances, campo KeyName) y si sus grupos de seguridad permiten SSH desde Internet.",
+        "Busque alertas anteriores para la misma identidad, la misma clave de acceso o la misma IP de origen, como inicios de sesión inusuales o errores AccessDenied.",
+        "Confirme con el responsable de la cuenta o con el ticket de cambio si la importación estaba planificada."
+      ],
+      "false_positives": [
+        "Administradores autorizados que importan claves SSH para acceso legítimo a instancias.",
+        "Pipelines de infraestructura como código (Terraform, CloudFormation, Ansible) que crean recursos aws_key_pair al aprovisionar entornos.",
+        "Procesos automatizados de alta de cuentas o entornos que distribuyen claves estándar en varias regiones."
+      ],
+      "response_steps": [
+        "Valide la actividad con el dueño de la identidad y del cambio antes de actuar.",
+        "Si no está autorizada, elimine el key pair importado con DeleteKeyPair y aísle o detenga las instancias lanzadas con esa clave, conservando primero snapshots como evidencia.",
+        "Desactive o rote la clave de acceso usada, revoque las sesiones del rol y revise los permisos de la identidad.",
+        "Revise en CloudTrail toda la actividad del actor, elimine los recursos o la persistencia que haya creado y restrinja ec2:ImportKeyPair mediante IAM o SCP."
+      ],
+      "severity_rationale": "Medium es adecuado porque la importación de claves es una acción administrativa frecuente, pero en manos de un atacante concede acceso directo a instancias y requiere validación."
+    },
+    "en": {
+      "summary": "An AWS identity called the EC2 ImportKeyPair API and registered its own SSH public key in the region. This may be routine administration or an attacker setting up persistent access to instances.",
+      "what_it_detects": "CloudTrail events with eventSource ec2.amazonaws.com and eventName ImportKeyPair, meaning an SSH public key generated outside AWS was imported for use when launching EC2 instances.",
+      "why_it_matters": "An attacker with valid credentials (T1078, Valid Accounts) can import their own key, launch or attach instances with it, and log in over SSH. This gives initial access, persistence or privilege escalation without stealing existing private keys.",
+      "triage_steps": [
+        "Identify the actor from userIdentity.arn, userIdentity.type and accessKeyId. Check whether it is an IAM user, an assumed role or root, and whether that identity normally manages EC2.",
+        "Review sourceIPAddress and userAgent. Compare them with corporate and CI/CD IPs and with expected tooling such as Terraform, the console or AWS CLI.",
+        "Note requestParameters.keyName and awsRegion. Look for generic or misleading key names, or a region the organization does not use.",
+        "Query CloudTrail for the same identity within +/- 15 minutes for RunInstances, ModifyInstanceAttribute, AuthorizeSecurityGroupIngress, CreateAccessKey and ConsoleLogin.",
+        "Check whether any instance already uses the key (DescribeInstances, KeyName) and whether its security groups allow SSH from the internet.",
+        "Look for earlier alerts on the same identity, access key or source IP, such as unusual logins or AccessDenied errors.",
+        "Confirm with the account owner or a change ticket that the import was planned."
+      ],
+      "false_positives": [
+        "Authorized administrators importing SSH keys for legitimate instance access.",
+        "Infrastructure-as-code pipelines (Terraform, CloudFormation, Ansible) creating aws_key_pair resources during provisioning.",
+        "Automated account or environment bootstrap processes that distribute standard keys across regions."
+      ],
+      "response_steps": [
+        "Validate the activity with the owner of the identity and of the change before acting.",
+        "If unauthorized, delete the imported key pair (DeleteKeyPair) and isolate or stop instances launched with it, taking snapshots first as evidence.",
+        "Deactivate or rotate the access key used, revoke role sessions and review the identity's permissions.",
+        "Review all of the actor's CloudTrail activity, remove any resources or persistence it created, and restrict ec2:ImportKeyPair through IAM or SCPs."
+      ],
+      "severity_rationale": "Medium fits because key imports are common admin actions, but in an attacker's hands they grant direct instance access and need validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user imports an SSH public key into EC2 from an unfamiliar IP address using AWS CLI.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "ImportKeyPair",
+          "eventTime": "2024-12-20T03:14:22Z",
+          "awsRegion": "sa-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Linux/6.5.0 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLEKEY12345",
+          "requestParameters.keyName": "backup-maint",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "A Terraform pipeline role imports a key pair during provisioning.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "ImportKeyPair",
+          "eventTime": "2024-12-20T15:02:10Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.6.6 aws-sdk-go-v2/1.24.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deployer/session-7781",
+          "requestParameters.keyName": "app-prod-deploy",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An AWS-generated key pair is created with CreateKeyPair, not imported, so eventName does not match.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "CreateKeyPair",
+          "eventTime": "2024-12-20T10:45:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "console.ec2.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mrodriguez",
+          "requestParameters.keyName": "lab-test",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Read-only DescribeKeyPairs listing of existing key pairs.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "ec2.amazonaws.com",
+          "eventName": "DescribeKeyPairs",
+          "eventTime": "2024-12-20T11:00:00Z",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.21",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Windows/10 exe/AMD64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/agomez",
+          "eventType": "AwsApiCall",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

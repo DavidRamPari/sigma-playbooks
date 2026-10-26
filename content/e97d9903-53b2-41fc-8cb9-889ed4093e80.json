@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "e97d9903-53b2-41fc-8cb9-889ed4093e80",
+    "title": "KrbRelayUp Service Installation",
+    "level": "high",
+    "status": "test",
+    "author": "Sittikorn S, Tim Shelton",
+    "path": "windows/builtin/system/service_control_manager/win_system_krbrelayup_service_installation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_krbrelayup_service_installation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio llamado KrbSCM en este equipo. Es el nombre de servicio que KrbRelayUp crea por defecto cuando usa un ticket Kerberos falsificado para ejecutar un comando como SYSTEM.",
+      "what_it_detects": "Evento 7045 del registro System (se instaló un servicio) con ServiceName igual a 'KrbSCM'. KrbRelayUp retransmite la autenticación Kerberos del equipo hacia LDAP y configura delegación restringida basada en recursos o shadow credentials. Luego obtiene un ticket para el equipo local mediante S4U y crea este servicio a través del Service Control Manager.",
+      "why_it_matters": "Un usuario de dominio sin privilegios puede obtener SYSTEM en un equipo unido al dominio si no se exige firma LDAP. Es una escalada de privilegios y persistencia mediante un servicio de Windows creado (ATT&CK T1543).",
+      "triage_steps": [
+        "Revise ImagePath, AccountName y StartType en el evento 7045. ImagePath muestra el comando o binario que se ejecutó como SYSTEM, a menudo cmd.exe o un payload dejado en disco.",
+        "Identifique quién tenía sesión interactiva en los 15 minutos antes o después de la alerta (Security 4624/4648). Ese usuario es el operador probable.",
+        "Busque creación de procesos de KrbRelayUp.exe o binarios renombrados con argumentos como 'relay', 'spawn', 'krbscm', '-m rbcd' o '-m shadowcred'.",
+        "En los controladores de dominio, busque eventos 5136 con cambios a msDS-AllowedToActOnBehalfOfOtherIdentity o msDS-KeyCredentialLink en el objeto de este equipo.",
+        "Busque eventos 4741 (un usuario estándar creó una cuenta de equipo nueva) y solicitudes de ticket S4U (4769) para los SPN de este host.",
+        "Analice el árbol de procesos, las conexiones de red y los archivos escritos por lo que lanzó ImagePath. Revise también alertas previas del mismo host y usuario."
+      ],
+      "false_positives": [
+        "Pruebas de penetración o ejercicios de red team autorizados que ejecutan KrbRelayUp con las opciones por defecto.",
+        "Laboratorios de seguridad o entornos de validación de detecciones que reproducen la herramienta a propósito."
+      ],
+      "response_steps": [
+        "Compare la actividad con los calendarios de pruebas aprobados. Si no está autorizada, trátela como un compromiso confirmado a nivel SYSTEM.",
+        "Aísle el equipo de la red y conserve los registros System y Security, la clave de registro del servicio y el binario de ImagePath.",
+        "En AD, elimine la delegación o las entradas KeyCredentialLink maliciosas y deshabilite las cuentas de equipo que creó el atacante. Restablezca las credenciales del usuario involucrado.",
+        "Elimine el servicio KrbSCM y el payload solo después de recolectar la evidencia. Luego busque otros mecanismos de persistencia que haya dejado el atacante.",
+        "Exija firma LDAP y channel binding, y configure ms-DS-MachineAccountQuota en 0."
+      ],
+      "severity_rationale": "El nivel alto corresponde porque el nombre del servicio es propio de una herramienta ofensiva, no se conoce software legítimo que lo use y una coincidencia indica una probable obtención de SYSTEM."
+    },
+    "en": {
+      "summary": "A service named KrbSCM was installed on this host. KrbSCM is the default service name that KrbRelayUp creates when it uses a forged Kerberos ticket to run a command as SYSTEM.",
+      "what_it_detects": "System log Event ID 7045 (a new service was installed) where ServiceName is exactly 'KrbSCM'. KrbRelayUp relays the machine's Kerberos authentication to LDAP and sets up resource-based constrained delegation or shadow credentials. It then uses S4U to get a ticket for the local host and creates this service through the Service Control Manager.",
+      "why_it_matters": "A low-privileged domain user can get SYSTEM on a domain-joined machine when LDAP signing is not enforced. This is privilege escalation and persistence through a created Windows service (ATT&CK T1543).",
+      "triage_steps": [
+        "Read ImagePath, AccountName and StartType in the 7045 event. ImagePath shows the command or binary that ran as SYSTEM, which is often cmd.exe or a dropped payload.",
+        "Find who was logged on interactively within 15 minutes before or after the alert (Security 4624/4648). That user is the likely operator.",
+        "Search process creation for KrbRelayUp.exe or renamed binaries with arguments like 'relay', 'spawn', 'krbscm', '-m rbcd' or '-m shadowcred'.",
+        "On domain controllers, look for 5136 changes to msDS-AllowedToActOnBehalfOfOtherIdentity or msDS-KeyCredentialLink on this computer object.",
+        "Check for 4741 events (a new computer account was created by a standard user) and 4769 S4U ticket requests for this host's SPNs.",
+        "Review process tree, network connections and files written by the process that ImagePath launched, and look for earlier alerts for the same host and user."
+      ],
+      "false_positives": [
+        "Authorized penetration tests or red team exercises running KrbRelayUp with default options.",
+        "Security lab or detection validation environments that reproduce the tool on purpose."
+      ],
+      "response_steps": [
+        "Check the activity against approved test schedules. If it is not authorized, treat it as a confirmed SYSTEM compromise.",
+        "Isolate the host from the network and keep the System and Security logs, the service registry key and the ImagePath binary.",
+        "In AD, remove the rogue delegation or KeyCredentialLink entries and disable any computer account the attacker created. Reset credentials for the involved user.",
+        "Delete the KrbSCM service and the payload only after you collect evidence. Then hunt for other persistence the attacker added.",
+        "Enforce LDAP signing and channel binding, and set ms-DS-MachineAccountQuota to 0."
+      ],
+      "severity_rationale": "High fits because the service name is specific to an offensive tool, legitimate software is not known to use it, and a match means someone likely gained SYSTEM."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "KrbRelayUp spawn mode installs the default KrbSCM service, which launches cmd.exe as LocalSystem",
+        "event": {
+          "EventID": 7045,
+          "Channel": "System",
+          "Provider_Name": "Service Control Manager",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "KrbSCM",
+          "ImagePath": "C:\\Windows\\System32\\cmd.exe /c C:\\Users\\Public\\payload.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "KrbSCM service written in lowercase that runs a binary from a user profile. Matching is case-insensitive.",
+        "event": {
+          "EventID": 7045,
+          "Channel": "System",
+          "Provider_Name": "Service Control Manager",
+          "Computer": "WS-0207.andes.example.com",
+          "ServiceName": "krbscm",
+          "ImagePath": "C:\\Users\\jperez\\AppData\\Local\\Temp\\KrbRelayUp.exe krbscm --ServiceName KrbSCM",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A legitimate service installation with a different ServiceName",
+        "event": {
+          "EventID": 7045,
+          "Channel": "System",
+          "Provider_Name": "Service Control Manager",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "KrbAgentSvc",
+          "ImagePath": "\"C:\\Program Files\\Example Corp\\Agent\\agentsvc.exe\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "KrbSCM in a state-change event (7036) rather than a service installation (7045)",
+        "event": {
+          "EventID": 7036,
+          "Channel": "System",
+          "Provider_Name": "Service Control Manager",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "KrbSCM",
+          "param1": "KrbSCM",
+          "param2": "stopped"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "311b6ce2-7890-4383-a8c2-663a9f6b43cd",
+    "title": "Enabled User Right in AD to Control User Objects",
+    "level": "high",
+    "status": "test",
+    "author": "@neu5ron",
+    "path": "windows/builtin/security/win_security_alert_active_directory_user_control.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_alert_active_directory_user_control.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró el evento 4704 que asigna el derecho SeEnableDelegationPrivilege a una cuenta o grupo. Con ese derecho, quien tenga permisos de escritura sobre objetos de AD puede configurar delegación Kerberos en ellos.",
+      "what_it_detects": "Eventos 4704 (se asignó un derecho de usuario) del log Security cuyo PrivilegeList contiene SeEnableDelegationPrivilege («Permitir que las cuentas de equipo y usuario sean de confianza para la delegación»). Requiere auditar Authorization Policy Change.",
+      "why_it_matters": "Este derecho permite activar delegación sin restricciones o restringida (msDS-AllowedToDelegateTo) sobre usuarios y equipos. Un atacante puede usarlo como puerta trasera persistente para suplantar cuentas privilegiadas (T1098, manipulación de cuentas).",
+      "triage_steps": [
+        "Resuelva TargetSid a una cuenta o grupo y confirme si es un titular esperado, normalmente solo Administrators del dominio.",
+        "Revise SubjectUserName, SubjectDomainName y SubjectLogonId; si es la cuenta del DC (DC01$), el cambio vino de una GPO aplicada.",
+        "Busque eventos 5136 sobre objetos groupPolicyContainer y cambios en GptTmpl.inf de la Default Domain Controllers Policy en SYSVOL, e identifique quién los editó.",
+        "Correlacione en el mismo DC +/- 15 minutos: eventos 4738, 4742 y 5136 que modifiquen userAccountControl (TRUSTED_FOR_DELEGATION) o msDS-AllowedToDelegateTo.",
+        "Verifique qué permisos de escritura (GenericAll, GenericWrite) tiene la cuenta de TargetSid sobre usuarios o equipos.",
+        "Consulte alertas previas del usuario que editó la GPO y de la cuenta destino, incluyendo inicios de sesión inusuales (4624) en DCs.",
+        "Confirme con el equipo de AD si existe un cambio aprobado en gestión de cambios."
+      ],
+      "false_positives": [
+        "Cambio planificado de GPO por administradores de AD que asigna el derecho a un grupo administrativo.",
+        "Reaplicación de línea base de seguridad o promoción de un nuevo controlador de dominio con la asignación predeterminada a Administrators.",
+        "Herramientas de hardening o cumplimiento que reescriben la configuración de derechos de usuario."
+      ],
+      "response_steps": [
+        "Verifique la autorización con el responsable de AD antes de cualquier cambio.",
+        "Si no está autorizado, retire el derecho de la GPO afectada y fuerce la actualización de políticas en los DCs.",
+        "Revise y revierta configuraciones de delegación agregadas a cuentas, y restablezca credenciales de la cuenta destino y del editor de la GPO.",
+        "Investigue el origen del acceso del editor y busque otros mecanismos de persistencia en AD; documente y monitoree reincidencias."
+      ],
+      "severity_rationale": "Nivel alto porque la asignación de este derecho fuera de lo esperado habilita escalamiento y persistencia a nivel de dominio y casi nunca cambia legítimamente."
+    },
+    "en": {
+      "summary": "A domain controller logged event 4704 assigning SeEnableDelegationPrivilege to an account or group. With that right, anyone holding write access to AD objects can configure Kerberos delegation on them.",
+      "what_it_detects": "Security log event 4704 (a user right was assigned) where PrivilegeList contains SeEnableDelegationPrivilege (\"Enable computer and user accounts to be trusted for delegation\"). Requires Audit Authorization Policy Change.",
+      "why_it_matters": "This right allows enabling unconstrained or constrained delegation (msDS-AllowedToDelegateTo) on users and computers. Attackers can use it as a persistent backdoor to impersonate privileged accounts (T1098, account manipulation).",
+      "triage_steps": [
+        "Resolve TargetSid to an account or group and confirm it is an expected holder, normally only domain Administrators.",
+        "Review SubjectUserName, SubjectDomainName and SubjectLogonId; if it is the DC account (DC01$), the change came from an applied GPO.",
+        "Look for 5136 events on groupPolicyContainer objects and GptTmpl.inf changes in the Default Domain Controllers Policy in SYSVOL; identify who edited them.",
+        "Correlate on the same DC +/- 15 minutes: 4738, 4742 and 5136 events changing userAccountControl (TRUSTED_FOR_DELEGATION) or msDS-AllowedToDelegateTo.",
+        "Check which write permissions (GenericAll, GenericWrite) the TargetSid account holds over users or computers.",
+        "Check earlier alerts for the GPO editor and the target account, including unusual logons (4624) on DCs.",
+        "Confirm with the AD team whether an approved change ticket exists."
+      ],
+      "false_positives": [
+        "Planned GPO change by AD administrators granting the right to an administrative group.",
+        "Security baseline reapplication or new DC promotion with the default assignment to Administrators.",
+        "Hardening or compliance tools rewriting user rights assignment settings."
+      ],
+      "response_steps": [
+        "Verify authorization with the AD owner before changing anything.",
+        "If unauthorized, remove the right from the affected GPO and force a policy refresh on DCs.",
+        "Review and revert delegation settings added to accounts; reset credentials of the target account and the GPO editor.",
+        "Investigate how the editor gained access and hunt for other AD persistence; document and monitor for recurrence."
+      ],
+      "severity_rationale": "High, because an unexpected grant of this right enables domain-level privilege escalation and persistence and rarely changes legitimately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GPO applied on a DC grants SeEnableDelegationPrivilege to a non-admin user SID",
+        "event": {
+          "EventID": 4704,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "DC01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "TargetSid": "S-1-5-21-3623811015-3361044348-30300820-1157",
+          "PrivilegeList": "SeEnableDelegationPrivilege"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same right removed (event 4705), not assigned",
+        "event": {
+          "EventID": 4705,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "DC01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "TargetSid": "S-1-5-21-3623811015-3361044348-30300820-1157",
+          "PrivilegeList": "SeEnableDelegationPrivilege"
+        }
+      },
+      {
+        "description": "Event 4704 assigning a different right (SeBackupPrivilege)",
+        "event": {
+          "EventID": 4704,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "DC01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "TargetSid": "S-1-5-32-551",
+          "PrivilegeList": "SeBackupPrivilege"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

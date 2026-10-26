@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "9bd012ee-0dff-44d7-84a0-aa698cfd87a3",
+    "title": "LSASS Memory Access by Tool With Dump Keyword In Name",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_lsass_dump_keyword_image.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_lsass_dump_keyword_image.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso con \"dump\" en la ruta de su imagen abrió lsass.exe con permisos de lectura de memoria. Esto suele indicar que alguien está generando un volcado de LSASS para extraer credenciales.",
+      "what_it_detects": "Eventos de acceso a procesos (por ejemplo, Sysmon Event ID 10) donde TargetImage termina en \\lsass.exe, SourceImage contiene \"dump\" (procdump, lsassdump, herramientas minidump) y GrantedAccess incluye PROCESS_VM_READ (0x10) o coincide con máscaras de volcado conocidas, como 0x1fffff o 0x14C2.",
+      "why_it_matters": "La memoria de LSASS guarda hashes de contraseñas, tickets Kerberos y a veces credenciales en texto claro. Volcarla (ATT&CK T1003.001, LSASS Memory) permite al atacante analizar el archivo fuera de línea, por ejemplo con Mimikatz, y moverse lateralmente.",
+      "triage_steps": [
+        "Revise SourceImage, SourceUser y GrantedAccess. Las rutas en Temp, ProgramData, Users o carpetas compartidas son más sospechosas que un directorio de herramientas aprobado.",
+        "Obtenga el hash y el firmante del binario de origen. ProcDump de Sysinternals está firmado, pero preocupa igual si nadie esperaba su ejecución. Un archivo renombrado o sin firma es peor.",
+        "Revise CallTrace en busca de dbghelp.dll o dbgcore.dll (MiniDumpWriteDump), señal de que realmente se escribió un volcado.",
+        "Ubique el evento de creación del proceso de origen y revise su CommandLine (por ejemplo, -ma lsass.exe), su ParentImage y la sesión de inicio.",
+        "En el mismo host, dentro de +/- 15 minutos, busque archivos .dmp nuevos, archivos comprimidos, transferencias salientes o el borrado del archivo.",
+        "Pivote por usuario y host: inicios de sesión recientes, ejecución remota (PsExec, WMI, servicios) y alertas previas de acceso a credenciales.",
+        "Consulte con TI o con el responsable del cambio si había una tarea de diagnóstico documentada."
+      ],
+      "false_positives": [
+        "Programas legítimos poco comunes con \"dump\" en el nombre que acceden a lsass, como utilidades de volcado de fallos o de diagnóstico.",
+        "Administradores o soporte del proveedor que ejecutan ProcDump sobre LSASS en un caso de diagnóstico documentado.",
+        "Herramientas de seguridad o forenses que capturan memoria durante una investigación autorizada."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del activo si la actividad estaba autorizada. Conserve la alerta, los datos del proceso y cualquier .dmp como evidencia.",
+        "Si no estaba autorizada, aísle el endpoint, detenga el proceso de origen y recolecte el binario y el volcado antes de eliminarlos.",
+        "Restablezca contraseñas y revoque sesiones y tickets de todas las cuentas que iniciaron sesión en el host. Escale si se expusieron cuentas privilegiadas o de administrador de dominio.",
+        "Busque el mismo hash, nombre de archivo o línea de comandos en otros endpoints.",
+        "Endurezca el host habilitando la protección LSA (RunAsPPL), Credential Guard o la regla ASR que bloquea el robo de credenciales desde LSASS."
+      ],
+      "severity_rationale": "La severidad alta es adecuada porque el acceso de lectura a la memoria de LSASS desde una herramienta con \"dump\" en el nombre rara vez es benigno y suele indicar robo de credenciales."
+    },
+    "en": {
+      "summary": "A process whose image path contains \"dump\" opened lsass.exe with memory-read rights. This often means someone is creating an LSASS memory dump to extract credentials.",
+      "what_it_detects": "Process access events (for example Sysmon Event ID 10) where TargetImage ends with \\lsass.exe, SourceImage contains \"dump\" (procdump, lsassdump, minidump tools), and GrantedAccess includes PROCESS_VM_READ (0x10) or matches known dump masks such as 0x1fffff or 0x14C2.",
+      "why_it_matters": "LSASS memory holds password hashes, Kerberos tickets and sometimes cleartext credentials. Dumping it (ATT&CK T1003.001, LSASS Memory) lets an attacker parse the file offline, for example with Mimikatz, and move laterally.",
+      "triage_steps": [
+        "Review SourceImage, SourceUser and GrantedAccess. Paths in Temp, ProgramData, Users or shared folders are more suspicious than an approved tools directory.",
+        "Get the source binary's hash and signer. Signed Sysinternals ProcDump is still a concern if nobody expected it to run; renamed or unsigned files are worse.",
+        "Check CallTrace for dbghelp.dll or dbgcore.dll (MiniDumpWriteDump), which points to an actual dump being written.",
+        "Find the process creation event for the source process: check its CommandLine (for example -ma lsass.exe), its ParentImage and the logon session.",
+        "Search the same host within +/- 15 minutes for new .dmp files, archive creation, outbound transfers or the file being deleted.",
+        "Pivot on the user and host for recent logons, remote execution (PsExec, WMI, services) and earlier credential-access alerts.",
+        "Ask IT or the change owner whether a documented troubleshooting task was in progress."
+      ],
+      "false_positives": [
+        "Rare legitimate programs with \"dump\" in their name that access lsass, such as crash-dump or diagnostic utilities.",
+        "Administrators or vendor support running ProcDump on LSASS for a documented troubleshooting case.",
+        "Security or forensic tools that capture memory during an authorized investigation."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner whether the activity was authorized. Keep the alert, process details and any .dmp file as evidence.",
+        "If it was not authorized, isolate the endpoint, stop the source process and collect the binary and the dump file before you remove them.",
+        "Reset passwords and revoke sessions and tickets for every account that logged on to the host. Escalate if privileged or domain admin accounts were exposed.",
+        "Hunt for the same hash, file name or command line on other endpoints.",
+        "Harden the host by enabling LSA protection (RunAsPPL), Credential Guard, or the ASR rule that blocks credential stealing from LSASS."
+      ],
+      "severity_rationale": "High fits because memory-read access to LSASS from a dump-named tool rarely has a benign cause and usually means credentials are being stolen."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ProcDump run from a user's Temp folder opens lsass.exe with full access (0x1fffff ends in FF)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\procdump64.exe",
+          "SourceProcessId": 6120,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "TargetProcessId": 712,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\SYSTEM32\\dbgcore.DLL+a3c5"
+        }
+      },
+      {
+        "description": "Custom lsassdump.exe in ProgramData opens lsass with 0x1410 (includes PROCESS_VM_READ, ends in 10)",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-FS-03.andes.example.com",
+          "SourceImage": "C:\\ProgramData\\lsassdump.exe",
+          "SourceProcessId": 4388,
+          "SourceUser": "ANDES\\svc_backup",
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "TargetProcessId": 684,
+          "GrantedAccess": "0x1410",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\ProgramData\\lsassdump.exe+1a2b"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ProcDump queries lsass with PROCESS_QUERY_LIMITED_INFORMATION only (0x1000 ends in 00, not in the list)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Tools\\Sysinternals\\procdump64.exe",
+          "SourceProcessId": 5012,
+          "SourceUser": "ANDES\\it_admin",
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "TargetProcessId": 712,
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e"
+        }
+      },
+      {
+        "description": "ProcDump dumps a crashing application, not lsass (TargetImage does not end in \\lsass.exe)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "C:\\Tools\\Sysinternals\\procdump64.exe",
+          "SourceProcessId": 7344,
+          "SourceUser": "ANDES\\it_admin",
+          "TargetImage": "C:\\Program Files\\Contoso\\Billing\\billing.exe",
+          "TargetProcessId": 9120,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\SYSTEM32\\dbgcore.DLL+a3c5"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

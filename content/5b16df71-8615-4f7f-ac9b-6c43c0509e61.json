@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "5b16df71-8615-4f7f-ac9b-6c43c0509e61",
+    "title": "Hide Schedule Task Via Index Value Tamper",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_hide_scheduled_task_via_index_tamper.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_hide_scheduled_task_via_index_tamper.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso puso en 0 el valor \"Index\" de la clave de registro TaskCache\\Tree de una tarea programada. Esto la oculta de schtasks /query y del Programador de tareas, pero la tarea sigue ejecutándose.",
+      "what_it_detects": "Eventos de escritura en registro donde TargetObject contiene \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\ e 'Index', y Details es DWORD (0x00000000).",
+      "why_it_matters": "Los atacantes usan tareas ocultas para lograr persistencia que las herramientas estándar no listan. La regla lo clasifica como deterioro de defensas (T1685), porque reduce la visibilidad del defensor. Modificar claves Tree suele requerir SYSTEM, lo que también indica acceso elevado.",
+      "triage_steps": [
+        "Obtenga el nombre y la carpeta de la tarea desde la ruta de TargetObject, en el segmento entre \\Tree\\ e \\Index.",
+        "Revise Image y User: reg.exe, powershell.exe o un binario desconocido ejecutándose como SYSTEM es sospechoso. Identifique el proceso padre y su línea de comandos.",
+        "Lea el valor Id en la misma clave Tree y abra TaskCache\\Tasks\\{Id} para ver Actions, Triggers y autor de la tarea.",
+        "Busque el XML de la tarea en C:\\Windows\\System32\\Tasks\\<ruta> y analice el binario o script que ejecuta (hash y firma).",
+        "Revise el mismo host en +/- 15 minutos: creación de tareas (evento 4698, schtasks.exe), borrado del valor SD en Tree, PsExec o instalación de servicios.",
+        "Verifique si el payload ya se ejecutó: procesos lanzados por svchost.exe (servicio Schedule) y sus conexiones de red.",
+        "Busque en otros endpoints el mismo nombre de tarea, ruta Tree o hash del payload, y revise alertas previas del host y del usuario."
+      ],
+      "false_positives": [
+        "La regla indica falsos positivos improbables; pruebas autorizadas de red team o investigación de seguridad sobre ocultamiento de tareas.",
+        "Herramientas de reparación de caché del Programador de tareas o de limpieza de terceros que reescriben TaskCache; confirme que Image sea un binario firmado y conocido."
+      ],
+      "response_steps": [
+        "Revise los detalles de la tarea y el payload para confirmar que el cambio no está autorizado; consulte con el responsable del equipo o con el calendario del red team.",
+        "Si se confirma un payload malicioso, aísle el endpoint y preserve evidencia: exporte las claves Tree y Tasks y el archivo XML de la tarea.",
+        "Tras recolectar evidencia, elimine la tarea oculta y su payload y finalice los procesos que haya iniciado.",
+        "Restablezca las credenciales con privilegios SYSTEM o de administrador usadas en el host e investigue cómo se obtuvo la elevación.",
+        "Busque los mismos indicadores en toda la flota, restaure el host y vigile que no se vuelvan a crear tareas."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque esta manipulación de Index casi no tiene usos legítimos, requiere acceso de nivel SYSTEM y apunta a persistencia sigilosa."
+    },
+    "en": {
+      "summary": "A process set the \"Index\" value of a scheduled task's TaskCache\\Tree registry key to 0. This hides the task from schtasks /query and the Task Scheduler UI, but the task still runs.",
+      "what_it_detects": "Registry set events where TargetObject contains \\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\ and 'Index', and Details is DWORD (0x00000000).",
+      "why_it_matters": "Attackers use hidden scheduled tasks for persistence that standard tools will not list. The rule tags this as defense impairment (T1685): it tampers with the visibility defenders rely on. Writing Tree keys normally requires SYSTEM, so a match also suggests elevated access.",
+      "triage_steps": [
+        "Get the task name and folder from the TargetObject path, the segment between \\Tree\\ and \\Index.",
+        "Review Image and User: reg.exe, powershell.exe or an unknown binary running as SYSTEM is suspicious. Find the parent process and its command line.",
+        "Read the Id value under the same Tree key, then open TaskCache\\Tasks\\{Id} to see the task's Actions, Triggers and author.",
+        "Look for the task XML in C:\\Windows\\System32\\Tasks\\<path> and check the binary or script it launches, including hash and signature.",
+        "Pivot on the same host within +/- 15 minutes: task creation (event 4698, schtasks.exe), SD value deletion under Tree, PsExec or service installs.",
+        "Check whether the task's payload has already run: process creations launched by svchost.exe (Schedule service), and network connections from that payload.",
+        "Search other endpoints for the same task name, Tree path or payload hash, and review earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Rule lists false positives as unlikely; authorized red team or security research testing task-hiding techniques.",
+        "Rare Task Scheduler cache repair or third-party cleanup tools rewriting TaskCache; confirm the Image is a known, signed system or vendor binary."
+      ],
+      "response_steps": [
+        "Confirm with the task details and payload that the change is unauthorized; check with the asset owner or red team schedule.",
+        "Isolate the endpoint if a malicious payload is confirmed, and keep evidence: export the Tree and Tasks keys and the task XML file.",
+        "Remove the hidden task and its payload after collecting evidence, and kill any processes it started.",
+        "Reset credentials used on the host that had SYSTEM or admin access, and look into how the attacker gained elevation.",
+        "Hunt across the fleet for the same indicators, then restore the host and monitor it for re-created tasks."
+      ],
+      "severity_rationale": "High fits because Index tampering has almost no legitimate use, needs SYSTEM-level access, and points to stealthy persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe running as SYSTEM sets Index to 0 for a task named UpdaterSvc, hiding it",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\UpdaterSvc\\Index",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "PowerShell sets Index to 0 for a task in a Microsoft-looking subfolder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\Microsoft\\Windows\\Maintenance\\SyncHelper\\Index",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Task Scheduler service registers a task normally with a non-zero Index",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\GoogleUpdateTaskMachineUA\\Index",
+          "Details": "DWORD (0x00000003)"
+        }
+      },
+      {
+        "description": "Zero DWORD written under the Tasks key (not Tree), so the path does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\{3F2504E0-4F89-11D3-9A0C-0305E82C3301}\\Schema",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

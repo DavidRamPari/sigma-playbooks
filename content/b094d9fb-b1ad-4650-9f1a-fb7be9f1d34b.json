@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "b094d9fb-b1ad-4650-9f1a-fb7be9f1d34b",
+    "title": "Cisco Show Commands Input",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Clark",
+    "path": "network/cisco/aaa/cisco_cli_input_capture.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/cisco/aaa/cisco_cli_input_capture.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un usuario ejecutó 'show history', 'show history all' o 'show logging' en un dispositivo Cisco, según los registros de AAA. Es posible que estuviera revisando comandos anteriores o logs locales en busca de credenciales.",
+      "what_it_detects": "Registros de accounting AAA (por ejemplo, TACACS+) que contienen literalmente 'show history', 'show history all' o 'show logging'. Las abreviaturas como 'sh hist' o 'show log' no coinciden, así que la regla no detecta esas variantes.",
+      "why_it_matters": "El historial de comandos y el buffer de logs local pueden contener contraseñas escritas en texto claro, comunidades SNMP o secretos de configuración. Un atacante con acceso al CLI los lee para obtener más credenciales (ATT&CK T1552.003, credenciales en el historial de shell).",
+      "triage_steps": [
+        "Identifique el usuario, el dispositivo, el nivel de privilegio (priv-lvl) y la IP de origen (rem_addr) en el campo message.",
+        "Verifique si la IP de origen es un jump host o una estación de administración autorizada y si el usuario pertenece al equipo de redes.",
+        "Revise los logs de autenticación TACACS+/RADIUS de esa sesión: hora del login, intentos fallidos previos y origen inusual.",
+        "Busque otros comandos del mismo usuario en el mismo dispositivo en una ventana de +/- 15 minutos: show running-config, terminal length 0, copy, configure terminal, username.",
+        "Confirme si hubo un ticket o una ventana de cambio que justifique la sesión.",
+        "Revise qué contenía realmente el historial o el buffer de logs y determine si se expusieron credenciales.",
+        "Busque alertas anteriores del mismo usuario o de la misma IP en otros dispositivos de red para detectar actividad de reconocimiento lateral."
+      ],
+      "false_positives": [
+        "Administradores que revisan sus propios comandos recientes mientras hacen troubleshooting.",
+        "Ingenieros que consultan 'show logging' durante un incidente operativo, sobre todo en equipos sin syslog remoto.",
+        "Herramientas de automatización o respaldo (scripts, NMS) que recolectan la salida de comandos show de forma programada."
+      ],
+      "response_steps": [
+        "Valide la actividad con el usuario y su supervisor antes de actuar.",
+        "Si no fue autorizada, deshabilite la cuenta en el servidor AAA y cierre las sesiones VTY activas (clear line).",
+        "Rote las credenciales que pudieron quedar expuestas: secret de enable, usuarios locales, comunidades SNMP y claves TACACS/RADIUS.",
+        "Compare la configuración actual con el último respaldo conocido para detectar cambios no autorizados.",
+        "Restrinja el acceso VTY con ACL a hosts de administración y envíe los logs a un syslog remoto."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque estos comandos también tienen usos administrativos legítimos, pero en manos de un atacante pueden exponer credenciales de infraestructura crítica."
+    },
+    "en": {
+      "summary": "Cisco AAA logs show that a user ran 'show history', 'show history all' or 'show logging' on a device. The user may have been reviewing earlier commands or local logs to find credentials.",
+      "what_it_detects": "AAA accounting records (for example, TACACS+) that contain the literal strings 'show history', 'show history all' or 'show logging'. Abbreviations such as 'sh hist' or 'show log' do not match, so the rule misses those variants.",
+      "why_it_matters": "The command history and the local log buffer can hold passwords typed in clear text, SNMP communities or configuration secrets. An attacker with CLI access reads them to collect more credentials (ATT&CK T1552.003, credentials in shell history).",
+      "triage_steps": [
+        "Find the user, device, privilege level (priv-lvl) and source IP (rem_addr) in the message field.",
+        "Check whether the source IP is an authorized jump host or admin workstation, and whether the user belongs to the network team.",
+        "Review the TACACS+/RADIUS authentication logs for the session: login time, earlier failed attempts, unusual origin.",
+        "Look for other commands by the same user on the same device within +/- 15 minutes: show running-config, terminal length 0, copy, configure terminal, username.",
+        "Confirm whether a ticket or change window covers the session.",
+        "Check what the history or log buffer actually contained and whether any credentials were exposed.",
+        "Search for earlier alerts on the same user or source IP across other network devices to spot reconnaissance spreading to more devices."
+      ],
+      "false_positives": [
+        "Administrators reviewing their own recent commands while troubleshooting.",
+        "Engineers running 'show logging' during an operational incident, especially on devices without remote syslog.",
+        "Automation or backup tools (scripts, NMS) that collect show command output on a schedule."
+      ],
+      "response_steps": [
+        "Check the activity with the user and their manager before acting.",
+        "If it was not authorized, disable the account on the AAA server and clear the active VTY sessions (clear line).",
+        "Rotate any credentials that may have been exposed: enable secret, local users, SNMP communities and TACACS/RADIUS keys.",
+        "Compare the running configuration with the last known-good backup to find unauthorized changes.",
+        "Restrict VTY access with ACLs to management hosts and forward logs to remote syslog."
+      ],
+      "severity_rationale": "Medium fits because these commands have legitimate admin uses, but an attacker running them can expose credentials for critical infrastructure."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "TACACS+ accounting record: a user ran 'show history all' on a core router from an unexpected source IP.",
+        "event": {
+          "message": "Oct 25 14:03:12 tacacs-01 tac_plus[2231]: 192.0.2.10\tjperez\ttty2\t203.0.113.45\tstop\ttask_id=4821\ttimezone=UTC\tservice=shell\tpriv-lvl=15\tcmd=show history all <cr>",
+          "host": "tacacs-01",
+          "device_ip": "192.0.2.10",
+          "user": "jperez",
+          "src_ip": "203.0.113.45"
+        }
+      },
+      {
+        "description": "TACACS+ accounting record: a user ran 'show logging' on a distribution switch.",
+        "event": {
+          "message": "Oct 25 14:05:40 tacacs-01 tac_plus[2231]: 192.0.2.20\tmrodriguez\ttty1\t198.51.100.77\tstop\ttask_id=4830\ttimezone=UTC\tservice=shell\tpriv-lvl=15\tcmd=show logging <cr>",
+          "host": "tacacs-01",
+          "device_ip": "192.0.2.20",
+          "user": "mrodriguez",
+          "src_ip": "198.51.100.77"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine admin command 'show running-config' matches none of the keywords.",
+        "event": {
+          "message": "Oct 25 09:12:03 tacacs-01 tac_plus[2231]: 192.0.2.10\tnetops\ttty3\t198.51.100.10\tstop\ttask_id=4702\ttimezone=UTC\tservice=shell\tpriv-lvl=15\tcmd=show running-config <cr>",
+          "host": "tacacs-01",
+          "device_ip": "192.0.2.10",
+          "user": "netops",
+          "src_ip": "198.51.100.10"
+        }
+      },
+      {
+        "description": "Abbreviated 'show log' does not contain 'show logging' verbatim, so it does not match.",
+        "event": {
+          "message": "Oct 25 09:20:47 tacacs-01 tac_plus[2231]: 192.0.2.20\tnetops\ttty3\t198.51.100.10\tstop\ttask_id=4710\ttimezone=UTC\tservice=shell\tpriv-lvl=15\tcmd=show log <cr>",
+          "host": "tacacs-01",
+          "device_ip": "192.0.2.20",
+          "user": "netops",
+          "src_ip": "198.51.100.10"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "7b836d7f-179c-4ba4-90a7-a7e60afb48e6",
+    "title": "Execute Invoke-command on Remote Host",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_invoke_command_remote.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_invoke_command_remote.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell registrado en el host ejecutó Invoke-Command con el parámetro -ComputerName, es decir, código ejecutado en otro equipo mediante WinRM. Puede ser administración legítima o movimiento lateral con credenciales válidas.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging en los que ScriptBlockText contiene a la vez 'invoke-command ' y ' -ComputerName ' (sin distinguir mayúsculas). No detecta alias como icm ni el uso de -Session sin -ComputerName.",
+      "why_it_matters": "Con WinRM (ATT&CK T1021.006, Remote Services: Windows Remote Management), un atacante con una cuenta válida puede ejecutar comandos en equipos remotos como ese usuario, extender el compromiso y desplegar herramientas sin dejar archivos en el origen.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo: identifique los equipos de -ComputerName, el contenido de -ScriptBlock o -FilePath y si se usa -Credential.",
+        "Reconstruya scripts largos uniendo los fragmentos con el mismo ScriptBlockId; revise Path para saber si proviene de un archivo .ps1 o de una sesión interactiva.",
+        "Identifique al usuario y al host de origen; confirme si es administrador, cuenta de servicio o herramienta de gestión conocida.",
+        "Busque el proceso padre de powershell.exe (Sysmon 1 o 4688) en el host ±15 minutos: Office, navegadores o cmd ofuscado elevan la sospecha.",
+        "En los equipos destino, revise eventos 4624 tipo 3, procesos wsmprovhost.exe y sus procesos hijos en la misma ventana de tiempo.",
+        "Busque contenido sospechoso en el bloque: descargas, Mimikatz, volcado de LSASS, creación de usuarios, desactivación de Defender o comandos codificados.",
+        "Revise alertas previas del mismo usuario, host de origen y destinos, y si el patrón de equipos remotos es inusual para esa cuenta."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administración o inventario que consultan servidores con Invoke-Command -ComputerName.",
+        "Herramientas de despliegue, monitoreo o configuración (por ejemplo DSC o tareas programadas de TI) que usan WinRM.",
+        "Administradores realizando soporte remoto o pruebas de conectividad documentadas."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o el equipo de TI si la ejecución remota estaba autorizada y corresponde a un cambio o tarea conocida.",
+        "Si no está autorizada, aísle el host de origen y los destinos afectados desde el EDR, preservando la evidencia.",
+        "Restablezca o deshabilite la cuenta usada y revoque sus sesiones; revise otras credenciales expuestas en el bloque.",
+        "Elimine la persistencia o artefactos creados en los destinos tras confirmarlos, y restrinja WinRM a hosts de administración autorizados.",
+        "Documente los scripts legítimos recurrentes para ajustar exclusiones por usuario, host o Path sin perder visibilidad."
+      ],
+      "severity_rationale": "Medium es adecuado porque Invoke-Command remoto es habitual en administración, pero también es una vía directa de movimiento lateral que requiere revisar el contexto."
+    },
+    "en": {
+      "summary": "A logged PowerShell script block ran Invoke-Command with -ComputerName, executing code on another machine over WinRM. This may be legitimate administration or lateral movement with valid credentials.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains both 'invoke-command ' and ' -ComputerName ' (case-insensitive). It does not catch the icm alias or -Session use without -ComputerName.",
+      "why_it_matters": "Through WinRM (ATT&CK T1021.006, Remote Services: Windows Remote Management), an attacker holding a valid account can run commands on remote hosts as that user, spreading the compromise and staging tools.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: note the -ComputerName targets, the -ScriptBlock or -FilePath content, and whether -Credential is supplied.",
+        "Rebuild long scripts by joining fragments sharing the same ScriptBlockId; check Path to see whether it came from a .ps1 file or an interactive session.",
+        "Identify the user and source host; confirm whether it is an admin, service account or known management tool.",
+        "Find the powershell.exe parent process (Sysmon 1 or 4688) on the host within ±15 minutes; Office, browsers or obfuscated cmd raise suspicion.",
+        "On target hosts, review 4624 logon type 3, wsmprovhost.exe processes and their children in the same window.",
+        "Look for suspicious content in the block: downloads, credential dumping, LSASS access, user creation, Defender tampering or encoded commands.",
+        "Check earlier alerts for the same user, source and targets, and whether the remote host set is unusual for that account."
+      ],
+      "false_positives": [
+        "Legitimate admin or inventory scripts querying servers with Invoke-Command -ComputerName.",
+        "Deployment, monitoring or configuration tooling (for example DSC or IT scheduled tasks) using WinRM.",
+        "Administrators performing documented remote support or connectivity tests."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT team that the remote execution was authorized and matches a known change or task.",
+        "If unauthorized, isolate the source and affected target hosts via EDR while preserving evidence.",
+        "Reset or disable the account used and revoke its sessions; review any other credentials exposed in the block.",
+        "Remove confirmed persistence or artifacts on targets, and restrict WinRM to authorized admin hosts.",
+        "Document recurring legitimate scripts to tune exclusions by user, host or Path without losing visibility."
+      ],
+      "severity_rationale": "Medium fits because remote Invoke-Command is common in administration yet is a direct lateral movement path that needs context review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive PowerShell running a command on a remote file server via Invoke-Command -ComputerName.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Invoke-Command -ComputerName SRV-FS01 -ScriptBlock { whoami; Get-LocalGroupMember -Group Administrators }",
+          "ScriptBlockId": "3f1c2a9e-7b4d-4e21-9a6f-0c5d8e2b1a44",
+          "Path": "",
+          "MessageNumber": 1,
+          "MessageTotal": 1
+        }
+      },
+      {
+        "description": "Script file executing a remote script block against multiple hosts with supplied credentials.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockText": "$c = Get-Credential ANDES\\jperez\ninvoke-command  -ComputerName SRV-APP02,SRV-APP03 -Credential $c -ScriptBlock { Get-Process }",
+          "ScriptBlockId": "9a7e5d10-2c3b-4f88-b1d2-6e4f0a9c7b31",
+          "Path": "C:\\Users\\jperez\\Documents\\check.ps1",
+          "MessageNumber": 1,
+          "MessageTotal": 1
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Invoke-Command run through an existing PSSession without the -ComputerName parameter.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "$s = New-PSSession -ComputerName SRV-FS01\nInvoke-Command -Session $s -ScriptBlock { Get-Service }",
+          "ScriptBlockId": "c2d4e6f8-1a3b-4c5d-8e7f-90a1b2c3d4e5",
+          "Path": "",
+          "MessageNumber": 1,
+          "MessageTotal": 1
+        }
+      },
+      {
+        "description": "Local Get-Service query with -ComputerName but no Invoke-Command.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Get-Service -ComputerName SRV-FS01 -Name Spooler",
+          "ScriptBlockId": "5e6f7a8b-9c0d-4e1f-a2b3-c4d5e6f7a8b9",
+          "Path": "",
+          "MessageNumber": 1,
+          "MessageTotal": 1
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

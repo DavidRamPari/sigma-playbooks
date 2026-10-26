@@ -1,0 +1,157 @@
+{
+  "rule": {
+    "id": "c265cf08-3f99-46c1-8d59-328247057d57",
+    "title": "User Added to Local Administrator Group",
+    "level": "medium",
+    "status": "stable",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/builtin/security/win_security_user_added_to_local_administrators.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_user_added_to_local_administrators.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078",
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se agregó un miembro al grupo local Administradores (S-1-5-32-544) de un equipo Windows, y lo hizo una cuenta de usuario, no una cuenta de equipo. Puede ser administración legítima o una escalada de privilegios o persistencia.",
+      "what_it_detects": "Eventos 4732 del registro Security en los que TargetUserName empieza con 'Administr' o TargetSid es S-1-5-32-544. Se excluyen los cambios hechos por cuentas de equipo (SubjectUserName termina en '$'), como los que aplica una GPO.",
+      "why_it_matters": "Un atacante con acceso a un endpoint puede agregar una cuenta propia o comprometida al grupo Administradores local para tener control total y persistente del equipo (T1098, manipulación de cuentas; T1078, cuentas válidas). Desde ahí puede volcar credenciales y moverse lateralmente.",
+      "triage_steps": [
+        "Identifique quién hizo el cambio (SubjectUserName, SubjectDomainName, SubjectLogonId) y a quién agregó (MemberSid, MemberName). Resuelva el SID a una cuenta.",
+        "Busque un ticket de cambio o una solicitud aprobada que justifique agregar ese miembro en ese equipo (Computer).",
+        "Use SubjectLogonId para encontrar el evento 4624 relacionado: tipo de logon, IP de origen y estación de trabajo.",
+        "Revise los procesos del mismo equipo en +/- 15 minutos (4688 o Sysmon 1): net.exe localgroup, Add-LocalGroupMember, PowerShell o herramientas remotas.",
+        "Verifique si la cuenta agregada es nueva (4720 en el equipo o en el dominio) o si estaba inactiva hace poco.",
+        "Busque cambios parecidos en otros equipos hechos por el mismo SubjectUserName o con el mismo MemberSid.",
+        "Revise alertas anteriores sobre el equipo, el actor y la cuenta agregada."
+      ],
+      "false_positives": [
+        "Administración legítima: soporte técnico que da permisos de administrador temporales a un usuario.",
+        "Scripts de aprovisionamiento o herramientas de gestión que corren con una cuenta de servicio en lugar de la cuenta de equipo.",
+        "Instaladores de software o agentes que agregan su propia cuenta de servicio al grupo."
+      ],
+      "response_steps": [
+        "Confirme con el actor y con el dueño del equipo si el cambio estaba autorizado.",
+        "Si no estaba autorizado, quite el miembro del grupo Administradores después de guardar la evidencia (eventos y lista actual de miembros).",
+        "Deshabilite o restablezca las credenciales de la cuenta que hizo el cambio y de la cuenta agregada si están comprometidas.",
+        "Si hay señales de compromiso, aísle el endpoint y busque persistencia y volcado de credenciales.",
+        "Revise los demás equipos con acceso de esa cuenta y restaure la membresía esperada con GPO o LAPS."
+      ],
+      "severity_rationale": "Es media porque los cambios legítimos son frecuentes, pero un cambio no autorizado da control total del equipo y debe revisarse pronto."
+    },
+    "en": {
+      "summary": "A member was added to the local Administrators group (S-1-5-32-544) on a Windows host by a user account rather than a computer account. This may be legitimate administration, privilege escalation or persistence.",
+      "what_it_detects": "Security log event 4732 where TargetUserName starts with 'Administr' or TargetSid is S-1-5-32-544. Changes made by computer accounts (SubjectUserName ending in '$'), such as GPO-applied changes, are excluded.",
+      "why_it_matters": "An attacker with access to an endpoint can add an account they control to local Administrators for full, persistent control (T1098 Account Manipulation; T1078 Valid Accounts), then dump credentials and move laterally.",
+      "triage_steps": [
+        "Identify who made the change (SubjectUserName, SubjectDomainName, SubjectLogonId) and who was added (MemberSid, MemberName). Resolve the SID to an account.",
+        "Look for a change ticket or approved request for adding that member on that host (Computer).",
+        "Use SubjectLogonId to find the matching 4624 event: logon type, source IP and workstation.",
+        "Review processes on the same host within +/- 15 minutes (4688 or Sysmon 1): net.exe localgroup, Add-LocalGroupMember, PowerShell or remote tools.",
+        "Check whether the added account is new (4720 locally or in the domain) or was dormant until recently.",
+        "Search for similar additions on other hosts by the same SubjectUserName or with the same MemberSid.",
+        "Review earlier alerts for the host, the actor and the added account."
+      ],
+      "false_positives": [
+        "Legitimate administration, such as helpdesk granting temporary admin rights to a user.",
+        "Provisioning scripts or management tools running under a service account instead of the computer account.",
+        "Software installers or agents adding their own service account to the group."
+      ],
+      "response_steps": [
+        "Confirm with the actor and the host owner whether the change was authorized.",
+        "If it was not, save the evidence (events and current member list), then remove the member from Administrators.",
+        "Disable or reset the credentials of the account that made the change, and of the added account if compromised.",
+        "If there are signs of compromise, isolate the endpoint and hunt for persistence and credential dumping.",
+        "Review other hosts the account can access and restore expected membership with GPO or LAPS."
+      ],
+      "severity_rationale": "Medium because legitimate changes are common, but an unauthorized change gives full control of the host and needs prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Domain user ANDES\\jperez adds a domain account to the local Administrators group on WS-0142.",
+        "event": {
+          "EventID": 4732,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "WS-0142.andes.example.com",
+          "TargetUserName": "Administrators",
+          "TargetDomainName": "Builtin",
+          "TargetSid": "S-1-5-32-544",
+          "MemberName": "CN=Soporte Temp,OU=Users,DC=andes,DC=example,DC=com",
+          "MemberSid": "S-1-5-21-3623811015-3361044348-30300820-2117",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectUserSid": "S-1-5-21-3623811015-3361044348-30300820-1104",
+          "SubjectLogonId": "0x3E7A21"
+        }
+      },
+      {
+        "description": "Spanish-localized host where the group is named 'Administradores'; a local account adds another local user, matched by TargetSid.",
+        "event": {
+          "EventID": 4732,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "SRV-FIN-02.andes.example.com",
+          "TargetUserName": "Administradores",
+          "TargetDomainName": "Builtin",
+          "TargetSid": "S-1-5-32-544",
+          "MemberName": "-",
+          "MemberSid": "S-1-5-21-1004336348-1177238915-682003330-1009",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "SRV-FIN-02",
+          "SubjectUserSid": "S-1-5-21-1004336348-1177238915-682003330-1001",
+          "SubjectLogonId": "0x9C4D12"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy (Restricted Groups) applied by the computer account WS-0142$ adds the helpdesk group; excluded by the computer account filter.",
+        "event": {
+          "EventID": 4732,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "WS-0142.andes.example.com",
+          "TargetUserName": "Administrators",
+          "TargetDomainName": "Builtin",
+          "TargetSid": "S-1-5-32-544",
+          "MemberName": "CN=Helpdesk,OU=Groups,DC=andes,DC=example,DC=com",
+          "MemberSid": "S-1-5-21-3623811015-3361044348-30300820-1520",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectLogonId": "0x3E7"
+        }
+      },
+      {
+        "description": "User added to the Remote Desktop Users local group (S-1-5-32-555), not Administrators.",
+        "event": {
+          "EventID": 4732,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "WS-0142.andes.example.com",
+          "TargetUserName": "Remote Desktop Users",
+          "TargetDomainName": "Builtin",
+          "TargetSid": "S-1-5-32-555",
+          "MemberName": "CN=Laura Gomez,OU=Users,DC=andes,DC=example,DC=com",
+          "MemberSid": "S-1-5-21-3623811015-3361044348-30300820-2201",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectUserSid": "S-1-5-21-3623811015-3361044348-30300820-1104",
+          "SubjectLogonId": "0x3E7A21"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

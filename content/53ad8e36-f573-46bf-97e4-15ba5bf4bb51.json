@@ -1,0 +1,111 @@
+{
+  "rule": {
+    "id": "53ad8e36-f573-46bf-97e4-15ba5bf4bb51",
+    "title": "Password Change on Directory Service Restore Mode (DSRM) Account",
+    "level": "high",
+    "status": "stable",
+    "author": "Thomas Patzke",
+    "path": "windows/builtin/security/win_security_susp_dsrm_password_change.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_dsrm_password_change.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró el evento 4794: alguien intentó establecer la contraseña del administrador de Directory Services Restore Mode (DSRM). Fuera de la instalación inicial de un DC, este cambio es poco común y puede indicar persistencia.",
+      "what_it_detects": "Cualquier evento de seguridad de Windows con EventID 4794 (intento de establecer la contraseña del administrador DSRM), sin importar si el intento tuvo éxito o falló.",
+      "why_it_matters": "La cuenta DSRM es un administrador local en cada controlador de dominio. Si un atacante conoce su contraseña, puede conservar acceso privilegiado al DC aunque se restablezcan las credenciales del dominio (ATT&CK T1098, manipulación de cuentas).",
+      "triage_steps": [
+        "Identifique el DC (Computer) y revise SubjectUserName, SubjectDomainName y SubjectLogonId para saber quién ejecutó el cambio.",
+        "Revise el campo Status: 0x0 significa que el cambio se aplicó; otros valores indican un intento fallido que aun así debe explicarse.",
+        "Confirme con el equipo de AD si hubo un cambio planificado, una promoción de DC o un ticket de cambio que cubra la fecha y la hora.",
+        "Correlacione el SubjectLogonId con el evento 4624 para obtener el tipo de logon y la IP de origen de la sesión.",
+        "En el mismo DC, en un rango de +/- 15 minutos, busque procesos como ntdsutil.exe con 'set dsrm password' o 'sync from domain account' en los eventos 4688 o Sysmon 1.",
+        "Verifique si cambió el valor de registro HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DsrmAdminLogonBehavior; el valor 2 permite usar la cuenta DSRM en logons de red.",
+        "Busque alertas previas sobre el mismo usuario o host: volcado de credenciales, DCSync o nuevos miembros en grupos privilegiados."
+      ],
+      "false_positives": [
+        "Instalación inicial o promoción de un controlador de dominio con dcpromo o Install-ADDSDomainController.",
+        "Rotación planificada de la contraseña DSRM con ntdsutil, realizada por administradores de AD dentro de una ventana de cambio.",
+        "Scripts de cumplimiento que sincronizan la contraseña DSRM con una cuenta de dominio de forma periódica."
+      ],
+      "response_steps": [
+        "Si el cambio no está autorizado, trate el DC como comprometido y escale de inmediato al equipo de respuesta a incidentes.",
+        "Restablezca la contraseña DSRM a un valor nuevo desde una sesión de administración confiable y verifique que DsrmAdminLogonBehavior tenga el valor predeterminado.",
+        "Deshabilite o restablezca la cuenta que hizo el cambio y revise sus sesiones activas y su actividad reciente en otros sistemas.",
+        "Busque otros mecanismos de persistencia en los DC y valore restablecer krbtgt si encuentra indicios de compromiso del dominio."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque el cambio solo es esperable al instalar un DC y otorga acceso administrativo persistente a un controlador de dominio."
+    },
+    "en": {
+      "summary": "A domain controller logged event 4794: someone tried to set the Directory Services Restore Mode (DSRM) administrator password. Outside initial DC installation this is rare and may indicate persistence.",
+      "what_it_detects": "Any Windows Security event with EventID 4794 (an attempt to set the DSRM administrator password), whether the attempt succeeded or failed.",
+      "why_it_matters": "The DSRM account is a local administrator on every domain controller. An attacker who knows its password can keep privileged access to the DC even after domain credentials are reset (ATT&CK T1098, Account Manipulation).",
+      "triage_steps": [
+        "Identify the DC (Computer) and review SubjectUserName, SubjectDomainName and SubjectLogonId to learn who made the change.",
+        "Check the Status field: 0x0 means the change was applied; other values mean a failed attempt that still needs an explanation.",
+        "Ask the AD team whether a planned change, DC promotion or change ticket covers this date and time.",
+        "Correlate SubjectLogonId with event 4624 to get the logon type and source IP of the session.",
+        "On the same DC within +/- 15 minutes, look for ntdsutil.exe with 'set dsrm password' or 'sync from domain account' in 4688 or Sysmon 1 events.",
+        "Check whether HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DsrmAdminLogonBehavior changed; a value of 2 allows the DSRM account to be used for network logons.",
+        "Search earlier alerts for the same user or host: credential dumping, DCSync or new privileged group members."
+      ],
+      "false_positives": [
+        "Initial installation or promotion of a domain controller with dcpromo or Install-ADDSDomainController.",
+        "Planned DSRM password rotation with ntdsutil by AD administrators during a change window.",
+        "Compliance scripts that periodically sync the DSRM password with a domain account."
+      ],
+      "response_steps": [
+        "If the change is not authorized, treat the DC as compromised and escalate to incident response immediately.",
+        "Reset the DSRM password to a new value from a trusted admin session and confirm DsrmAdminLogonBehavior is at its default.",
+        "Disable or reset the account that made the change and review its active sessions and recent activity on other systems.",
+        "Hunt for other persistence on the DCs and consider a krbtgt reset if you find signs of domain compromise."
+      ],
+      "severity_rationale": "High fits because this change is expected only when a DC is installed, and it grants persistent administrative access to a domain controller."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DSRM administrator password set on a domain controller by a domain account outside any change window",
+        "event": {
+          "EventID": 4794,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "Workstation": "DC-01",
+          "Status": "0x0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Ordinary domain user password reset (event 4724) on the same DC; not a DSRM password change",
+        "event": {
+          "EventID": 4724,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "helpdesk01",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x4B2C10",
+          "TargetUserName": "mrodriguez",
+          "TargetDomainName": "ANDES"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

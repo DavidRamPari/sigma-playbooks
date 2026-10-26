@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "a6355fbe-f36f-45d8-8efc-ab42465cbc52",
+    "title": "Delegated Permissions Granted For All Users",
+    "level": "high",
+    "status": "test",
+    "author": "Bailey Bercik '@baileybercik', Mark Morowczynski '@markmorow'",
+    "path": "cloud/azure/audit_logs/azure_app_delegated_permissions_all_users.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_app_delegated_permissions_all_users.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1528"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en Entra ID (Azure AD) la operación «Add delegated permission grant»: alguien otorgó permisos delegados a una aplicación, posiblemente en nombre de todos los usuarios del tenant (consentimiento de administrador).",
+      "what_it_detects": "Eventos de Azure Audit Logs cuyo properties.message es exactamente «Add delegated permission grant». La regla no filtra por alcance ni por tipo de consentimiento, así que el analista debe confirmar si fue AllPrincipals y qué scopes se otorgaron.",
+      "why_it_matters": "Un consentimiento amplio permite que una aplicación lea correo, archivos o directorio en nombre de cualquier usuario. Los atacantes lo usan para obtener tokens de acceso persistentes sin contraseñas (ATT&CK T1528, robo de tokens de acceso de aplicación).",
+      "triage_steps": [
+        "Identifique al iniciador (initiatedBy: usuario o service principal), su IP de origen y si tiene rol de Global Admin, Application Admin o Cloud Application Admin.",
+        "Revise targetResources y modifiedProperties: aplicación o service principal destino, ConsentType (AllPrincipals indica todos los usuarios) y los scopes otorgados.",
+        "Evalúe el riesgo de los scopes: Mail.ReadWrite, Files.ReadWrite.All, Directory.ReadWrite.All, offline_access u otros de alto privilegio.",
+        "Verifique la aplicación: publisher verificado, fecha de creación, tenant propietario, URLs de redirección y si fue registrada recientemente.",
+        "Busque en ±15 minutos eventos relacionados del mismo iniciador: «Consent to application», «Add service principal», «Add app role assignment» o nuevas credenciales en la aplicación.",
+        "Correlacione con alertas previas del iniciador: inicios de sesión riesgosos, MFA inusual, IP o país atípicos.",
+        "Consulte los sign-in logs del service principal para ver si ya obtuvo tokens y accedió a recursos tras la concesión."
+      ],
+      "false_positives": [
+        "Consentimiento de administrador legítimo para una aplicación aprobada y documentada en un ticket de cambio.",
+        "Despliegue de aplicaciones corporativas o integraciones SaaS por el equipo de identidad o mediante automatización (Terraform, Graph API).",
+        "Actualización de scopes de una aplicación existente aprobada por el equipo de seguridad."
+      ],
+      "response_steps": [
+        "Confirme con el iniciador y el dueño de la aplicación si la concesión fue autorizada y existe un cambio aprobado.",
+        "Si no está autorizada, revoque el OAuth2PermissionGrant y deshabilite el service principal; conserve evidencia antes de eliminar.",
+        "Revoque sesiones y tokens de refresco del iniciador, restablezca credenciales y revise sus métodos de MFA.",
+        "Audite la actividad de la aplicación en Graph/Unified Audit Log para determinar datos accedidos y el alcance del impacto.",
+        "Restrinja el consentimiento de usuarios y exija el flujo de aprobación de consentimiento de administrador."
+      ],
+      "severity_rationale": "Es alta porque un consentimiento delegado para todos los usuarios puede exponer los datos de toda la organización a una aplicación con acceso persistente."
+    },
+    "en": {
+      "summary": "Entra ID (Azure AD) logged an «Add delegated permission grant» operation: someone granted delegated permissions to an application, possibly on behalf of all tenant users (admin consent).",
+      "what_it_detects": "Azure Audit Log events whose properties.message is exactly «Add delegated permission grant». The rule does not filter on scope or consent type, so the analyst must confirm AllPrincipals and the granted scopes.",
+      "why_it_matters": "Broad consent lets an application read mail, files or directory data as any user. Attackers abuse it to obtain persistent access tokens without passwords (ATT&CK T1528, Steal Application Access Token).",
+      "triage_steps": [
+        "Identify the initiator (initiatedBy user or service principal), source IP, and whether it holds Global Admin, Application Admin or Cloud Application Admin.",
+        "Review targetResources and modifiedProperties: target app or service principal, ConsentType (AllPrincipals means all users) and granted scopes.",
+        "Assess scope risk: Mail.ReadWrite, Files.ReadWrite.All, Directory.ReadWrite.All, offline_access or other high-privilege permissions.",
+        "Vet the app: verified publisher, creation date, owning tenant, redirect URIs, and whether it was registered recently.",
+        "Search ±15 minutes for related events by the same initiator: Consent to application, Add service principal, Add app role assignment, or new app credentials.",
+        "Correlate with earlier alerts for the initiator: risky sign-ins, unusual MFA, atypical IP or country.",
+        "Check the service principal's sign-in logs to see whether it already obtained tokens and accessed resources after the grant."
+      ],
+      "false_positives": [
+        "Legitimate admin consent for an approved application documented in a change ticket.",
+        "Corporate app or SaaS integration rollout by the identity team or automation (Terraform, Graph API).",
+        "Scope update to an existing app approved by security."
+      ],
+      "response_steps": [
+        "Confirm with the initiator and app owner that the grant was authorized and has an approved change.",
+        "If unauthorized, revoke the OAuth2PermissionGrant and disable the service principal; preserve evidence before deleting anything.",
+        "Revoke the initiator's sessions and refresh tokens, reset credentials and review MFA methods.",
+        "Audit the app's activity in Graph/Unified Audit Log to determine data accessed and impact.",
+        "Restrict user consent and enforce the admin consent approval workflow."
+      ],
+      "severity_rationale": "High because a tenant-wide delegated grant can expose the whole organization's data to an app with persistent access."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Admin consent granting Mail.ReadWrite and offline_access to all users for an unverified app",
+        "event": {
+          "properties.message": "Add delegated permission grant",
+          "properties.activityDisplayName": "Add delegated permission grant",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "properties.initiatedBy.user.ipAddress": "203.0.113.45",
+          "properties.targetResources.0.displayName": "Mail Sync Helper",
+          "properties.targetResources.0.type": "ServicePrincipal",
+          "properties.targetResources.0.modifiedProperties.0.displayName": "DelegatedPermissionGrant.Scope",
+          "properties.targetResources.0.modifiedProperties.0.newValue": "Mail.ReadWrite offline_access User.Read",
+          "properties.targetResources.0.modifiedProperties.1.displayName": "DelegatedPermissionGrant.ConsentType",
+          "properties.targetResources.0.modifiedProperties.1.newValue": "AllPrincipals",
+          "time": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "Delegated grant created by a service principal via Graph automation",
+        "event": {
+          "properties.message": "Add delegated permission grant",
+          "properties.activityDisplayName": "Add delegated permission grant",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.app.displayName": "Provisioning-Automation",
+          "properties.targetResources.0.displayName": "Files Reporting Tool",
+          "properties.targetResources.0.modifiedProperties.0.newValue": "Files.ReadWrite.All",
+          "time": "2024-10-25T15:21:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Related but different operation: application permission (app role) assignment",
+        "event": {
+          "properties.message": "Add app role assignment to service principal",
+          "properties.activityDisplayName": "Add app role assignment to service principal",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "properties.targetResources.0.displayName": "Mail Sync Helper",
+          "time": "2024-10-25T14:04:01Z"
+        }
+      },
+      {
+        "description": "Removal of a delegated permission grant, not an addition",
+        "event": {
+          "properties.message": "Remove delegated permission grant",
+          "properties.activityDisplayName": "Remove delegated permission grant",
+          "properties.category": "ApplicationManagement",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "mrojas@example.com",
+          "properties.targetResources.0.displayName": "Legacy CRM Connector",
+          "time": "2024-10-25T16:10:22Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "db014773-b1d3-46bd-ba26-133337c0ffee",
+    "title": "AWS IAM S3Browser LoginProfile Creation",
+    "level": "high",
+    "status": "test",
+    "author": "daniel.bohannon@permiso.io (@danielhbohannon)",
+    "path": "cloud/aws/cloudtrail/aws_iam_s3browser_loginprofile_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_iam_s3browser_loginprofile_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.009",
+      "T1078.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "La herramienta S3 Browser consultó (GetLoginProfile) o creó (CreateLoginProfile) un perfil de inicio de sesión de consola para un usuario IAM. Este patrón sirve para darle acceso a la consola a un usuario IAM que antes solo tenía llaves de acceso.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource iam.amazonaws.com, eventName GetLoginProfile o CreateLoginProfile y un userAgent que contiene 'S3 Browser', un cliente gráfico de Windows pensado para administrar S3.",
+      "why_it_matters": "Si alguien roba llaves de acceso, puede buscar usuarios sin contraseña de consola y crearles una. Así obtiene acceso persistente a la consola con una cuenta válida (T1078.004). El uso de un cliente GUI corresponde a T1059.009.",
+      "triage_steps": [
+        "Identifique al actor en userIdentity.arn y userIdentity.accessKeyId, y anote sourceIPAddress, awsRegion y la versión exacta del userAgent.",
+        "Revise requestParameters.userName para saber a qué usuarios se les consultó o creó un LoginProfile. Verifique en errorCode si la llamada falló con NoSuchEntity.",
+        "Confirme con el dueño de la llave o con el equipo de cloud si S3 Browser es una herramienta aprobada y si el cambio estaba planeado.",
+        "Pivotee por la misma accessKeyId y la misma sourceIPAddress en +/- 15 minutos para buscar ListUsers, CreateUser, CreateAccessKey, AttachUserPolicy o PutUserPolicy.",
+        "Busque eventos ConsoleLogin posteriores de los usuarios afectados, sobre todo desde IP o geolocalizaciones nuevas.",
+        "Compare la sourceIPAddress con el historial del actor y revise alertas anteriores de la misma identidad o la misma IP."
+      ],
+      "false_positives": [
+        "Un administrador usa S3 Browser de forma legítima para listar o crear perfiles de inicio de sesión de usuarios IAM.",
+        "Pruebas internas o ejercicios de red team autorizados que usan S3 Browser con credenciales de laboratorio."
+      ],
+      "response_steps": [
+        "Valide la actividad con el dueño de la credencial antes de actuar. Si no está autorizada, abra un incidente.",
+        "Desactive la llave de acceso del actor y elimine los LoginProfile que se crearon sin autorización con DeleteLoginProfile, después de documentar la evidencia.",
+        "Revise y revierta los usuarios, llaves y políticas que el actor creó o modificó, e invalide las sesiones activas de los usuarios afectados.",
+        "Rote las credenciales comprometidas, exija MFA y limite iam:CreateLoginProfile con políticas de mínimo privilegio o SCP."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque crear perfiles de consola desde un cliente S3 de terceros es poco común y le da persistencia directa a un atacante."
+    },
+    "en": {
+      "summary": "The S3 Browser tool queried (GetLoginProfile) or created (CreateLoginProfile) a console login profile for an IAM user. This pattern can give console access to IAM users that previously had only access keys.",
+      "what_it_detects": "CloudTrail events with eventSource iam.amazonaws.com, eventName GetLoginProfile or CreateLoginProfile, and a userAgent containing 'S3 Browser', a Windows GUI client for managing S3.",
+      "why_it_matters": "With stolen access keys, an attacker can look for users without a console password and create one. That gives persistent console access through a valid cloud account (T1078.004). Use of a GUI client maps to T1059.009.",
+      "triage_steps": [
+        "Identify the actor from userIdentity.arn and userIdentity.accessKeyId. Note the sourceIPAddress, awsRegion and exact userAgent version.",
+        "Check requestParameters.userName for the targeted users. Check errorCode, because a NoSuchEntity error means the call was only a lookup that found no profile.",
+        "Ask the key owner or the cloud team whether S3 Browser is an approved tool and whether this change was planned.",
+        "Pivot on the same accessKeyId and sourceIPAddress within +/- 15 minutes. Look for ListUsers, CreateUser, CreateAccessKey, AttachUserPolicy or PutUserPolicy.",
+        "Look for later ConsoleLogin events by the affected users, especially from new IPs or locations.",
+        "Compare the sourceIPAddress with the actor's history and review earlier alerts for the same identity or IP."
+      ],
+      "false_positives": [
+        "An administrator uses S3 Browser legitimately to list or create IAM login profiles.",
+        "Authorized internal testing or red team exercises that use S3 Browser with lab credentials."
+      ],
+      "response_steps": [
+        "Confirm the activity with the credential owner before acting. If it is not authorized, open an incident.",
+        "Save the evidence. Then deactivate the actor's access key and remove unauthorized login profiles with DeleteLoginProfile.",
+        "Review and revert any users, keys or policies the actor created or changed. Revoke active sessions of the affected users.",
+        "Rotate the compromised credentials, enforce MFA, and restrict iam:CreateLoginProfile through least-privilege policies or SCPs."
+      ],
+      "severity_rationale": "High fits because creating console profiles from a third-party S3 client is unusual and gives an attacker direct persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "S3 Browser creates a console login profile for an existing IAM user",
+        "event": {
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateLoginProfile",
+          "userAgent": "S3 Browser 11.4.5 https://s3browser.com",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.userName": "jperez",
+          "eventTime": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "S3 Browser looks up a login profile and finds none (NoSuchEntity)",
+        "event": {
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "GetLoginProfile",
+          "userAgent": "S3 Browser 11.4.5 https://s3browser.com",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.userName": "mrodriguez",
+          "errorCode": "NoSuchEntityException",
+          "eventTime": "2024-10-25T14:02:58Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An administrator creates a login profile with the AWS CLI, so the userAgent does not contain S3 Browser",
+        "event": {
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateLoginProfile",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Windows/10 exe/AMD64",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/admin-cloud",
+          "requestParameters.userName": "nuevo.usuario",
+          "eventTime": "2024-10-25T09:15:40Z"
+        }
+      },
+      {
+        "description": "S3 Browser lists buckets in S3, which is normal use and is neither an IAM event nor a LoginProfile action",
+        "event": {
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "userAgent": "S3 Browser 11.4.5 https://s3browser.com",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.33",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/data-analyst",
+          "eventTime": "2024-10-25T11:20:05Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "96c982fe-3d08-4df4-bed2-eb14e02f21c8",
+    "title": "Get-ADUser Enumeration Using UserAccountControl Flags",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_as_rep_roasting.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_as_rep_roasting.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1033"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell ejecutó Get-ADUser con un filtro de bits sobre userAccountControl (valor 4194304, DONT_REQ_PREAUTH) para listar cuentas que no requieren preautenticación Kerberos. Este es el paso previo típico al AS-REP roasting.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging cuyo ScriptBlockText contiene a la vez 'Get-ADUser', '-Filter', 'useraccountcontrol', '-band' y '4194304', o sea, una búsqueda de cuentas con la marca DONT_REQ_PREAUTH.",
+      "why_it_matters": "Cuando una cuenta no exige preautenticación, cualquier usuario del dominio puede pedir su AS-REP y descifrar la contraseña offline. La regla cubre esa enumeración (Discovery, T1033), que suele ocurrir justo antes de robar credenciales.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y reconstruya los bloques divididos con ScriptBlockId. Fíjese en propiedades solicitadas, exportaciones a archivo y comandos posteriores.",
+        "Identifique el usuario que ejecutó PowerShell y el equipo (Computer). Confirme si es un administrador de AD o una cuenta de servicio conocida.",
+        "Revise Path para saber si fue un script en disco o una sesión interactiva. Si hay archivo, obtenga su hash y su ruta y valide si es una herramienta interna aprobada.",
+        "Revise la creación de procesos en el mismo host +/- 15 minutos: proceso padre de powershell.exe, línea de comandos, y si hubo descargas o binarios como Rubeus.",
+        "En los controladores de dominio, busque eventos 4768 con tipo de preautenticación 0 que vengan de la IP de este host y se registren después de la enumeración.",
+        "Busque alertas previas del mismo usuario y del mismo host, sobre todo de enumeración LDAP, Kerberoasting o actividad de BloodHound."
+      ],
+      "false_positives": [
+        "Scripts legítimos de auditoría o hardening de AD que inventarían las cuentas con DONT_REQ_PREAUTH.",
+        "Administradores de identidad que revisan la configuración de las cuentas a mano o en tareas programadas.",
+        "Ejercicios autorizados de pentest o red team, o pruebas de Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la cuenta o con el equipo de AD si la ejecución estaba autorizada. Si lo estaba, documente y ajuste la regla para ese script o esa cuenta.",
+        "Si no estaba autorizada, aísle el endpoint y suspenda o vigile la cuenta que ejecutó el script mientras dura la investigación.",
+        "Haga un inventario de las cuentas con DONT_REQ_PREAUTH. Active la preautenticación donde sea posible y cambie las contraseñas de las cuentas expuestas.",
+        "Busque señales de que alguien descifró credenciales o las usó después: inicios de sesión anómalos de las cuentas enumeradas."
+      ],
+      "severity_rationale": "Se considera media porque por sí sola es reconocimiento sin impacto directo, pero suele anticipar el robo de credenciales, y en entornos legítimos aparece poco."
+    },
+    "en": {
+      "summary": "A PowerShell script ran Get-ADUser with a bitwise filter on userAccountControl (4194304, DONT_REQ_PREAUTH) to list accounts that do not require Kerberos pre-authentication. This is the usual first step of AS-REP roasting.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains all of 'Get-ADUser', '-Filter', 'useraccountcontrol', '-band' and '4194304', which is a query for accounts flagged DONT_REQ_PREAUTH.",
+      "why_it_matters": "Any domain user can request an AS-REP for an account that does not require pre-authentication, then crack its password offline. The rule covers that enumeration (Discovery, T1033), which often comes right before credential theft.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and rebuild split blocks using ScriptBlockId. Look at requested properties, exports to files and any follow-on commands.",
+        "Identify the user running PowerShell and the host (Computer). Check whether the user is a known AD administrator or service account.",
+        "Check Path to see whether this was a script on disk or an interactive session. If a file exists, get its hash and location and check whether it is approved internal tooling.",
+        "Review process creation on the same host within +/- 15 minutes: the powershell.exe parent, command lines, and any downloads or tools such as Rubeus.",
+        "On domain controllers, look for 4768 events with pre-authentication type 0 that come from this host's IP after the enumeration.",
+        "Check earlier alerts for the same user and host, especially LDAP enumeration, Kerberoasting or BloodHound activity."
+      ],
+      "false_positives": [
+        "Legitimate AD audit or hardening scripts that list accounts with DONT_REQ_PREAUTH.",
+        "Identity administrators reviewing account settings by hand or in scheduled tasks.",
+        "Authorized penetration tests, red team exercises or Atomic Red Team runs."
+      ],
+      "response_steps": [
+        "Check with the user or the AD team whether the run was authorized. If it was, document it and tune the rule for that script or account.",
+        "If it was not authorized, isolate the endpoint and suspend or closely monitor the executing account while you investigate.",
+        "Inventory the accounts flagged DONT_REQ_PREAUTH. Turn pre-authentication back on where possible and reset the passwords of exposed accounts.",
+        "Look for signs that credentials were cracked or used afterwards, such as unusual logons by the enumerated accounts."
+      ],
+      "severity_rationale": "Medium fits because this is reconnaissance with no direct impact, but it often comes before credential theft and is uncommon in legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive Get-ADUser query for accounts with DONT_REQ_PREAUTH using a bitwise filter (Atomic Red Team style).",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c21-5d6e7f8a9b01",
+          "Path": "",
+          "ScriptBlockText": "Get-ADUser -Filter 'useraccountcontrol -band 4194304' -Properties useraccountcontrol | Format-Table name"
+        }
+      },
+      {
+        "description": "Script on disk that enumerates AS-REP roastable accounts and exports them to CSV.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "UserID": "ANDES\\svc_report",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "a7c3e2d1-0f9b-4c6a-8e5d-2b1a3c4d5e6f",
+          "Path": "C:\\Users\\Public\\enum.ps1",
+          "ScriptBlockText": "$u = Get-ADUser -Filter {UserAccountControl -band 4194304} -Properties SamAccountName,UserAccountControl\n$u | Export-Csv C:\\Users\\Public\\np.csv -NoTypeInformation"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same goal using the DoesNotRequirePreAuth property; no useraccountcontrol, -band or 4194304, so the rule does not match.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "b1d2e3f4-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "Path": "",
+          "ScriptBlockText": "Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | Select-Object Name"
+        }
+      },
+      {
+        "description": "Admin script that checks disabled accounts with the ACCOUNTDISABLE flag (2) instead of 4194304.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "DC-ADM-01.andes.example.com",
+          "UserID": "ANDES\\adm_mlopez",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "c9e8d7f6-1a2b-4c3d-9e8f-7a6b5c4d3e2f",
+          "Path": "C:\\Scripts\\disabled_users.ps1",
+          "ScriptBlockText": "Get-ADUser -Filter 'useraccountcontrol -band 2' -Properties useraccountcontrol | Select-Object Name,Enabled"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

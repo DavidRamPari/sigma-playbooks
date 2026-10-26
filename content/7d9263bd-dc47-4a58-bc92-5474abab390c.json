@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "7d9263bd-dc47-4a58-bc92-5474abab390c",
+    "title": "Change Winevt Channel Access Permission Via Registry",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_change_winevt_channelaccess.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_change_winevt_channelaccess.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto del servicio de mantenimiento de Windows modificó el valor ChannelAccess de un canal de eventos y escribió un SDDL con entradas de acceso restringidas. Esto puede limitar quién puede leer, escribir o borrar ese registro de eventos.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject está bajo \\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\ y termina en \\ChannelAccess, y Details contiene (A;;0x1;;;LA), (A;;0x1;;;SY) o (A;;0x5;;;BA). Se excluyen TrustedInstaller.exe y TiWorker.exe de WinSxS.",
+      "why_it_matters": "ChannelAccess define en SDDL los permisos de un canal de eventos. Reemplazarlo permite cegar canales como PowerShell, Sysmon o Defender ante lectores y el reenvío al SIEM. Corresponde a ATT&CK T1685.001 (debilitamiento de defensas mediante alteración del registro de eventos).",
+      "triage_steps": [
+        "Identifique el canal afectado en TargetObject y su importancia (Sysmon, PowerShell, Defender, Security, TaskScheduler).",
+        "Compare Details con el SDDL predeterminado del canal y determine qué principales perdieron acceso, en particular la cuenta del servicio de reenvío o lectura.",
+        "Revise Image, User y la línea de comandos del proceso (reg.exe, powershell.exe, wevtutil.exe sl /ca) y su ParentImage.",
+        "Pivote en el mismo host +/- 15 minutos: otros cambios en WINEVT\\Channels (Enabled=0), detención del servicio EventLog, borrado de registros o desactivación de Defender.",
+        "Verifique si el canal sigue enviando eventos al SIEM después de la hora del cambio.",
+        "Busque el mismo valor Details en otros endpoints y alertas previas para el usuario o host."
+      ],
+      "false_positives": [
+        "Hardening o GPO legítimos que restringen el acceso a canales, documentados por el equipo de plataforma.",
+        "Herramientas de gestión o agentes de seguridad que ajustan permisos de canales durante su instalación.",
+        "Pruebas de administradores en laboratorio con wevtutil sl /ca."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o con el registro de cambios si la modificación fue autorizada.",
+        "Si no lo fue, aísle el endpoint y conserve el proceso, sus hashes y los eventos disponibles.",
+        "Restaure el SDDL predeterminado de ChannelAccess (wevtutil sl <canal> /ca:<SDDL original>) y verifique que el reenvío se reanude.",
+        "Investigue la actividad ocurrida durante la ventana sin visibilidad con otras fuentes (EDR, red, otros canales).",
+        "Restablezca las credenciales usadas y elimine la persistencia encontrada."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque alterar permisos de canales de eventos casi nunca es rutinario y suele preceder a actividad que el atacante quiere ocultar."
+    },
+    "en": {
+      "summary": "A process other than Windows servicing changed an event channel's ChannelAccess value to an SDDL with restricted access entries. This can limit who can read, write or clear that event log.",
+      "what_it_detects": "registry_set events where TargetObject is under \\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\ and ends with \\ChannelAccess, and Details contains (A;;0x1;;;LA), (A;;0x1;;;SY) or (A;;0x5;;;BA). TrustedInstaller.exe and WinSxS TiWorker.exe are excluded.",
+      "why_it_matters": "ChannelAccess holds the SDDL permissions of an event channel. Replacing it can blind channels such as PowerShell, Sysmon or Defender to readers and SIEM forwarding. Maps to ATT&CK T1685.001 (defense impairment by tampering with event logging).",
+      "triage_steps": [
+        "Identify the channel in TargetObject and how important it is (Sysmon, PowerShell, Defender, Security, TaskScheduler).",
+        "Compare Details with the channel's default SDDL and work out which principals lost access, especially the forwarding or reader account.",
+        "Review Image, User and the process command line (reg.exe, powershell.exe, wevtutil.exe sl /ca) and its ParentImage.",
+        "Pivot on the same host +/- 15 minutes: other WINEVT\\Channels changes (Enabled=0), EventLog service stops, log clearing, Defender tampering.",
+        "Check whether the channel still delivers events to the SIEM after the change time.",
+        "Search for the same Details value on other endpoints and for earlier alerts on the user or host."
+      ],
+      "false_positives": [
+        "Legitimate hardening or GPO restricting channel access, documented by the platform team.",
+        "Management tools or security agents adjusting channel permissions during installation.",
+        "Administrator lab testing with wevtutil sl /ca."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or change records whether the change was authorized.",
+        "If not, isolate the endpoint and preserve the process, its hashes and available events.",
+        "Restore the default ChannelAccess SDDL (wevtutil sl <channel> /ca:<original SDDL>) and verify forwarding resumes.",
+        "Investigate activity during the blind window using other sources (EDR, network, other channels).",
+        "Reset credentials used and remove any persistence found."
+      ],
+      "severity_rationale": "High fits because changing event channel permissions is rarely routine and usually precedes activity an attacker wants to hide."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe overwrites the Sysmon Operational channel ChannelAccess with a restricted SDDL",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-Sysmon/Operational\\ChannelAccess",
+          "Details": "O:BAG:SYD:(A;;0x1;;;SY)(A;;0x5;;;BA)(A;;0x1;;;LA)"
+        }
+      },
+      {
+        "description": "PowerShell changes the PowerShell Operational channel ChannelAccess to built-in administrators only",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "SRV-FS-02.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-PowerShell/Operational\\ChannelAccess",
+          "Details": "O:BAG:SYD:(A;;0x5;;;BA)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "TiWorker.exe from WinSxS writes the same SDDL during a Windows update (excluded by filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.3745_none_7e2b5c6e3b6d1a52\\TiWorker.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-Sysmon/Operational\\ChannelAccess",
+          "Details": "O:BAG:SYD:(A;;0x1;;;SY)(A;;0x5;;;BA)(A;;0x1;;;LA)"
+        }
+      },
+      {
+        "description": "wevtutil sets a broader SDDL that contains none of the watched access entries",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "ComputerName": "WS-0077.andes.example.com",
+          "User": "ANDES\\admin.lgomez",
+          "Image": "C:\\Windows\\System32\\wevtutil.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-TaskScheduler/Operational\\ChannelAccess",
+          "Details": "O:BAG:SYD:(A;;0xf0007;;;SY)(A;;0x7;;;BA)(A;;0x3;;;BO)(A;;0x5;;;SO)(A;;0x1;;;IU)(A;;0x1;;;S-1-5-32-573)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

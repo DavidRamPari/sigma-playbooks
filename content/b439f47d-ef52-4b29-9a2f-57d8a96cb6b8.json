@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "b439f47d-ef52-4b29-9a2f-57d8a96cb6b8",
+    "title": "WMI ActiveScriptEventConsumers Activity Via Scrcons.EXE DLL Load",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/image_load/image_load_scrcons_wmi_scripteventconsumer.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_scrcons_wmi_scripteventconsumer.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso host de scripts WMI scrcons.exe cargó una DLL de scripting (vbscript.dll, wbemdisp.dll, wshom.ocx o scrrun.dll). Esto indica que se ejecutó un ActiveScriptEventConsumer de WMI, un mecanismo que se usa para persistencia o movimiento lateral.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon EID 7) en los que Image termina en \\scrcons.exe e ImageLoaded termina en vbscript.dll, wbemdisp.dll, wshom.ocx o scrrun.dll. Esto ocurre cuando un consumidor WMI ActiveScriptEventConsumer ejecuta VBScript o JScript.",
+      "why_it_matters": "Las suscripciones a eventos WMI (T1546.003) permiten ejecutar código como SYSTEM cuando se cumple un filtro. Un atacante puede crearlas de forma remota para persistir o para moverse lateralmente sin dejar archivos evidentes.",
+      "triage_steps": [
+        "Confirma el host, la hora, el usuario, ProcessId y la ruta de Image. scrcons.exe legítimo está en C:\\Windows\\System32 y su padre es svchost.exe (WmiPrvSE/DcomLaunch).",
+        "Enumera las suscripciones: Get-WmiObject -Namespace root\\subscription -Class __EventFilter, __EventConsumer y __FilterToConsumerBinding. Revisa ScriptText y ScriptFileName.",
+        "Busca eventos Sysmon 19, 20 y 21 y WMI-Activity/Operational 5861 en el host para identificar quién creó el filtro y el consumidor, y cuándo.",
+        "Revisa los procesos hijos de scrcons.exe, las conexiones de red y los archivos creados en un rango de +/- 15 minutos.",
+        "Correlaciona con inicios de sesión remotos (4624 tipo 3) y tráfico DCOM/WinRM desde otros hosts justo antes de la creación de la suscripción.",
+        "Verifica si es un equipo Dell o si el consumidor pertenece a software de gestión conocido, y busca alertas previas para el mismo host."
+      ],
+      "false_positives": [
+        "Consumidores de eventos legítimos registrados por software de gestión, monitoreo o inventario.",
+        "Equipos Dell con un consumidor que se ejecuta al cambiar el brillo con la tecla del teclado.",
+        "Scripts administrativos internos documentados que usan ActiveScriptEventConsumer."
+      ],
+      "response_steps": [
+        "Si el consumidor es desconocido, exporta su definición (filtro, consumidor y binding) como evidencia antes de cualquier cambio.",
+        "Aísla el endpoint si el script descarga payloads, crea procesos sospechosos o se originó en un host remoto no autorizado.",
+        "Elimina el filtro, el consumidor y el binding maliciosos solo después de validarlos, y restablece las credenciales usadas para crearlos.",
+        "Busca la misma suscripción en otros hosts y agrega a la lista de exclusiones los consumidores legítimos verificados."
+      ],
+      "severity_rationale": "La severidad es media porque esta técnica sirve para persistir y moverse lateralmente, pero algunos fabricantes y herramientas registran consumidores legítimos."
+    },
+    "en": {
+      "summary": "The WMI script host scrcons.exe loaded a scripting DLL (vbscript.dll, wbemdisp.dll, wshom.ocx or scrrun.dll). This means a WMI ActiveScriptEventConsumer ran, a mechanism used for persistence or lateral movement.",
+      "what_it_detects": "Image load events (Sysmon EID 7) where Image ends with \\scrcons.exe and ImageLoaded ends with vbscript.dll, wbemdisp.dll, wshom.ocx or scrrun.dll. This happens when a WMI ActiveScriptEventConsumer executes VBScript or JScript.",
+      "why_it_matters": "WMI event subscriptions (T1546.003) run code as SYSTEM whenever a filter fires. Attackers can create them remotely for persistence or lateral movement without leaving obvious files.",
+      "triage_steps": [
+        "Confirm the host, time, user, ProcessId and Image path. Legitimate scrcons.exe lives in C:\\Windows\\System32 and its parent is svchost.exe (DcomLaunch).",
+        "Enumerate subscriptions in root\\subscription: __EventFilter, __EventConsumer and __FilterToConsumerBinding. Review ScriptText and ScriptFileName.",
+        "Search the host for Sysmon events 19, 20 and 21 and WMI-Activity/Operational 5861 to find who created the filter and consumer, and when.",
+        "Review child processes of scrcons.exe, network connections and created files within +/- 15 minutes.",
+        "Correlate with remote logons (4624 type 3) and DCOM/WinRM traffic from other hosts just before the subscription was created.",
+        "Check whether the host is a Dell or the consumer belongs to known management software, and look for earlier alerts on the same host."
+      ],
+      "false_positives": [
+        "Legitimate event consumers registered by management, monitoring or inventory software.",
+        "Dell computers whose consumer runs when brightness is changed with the keyboard button.",
+        "Documented internal admin scripts that use ActiveScriptEventConsumer."
+      ],
+      "response_steps": [
+        "If the consumer is unknown, export the filter, consumer and binding definitions as evidence before changing anything.",
+        "Isolate the endpoint if the script fetches payloads, spawns suspicious processes or was created from an unauthorized remote host.",
+        "Remove the malicious filter, consumer and binding only after validating them, and reset the credentials used to create them.",
+        "Hunt for the same subscription on other hosts and add verified legitimate consumers to the exclusion list."
+      ],
+      "severity_rationale": "Severity is medium because attackers use this technique for persistence and lateral movement, but some vendors and tools register legitimate consumers."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "scrcons.exe loads vbscript.dll while running an ActiveScriptEventConsumer",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\wbem\\scrcons.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\vbscript.dll",
+          "ProcessId": 4312,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "true",
+          "Signature": "Microsoft Windows"
+        }
+      },
+      {
+        "description": "scrcons.exe loads wshom.ocx (WScript.Shell) from a script consumer",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\wbem\\scrcons.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\wshom.ocx",
+          "ProcessId": 5120,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "true"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "wscript.exe loads vbscript.dll for a normal logon script; the Image is not scrcons.exe",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\vbscript.dll",
+          "ProcessId": 6644,
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "scrcons.exe loads a non-scripting system DLL",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\wbem\\scrcons.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\kernel32.dll",
+          "ProcessId": 4312,
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

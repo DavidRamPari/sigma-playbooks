@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "1543ae20-cbdf-4ec1-8d12-7664d667a825",
+    "title": "Suspicious Commands Linux",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/auditd/execve/lnx_auditd_susp_cmds.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_susp_cmds.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un EXECVE de chmod 777, chmod u+s o una copia de /bin/sh o /bin/ksh. Son patrones comunes en exploits y malware para dejar archivos ejecutables por todos, crear binarios setuid o plantar shells de respaldo.",
+      "what_it_detects": "Registros EXECVE de auditd donde a0 es exactamente 'chmod' y a1 es '777' o 'u+s', o donde a0 es 'cp' y a1 es '/bin/sh' o '/bin/ksh'. La regla solo revisa los dos primeros argumentos. Por eso no detecta variantes como 'chmod -R 777', '/bin/chmod' o 'cp /bin/bash'.",
+      "why_it_matters": "Corresponde a ejecución mediante Unix shell (T1059.004). Copiar una shell y ponerle el bit setuid es una forma clásica de escalar privilegios y mantener persistencia. Con chmod 777 un payload puede ejecutarse o modificarse desde cualquier cuenta.",
+      "triage_steps": [
+        "Revise a2 y los argumentos siguientes del EXECVE para saber qué archivo se modificó o adónde se copió la shell. Las rutas en /tmp, /dev/shm, /var/tmp o directorios ocultos son de mayor riesgo.",
+        "Correlacione con el registro SYSCALL del mismo ID de evento de audit para obtener auid, uid, euid, exe, ppid y tty. Así sabrá quién ejecutó el comando y desde qué sesión.",
+        "Identifique el proceso padre y el árbol de procesos. Un shell lanzado por un servidor web, una base de datos o un cron desconocido es una señal fuerte de compromiso.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, más EXECVE: descargas (wget, curl), compilación, ejecución desde /tmp y cambios en usuarios o en sudoers.",
+        "Verifique si el archivo afectado tiene ahora el bit setuid y si su propietario es root. Calcule su hash y compárelo con /bin/sh o /bin/ksh.",
+        "Revise alertas anteriores del mismo usuario y del mismo host, y cualquier conexión de red saliente inusual cercana al evento."
+      ],
+      "false_positives": [
+        "Actividad administrativa legítima, por ejemplo permisos amplios en un directorio compartido o un ajuste temporal durante un diagnóstico.",
+        "Scripts de instalación de paquetes o de software de terceros que asignan setuid o permisos 777.",
+        "Builds de contenedores, pipelines de CI o entornos de desarrollo que copian /bin/sh a imágenes o chroots."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o con un ticket de cambio si la acción estaba autorizada antes de modificar algo.",
+        "Si no estaba autorizada, preserve evidencia: logs de audit, el archivo afectado, su hash y la lista de procesos. Aísle el host si hay indicios de compromiso activo.",
+        "Después de documentar, quite el setuid, restaure los permisos originales y elimine las copias de shell no autorizadas. Termine las sesiones del usuario involucrado.",
+        "Restablezca las credenciales comprometidas. Compare los binarios setuid de toda la flota con su línea base y busque el mismo patrón en otros hosts."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estos comandos también son habituales en administración legítima, aunque coinciden con técnicas reales de escalamiento de privilegios y persistencia que exigen validación."
+    },
+    "en": {
+      "summary": "auditd recorded an EXECVE of chmod 777, chmod u+s, or a copy of /bin/sh or /bin/ksh. Exploits and malware often use these to make files world-writable, create setuid binaries or drop backup shells.",
+      "what_it_detects": "auditd EXECVE records where a0 is exactly 'chmod' and a1 is '777' or 'u+s', or where a0 is 'cp' and a1 is '/bin/sh' or '/bin/ksh'. The rule only checks the first two arguments, so it misses variants such as 'chmod -R 777', '/bin/chmod' or 'cp /bin/bash'.",
+      "why_it_matters": "This maps to Unix shell execution (T1059.004). Copying a shell and setting the setuid bit on it is a classic way to escalate privileges and keep persistence. chmod 777 lets any account run or change a payload.",
+      "triage_steps": [
+        "Check a2 and any later EXECVE arguments to find the file that was changed or where the shell was copied. Paths in /tmp, /dev/shm, /var/tmp or hidden directories are higher risk.",
+        "Correlate with the SYSCALL record that has the same audit event ID to get auid, uid, euid, exe, ppid and tty. This shows who ran the command and from which session.",
+        "Identify the parent process and the process tree. A shell spawned by a web server, a database or an unknown cron job strongly suggests compromise.",
+        "On the same host within +/- 15 minutes, look for other EXECVE records: downloads (wget, curl), compilation, execution from /tmp, and changes to users or sudoers.",
+        "Check whether the affected file now has the setuid bit and is owned by root. Hash it and compare it with /bin/sh or /bin/ksh.",
+        "Review earlier alerts for the same user and host, plus any unusual outbound network connections around the event."
+      ],
+      "false_positives": [
+        "Legitimate admin work, such as setting broad permissions on a shared directory or a temporary change while troubleshooting.",
+        "Package or third-party installer scripts that set setuid or 777 permissions.",
+        "Container builds, CI pipelines or developer environments that copy /bin/sh into images or chroots."
+      ],
+      "response_steps": [
+        "Before changing anything, check with the host owner or a change ticket whether the action was authorized.",
+        "If it was not authorized, preserve evidence: audit logs, the affected file, its hash and the process list. Isolate the host if there are signs of active compromise.",
+        "After documenting, remove the setuid bit, restore the original permissions and delete unauthorized shell copies. End the sessions of the user involved.",
+        "Reset compromised credentials. Compare setuid binaries across the fleet with their baseline and hunt for the same pattern on other hosts."
+      ],
+      "severity_rationale": "Medium fits because these commands are also common in legitimate administration, yet they match real privilege-escalation and persistence techniques that need validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "chmod 777 on a dropped file in /tmp, recorded as an auditd EXECVE record",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "chmod",
+          "a1": "777",
+          "a2": "/tmp/.x/payload",
+          "msg": "audit(1698242592.311:4821)",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Copy of /bin/sh to a hidden path, a typical step before setting the setuid bit",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "cp",
+          "a1": "/bin/sh",
+          "a2": "/var/tmp/.sh",
+          "msg": "audit(1698242601.044:4826)",
+          "host": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine chmod 755 on a deployment script; a1 is not 777 or u+s",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "chmod",
+          "a1": "755",
+          "a2": "/opt/app/deploy.sh",
+          "msg": "audit(1698243010.502:4902)",
+          "host": "app-03"
+        }
+      },
+      {
+        "description": "Recursive chmod: a1 is '-R', so the exact match on a1 fails even though 777 appears in a2",
+        "event": {
+          "type": "EXECVE",
+          "argc": 4,
+          "a0": "chmod",
+          "a1": "-R",
+          "a2": "777",
+          "a3": "/srv/shared",
+          "msg": "audit(1698243122.118:4915)",
+          "host": "files-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

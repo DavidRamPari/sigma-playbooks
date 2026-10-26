@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "3603f18a-ec15-43a1-9af2-d196c8a7fec6",
+    "title": "System Integrity Protection (SIP) Disabled",
+    "level": "medium",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "macos/process_creation/proc_creation_macos_csrutil_disable.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_csrutil_disable.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1518.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó csrutil en un equipo macOS con un argumento que contiene 'disable', lo que indica un intento de desactivar System Integrity Protection (SIP) o alguno de sus componentes.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde Image termina en '/csrutil' y CommandLine contiene 'disable', por ejemplo 'csrutil disable', 'csrutil disable --without fs' o 'csrutil authenticated-root disable'.",
+      "why_it_matters": "SIP protege archivos, procesos y extensiones del sistema frente a modificaciones, incluso por root. Si se desactiva, un atacante puede persistir y manipular componentes protegidos. La regla lo etiqueta como T1518.001 (descubrimiento de software de seguridad); también es una forma de evasión de defensas.",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique qué se desactiva (SIP completo, 'authenticated-root' o protecciones parciales con '--without').",
+        "Identifique el usuario y el proceso padre (ParentImage, ParentCommandLine): Terminal interactiva, script, instalador o binario desconocido en /tmp o ~/Library.",
+        "Determine si se ejecutó desde Recovery OS o desde el sistema en vivo; en el sistema normal el comando suele fallar con un error.",
+        "Busque en el mismo host, +/- 15 minutos, ejecuciones de 'csrutil status', reinicios, nvram, spctl, kextload o descargas con curl.",
+        "Valide con el usuario o su responsable si existe un ticket de desarrollo, depuración de kexts o investigación de seguridad que lo justifique.",
+        "Revise alertas previas del mismo host y usuario, y busque el mismo hash del proceso padre en otros endpoints.",
+        "Confirme el estado actual con 'csrutil status' mediante la herramienta de EDR o MDM."
+      ],
+      "false_positives": [
+        "Desarrolladores o investigadores de seguridad que desactivan SIP para depurar kernel extensions, usar DTrace o analizar malware.",
+        "Administradores de TI que siguen guías de soporte de software heredado que exige SIP desactivado.",
+        "Laboratorios o equipos de prueba documentados donde SIP se desactiva de forma intencional."
+      ],
+      "response_steps": [
+        "Verifique con el usuario y el registro de cambios si la acción fue autorizada antes de escalar.",
+        "Si no está autorizada, aísle el endpoint desde el EDR y preserve evidencia: árbol de procesos, binario padre y su hash.",
+        "Busque persistencia en LaunchAgents, LaunchDaemons, kexts y perfiles de configuración; elimine solo lo confirmado como malicioso.",
+        "Reactive SIP con 'csrutil enable' desde Recovery OS y confirme con 'csrutil status'.",
+        "Rote credenciales del usuario afectado si hay indicios de compromiso y documente el incidente."
+      ],
+      "severity_rationale": "Nivel medio: desactivar SIP es grave si es malicioso, pero existen usos legítimos de desarrollo y en el sistema en vivo el comando normalmente falla."
+    },
+    "en": {
+      "summary": "csrutil ran on a macOS host with an argument containing 'disable', indicating an attempt to turn off System Integrity Protection (SIP) or one of its components.",
+      "what_it_detects": "macOS process creation events where Image ends with '/csrutil' and CommandLine contains 'disable', such as 'csrutil disable', 'csrutil disable --without fs' or 'csrutil authenticated-root disable'.",
+      "why_it_matters": "SIP protects system files, processes and extensions from modification, even by root. With it off, an attacker can persist and tamper with protected components. The rule tags T1518.001 (security software discovery); it is also defense evasion.",
+      "triage_steps": [
+        "Read the full CommandLine: identify what is being disabled (full SIP, 'authenticated-root', or partial protections via '--without').",
+        "Identify the user and parent process (ParentImage, ParentCommandLine): interactive Terminal, script, installer, or an unknown binary in /tmp or ~/Library.",
+        "Determine whether it ran from Recovery OS or the live system; on a normal boot the command usually fails with an error.",
+        "On the same host within +/- 15 minutes, look for 'csrutil status', reboots, nvram, spctl, kextload or curl downloads.",
+        "Check with the user or their manager for a ticket covering development, kext debugging or security research.",
+        "Review earlier alerts for the same host and user, and hunt for the parent process hash on other endpoints.",
+        "Confirm current state with 'csrutil status' through EDR or MDM."
+      ],
+      "false_positives": [
+        "Developers or security researchers disabling SIP to debug kernel extensions, use DTrace or analyze malware.",
+        "IT administrators following support guides for legacy software that requires SIP off.",
+        "Documented lab or test machines where SIP is intentionally disabled."
+      ],
+      "response_steps": [
+        "Confirm authorization with the user and change records before escalating.",
+        "If unauthorized, isolate the endpoint via EDR and preserve evidence: process tree, parent binary and its hash.",
+        "Hunt for persistence in LaunchAgents, LaunchDaemons, kexts and configuration profiles; remove only items confirmed malicious.",
+        "Re-enable SIP with 'csrutil enable' from Recovery OS and confirm with 'csrutil status'.",
+        "Rotate the affected user's credentials if compromise is suspected and document the incident."
+      ],
+      "severity_rationale": "Medium: disabling SIP is serious when malicious, but legitimate developer uses exist and on a live system the command normally fails."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown script launched from /tmp runs csrutil disable",
+        "event": {
+          "Image": "/usr/bin/csrutil",
+          "CommandLine": "csrutil disable",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /tmp/.update.sh",
+          "User": "root",
+          "Computer": "MBP-0142.example.com",
+          "ProcessId": 4821
+        }
+      },
+      {
+        "description": "Disabling authenticated root protection",
+        "event": {
+          "Image": "/usr/bin/csrutil",
+          "CommandLine": "csrutil authenticated-root disable",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0087.example.com",
+          "ProcessId": 1377
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Status check only, no disable argument",
+        "event": {
+          "Image": "/usr/bin/csrutil",
+          "CommandLine": "csrutil status",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142.example.com",
+          "ProcessId": 4710
+        }
+      },
+      {
+        "description": "Word 'disable' in the command line, but a different binary",
+        "event": {
+          "Image": "/usr/sbin/spctl",
+          "CommandLine": "spctl --master-disable",
+          "ParentImage": "/bin/zsh",
+          "User": "admin",
+          "Computer": "MBP-0087.example.com",
+          "ProcessId": 1402
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

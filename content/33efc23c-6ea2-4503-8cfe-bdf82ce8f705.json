@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "33efc23c-6ea2-4503-8cfe-bdf82ce8f705",
+    "title": "Potential Persistence Via New AMSI Providers - Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_amsi_providers.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_amsi_providers.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor bajo la clave AMSI Providers, lo que registra o modifica un proveedor de Antimalware Scan Interface. Si el cambio no lo hizo un producto de seguridad conocido, trátelo como posible persistencia o manipulación de AMSI.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene \\SOFTWARE\\Microsoft\\AMSI\\Providers\\ o su equivalente en WOW6432Node. Se excluyen los instaladores conocidos de Avast, AVG y Avira cuando escriben el GUID de su propio proveedor.",
+      "why_it_matters": "Un proveedor AMSI es una DLL COM. La cargan todos los procesos compatibles con AMSI, como PowerShell, los hosts de scripts y las macros de Office. Un proveedor malicioso obtiene ejecución persistente y puede ver o anular el escaneo de scripts. Es persistencia más evasión de defensas.",
+      "triage_steps": [
+        "Tome el GUID del proveedor desde TargetObject y registre Image, User, ProcessId y Details de la escritura.",
+        "Resuelva el GUID en HKLM\\SOFTWARE\\Classes\\CLSID\\{GUID}\\InprocServer32 para obtener la ruta de la DLL. Revise los eventos registry_set del mismo host en +/- 15 minutos.",
+        "Analice la DLL: ruta (es sospechosa si es escribible por usuarios, Temp o ProgramData), firma, hash, reputación y fecha de creación.",
+        "Compare el GUID con los proveedores de un equipo de referencia limpio y con los productos de seguridad que su organización tiene aprobados.",
+        "Revise el árbol de procesos de Image: proceso padre, línea de comandos y si la escritura la hizo reg.exe, PowerShell, regsvr32 o un binario desconocido.",
+        "Busque eventos de carga de esa DLL en powershell.exe, wscript.exe o procesos de Office. Revise también las conexiones de red de esos procesos.",
+        "Consulte los registros de instalación de software y las alertas previas del mismo host y del mismo usuario."
+      ],
+      "false_positives": [
+        "Antivirus o EDR legítimos de proveedores que los filtros no cubren y que registran su proveedor AMSI al instalarse o actualizarse.",
+        "Actualizaciones de Avast, AVG o Avira instalados en rutas no predeterminadas, que los filtros de Image no reconocen.",
+        "Pruebas de seguridad autorizadas o investigación sobre AMSI en laboratorio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con TI si el proveedor y la DLL pertenecen a software aprobado.",
+        "Si no está autorizado, aísle el endpoint. Preserve la DLL, su hash y exportaciones de las claves Providers y CLSID.",
+        "Tras verificarlo, elimine las entradas del proveedor y del CLSID y la DLL. Luego reinicie los procesos afectados o el equipo.",
+        "Busque en toda la flota el mismo GUID, ruta o hash. Restablezca las credenciales del usuario involucrado si el compromiso es probable.",
+        "Si el proveedor es legítimo, agregue un filtro que coincida con la ruta exacta de Image y con el GUID."
+      ],
+      "severity_rationale": "Medium es adecuado porque la escritura requiere privilegios de administrador y los productos de seguridad legítimos también lo hacen, pero un proveedor no autorizado logra ejecución sigilosa en todos los procesos con AMSI."
+    },
+    "en": {
+      "summary": "A process wrote a registry value under the AMSI Providers key, which registers a new or changed Antimalware Scan Interface provider. Unless a known security product made the change, treat it as possible persistence or AMSI tampering.",
+      "what_it_detects": "registry_set events where TargetObject contains \\SOFTWARE\\Microsoft\\AMSI\\Providers\\ or its WOW6432Node equivalent. Known Avast, AVG and Avira installers writing their own provider GUIDs are excluded.",
+      "why_it_matters": "An AMSI provider is a COM DLL. Every AMSI-enabled process loads it, including PowerShell, script hosts and Office macros. A malicious provider gets persistent code execution and can see or blind script scanning. This is persistence plus defense evasion.",
+      "triage_steps": [
+        "Take the provider GUID from TargetObject, then record Image, User, ProcessId and Details for the write.",
+        "Resolve the GUID at HKLM\\SOFTWARE\\Classes\\CLSID\\{GUID}\\InprocServer32 to get the DLL path. Check registry_set events on the same host within +/- 15 minutes.",
+        "Check the DLL: path (user-writable, Temp or ProgramData is suspicious), signature, hash, reputation and creation time.",
+        "Compare the GUID with the providers on a clean baseline host and with the security products your organization has approved.",
+        "Review the process tree for Image: parent process, command line, and whether reg.exe, PowerShell, regsvr32 or an unknown binary made the write.",
+        "Look for image-load events of that DLL in powershell.exe, wscript.exe or Office processes. Also check network connections from those processes.",
+        "Check software installation records and earlier alerts for the same host and user."
+      ],
+      "false_positives": [
+        "Legitimate antivirus or EDR products registering their AMSI provider during install or update, from vendors the filters do not cover.",
+        "Upgrades of Avast, AVG or Avira run from non-default install paths, which the Image filters miss.",
+        "Authorized security testing or AMSI research in a lab."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner or IT whether the provider and DLL belong to approved software.",
+        "If unauthorized, isolate the endpoint. Preserve the DLL, its hash and exports of the Providers and CLSID keys.",
+        "After verification, remove the provider and CLSID entries and the DLL, then restart the affected processes or the host.",
+        "Search the fleet for the same GUID, DLL path or hash. Reset credentials for the user involved if compromise is likely.",
+        "If the provider is legitimate, add a filter that matches both the exact Image path and the GUID."
+      ],
+      "severity_rationale": "Medium fits because the write needs admin rights and legitimate security products do it, but an unauthorized provider gives stealthy code execution in every AMSI-enabled process."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers an unknown AMSI provider GUID under the native Providers key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\AMSI\\Providers\\{2E5D8A62-77F9-4F7B-A90C-2744820139B2}\\(Default)",
+          "Details": "FakeAMSI"
+        }
+      },
+      {
+        "description": "PowerShell writes a provider entry under the WOW6432Node AMSI Providers key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\AMSI\\Providers\\{9A1C4F33-0B2E-4D6A-8E5F-31C7D2A4B610}\\(Default)",
+          "Details": "(Empty)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Avast RegSvr.exe registering its own known AMSI provider GUID, excluded by filter_optional_avast",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Program Files\\Avast Software\\Avast\\RegSvr.exe",
+          "ProcessId": 3012,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\AMSI\\Providers\\{FB904E4E-D2C7-4C8D-8492-B620BB9896B1}\\(Default)",
+          "Details": "Avast AMSI Provider"
+        }
+      },
+      {
+        "description": "Write to an AMSI setting outside the Providers subkey, so the selection does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0150.andes.example.com",
+          "User": "ANDES\\admin.ti",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 5520,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\AMSI\\FeatureBits",
+          "Details": "DWORD (0x00000002)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

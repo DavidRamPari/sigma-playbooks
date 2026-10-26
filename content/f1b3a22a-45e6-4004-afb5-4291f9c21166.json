@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "f1b3a22a-45e6-4004-afb5-4291f9c21166",
+    "title": "Suspicious PsExec Execution - Zeek",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden, @neu5ron, Tim Shelton",
+    "path": "network/zeek/zeek_smb_converted_win_susp_psexec.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_smb_converted_win_susp_psexec.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró el acceso SMB a un named pipe en IPC$ cuyo nombre termina en -stdin, -stdout o -stderr pero no empieza con PSEXESVC. Esto sugiere ejecución remota estilo PsExec con un servicio renombrado o con un cliente alternativo como PAExec.",
+      "what_it_detects": "Eventos de Zeek smb_files donde path contiene una ruta UNC hacia \\IPC$ y name termina en -stdin, -stdout o -stderr. Excluye los pipes del servicio estándar de Sysinternals (PSEXESVC*).",
+      "why_it_matters": "PsExec y otras herramientas parecidas crean un servicio remoto y redirigen la consola por named pipes sobre SMB (T1021.002, SMB/Windows Admin Shares). Renombrar el servicio es una forma habitual de evadir detecciones y es un indicio fuerte de movimiento lateral.",
+      "triage_steps": [
+        "Identifique el origen (id.orig_h) y el destino (id.resp_h). Revise el campo path para confirmar qué host aparece en la ruta \\\\<host>\\IPC$.",
+        "Analice el campo name. El prefijo antes de -stdin/-stdout/-stderr indica el nombre del servicio renombrado (por ejemplo, PAExec o un nombre genérico que imita a Windows).",
+        "Busque en Zeek smb_mapping, smb_files y dce_rpc del mismo par de IPs, +/- 15 minutos: escritura de un binario en ADMIN$ y llamadas a svcctl como CreateServiceW o StartServiceW.",
+        "Revise la autenticación (ntlm.log o kerberos.log) para identificar la cuenta usada y si es una cuenta privilegiada o de servicio.",
+        "En el host destino, busque el evento 7045 (instalación de servicio) y la creación de procesos hijos del servicio en la misma ventana.",
+        "Verifique si el origen generó alertas anteriores, como volcado de credenciales, escaneo SMB u otras ejecuciones remotas hacia más hosts.",
+        "Pregunte a los equipos de TI si la actividad corresponde a mantenimiento o despliegue autorizado."
+      ],
+      "false_positives": [
+        "Herramientas de administración o despliegue que usan PAExec u otros clones de PsExec con nombres de servicio propios.",
+        "Administradores que ejecutan PsExec con la opción -r para renombrar el servicio por políticas internas.",
+        "Software de gestión o monitoreo que imita el mecanismo de PsExec con pipes stdin/stdout/stderr."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host de origen y de la cuenta si la ejecución estaba autorizada. Si no lo estaba, trátela como movimiento lateral.",
+        "Aísle el host de origen y, si corresponde, el destino mediante el EDR o la segmentación de red, sin apagarlos, para preservar la evidencia.",
+        "Deshabilite o restablezca la contraseña de la cuenta usada y revise sus sesiones activas en otros sistemas.",
+        "Elimine el servicio y el binario remoto después de recolectar evidencia (hash, ruta, evento 7045) y busque el mismo nombre de servicio en todo el entorno.",
+        "Restrinja el acceso SMB administrativo entre estaciones de trabajo y documente los hallazgos."
+      ],
+      "severity_rationale": "El nivel high se justifica porque los pipes de PsExec con un servicio renombrado rara vez son legítimos e indican ejecución remota con credenciales privilegiadas."
+    },
+    "en": {
+      "summary": "Zeek saw SMB access to an IPC$ named pipe whose name ends in -stdin, -stdout or -stderr but does not start with PSEXESVC. This suggests PsExec-style remote execution with a renamed service or an alternative client such as PAExec.",
+      "what_it_detects": "Zeek smb_files events where path contains a UNC path to \\IPC$ and name ends with -stdin, -stdout or -stderr. The standard Sysinternals service pipes (PSEXESVC*) are excluded.",
+      "why_it_matters": "PsExec and similar tools create a remote service and redirect its console through named pipes over SMB (T1021.002, SMB/Windows Admin Shares). A renamed service is a common evasion step and a strong sign of lateral movement.",
+      "triage_steps": [
+        "Identify the source (id.orig_h) and destination (id.resp_h). Check that the host in path (\\\\<host>\\IPC$) matches the destination.",
+        "Read the name field. The prefix before -stdin/-stdout/-stderr is the renamed service name, such as PAExec or a generic name that mimics Windows.",
+        "Pivot to Zeek smb_mapping, smb_files and dce_rpc for the same IP pair within +/- 15 minutes. Look for binary writes to ADMIN$ and svcctl calls such as CreateServiceW or StartServiceW.",
+        "Check ntlm.log or kerberos.log for the account that authenticated, and note whether it is privileged or a service account.",
+        "On the destination, look for event 7045 (service installed) and for child processes of that service in the same window.",
+        "Check the source for earlier alerts, such as credential dumping, SMB scanning or remote execution against other hosts.",
+        "Ask IT whether this matches authorized maintenance or a software deployment."
+      ],
+      "false_positives": [
+        "Admin or deployment tools that use PAExec or other PsExec clones with their own service names.",
+        "Administrators who run PsExec with -r to rename the service because of internal policy.",
+        "Management or monitoring software that copies the PsExec stdin/stdout/stderr pipe mechanism."
+      ],
+      "response_steps": [
+        "Confirm with the source host owner and the account owner that the execution was authorized. If it was not, treat it as lateral movement.",
+        "Isolate the source host, and the destination if needed, through EDR or network segmentation. Do not power them off, so evidence is preserved.",
+        "Disable the account or reset its password, and review its active sessions on other systems.",
+        "After collecting evidence (hash, path, event 7045), remove the remote service and binary. Hunt for the same service name across the environment.",
+        "Restrict administrative SMB between workstations and document the findings."
+      ],
+      "severity_rationale": "High fits because PsExec pipes with a renamed service are rarely benign and mean remote execution with privileged credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PsExec run with a renamed service (-r WinUpdSvc) opens its stdin pipe on the remote IPC$ share",
+        "event": {
+          "ts": "2024-03-14T10:22:31.512Z",
+          "uid": "CzT4a12kP9xQwE7b3",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 50122,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FILESRV-01\\IPC$",
+          "name": "WinUpdSvc-WS-0142-4412-stdin",
+          "size": 0
+        }
+      },
+      {
+        "description": "PAExec client opens its stdout pipe on the remote IPC$ share",
+        "event": {
+          "ts": "2024-03-14T10:22:31.604Z",
+          "uid": "CzT4a12kP9xQwE7b3",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 50122,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FILESRV-01\\IPC$",
+          "name": "PAExec-4412-WS-0142-stdout",
+          "size": 0
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Standard Sysinternals PsExec with the default PSEXESVC service name is excluded by the filter",
+        "event": {
+          "ts": "2024-03-14T11:05:02.118Z",
+          "uid": "Cb81LmQ2rT6yVn0d4",
+          "id.orig_h": "192.0.2.60",
+          "id.orig_p": 51877,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FILESRV-01\\IPC$",
+          "name": "PSEXESVC-WS-0201-5520-stdin",
+          "size": 0
+        }
+      },
+      {
+        "description": "Normal srvsvc named pipe access on IPC$ for share enumeration; the name does not end in -stdin/-stdout/-stderr",
+        "event": {
+          "ts": "2024-03-14T11:07:45.903Z",
+          "uid": "CkP03sW9eHq1Zr5f2",
+          "id.orig_h": "192.0.2.77",
+          "id.orig_p": 52011,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FILESRV-01\\IPC$",
+          "name": "srvsvc",
+          "size": 0
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

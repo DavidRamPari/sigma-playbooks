@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "5f699bc5-5446-4a4a-a0b7-5ef2885a3eb4",
+    "title": "RDP Over Reverse SSH Tunnel",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden",
+    "path": "windows/network_connection/net_connection_win_rdp_reverse_tunnel.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/network_connection/net_connection_win_rdp_reverse_tunnel.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.001",
+      "T1572"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un svchost.exe registró una conexión con puerto de origen TCP 3389 hacia una dirección de loopback (127.0.0.0/8 o ::1). Esto suele indicar que una sesión RDP entra al host a través de un túnel local, como un reenvío inverso por SSH.",
+      "what_it_detects": "Eventos de conexión de red de Windows (Sysmon Event ID 3) en los que Image termina en \\svchost.exe, Initiated es 'true', SourcePort es 3389 y DestinationIp está en 127.0.0.0/8 o ::1/128. Es el patrón del servicio Terminal Services atendiendo una conexión RDP que llega por loopback y no por la red.",
+      "why_it_matters": "Un atacante puede exponer el RDP de un equipo interno a través de un túnel SSH inverso u otro proxy local (T1572, Protocol Tunneling). Así evade firewalls y el NAT, y consigue movimiento lateral o acceso interactivo por Remote Desktop (T1021.001) sin abrir el puerto 3389 hacia afuera.",
+      "triage_steps": [
+        "Confirme en el evento Image, SourcePort=3389, DestinationIp y DestinationPort, y verifique que el svchost.exe aloje TermService (revise ProcessId contra la lista de servicios).",
+        "Identifique el proceso dueño del DestinationPort en loopback: busque conexiones de ssh.exe, plink.exe u otros binarios de túnel en el mismo host, dentro de +/- 15 minutos.",
+        "Revise la creación de procesos (Sysmon 1 / 4688) en busca de CommandLine con '-R', ':3389', 'plink' o 'ssh' y su ParentImage.",
+        "Determine el destino externo del proceso de túnel (puerto 22, 443 u otros) y valore la reputación de la IP o el dominio.",
+        "Busque inicios de sesión 4624 con LogonType 10 y dirección de origen 127.0.0.1 o ::1, y eventos 21/25 de TerminalServices-LocalSessionManager.",
+        "Identifique al usuario autenticado por RDP y revise su actividad posterior: procesos, accesos a recursos compartidos y creación de cuentas.",
+        "Consulte alertas previas del mismo host y del mismo usuario, y busque el mismo binario o el mismo destino externo en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores que usan un túnel SSH autorizado para llegar por RDP a equipos detrás de NAT o de un bastión.",
+        "Herramientas de soporte remoto o agentes de acceso que redirigen RDP por localhost.",
+        "Pruebas o laboratorios en los que se conecta mstsc a una dirección de loopback del propio equipo."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo y con el equipo de TI si el túnel y la sesión RDP están autorizados.",
+        "Si no lo están, aísle el endpoint de la red y cierre la sesión RDP activa tras preservar evidencia (memoria, logs de eventos).",
+        "Termine el proceso de túnel, elimine su binario y la persistencia asociada, y bloquee el destino externo en el perímetro.",
+        "Restablezca las credenciales del usuario usado en la sesión RDP y revise otras cuentas expuestas en el host.",
+        "Restrinja RDP mediante NLA, firewall y grupos permitidos, y vigile la reaparición del patrón en otros equipos."
+      ],
+      "severity_rationale": "El nivel high es adecuado: RDP sobre loopback casi nunca ocurre en operación normal y apunta a acceso interactivo tunelizado que evade los controles de red."
+    },
+    "en": {
+      "summary": "An svchost.exe process logged a connection with TCP source port 3389 to a loopback address (127.0.0.0/8 or ::1). This usually means an RDP session is reaching the host through a local tunnel, such as a reverse SSH port forward.",
+      "what_it_detects": "Windows network connection events (Sysmon Event ID 3) where Image ends with \\svchost.exe, Initiated is 'true', SourcePort is 3389 and DestinationIp is in 127.0.0.0/8 or ::1/128. This is the Terminal Services host handling an RDP connection that arrives over loopback instead of the network.",
+      "why_it_matters": "An attacker can expose an internal host's RDP through a reverse SSH tunnel or another local proxy (T1572, Protocol Tunneling). This bypasses firewalls and NAT and gives interactive access or lateral movement over Remote Desktop (T1021.001) without opening 3389 externally.",
+      "triage_steps": [
+        "Confirm Image, SourcePort=3389, DestinationIp and DestinationPort, and check that the svchost.exe ProcessId hosts TermService.",
+        "Find the process owning the loopback DestinationPort: look for ssh.exe, plink.exe or other tunneling binaries with connections on the same host within +/- 15 minutes.",
+        "Review process creation (Sysmon 1 / 4688) for CommandLine containing '-R', ':3389', 'plink' or 'ssh', and check its ParentImage.",
+        "Identify the tunnel process's external destination (port 22, 443 or other) and check the IP or domain reputation.",
+        "Look for 4624 logons with LogonType 10 from 127.0.0.1 or ::1, and TerminalServices-LocalSessionManager events 21/25.",
+        "Identify the user authenticated over RDP and review follow-on activity: processes, share access, account creation.",
+        "Check earlier alerts for the same host and user, and hunt for the same binary or external destination on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators using an approved SSH tunnel to RDP into hosts behind NAT or a bastion.",
+        "Remote support tools or access agents that relay RDP through localhost.",
+        "Testing or lab setups where mstsc connects to the machine's own loopback address."
+      ],
+      "response_steps": [
+        "Confirm with the host owner and IT whether the tunnel and RDP session are authorized.",
+        "If not, isolate the endpoint and end the active RDP session after preserving evidence (memory, event logs).",
+        "Kill the tunnel process, remove its binary and persistence, and block the external destination at the perimeter.",
+        "Reset credentials for the account used in the RDP session and review other accounts exposed on the host.",
+        "Restrict RDP with NLA, firewall rules and allowed groups, and monitor for the pattern on other hosts."
+      ],
+      "severity_rationale": "High fits because RDP over loopback is rare in normal operations and points to tunneled interactive access that evades network controls."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "TermService svchost handling an RDP session relayed over IPv4 loopback by a reverse SSH tunnel",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1184,
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "127.0.0.1",
+          "SourcePort": 3389,
+          "DestinationIp": "127.0.0.1",
+          "DestinationPort": 50214
+        }
+      },
+      {
+        "description": "Same pattern over IPv6 loopback",
+        "event": {
+          "EventID": 3,
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1312,
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "::1",
+          "SourcePort": 3389,
+          "DestinationIp": "::1",
+          "DestinationPort": 49877
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal inbound RDP from a LAN workstation: destination is not loopback",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1184,
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.15",
+          "SourcePort": 3389,
+          "DestinationIp": "192.0.2.40",
+          "DestinationPort": 51022
+        }
+      },
+      {
+        "description": "svchost talking to loopback on a different port, not RDP",
+        "event": {
+          "EventID": 3,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 2240,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "127.0.0.1",
+          "SourcePort": 49712,
+          "DestinationIp": "127.0.0.1",
+          "DestinationPort": 5357
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

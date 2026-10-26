@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "f99276ad-d122-4989-a09a-d00904a5f9d2",
+    "title": "Clear PowerShell History - PowerShell Module",
+    "level": "medium",
+    "status": "test",
+    "author": "Ilyas Ochkov, Jonhnathan Ribeiro, Daniil Yugoslavskiy, oscd.community",
+    "path": "windows/powershell/powershell_module/posh_pm_clear_powershell_history.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_clear_powershell_history.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El registro de módulos de PowerShell capturó un comando que borra el archivo de historial de PSReadLine o desactiva el guardado del historial (SaveNothing). Un atacante puede hacer esto para borrar el rastro de sus comandos interactivos.",
+      "what_it_detects": "Eventos ps_module (4103) cuyo Payload contiene '(Get-PSReadlineOption).HistorySavePath' junto con 'del', 'rm' o 'Remove-Item', o 'Set-PSReadlineOption' con '-HistorySaveStyle' (o '–HistorySaveStyle') y 'SaveNothing'.",
+      "why_it_matters": "Corresponde a ATT&CK T1070.003 (Clear Command History). Borrar ConsoleHost_history.txt o desactivar el historial quita evidencia forense de la actividad interactiva y suele ocurrir después de comandos maliciosos o justo antes de ejecutarlos.",
+      "triage_steps": [
+        "Lea el Payload completo e identifique qué ocurrió: borrado del archivo de historial (Remove-Item/del/rm) o desactivación con Set-PSReadlineOption -HistorySaveStyle SaveNothing.",
+        "Revise que el comando realmente actúe sobre el historial. 'rm' y 'del' son subcadenas cortas que también aparecen dentro de palabras como 'Format' o 'model'.",
+        "Identifique al usuario, el host, HostApplication y el proceso padre de powershell.exe. Determine si la sesión fue interactiva, remota (wsmprovhost.exe) o lanzada por un script programado.",
+        "En el mismo host, revise los eventos 4104 (Script Block) y la creación de procesos en un rango de +/- 15 minutos para reconstruir qué se ejecutó antes del borrado.",
+        "Si tiene Sysmon, busque eventos de borrado de archivo (23/26) sobre ConsoleHost_history.txt y, si existe, recupere una copia del archivo desde backups o VSS.",
+        "Revise los inicios de sesión del usuario (4624, tipos 3 y 10) y las IP de origen. Busque alertas anteriores del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administración o de limpieza de perfiles que borran o rotan el historial de PSReadLine.",
+        "Administradores que desactivan el historial a propósito para no guardar credenciales escritas en la consola.",
+        "Plantillas de hardening, imágenes de VDI o kioscos que configuran HistorySaveStyle SaveNothing en el perfil de PowerShell."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el responsable del sistema si la acción estaba autorizada y documentada.",
+        "Si no está justificada, preserve los logs de PowerShell, Sysmon y Security del host antes de que se sobrescriban.",
+        "Si encuentra actividad maliciosa, aísle el endpoint, restablezca las credenciales del usuario y revise si hay persistencia en los perfiles de PowerShell ($PROFILE).",
+        "Restaure la configuración de historial y verifique que el Script Block Logging y el Module Logging estén forzados por GPO."
+      ],
+      "severity_rationale": "La severidad es media porque borrar el historial es una técnica clara de evasión, pero también la usan administradores legítimos. Hay que buscar otra actividad sospechosa antes de escalar."
+    },
+    "en": {
+      "summary": "PowerShell module logging captured a command that deletes the PSReadLine history file or turns off history saving (SaveNothing). Attackers do this to erase the trace of their interactive commands.",
+      "what_it_detects": "ps_module (4103) events where Payload contains '(Get-PSReadlineOption).HistorySavePath' plus 'del', 'rm' or 'Remove-Item', or contains 'Set-PSReadlineOption' with '-HistorySaveStyle' (or '–HistorySaveStyle') and 'SaveNothing'.",
+      "why_it_matters": "This maps to ATT&CK T1070.003 (Clear Command History). Deleting ConsoleHost_history.txt or turning off history removes forensic evidence of hands-on activity. It usually happens right after or just before malicious commands.",
+      "triage_steps": [
+        "Read the full Payload and work out which action happened: the history file was deleted (Remove-Item/del/rm), or history was turned off with Set-PSReadlineOption -HistorySaveStyle SaveNothing.",
+        "Make sure the command really targets the history file. 'rm' and 'del' are short substrings that also occur inside words such as 'Format' or 'model'.",
+        "Identify the user, host, HostApplication and the parent of powershell.exe. Find out whether the session was interactive, remote (wsmprovhost.exe) or a scheduled script.",
+        "On the same host within +/- 15 minutes, review 4104 Script Block events and process creation to rebuild what ran before the wipe.",
+        "If Sysmon is deployed, look for file-delete events (23/26) on ConsoleHost_history.txt. Recover a copy from backups or VSS if one exists.",
+        "Check the user's logons (4624, types 3 and 10) and their source IPs. Look for earlier alerts on the same user or host."
+      ],
+      "false_positives": [
+        "Legitimate admin or profile-cleanup scripts that delete or rotate PSReadLine history.",
+        "Administrators who turn off history on purpose so that credentials typed at the console are not saved.",
+        "Hardening baselines, VDI images or kiosks that set HistorySaveStyle SaveNothing in the PowerShell profile."
+      ],
+      "response_steps": [
+        "Ask the user or the system owner whether the action was authorized and documented.",
+        "If it is unexplained, preserve the host's PowerShell, Sysmon and Security logs before they roll over.",
+        "If you confirm malicious activity, isolate the endpoint, reset the user's credentials and check PowerShell profiles ($PROFILE) for persistence.",
+        "Restore the history settings and confirm that Script Block Logging and Module Logging are enforced through GPO."
+      ],
+      "severity_rationale": "The level is medium because clearing history is a clear evasion technique, but admins also do it legitimately. Look for other suspicious activity before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remove-Item deletes the file at (Get-PSReadlineOption).HistorySavePath, which matches both selection_1a and selection_1b.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserId": "ANDES\\jperez",
+          "HostApplication": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "Payload": "CommandInvocation(Remove-Item): \"Remove-Item\"\nParameterBinding(Remove-Item): name=\"Path\"; value=\"(Get-PSReadlineOption).HistorySavePath\""
+        }
+      },
+      {
+        "description": "Set-PSReadlineOption -HistorySaveStyle SaveNothing turns off history saving, which matches selection_payload_3.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserId": "ANDES\\jperez",
+          "HostApplication": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "Payload": "CommandInvocation(Set-PSReadLineOption): \"Set-PSReadlineOption -HistorySaveStyle SaveNothing\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The history file is only read with Get-Content. The payload references HistorySavePath but contains none of del, rm or Remove-Item.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserId": "ANDES\\jperez",
+          "HostApplication": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "Payload": "CommandInvocation(Get-Content): \"Get-Content\"\nParameterBinding(Get-Content): name=\"Path\"; value=\"(Get-PSReadlineOption).HistorySavePath\""
+        }
+      },
+      {
+        "description": "Set-PSReadlineOption sets HistorySaveStyle to SaveIncrementally, not SaveNothing, so no selection is complete.",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserId": "ANDES\\jperez",
+          "HostApplication": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "Payload": "CommandInvocation(Set-PSReadLineOption): \"Set-PSReadlineOption -HistorySaveStyle SaveIncrementally\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

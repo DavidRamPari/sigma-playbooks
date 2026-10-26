@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "174afcfa-6e40-4ae9-af64-496546389294",
+    "title": "Credential Dumping Attempt Via Svchost",
+    "level": "high",
+    "status": "test",
+    "author": "Florent Labouyrie",
+    "path": "windows/process_access/proc_access_win_svchost_credential_dumping.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_svchost_credential_dumping.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso abrió un handle a svchost.exe con el acceso 0x143a, que permite leer y escribir memoria y crear hilos. Puede tratarse de un intento de volcar credenciales o de inyectar código en un proceso de servicio.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon EventID 10) donde TargetImage termina en \\svchost.exe y GrantedAccess es exactamente 0x143a. Se excluyen los SourceImage que terminan en \\services.exe o \\msiexec.exe.",
+      "why_it_matters": "svchost.exe aloja servicios de Windows cuya memoria puede contener secretos. El acceso 0x143a incluye VM_READ, VM_WRITE, VM_OPERATION y CREATE_THREAD. La regla está etiquetada como T1548 (abuso de mecanismos de control de elevación), aunque la descripción menciona robo de credenciales.",
+      "triage_steps": [
+        "Identifique SourceImage, SourceProcessId y SourceUser. Confirme si la ruta es estándar (Program Files, System32) o inusual (Temp, AppData, Users\\Public).",
+        "Revise TargetProcessId y determine qué servicios aloja esa instancia de svchost.exe (por ejemplo, con tasklist /svc o la línea de comandos -k del proceso).",
+        "Analice CallTrace: si aparecen módulos UNKNOWN o DLL fuera de System32, aumenta la sospecha de inyección o herramienta ofensiva.",
+        "Obtenga el hash y la firma del SourceImage y consúltelos en su inventario de software y en fuentes de reputación.",
+        "Revise la creación del proceso origen (EventID 1): ParentImage, CommandLine y usuario. Busque argumentos relacionados con volcado de memoria o minidump.",
+        "Pivotee en el mismo host +/- 15 minutos: creación de archivos .dmp, accesos a lsass.exe, nuevos servicios o conexiones de red salientes.",
+        "Busque alertas previas del mismo host, usuario o hash en otros endpoints."
+      ],
+      "false_positives": [
+        "Agentes de EDR, antivirus o DLP que inspeccionan la memoria de procesos del sistema.",
+        "Software de monitoreo, respaldo o gestión de endpoints que interactúa con servicios alojados en svchost.",
+        "Instaladores o actualizadores legítimos distintos de msiexec.exe que configuran servicios.",
+        "Depuradores o herramientas de diagnóstico usadas por administradores autorizados."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo y con TI si el SourceImage es una herramienta autorizada; documente la excepción si lo es.",
+        "Si es sospechoso, aísle el endpoint desde el EDR y preserve memoria y el binario de origen antes de terminar procesos.",
+        "Elimine el binario malicioso y los mecanismos de persistencia asociados tras confirmar su naturaleza.",
+        "Restablezca las credenciales de las cuentas que iniciaron sesión en el host y revise su uso posterior en la red."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque leer y escribir la memoria de svchost con creación de hilos rara vez ocurre de forma legítima y puede indicar robo de credenciales o inyección."
+    },
+    "en": {
+      "summary": "A process opened a handle to svchost.exe with access mask 0x143a, which allows reading and writing memory and creating threads. This may be an attempt to dump credentials or inject code into a service host.",
+      "what_it_detects": "Process access events (Sysmon EventID 10) where TargetImage ends with \\svchost.exe and GrantedAccess is exactly 0x143a. SourceImage values ending with \\services.exe or \\msiexec.exe are excluded.",
+      "why_it_matters": "svchost.exe hosts Windows services whose memory may hold secrets. Mask 0x143a includes VM_READ, VM_WRITE, VM_OPERATION and CREATE_THREAD. The rule is tagged T1548 (Abuse Elevation Control Mechanism), while its description points to credential dumping.",
+      "triage_steps": [
+        "Identify SourceImage, SourceProcessId and SourceUser. Check whether the path is standard (Program Files, System32) or unusual (Temp, AppData, Users\\Public).",
+        "Use TargetProcessId to find which services that svchost.exe instance hosts (tasklist /svc or its -k command line).",
+        "Review CallTrace: UNKNOWN entries or DLLs outside System32 raise suspicion of injection or an offensive tool.",
+        "Get the SourceImage hash and signature; compare against your software inventory and reputation sources.",
+        "Check the source process creation (EventID 1): ParentImage, CommandLine and user. Look for memory dump or minidump arguments.",
+        "Pivot on the same host +/- 15 minutes: new .dmp files, lsass.exe access, new services or outbound connections.",
+        "Search for earlier alerts for the same host, user or hash on other endpoints."
+      ],
+      "false_positives": [
+        "EDR, antivirus or DLP agents inspecting system process memory.",
+        "Monitoring, backup or endpoint management software interacting with services hosted in svchost.",
+        "Legitimate installers or updaters other than msiexec.exe configuring services.",
+        "Debuggers or diagnostic tools used by authorized administrators."
+      ],
+      "response_steps": [
+        "Confirm with the host owner and IT whether SourceImage is authorized; document a tuned exception if so.",
+        "If suspicious, isolate the endpoint via EDR and preserve memory and the source binary before killing processes.",
+        "Remove the malicious binary and related persistence once confirmed.",
+        "Reset credentials for accounts logged on to the host and review their subsequent use across the network."
+      ],
+      "severity_rationale": "High fits because reading and writing svchost memory with thread creation is rarely legitimate and may indicate credential theft or injection."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user Temp folder opens svchost.exe with 0x143a access",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcdump.exe",
+          "SourceProcessId": 6412,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "TargetProcessId": 1184,
+          "TargetUser": "NT AUTHORITY\\SYSTEM",
+          "GrantedAccess": "0x143a",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00007FF6A1B21F3C)"
+        }
+      },
+      {
+        "description": "rundll32 accessing svchost.exe memory with the same mask",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\rundll32.exe",
+          "SourceProcessId": 3020,
+          "SourceUser": "ANDES\\adm-mrojas",
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "TargetProcessId": 968,
+          "GrantedAccess": "0x143A",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Users\\Public\\x.dll+1a2b"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "services.exe opening svchost.exe with 0x143a is excluded by the filter",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\services.exe",
+          "SourceProcessId": 712,
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "TargetProcessId": 1184,
+          "GrantedAccess": "0x143a",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e"
+        }
+      },
+      {
+        "description": "Task Manager querying svchost.exe with limited query access (0x1000) does not match GrantedAccess",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\Taskmgr.exe",
+          "SourceProcessId": 5528,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "TargetProcessId": 1184,
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

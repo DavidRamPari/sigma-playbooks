@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "34979410-e4b5-4e5d-8cfb-389fdff05c12",
+    "title": "Remove Immutable File Attribute",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_chattr_immutable_removal.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_chattr_immutable_removal.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó la utilidad chattr con la opción -i, que quita el atributo inmutable de uno o más archivos. Ese archivo vuelve a poder modificarse, borrarse o renombrarse.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en '/chattr' y CommandLine contiene ' -i ', es decir, la eliminación del atributo inmutable (+i) de archivos o directorios.",
+      "why_it_matters": "Un atacante quita el atributo inmutable para alterar archivos protegidos como /etc/passwd, /etc/shadow, authorized_keys, crontabs o /etc/ld.so.preload, o para sobrescribir binarios de otro malware. Corresponde a T1222.002: modificación de permisos de archivos y directorios en Linux.",
+      "triage_steps": [
+        "Revise CommandLine e identifique las rutas afectadas; priorice /etc, /root/.ssh, /var/spool/cron, /usr/bin y /etc/ld.so.preload.",
+        "Identifique el usuario y el ParentImage: una shell interactiva, curl/wget, un script en /tmp o un servicio web como padre aumentan la sospecha.",
+        "Reconstruya el árbol de procesos y busque en el mismo host, en un rango de +/- 15 minutos, comandos que escriban en esos archivos (echo, cp, mv, sed, rm) o un chattr +i posterior.",
+        "Compare el hash y el contenido actual de los archivos con una línea base o un backup; verifique cambios en cuentas, llaves SSH y tareas cron.",
+        "Busque la sesión de origen (IP de SSH, sudo, TTY) y revise los inicios de sesión de ese usuario y esa IP.",
+        "Busque alertas previas del host: descargas, procesos de minería, conexiones salientes poco comunes o desactivación de servicios de seguridad.",
+        "Confirme con el equipo de administración si había un cambio o un mantenimiento planificado."
+      ],
+      "false_positives": [
+        "Administradores que modifican archivos inmutables durante backups, restauraciones o mantenimiento.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) que desbloquean temporalmente archivos como resolv.conf.",
+        "Scripts de actualización o instaladores que quitan +i antes de reemplazar archivos protegidos."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host si el cambio estaba autorizado y documentado.",
+        "Si no lo estaba, aísle el host o restrinja su red y preserve evidencia: historial de shell, logs de autenticación y archivos modificados.",
+        "Revierta los cambios no autorizados en cuentas, llaves SSH, crontabs y preload; elimine binarios o scripts maliciosos tras confirmarlos.",
+        "Rote las credenciales del usuario comprometido, restaure el atributo inmutable donde corresponda y monitoree el host para detectar reincidencias."
+      ],
+      "severity_rationale": "Nivel medio: la acción es común en administración legítima, pero suele preceder la manipulación de archivos críticos y requiere contexto para confirmar el riesgo."
+    },
+    "en": {
+      "summary": "The chattr utility ran with the -i option, removing the immutable attribute from one or more files. Those files can now be modified, deleted or renamed again.",
+      "what_it_detects": "Linux process creation events where Image ends with '/chattr' and CommandLine contains ' -i ', meaning the immutable (+i) attribute is being removed from files or directories.",
+      "why_it_matters": "Attackers strip the immutable flag to tamper with protected files such as /etc/passwd, /etc/shadow, authorized_keys, crontabs or /etc/ld.so.preload, or to overwrite a competing malware's binaries. This maps to T1222.002, Linux file and directory permissions modification.",
+      "triage_steps": [
+        "Read CommandLine and list the target paths; prioritize /etc, /root/.ssh, /var/spool/cron, /usr/bin and /etc/ld.so.preload.",
+        "Identify the user and ParentImage; an interactive shell, curl/wget, a script in /tmp or a web service parent raises suspicion.",
+        "Rebuild the process tree and look at the same host within +/- 15 minutes for writes to those files (echo, cp, mv, sed, rm) or a later chattr +i.",
+        "Compare current file hashes and contents with a baseline or backup; check for changes to accounts, SSH keys and cron jobs.",
+        "Find the originating session (SSH source IP, sudo, TTY) and review other logins from that user and IP.",
+        "Check earlier alerts for the host: downloads, mining processes, unusual outbound connections or disabled security services.",
+        "Confirm with administrators whether a planned change or maintenance window explains it."
+      ],
+      "false_positives": [
+        "Administrators modifying immutable files during backups, restores or maintenance.",
+        "Configuration management tools (Ansible, Puppet, Chef) temporarily unlocking files such as resolv.conf.",
+        "Update scripts or installers removing +i before replacing protected files."
+      ],
+      "response_steps": [
+        "Verify with the host owner whether the change was authorized and documented.",
+        "If not, isolate the host or restrict its network access and preserve evidence: shell history, auth logs and modified files.",
+        "Revert unauthorized changes to accounts, SSH keys, crontabs and preload files; remove malicious binaries or scripts once confirmed.",
+        "Rotate the affected user's credentials, reapply the immutable attribute where appropriate and monitor the host for recurrence."
+      ],
+      "severity_rationale": "Medium fits because the action is common in legitimate administration but often precedes tampering with critical files, so context is needed to confirm risk."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "chattr removes the immutable flag from authorized_keys, launched from a bash shell running a script in /tmp",
+        "event": {
+          "Image": "/usr/bin/chattr",
+          "CommandLine": "chattr -i /root/.ssh/authorized_keys",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash /tmp/.x/setup.sh",
+          "User": "root",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/tmp/.x",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Recursive removal of the immutable attribute from /etc/cron.d via sudo",
+        "event": {
+          "Image": "/bin/chattr",
+          "CommandLine": "/bin/chattr -R -i /etc/cron.d",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 51077,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator sets (not removes) the immutable attribute on resolv.conf",
+        "event": {
+          "Image": "/usr/bin/chattr",
+          "CommandLine": "chattr +i /etc/resolv.conf",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 30122,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "lsattr lists attributes; the image is not chattr",
+        "event": {
+          "Image": "/usr/bin/lsattr",
+          "CommandLine": "lsattr -a /etc/passwd",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 30455,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "web-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

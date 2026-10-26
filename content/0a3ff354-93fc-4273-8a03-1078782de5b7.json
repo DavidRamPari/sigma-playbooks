@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "0a3ff354-93fc-4273-8a03-1078782de5b7",
+    "title": "Recon Activity via SASec",
+    "level": "high",
+    "status": "test",
+    "author": "Sagie Dulce, Dekel Paz",
+    "path": "application/rpc_firewall/rpc_firewall_sasec_recon.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/rpc_firewall/rpc_firewall_sasec_recon.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "RPC Firewall registró una llamada RPC remota a la interfaz SASec (MS-TSCH) para leer información de tareas programadas. Puede indicar reconocimiento previo a movimiento lateral o persistencia mediante tareas programadas.",
+      "what_it_detects": "Eventos RPCFW con EventID 3 cuyo InterfaceUuid es 378e52b0-c0a9-11cf-822d-00aa0051e40f (SASec) y cuyo OpNum no es 0 ni 1. Así se excluyen las operaciones de escritura de cuentas y quedan las de lectura, como SAGetNSAccountInformation (2) y SAGetAccountInformation (3).",
+      "why_it_matters": "SASec permite consultar a distancia qué cuentas ejecutan las tareas programadas. Un atacante puede usar esta información para ubicar cuentas privilegiadas o preparar la ejecución remota de tareas. Corresponde a la táctica Discovery de ATT&CK.",
+      "triage_steps": [
+        "Identifique el host destino, ClientNetworkAddress y el OpNum exacto, y confirme si la llamada se bloqueó según la política audit:true action:block.",
+        "Determine el usuario cliente (SubjectUserName, SubjectDomainName) y si es una cuenta de administración esperada para ese servidor.",
+        "Revise si la IP de origen es una estación de administración, un escáner o un servidor de inventario conocido.",
+        "Busque otros eventos RPCFW desde la misma IP de origen en +/- 15 minutos, sobre todo ITaskSchedulerService, SAMR, LSARPC, SRVSVC o DRSUAPI.",
+        "En el host destino, revise eventos 4624 (logon tipo 3) y 4698/4702 (creación o modificación de tareas) cercanos a la alerta.",
+        "En el equipo de origen, busque procesos como schtasks.exe, at.exe, PowerShell o herramientas tipo Impacket que hayan iniciado conexiones RPC.",
+        "Consulte alertas anteriores para el mismo usuario, el mismo origen y el mismo destino."
+      ],
+      "false_positives": [
+        "Administradores que consultan tareas programadas remotas con herramientas heredadas que usan la interfaz SASec.",
+        "Software de inventario, monitoreo o gestión de configuración que enumera tareas en servidores.",
+        "Escáneres de vulnerabilidades o auditorías autorizadas que revisan la configuración del Programador de tareas."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta o del sistema de origen si la actividad estaba autorizada y documentada.",
+        "Si no está autorizada, aísle el equipo de origen y restrinja el acceso RPC desde esa IP hacia los servidores afectados.",
+        "Revise y, si corresponde, deshabilite o restablezca la cuenta usada; verifique si hubo tareas programadas nuevas o modificadas en los destinos.",
+        "Elimine las tareas maliciosas confirmadas, mantenga la regla de bloqueo de RPC Firewall y documente las IP autorizadas para reducir ruido."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque la lectura remota de cuentas de tareas vía SASec no es habitual y suele anteceder al movimiento lateral."
+    },
+    "en": {
+      "summary": "RPC Firewall logged a remote RPC call to the SASec (MS-TSCH) interface that reads scheduled task information. This may be reconnaissance before lateral movement or persistence through scheduled tasks.",
+      "what_it_detects": "RPCFW events with EventID 3, InterfaceUuid 378e52b0-c0a9-11cf-822d-00aa0051e40f (SASec) and an OpNum other than 0 or 1. This leaves out the account write operations and keeps the reads, such as SAGetNSAccountInformation (2) and SAGetAccountInformation (3).",
+      "why_it_matters": "With SASec, a remote caller can see which accounts run scheduled tasks. Attackers can use this to find privileged accounts or prepare remote task execution. It falls under the ATT&CK Discovery tactic.",
+      "triage_steps": [
+        "Identify the target host, ClientNetworkAddress and exact OpNum, and confirm whether the audit:true action:block policy blocked the call.",
+        "Find the client user (SubjectUserName, SubjectDomainName) and check whether it is an expected admin account for this server.",
+        "Check whether the source IP belongs to a known admin workstation, scanner or inventory server.",
+        "Look for other RPCFW events from the same source IP within +/- 15 minutes, especially ITaskSchedulerService, SAMR, LSARPC, SRVSVC or DRSUAPI.",
+        "On the target, review nearby 4624 type 3 logons and 4698/4702 task creation or modification events.",
+        "On the source, look for schtasks.exe, at.exe, PowerShell or Impacket-style tooling that started RPC connections.",
+        "Check earlier alerts for the same user, source and target."
+      ],
+      "false_positives": [
+        "Administrators querying remote scheduled tasks with legacy tools that use the SASec interface.",
+        "Inventory, monitoring or configuration management software that lists tasks on servers.",
+        "Authorized vulnerability scanners or audits that review Task Scheduler configuration."
+      ],
+      "response_steps": [
+        "Ask the account or source system owner whether the activity was authorized and documented.",
+        "If it was not authorized, isolate the source host and block RPC access from that IP to the affected servers.",
+        "Review the account used, and disable or reset it if needed. Check the targets for new or changed scheduled tasks.",
+        "Remove confirmed malicious tasks, keep the RPC Firewall block rule and document authorized source IPs to cut noise."
+      ],
+      "severity_rationale": "High fits because remote reads of task account data through SASec are uncommon and often come before lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote SAGetAccountInformation (OpNum 3) call to SASec from an unexpected workstation",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "378e52b0-c0a9-11cf-822d-00aa0051e40f",
+          "OpNum": 3,
+          "Function": "RpcServerUseProtseqEp",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\atsvc",
+          "ClientNetworkAddress": "192.0.2.45",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Computer": "SRV-FILE-01.andes.example.com"
+        }
+      },
+      {
+        "description": "Remote SAGetNSAccountInformation (OpNum 2) call to SASec over TCP",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "378E52B0-C0A9-11CF-822D-00AA0051E40F",
+          "OpNum": 2,
+          "Protocol": "ncacn_ip_tcp",
+          "Endpoint": "49668",
+          "ClientNetworkAddress": "198.51.100.23",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "SASec call with OpNum 0 (SASetAccountInformation), excluded by the filter",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "378e52b0-c0a9-11cf-822d-00aa0051e40f",
+          "OpNum": 0,
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\atsvc",
+          "ClientNetworkAddress": "192.0.2.10",
+          "SubjectUserName": "adm_mlopez",
+          "SubjectDomainName": "ANDES",
+          "Computer": "SRV-FILE-01.andes.example.com"
+        }
+      },
+      {
+        "description": "Read call to the ITaskSchedulerService interface, a different UUID than SASec",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "86d35949-83c9-4044-b424-db363231fd0c",
+          "OpNum": 3,
+          "Protocol": "ncacn_ip_tcp",
+          "Endpoint": "49668",
+          "ClientNetworkAddress": "192.0.2.10",
+          "SubjectUserName": "adm_mlopez",
+          "SubjectDomainName": "ANDES",
+          "Computer": "SRV-FILE-01.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

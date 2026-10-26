@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "1d2de8a6-4803-4fde-b85b-f58f3aa7a705",
+    "title": "Potentially Suspicious WDAC Policy File Creation",
+    "level": "medium",
+    "status": "experimental",
+    "author": "X__Junior",
+    "path": "windows/file/file_event/file_event_win_susp_wdac_policy_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_susp_wdac_policy_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso fuera de la lista de herramientas de administración conocidas creó un archivo en \\Windows\\System32\\CodeIntegrity\\. Puede ser una política WDAC maliciosa para bloquear el EDR o el antivirus.",
+      "what_it_detects": "La creación de archivos cuyo TargetFilename contiene \\Windows\\System32\\CodeIntegrity\\. Se excluyen los procesos System, wuauclt, wuaucltcore, dllhost, PowerShell, el WDAC Wizard, Configuration Manager y las líneas de comando de despliegue habituales: ConvertFrom-CIPolicy, CiTool --update-policy y Copy-Item.",
+      "why_it_matters": "Un atacante con privilegios puede colocar una política de Application Control que bloquee los binarios del EDR o AV y deje correr su propio código. Esto es un deterioro de las defensas. La política se aplica al reiniciar o al refrescarse, y el equipo se queda sin visibilidad.",
+      "triage_steps": [
+        "Revise Image, CommandLine y el usuario. Valide la ruta, la firma digital y el hash del binario que escribió el archivo.",
+        "Identifique el TargetFilename, por ejemplo SiPolicy.p7b o CiPolicies\\Active\\{GUID}.cip. Obtenga una copia del archivo antes de que alguien lo modifique.",
+        "Analice la política y busque reglas de denegación contra rutas, hashes o firmantes de su EDR o antivirus.",
+        "Busque el proceso padre y los procesos hijos en el mismo host, en una ventana de +/- 15 minutos.",
+        "Revise si hubo reinicios programados, shutdown.exe o CiTool, y cambios en el registro DeviceGuard relacionados con ConfigCIPolicyFilePath.",
+        "Consulte el log Microsoft-Windows-CodeIntegrity/Operational: eventos de política activada y bloqueos de los binarios del EDR.",
+        "Confirme que el agente EDR sigue reportando y busque alertas previas para el mismo host y el mismo usuario."
+      ],
+      "false_positives": [
+        "Administradores que despliegan políticas WDAC con herramientas o scripts no incluidos en los filtros.",
+        "Agentes de seguridad o de gestión de terceros que administran Application Control.",
+        "Herramientas de despliegue de software que copian políticas mediante procesos propios."
+      ],
+      "response_steps": [
+        "Verifique con el equipo de endpoint o de seguridad si el cambio estaba autorizado y tiene ticket asociado.",
+        "Si es malicioso, aísle el host y conserve el archivo de política y la telemetría como evidencia.",
+        "Retire la política no autorizada con CiTool o eliminando el archivo validado, reinicie y confirme que el EDR funciona.",
+        "Restablezca las credenciales usadas y busque el mismo hash de política y el mismo binario en otros equipos."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque el impacto puede ser alto al cegar el EDR, pero la administración legítima de WDAC con herramientas no filtradas es frecuente."
+    },
+    "en": {
+      "summary": "A process outside the list of known WDAC management tools created a file under \\Windows\\System32\\CodeIntegrity\\. It may be a rogue WDAC policy meant to block EDR or AV.",
+      "what_it_detects": "File creation where TargetFilename contains \\Windows\\System32\\CodeIntegrity\\. Excluded: System, wuauclt, wuaucltcore, dllhost, PowerShell, WDAC Wizard, Configuration Manager, and the usual deployment command lines (ConvertFrom-CIPolicy, CiTool --update-policy, Copy-Item).",
+      "why_it_matters": "A privileged attacker can drop an Application Control policy that denies EDR or AV binaries while allowing their own code. This is defense impairment. The policy takes effect after a reboot or refresh, and the host loses visibility.",
+      "triage_steps": [
+        "Review Image, CommandLine and the user. Validate the writing binary's path, signature and hash.",
+        "Identify the TargetFilename, for example SiPolicy.p7b or CiPolicies\\Active\\{GUID}.cip. Collect a copy before anyone changes it.",
+        "Parse the policy and look for deny rules that target your EDR or AV paths, hashes or signers.",
+        "Pivot to parent and child processes on the same host within +/- 15 minutes.",
+        "Look for scheduled reboots, shutdown.exe, CiTool use, or DeviceGuard registry changes such as ConfigCIPolicyFilePath.",
+        "Check the Microsoft-Windows-CodeIntegrity/Operational log for policy activation and blocks of EDR binaries.",
+        "Confirm the EDR agent is still reporting, and review earlier alerts for the same host and user."
+      ],
+      "false_positives": [
+        "Administrators deploying WDAC policies with tools or scripts that the filters do not cover.",
+        "Third-party security or management agents that manage Application Control.",
+        "Software deployment tools that copy policies using their own processes."
+      ],
+      "response_steps": [
+        "Check with the endpoint or security team whether the change was authorized and has a ticket.",
+        "If it is malicious, isolate the host and preserve the policy file and telemetry.",
+        "Remove the rogue policy with CiTool, or delete the verified file. Reboot and confirm the EDR is running.",
+        "Reset the credentials involved, then hunt for the same policy hash and writing binary on other hosts."
+      ],
+      "severity_rationale": "Medium fits because the impact can be high (a blinded EDR), but legitimate WDAC administration through unfiltered tools is common."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user-writable folder drops a SiPolicy.p7b into CodeIntegrity",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\Public\\Downloads\\svcupdate.exe",
+          "CommandLine": "C:\\Users\\Public\\Downloads\\svcupdate.exe /install /quiet",
+          "TargetFilename": "C:\\Windows\\System32\\CodeIntegrity\\SiPolicy.p7b"
+        }
+      },
+      {
+        "description": "cmd.exe copies a .cip policy into the active CiPolicies folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "ProcessId": 4388,
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "cmd.exe /c copy C:\\ProgramData\\tmp\\p.cip C:\\Windows\\System32\\CodeIntegrity\\CiPolicies\\Active\\{A244370E-44C9-4C06-B551-F6016E563076}.cip",
+          "TargetFilename": "C:\\Windows\\System32\\CodeIntegrity\\CiPolicies\\Active\\{A244370E-44C9-4C06-B551-F6016E563076}.cip"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator converts a WDAC XML policy with Windows PowerShell; excluded by the image and command-line filters",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "ProcessId": 7012,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "CommandLine": "powershell.exe ConvertFrom-CIPolicy -XmlFilePath C:\\Policies\\Base.xml -BinaryFilePath C:\\Windows\\System32\\CodeIntegrity\\SiPolicy.p7b",
+          "TargetFilename": "C:\\Windows\\System32\\CodeIntegrity\\SiPolicy.p7b"
+        }
+      },
+      {
+        "description": "Same suspicious binary writes a .p7b outside the CodeIntegrity folder, so the selection does not match",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\Public\\Downloads\\svcupdate.exe",
+          "CommandLine": "C:\\Users\\Public\\Downloads\\svcupdate.exe /install /quiet",
+          "TargetFilename": "C:\\Users\\Public\\Downloads\\SiPolicy.p7b"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

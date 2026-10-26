@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "17d619c1-e020-4347-957e-1d1207455c93",
+    "title": "Active Directory Replication from Non Machine Account - DcSync Indicator",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/builtin/security/win_security_ad_replication_non_machine_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_ad_replication_non_machine_account.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una cuenta que no es de equipo (no termina en '$') solicitó derechos de replicación de Active Directory sobre el objeto raíz del dominio. Puede indicar un ataque DCSync para extraer hashes de contraseñas desde un controlador de dominio.",
+      "what_it_detects": "Eventos 4662 de Security en un controlador de dominio cuyo campo Properties contiene los GUID de DS-Replication-Get-Changes, Get-Changes-All, Synchronize o Get-Changes-In-Filtered-Set, cuando SubjectUserName no es una cuenta de equipo, ni NT AUTHORITY, ni una cuenta MSOL_ de Entra Connect, y SubjectDomainName no es 'Window Manager'. Requiere una SACL en la raíz del NC del dominio y la auditoría de Directory Service Access.",
+      "why_it_matters": "DCSync (ATT&CK T1003.006) imita a un controlador de dominio y pide por DRSUAPI los secretos de cuentas, incluido krbtgt. Con ellos un atacante puede hacer pass-the-hash, crear Golden Tickets y controlar todo el dominio.",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y SubjectUserSid; confirme con IAM si la cuenta tiene un uso aprobado de replicación (sincronización de identidades, herramienta de auditoría).",
+        "Revise Properties: la presencia de 1131f6ad (Get-Changes-All) indica solicitud de secretos y es la más crítica.",
+        "Correlacione SubjectLogonId con el evento 4624 en el mismo DC para obtener IpAddress y WorkstationName de origen.",
+        "Verifique si la IP de origen pertenece a un controlador de dominio o servidor de sincronización conocido; una estación de trabajo es altamente sospechosa.",
+        "En el host de origen, busque en +/- 15 minutos procesos como mimikatz, secretsdump de Impacket o PowerShell con lsadump/DRSUAPI en CommandLine.",
+        "Busque eventos 5136 o cambios de ACL recientes que otorgaran derechos de replicación a esta cuenta en la raíz del dominio.",
+        "Revise alertas previas del mismo usuario y del host de origen, incluidos accesos anómalos o escalamiento de privilegios."
+      ],
+      "false_positives": [
+        "Cuentas del conector de AD DS de Entra Connect con nombre personalizado que no empieza por MSOL_.",
+        "Herramientas de auditoría de contraseñas, respaldo o recuperación de AD que usan una cuenta de servicio con derechos de replicación.",
+        "Productos de identidad o seguridad que sincronizan el directorio con cuentas de usuario dedicadas.",
+        "Administradores realizando pruebas autorizadas o ejercicios de red team documentados."
+      ],
+      "response_steps": [
+        "Verifique con el propietario de la cuenta y el equipo de identidad si la actividad estaba autorizada; si lo está, documente y cree una exclusión específica.",
+        "Si no está autorizada, deshabilite la cuenta, revoque sus sesiones y aísle el host de origen identificado.",
+        "Retire los derechos de replicación indebidos de la ACL de la raíz del dominio y revise otros principales con esos derechos.",
+        "Trate el incidente como compromiso del dominio: restablezca krbtgt dos veces de forma controlada y rote las credenciales privilegiadas y de servicio.",
+        "Busque uso posterior de credenciales robadas: Golden Tickets, pass-the-hash y accesos laterales desde el host de origen."
+      ],
+      "severity_rationale": "El nivel medio refleja que existen cuentas de sincronización legítimas no filtradas, pero una solicitud no autorizada con Get-Changes-All equivale a compromiso crítico del dominio."
+    },
+    "en": {
+      "summary": "A non-machine account (name not ending in '$') exercised Active Directory replication rights on the domain root object. This may indicate a DCSync attack extracting password hashes from a domain controller.",
+      "what_it_detects": "Security event 4662 on a domain controller where Properties contains the GUID for DS-Replication-Get-Changes, Get-Changes-All, Synchronize or Get-Changes-In-Filtered-Set, and SubjectUserName is not a machine account, NT AUTHORITY or an MSOL_ Entra Connect account, and SubjectDomainName is not 'Window Manager'. Requires a SACL on the domain NC root and Directory Service Access auditing.",
+      "why_it_matters": "DCSync (ATT&CK T1003.006) impersonates a domain controller and requests account secrets, including krbtgt, over DRSUAPI. This enables pass-the-hash, Golden Tickets and full domain takeover.",
+      "triage_steps": [
+        "Identify SubjectUserName, SubjectDomainName and SubjectUserSid; confirm with IAM whether the account has approved replication use (identity sync, audit tooling).",
+        "Check Properties: 1131f6ad (Get-Changes-All) means secrets were requested and is the most critical.",
+        "Correlate SubjectLogonId with event 4624 on the same DC to obtain the source IpAddress and WorkstationName.",
+        "Check whether the source IP is a known domain controller or sync server; a workstation source is highly suspicious.",
+        "On the source host, look within +/- 15 minutes for mimikatz, Impacket secretsdump or PowerShell with lsadump/DRSUAPI in CommandLine.",
+        "Look for event 5136 or recent ACL changes granting replication rights to this account on the domain root.",
+        "Review earlier alerts for the same user and source host, including anomalous logons or privilege escalation."
+      ],
+      "false_positives": [
+        "Entra Connect AD DS connector accounts with a custom name not starting with MSOL_.",
+        "Password audit, AD backup or recovery tools running under a service account with replication rights.",
+        "Identity or security products that sync the directory using dedicated user accounts.",
+        "Administrators running authorized tests or documented red team exercises."
+      ],
+      "response_steps": [
+        "Verify with the account owner and identity team whether the activity was authorized; if so, document it and add a narrow exclusion.",
+        "If unauthorized, disable the account, revoke its sessions and isolate the identified source host.",
+        "Remove improper replication rights from the domain root ACL and review all other principals holding them.",
+        "Treat as domain compromise: reset krbtgt twice in a controlled way and rotate privileged and service credentials.",
+        "Hunt for follow-on use of stolen credentials: Golden Tickets, pass-the-hash and lateral movement from the source host."
+      ],
+      "severity_rationale": "Medium reflects that legitimate unfiltered sync accounts exist, but an unauthorized Get-Changes-All request amounts to critical domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Regular domain user requests DS-Replication-Get-Changes-All on the domain root (DCSync pattern).",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1142",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5A3F21",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "ObjectName": "%{4c2f9a1e-8b7d-4e3a-9f10-2d5c6b7a8e90}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      },
+      {
+        "description": "Service account with a custom name requests DS-Replication-Get-Changes.",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC02.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-2207",
+          "SubjectUserName": "svc-backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x7C1D09",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6aa-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal DC-to-DC replication by a machine account, excluded by the '$' filter.",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1001",
+          "SubjectUserName": "DC02$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E1A44",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6ad-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      },
+      {
+        "description": "Entra Connect AD DS connector account (MSOL_ prefix), excluded by the optional filter.",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-3105",
+          "SubjectUserName": "MSOL_a1b2c3d4e5f6",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x9B2E10",
+          "ObjectServer": "DS",
+          "ObjectType": "%{19195a5b-6da0-11d0-afd3-00c04fd930c9}",
+          "AccessMask": "0x100",
+          "Properties": "%%7688 {1131f6aa-9c07-11d1-f79f-00c04fc2dcd2} {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

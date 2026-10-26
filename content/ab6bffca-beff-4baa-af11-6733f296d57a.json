@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "ab6bffca-beff-4baa-af11-6733f296d57a",
+    "title": "Potential AD User Enumeration From Non-Machine Account",
+    "level": "medium",
+    "status": "test",
+    "author": "Maxime Thiebaut (@0xThiebaut)",
+    "path": "windows/builtin/security/win_security_ad_user_enumeration.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_ad_user_enumeration.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1087.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una cuenta de usuario (no de máquina) leyó propiedades de un objeto user en Active Directory, según el evento 4662 de un controlador de dominio. Un volumen alto de estas lecturas en poco tiempo puede indicar enumeración de usuarios del dominio.",
+      "what_it_detects": "Eventos 4662 cuyo ObjectType contiene el GUID de la clase user (bf967aba-0de6-11d0-a285-00aa003049e2) y cuyo AccessMask incluye Read Property. Excluye cuentas cuyo SubjectUserName termina en '$' o empieza con 'MSOL_'. Requiere auditar 'Read all properties' para Everyone en los objetos user.",
+      "why_it_matters": "La enumeración de cuentas de dominio (ATT&CK T1087.002) permite al atacante mapear usuarios, grupos y privilegios. Herramientas como BloodHound/SharpHound la usan para encontrar rutas de escalamiento hacia administradores del dominio.",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y el controlador de dominio (Computer) que registró el evento.",
+        "Cuente los eventos 4662 del mismo SubjectUserName en +/- 15 minutos; cientos de ObjectName distintos sugieren enumeración masiva y no una consulta puntual.",
+        "Correlacione SubjectLogonId con el evento 4624 del mismo DC para obtener la IP y el host de origen y el tipo de inicio de sesión.",
+        "Revise Properties y AccessMask para ver qué atributos se leyeron; lecturas amplias en muchos usuarios son más sospechosas que cambios administrativos.",
+        "En el endpoint de origen, busque procesos con consultas LDAP masivas, PowerShell (Get-ADUser, PowerView) o binarios tipo SharpHound en la misma ventana.",
+        "Confirme con el responsable si la cuenta es administrativa o de servicio con una tarea legítima, y revise alertas previas del usuario y del host."
+      ],
+      "false_positives": [
+        "Administradores creando o configurando usuarios nuevos en consolas como ADUC o el Centro de administración de AD.",
+        "Cuentas de servicio de sincronización de identidades, IAM, respaldo o auditoría que leen el directorio de forma periódica.",
+        "Herramientas autorizadas de evaluación de seguridad de AD durante una prueba aprobada."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la cuenta y el equipo de TI si la actividad fue autorizada antes de actuar.",
+        "Si no está autorizada, aísle el host de origen y deshabilite o restablezca la contraseña de la cuenta, preservando evidencia.",
+        "Busque artefactos de herramientas de enumeración en el host y movimiento lateral posterior desde la misma cuenta o IP.",
+        "Documente las cuentas de servicio legítimas confirmadas y ajuste exclusiones específicas para reducir ruido."
+      ],
+      "severity_rationale": "Es media porque la lectura de usuarios también ocurre en administración normal, pero la enumeración masiva suele preceder al escalamiento de privilegios."
+    },
+    "en": {
+      "summary": "A non-machine account read properties of an Active Directory user object, as logged by event 4662 on a domain controller. Many such reads in a short time may indicate domain user enumeration.",
+      "what_it_detects": "Event 4662 where ObjectType contains the user class GUID (bf967aba-0de6-11d0-a285-00aa003049e2) and AccessMask includes Read Property. Accounts whose SubjectUserName ends with '$' or starts with 'MSOL_' are excluded. Requires auditing 'Read all properties' for Everyone on user objects.",
+      "why_it_matters": "Domain account discovery (ATT&CK T1087.002) lets attackers map users, groups and privileges. Tools such as BloodHound/SharpHound rely on it to find escalation paths to domain admin.",
+      "triage_steps": [
+        "Identify SubjectUserName, SubjectDomainName and the domain controller (Computer) that logged the event.",
+        "Count 4662 events from the same SubjectUserName within +/- 15 minutes; hundreds of distinct ObjectName values suggest bulk enumeration, not a single lookup.",
+        "Correlate SubjectLogonId with the matching 4624 on the same DC to get source IP, workstation and logon type.",
+        "Review Properties and AccessMask to see which attributes were read; broad reads across many users are more suspicious than admin edits.",
+        "On the source endpoint, look for bulk LDAP queries, PowerShell (Get-ADUser, PowerView) or SharpHound-like binaries in the same window.",
+        "Confirm with the owner whether the account is an admin or service account with a legitimate task; check earlier alerts for the user and host."
+      ],
+      "false_positives": [
+        "Administrators creating or configuring new users in ADUC or AD Administrative Center.",
+        "Identity sync, IAM, backup or audit service accounts that read the directory on a schedule.",
+        "Authorized AD security assessment tools during an approved test."
+      ],
+      "response_steps": [
+        "Verify with the account owner and IT whether the activity was authorized before acting.",
+        "If unauthorized, isolate the source host and disable or reset the account, preserving evidence.",
+        "Hunt for enumeration tool artifacts on the host and follow-on lateral movement from the same account or IP.",
+        "Document confirmed legitimate service accounts and add narrow exclusions to reduce noise."
+      ],
+      "severity_rationale": "Medium, because user reads also occur in normal administration, yet bulk enumeration commonly precedes privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Regular domain user reads properties (Read Property, 0x10) of a user object, as during SharpHound collection.",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "DS",
+          "ObjectType": "%{bf967aba-0de6-11d0-a285-00aa003049e2}",
+          "ObjectName": "%{6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x10",
+          "Properties": "Read Property {bf967aba-0de6-11d0-a285-00aa003049e2}"
+        }
+      },
+      {
+        "description": "Service account reads a user object with Read Property + Write Property (0x30).",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "SubjectUserName": "svc_reports",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5B19C0",
+          "ObjectServer": "DS",
+          "ObjectType": "{bf967aba-0de6-11d0-a285-00aa003049e2}",
+          "ObjectName": "%{0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x30",
+          "Properties": "Read Property Write Property"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Machine account (name ends with $) reads a user object; excluded by filter_main_machine_accounts.",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectServer": "DS",
+          "ObjectType": "%{bf967aba-0de6-11d0-a285-00aa003049e2}",
+          "ObjectName": "%{6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x10",
+          "Properties": "Read Property"
+        }
+      },
+      {
+        "description": "User performs a Control Access operation (0x100) on a user object; AccessMask does not include Read Property.",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "DS",
+          "ObjectType": "%{bf967aba-0de6-11d0-a285-00aa003049e2}",
+          "ObjectName": "%{6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x100",
+          "Properties": "Control Access"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

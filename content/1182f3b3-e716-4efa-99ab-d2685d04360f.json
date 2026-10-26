@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "1182f3b3-e716-4efa-99ab-d2685d04360f",
+    "title": "History File Deletion",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_history_delete.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_history_delete.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1565.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó rm, unlink o shred sobre un archivo de historial de shell (por ejemplo .bash_history o .zsh_history) en un host Linux. Puede indicar que alguien intenta borrar el rastro de los comandos que ejecutó.",
+      "what_it_detects": "Eventos process_creation de Linux en los que Image termina en /rm, /unlink o /shred y CommandLine contiene /.bash_history o /.zsh_history, o termina en _history, .history o zhistory.",
+      "why_it_matters": "Borrar el historial elimina evidencia de lo que hizo un atacante después del acceso. La regla está etiquetada como T1565.001 (manipulación de datos almacenados) y la conducta también coincide con la limpieza del historial de comandos para evadir la defensa.",
+      "triage_steps": [
+        "Revise CommandLine: qué archivo de historial se borró, de qué usuario es y si se usó shred -u o -z, lo que indica intención de impedir la recuperación.",
+        "Identifique el usuario que ejecutó el proceso y confirme si es un administrador conocido que trabaja dentro de su horario y de una ventana de cambios.",
+        "Analice ParentImage y la cadena de procesos: una shell interactiva sobre sshd, un script en /tmp o /dev/shm, o un servicio web padre aumentan la sospecha.",
+        "Correlacione en el mismo host +/- 15 minutos: inicios de sesión SSH, sudo, descargas con curl/wget, nuevas cuentas, cambios en cron o authorized_keys.",
+        "Busque otros intentos antievidencia: unset HISTFILE, HISTSIZE=0, history -c, ln -s /dev/null sobre el historial o borrado de /var/log.",
+        "Revise la IP de origen de la sesión y las alertas previas del mismo usuario y host."
+      ],
+      "false_positives": [
+        "Actividades legítimas de administración, como limpiar cuentas antes de crear una imagen o plantilla de VM.",
+        "Scripts de hardening o desmantelamiento de cuentas que borran historiales por política.",
+        "Usuarios que borran su propio historial tras escribir por error una contraseña en la terminal."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o el responsable del sistema si la acción estaba autorizada y documentada.",
+        "Si no lo estaba, preserve evidencia: copia de memoria, logs de auth, journal y artefactos del disco antes de que se sobrescriban.",
+        "Contenga: aísle el host, deshabilite o restablezca las credenciales comprometidas y revoque claves SSH no reconocidas.",
+        "Reconstruya la actividad con auditd, logs centralizados y EDR, y elimine la persistencia encontrada.",
+        "Envíe el historial de shell a un colector centralizado y protéjalo para que no se pueda borrar en local."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque borrar historiales es una técnica antiforense poco común en la operación normal y suele acompañar a una intrusión activa."
+    },
+    "en": {
+      "summary": "rm, unlink or shred was run against a shell history file (for example .bash_history or .zsh_history) on a Linux host. This may mean someone is erasing the record of commands they ran.",
+      "what_it_detects": "Linux process_creation events where Image ends with /rm, /unlink or /shred and CommandLine contains /.bash_history or /.zsh_history, or ends with _history, .history or zhistory.",
+      "why_it_matters": "Deleting history removes evidence of what an attacker did after gaining access. The rule is tagged T1565.001 (Stored Data Manipulation), and the behavior also matches clearing command history for defense evasion.",
+      "triage_steps": [
+        "Read CommandLine: which history file was deleted, who owns it, and whether shred -u or -z was used. Those options show an intent to prevent recovery.",
+        "Identify the executing user. Confirm whether it is a known administrator working within normal hours and an approved change window.",
+        "Inspect ParentImage and the process tree. An interactive shell under sshd, a script in /tmp or /dev/shm, or a web service parent raises suspicion.",
+        "Correlate on the same host +/- 15 minutes: SSH logons, sudo, curl/wget downloads, new accounts, and cron or authorized_keys changes.",
+        "Look for other anti-forensics: unset HISTFILE, HISTSIZE=0, history -c, history symlinked to /dev/null, or deletion of /var/log files.",
+        "Check the session source IP and earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate administration activities, such as cleaning accounts before building a VM image or template.",
+        "Hardening or account-decommissioning scripts that wipe history files by policy.",
+        "Users deleting their own history after accidentally typing a password into the terminal."
+      ],
+      "response_steps": [
+        "Ask the user or system owner whether the action was authorized and documented.",
+        "If it was not, preserve evidence before it is overwritten: memory capture, auth logs, the journal and disk artifacts.",
+        "Contain: isolate the host, disable or reset compromised credentials, and revoke unrecognized SSH keys.",
+        "Reconstruct activity from auditd, centralized logs and EDR, then remove any persistence you find.",
+        "Forward shell history to a central collector and protect it so it cannot be deleted locally."
+      ],
+      "severity_rationale": "High fits because deleting history files is an anti-forensic action that rarely happens in normal operations and often accompanies an active intrusion."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rm force-deletes a user's bash history from an interactive SSH shell",
+        "event": {
+          "Image": "/usr/bin/rm",
+          "CommandLine": "rm -f /home/jperez/.bash_history",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "shred overwrites and removes root's zsh history",
+        "event": {
+          "Image": "/usr/bin/shred",
+          "CommandLine": "shred -u -z /root/.zsh_history",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo shred -u -z /root/.zsh_history",
+          "User": "root",
+          "ProcessId": 51077,
+          "CurrentDirectory": "/root",
+          "Computer": "app-srv-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "History file is read with cat, not deleted, so the Image selection does not match",
+        "event": {
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /home/jperez/.bash_history",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48290,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "rm removes an application export file whose path does not match any history pattern",
+        "event": {
+          "Image": "/usr/bin/rm",
+          "CommandLine": "rm -f /tmp/history_export.csv",
+          "ParentImage": "/usr/bin/bash",
+          "User": "svc-backup",
+          "ProcessId": 39911,
+          "Computer": "app-srv-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

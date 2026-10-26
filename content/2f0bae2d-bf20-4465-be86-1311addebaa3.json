@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "2f0bae2d-bf20-4465-be86-1311addebaa3",
+    "title": "Google Cloud Kubernetes Secrets Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_kubernetes_secrets_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_kubernetes_secrets_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, actualizó, modificó con patch o eliminó un Secret de Kubernetes en un clúster de GKE, según los registros de auditoría de GCP. Puede ser un cambio administrativo normal o un intento de manipular o robar credenciales.",
+      "what_it_detects": "Eventos de auditoría de GCP cuyo gcp.audit.method_name coincide con io.k8s.core.v*.secrets.create, update, patch o delete, es decir, cualquier escritura o eliminación de objetos Secret en la API de Kubernetes de GKE.",
+      "why_it_matters": "Los Secrets guardan contraseñas, tokens y claves. Un atacante puede reemplazarlos para redirigir aplicaciones, crear unos nuevos para persistir o borrarlos para interrumpir servicios. La regla está etiquetada en la táctica de acceso a credenciales de ATT&CK.",
+      "triage_steps": [
+        "Identifique el método exacto en gcp.audit.method_name (create, update, patch o delete), el nombre del Secret, el namespace y el clúster afectado.",
+        "Revise el principal autenticado (cuenta de usuario o service account), la IP de origen y el user agent. Confirme si corresponden a kubectl, Helm, un pipeline de CI/CD o un controlador conocido.",
+        "Verifique si existe un ticket de cambio, un despliegue o un release que justifique la modificación en ese namespace y horario.",
+        "Pivotee por el mismo principal +/- 15 minutos: busque secrets.get o list, creación de pods, rolebindings o cambios de RBAC.",
+        "Compruebe si la IP de origen o la ubicación son inusuales para esa identidad y si hay alertas previas para el mismo usuario o service account.",
+        "Para update o patch, determine qué claves cambiaron y qué workloads montan ese Secret; para delete, valide si hubo impacto en servicios."
+      ],
+      "false_positives": [
+        "Administradores del clúster que rotan o actualizan credenciales de forma planificada.",
+        "Pipelines de CI/CD, Helm, Argo CD o Flux que crean o actualizan Secrets durante despliegues.",
+        "Controladores como cert-manager o External Secrets Operator que renuevan certificados y sincronizan Secrets automáticamente.",
+        "Service accounts del propio GKE que gestionan tokens. Si el comportamiento es conocido y estable, exclúyalo de la regla."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del clúster o del namespace si el cambio fue autorizado antes de tomar acciones.",
+        "Si no fue autorizado, revoque o deshabilite las credenciales del principal involucrado y restrinja sus permisos RBAC e IAM.",
+        "Rote las credenciales contenidas en el Secret afectado y en los Secrets que esa identidad pudo leer.",
+        "Restaure el Secret desde GitOps o desde un respaldo y verifique que los workloads dependientes funcionen correctamente.",
+        "Revise y elimine mecanismos de persistencia: rolebindings, service accounts, pods o webhooks creados por la misma identidad.",
+        "Documente el incidente y ajuste exclusiones para automatizaciones legítimas verificadas."
+      ],
+      "severity_rationale": "Nivel medio porque estos cambios son frecuentes en operaciones legítimas, pero afectan directamente material de credenciales y requieren verificar contexto."
+    },
+    "en": {
+      "summary": "An identity created, updated, patched or deleted a Kubernetes Secret in a GKE cluster, as recorded by GCP audit logs. This may be routine administration or an attempt to tamper with or abuse credentials.",
+      "what_it_detects": "GCP audit events where gcp.audit.method_name matches io.k8s.core.v*.secrets.create, update, patch or delete, i.e. any write or deletion of Secret objects through the GKE Kubernetes API.",
+      "why_it_matters": "Secrets hold passwords, tokens and keys. Attackers can replace them to redirect applications, create new ones for persistence, or delete them to disrupt services. The rule is tagged with the ATT&CK credential access tactic.",
+      "triage_steps": [
+        "Note the exact verb in gcp.audit.method_name (create, update, patch or delete), the Secret name, namespace and affected cluster.",
+        "Review the authenticated principal (user or service account), source IP and user agent. Confirm whether they map to kubectl, Helm, CI/CD or a known controller.",
+        "Check for a change ticket, deployment or release that explains the change in that namespace and time window.",
+        "Pivot on the same principal +/- 15 minutes: look for secrets.get or list, pod creation, rolebindings or other RBAC changes.",
+        "Check whether the source IP or location is unusual for this identity and whether earlier alerts exist for the same user or service account.",
+        "For update or patch, identify which keys changed and which workloads mount the Secret; for delete, confirm any service impact."
+      ],
+      "false_positives": [
+        "Cluster administrators performing planned credential rotation or updates.",
+        "CI/CD pipelines, Helm, Argo CD or Flux creating or updating Secrets during deployments.",
+        "Controllers such as cert-manager or External Secrets Operator renewing certificates and syncing Secrets automatically.",
+        "GKE system service accounts managing tokens. If the behavior is known and stable, exempt it from the rule."
+      ],
+      "response_steps": [
+        "Confirm with the cluster or namespace owner whether the change was authorized before acting.",
+        "If unauthorized, revoke or disable the principal's credentials and restrict its RBAC and IAM permissions.",
+        "Rotate the credentials stored in the affected Secret and in any Secrets that identity could read.",
+        "Restore the Secret from GitOps or backup and verify dependent workloads work correctly.",
+        "Hunt for and remove persistence: rolebindings, service accounts, pods or webhooks created by the same identity.",
+        "Document the incident and tune exclusions for verified legitimate automation."
+      ],
+      "severity_rationale": "Medium because these changes are common in legitimate operations, yet they directly touch credential material and need context verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user deletes a Secret in the payments namespace from an unusual IP using kubectl",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.core.v1.secrets.delete",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "core/v1/namespaces/payments/secrets/db-credentials",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "kubectl/v1.27.3 (linux/amd64) kubernetes/25b4e43",
+          "cloud.project.id": "centinela-prod-example",
+          "orchestrator.cluster.name": "gke-prod-01"
+        }
+      },
+      {
+        "description": "Service account patches an existing Secret",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.core.v1.secrets.patch",
+          "gcp.audit.principal_email": "deployer@centinela-prod-example.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "core/v1/namespaces/default/secrets/api-token",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "198.51.100.20",
+          "user_agent.original": "Go-http-client/2.0",
+          "cloud.project.id": "centinela-prod-example",
+          "orchestrator.cluster.name": "gke-prod-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only access to a Secret (get), not a modification or deletion",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.core.v1.secrets.get",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "core/v1/namespaces/payments/secrets/db-credentials",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "kubectl/v1.27.3 (linux/amd64) kubernetes/25b4e43",
+          "cloud.project.id": "centinela-prod-example"
+        }
+      },
+      {
+        "description": "Update of a ConfigMap, not a Secret",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.core.v1.configmaps.update",
+          "gcp.audit.principal_email": "deployer@centinela-prod-example.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "core/v1/namespaces/default/configmaps/app-config",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "198.51.100.20",
+          "user_agent.original": "Helm/3.12.0",
+          "cloud.project.id": "centinela-prod-example"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

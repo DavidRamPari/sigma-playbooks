@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "f0025a69-e1b7-4dda-a53c-db21fa2d4071",
+    "title": "Script Interpreter Spawning Credential Scanner - Linux",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_script_interpretor_spawn_credential_scanner.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_script_interpretor_spawn_credential_scanner.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1005",
+      "T1059.004",
+      "T1552"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un intérprete de scripts node o bun lanzó un escáner de credenciales (trufflehog o gitleaks). Puede indicar que un paquete npm malicioso está buscando secretos en el host para robarlos.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde ParentImage termina en /node o /bun, e Image termina en /trufflehog o /gitleaks, o CommandLine contiene 'trufflehog' o 'gitleaks'.",
+      "why_it_matters": "La campaña de cadena de suministro npm 'Shai-Hulud: The Second Coming', citada por la regla, ejecuta trufflehog desde bun para recolectar tokens y claves. Corresponde a credenciales no protegidas (T1552), datos del sistema local (T1005) y ejecución con shell de Unix (T1059.004).",
+      "triage_steps": [
+        "Revise ParentImage, Image y CommandLine: anote la ruta del escáner y los directorios que analiza, como $HOME, / o rutas de repositorios.",
+        "Identifique el script padre (ParentCommandLine) y el paquete npm que lo invocó; busque archivos como setup_bun.js o bun_environment.js en node_modules.",
+        "Verifique si el binario de trufflehog o gitleaks se descargó recientemente a una ruta temporal o de usuario; obtenga su hash y compárelo con versiones oficiales.",
+        "Confirme el usuario y el host: ¿es un runner de CI/CD o un hook pre-commit documentado, o una estación de desarrollo durante un npm install?",
+        "Pivotee en el mismo host +/- 15 minutos: instalaciones npm, descargas de bun, conexiones salientes a api.github.com u otros destinos y lectura de ~/.npmrc, ~/.aws o ~/.git-credentials.",
+        "Busque alertas previas del mismo usuario o host y otros equipos donde se haya instalado el mismo paquete o versión."
+      ],
+      "false_positives": [
+        "Hooks pre-commit legítimos (por ejemplo, con husky) que ejecutan gitleaks desde node.",
+        "Jobs de CI/CD que lanzan trufflehog o gitleaks desde un script de Node como control de seguridad.",
+        "Herramientas internas de auditoría de secretos escritas en JavaScript, ejecutadas por el equipo de seguridad."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o del pipeline si el escaneo era esperado; si no lo era, trátelo como un compromiso.",
+        "Aísle el endpoint o detenga el runner afectado y conserve node_modules, los scripts y el binario del escáner como evidencia.",
+        "Rote todas las credenciales accesibles desde el host: tokens npm, PAT de GitHub, claves de nube, llaves SSH y secretos de CI.",
+        "Revise las cuentas de GitHub/npm afectadas en busca de repositorios, workflows o publicaciones de paquetes desconocidos.",
+        "Elimine el paquete malicioso, fije versiones confiables en el lockfile y reinstale las dependencias desde un estado limpio."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un intérprete que lanza un escáner de secretos fuera de un pipeline conocido apunta directamente a robo de credenciales en una cadena de suministro."
+    },
+    "en": {
+      "summary": "A node or bun script interpreter spawned a credential scanner (trufflehog or gitleaks). This may mean a malicious npm package is hunting for secrets on the host so it can steal them.",
+      "what_it_detects": "Linux process creation events where ParentImage ends with /node or /bun and either Image ends with /trufflehog or /gitleaks or CommandLine contains 'trufflehog' or 'gitleaks'.",
+      "why_it_matters": "The rule cites the 'Shai-Hulud: The Second Coming' npm supply-chain campaign, which runs trufflehog from bun to collect tokens and keys. This maps to unsecured credentials (T1552), data from the local system (T1005) and Unix shell execution (T1059.004).",
+      "triage_steps": [
+        "Review ParentImage, Image and CommandLine. Note the scanner path and the directories it scans, such as $HOME, / or repository paths.",
+        "Find the parent script (ParentCommandLine) and the npm package that invoked it. Look for files such as setup_bun.js or bun_environment.js in node_modules.",
+        "Check whether the trufflehog or gitleaks binary was recently downloaded to a temp or user path. Get its hash and compare it with official releases.",
+        "Confirm the user and host: is this a CI/CD runner or a documented pre-commit hook, or a developer workstation running npm install?",
+        "Pivot on the same host within +/- 15 minutes: npm installs, bun downloads, outbound connections to api.github.com or elsewhere, and reads of ~/.npmrc, ~/.aws or ~/.git-credentials.",
+        "Look for earlier alerts on the same user or host, and for other machines that installed the same package version."
+      ],
+      "false_positives": [
+        "Legitimate pre-commit hooks (for example, husky) that run gitleaks from node.",
+        "CI/CD jobs that run trufflehog or gitleaks from a Node script as a security check.",
+        "Internal secret-audit tooling written in JavaScript and run by the security team."
+      ],
+      "response_steps": [
+        "Ask the host or pipeline owner whether the scan was expected. If it was not, treat it as a compromise.",
+        "Isolate the endpoint or stop the affected runner. Keep node_modules, the scripts and the scanner binary as evidence.",
+        "Rotate every credential reachable from the host: npm tokens, GitHub PATs, cloud keys, SSH keys and CI secrets.",
+        "Check the affected GitHub and npm accounts for unknown repositories, workflows or package publications.",
+        "Remove the malicious package, pin trusted versions in the lockfile and reinstall dependencies from a clean state."
+      ],
+      "severity_rationale": "High fits because an interpreter launching a secret scanner outside a known pipeline points directly to credential theft through the supply chain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "bun running from a user directory spawns a freshly downloaded trufflehog binary that scans the home directory",
+        "event": {
+          "ParentImage": "/home/jperez/.bun/bin/bun",
+          "ParentCommandLine": "/home/jperez/.bun/bin/bun bun_environment.js",
+          "Image": "/tmp/.cache/trufflehog",
+          "CommandLine": "/tmp/.cache/trufflehog filesystem /home/jperez --json",
+          "User": "jperez",
+          "Computer": "WS-0142",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/home/jperez/projects/webapp/node_modules/example-pkg"
+        }
+      },
+      {
+        "description": "node spawns a shell whose command line runs gitleaks; CommandLine matches even though Image is sh",
+        "event": {
+          "ParentImage": "/usr/local/bin/node",
+          "ParentCommandLine": "node setup_bun.js",
+          "Image": "/usr/bin/sh",
+          "CommandLine": "sh -c gitleaks detect --source / --no-git --report-path /tmp/r.json",
+          "User": "ci-runner",
+          "Computer": "build-02",
+          "ProcessId": 9921,
+          "ParentProcessId": 9907,
+          "CurrentDirectory": "/opt/runner/_work/app"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Pre-commit hook launched from bash runs gitleaks; the parent is not node or bun",
+        "event": {
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash .git/hooks/pre-commit",
+          "Image": "/usr/local/bin/gitleaks",
+          "CommandLine": "gitleaks protect --staged --redact",
+          "User": "jperez",
+          "Computer": "WS-0142",
+          "ProcessId": 51002,
+          "ParentProcessId": 50998,
+          "CurrentDirectory": "/home/jperez/projects/webapp"
+        }
+      },
+      {
+        "description": "node spawns git for a normal status check; no credential scanner in Image or CommandLine",
+        "event": {
+          "ParentImage": "/usr/local/bin/node",
+          "ParentCommandLine": "node scripts/version-check.js",
+          "Image": "/usr/bin/git",
+          "CommandLine": "git status --porcelain",
+          "User": "jperez",
+          "Computer": "WS-0142",
+          "ProcessId": 51120,
+          "ParentProcessId": 51110,
+          "CurrentDirectory": "/home/jperez/projects/webapp"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

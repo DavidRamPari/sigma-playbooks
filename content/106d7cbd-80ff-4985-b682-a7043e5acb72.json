@@ -1,0 +1,162 @@
+{
+  "rule": {
+    "id": "106d7cbd-80ff-4985-b682-a7043e5acb72",
+    "title": "Loading of Kernel Module via Insmod",
+    "level": "high",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/syscall/lnx_auditd_load_module_insmod.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_load_module_insmod.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un evento SYSCALL del comando insmod (binario /usr/bin/kmod), lo que significa que alguien intentó cargar un módulo de kernel directamente desde un archivo. En producción esto es poco frecuente y debe tener una justificación.",
+      "what_it_detects": "Un registro SYSCALL de auditd con comm=insmod y exe=/usr/bin/kmod. insmod carga en el kernel un archivo .ko desde una ruta indicada, mediante la syscall init_module o finit_module, sin resolver dependencias como lo hace modprobe.",
+      "why_it_matters": "Los módulos de kernel cargables se ejecutan con privilegios totales de kernel. Los atacantes los usan para instalar rootkits que ocultan procesos, archivos y conexiones de red, mantener persistencia y escalar privilegios (ATT&CK T1547.006, Kernel Modules and Extensions).",
+      "triage_steps": [
+        "Revise los campos auid, uid, pid, ppid y success del registro SYSCALL. ¿La llamada tuvo éxito y qué usuario real (auid) la ejecutó?",
+        "Con el ID del evento de auditoría, busque los registros EXECVE/PROCTITLE asociados para obtener la línea de comandos completa de insmod y la ruta del .ko.",
+        "Revise dónde está guardado el módulo. Considere sospechosas rutas como /tmp, /dev/shm, /var/tmp, directorios home o directorios ocultos.",
+        "Calcule el hash del .ko y ejecute modinfo sobre él. Verifique el firmante, vermagic y autor, y compárelo con paquetes, fuentes DKMS y threat intel.",
+        "Ejecute dmesg o journalctl -k y busque 'module verification failed' o mensajes de taint. Compare lsmod con /proc/modules y /sys/module para detectar un módulo que se oculta.",
+        "Siga la cadena de procesos padre a partir del ppid. Busque una sesión SSH, un servidor web, cron o un script que haya descargado o compilado el módulo.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque actividad de gcc/make, descargas y cambios en /etc/modules, /etc/modules-load.d o /etc/modprobe.d.",
+        "Verifique si el mismo usuario, el mismo host o el mismo hash del módulo generaron alertas anteriores."
+      ],
+      "false_positives": [
+        "Administradores que cargan a mano drivers propios o externos al árbol del kernel, como drivers de hardware, almacenamiento o red.",
+        "Desarrolladores de kernel o equipos de QA que prueban módulos en equipos de compilación o de laboratorio.",
+        "Instaladores o agentes de fabricantes (virtualización, GPU o seguridad) que invocan insmod directamente.",
+        "Pruebas autorizadas de purple team o de Atomic Red Team T1547.006."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o con un ticket de cambio que la carga era esperada y que el módulo es legítimo.",
+        "Si no puede confirmarlo, aísle el host de la red y capture la memoria y el archivo .ko antes de reiniciar o descargar el módulo.",
+        "No confíe en las herramientas del propio host. Un rootkit puede falsear lsmod, ps y netstat, así que analice desde una imagen confiable o fuera de línea.",
+        "Elimine las entradas de persistencia y el archivo del módulo. Como el kernel puede estar comprometido, es preferible reconstruir el host desde una imagen confiable.",
+        "Rote las credenciales y llaves usadas en el host, y exija módulos firmados o configure kernel.modules_disabled cuando sea posible."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un insmod exitoso ejecuta código arbitrario con privilegios de kernel, y cargar módulos directamente desde un archivo no es habitual en la operación normal."
+    },
+    "en": {
+      "summary": "auditd recorded a SYSCALL event from the insmod command (the /usr/bin/kmod binary), which means someone tried to load a kernel module directly from a file. In production this is rare and needs an explanation.",
+      "what_it_detects": "An auditd SYSCALL record with comm=insmod and exe=/usr/bin/kmod. insmod loads a .ko file from a given path into the kernel through the init_module or finit_module syscall, without the dependency handling that modprobe does.",
+      "why_it_matters": "Loadable kernel modules run with full kernel privileges. Attackers use them to install rootkits that hide processes, files and network connections, keep persistence and escalate privileges (ATT&CK T1547.006, Kernel Modules and Extensions).",
+      "triage_steps": [
+        "Check the auid, uid, pid, ppid and success fields in the SYSCALL record. Was the call successful, and which real user (auid) ran it?",
+        "Use the audit event ID to find the matching EXECVE/PROCTITLE records and get the full insmod command line and the .ko path.",
+        "Look at where the module is stored. Treat paths such as /tmp, /dev/shm, /var/tmp, home directories or hidden directories as suspicious.",
+        "Hash the .ko file and run modinfo on it. Check its signer, vermagic and author, and compare it against packages, DKMS sources and threat intel.",
+        "Run dmesg or journalctl -k and look for 'module verification failed' or taint messages. Compare lsmod with /proc/modules and /sys/module to spot a module that is hiding itself.",
+        "Follow the parent chain from ppid. Look for an SSH session, a web server, cron or a script that downloaded or compiled the module.",
+        "On the same host within +/- 15 minutes, look for gcc/make activity, downloads, and changes to /etc/modules, /etc/modules-load.d or /etc/modprobe.d.",
+        "Check whether the same user, the same host or the same module hash triggered earlier alerts."
+      ],
+      "false_positives": [
+        "Administrators loading custom or out-of-tree drivers by hand, such as hardware, storage or network drivers.",
+        "Kernel developers or QA teams testing modules on build or lab hosts.",
+        "Vendor installers or agents (virtualization, GPU or security software) that call insmod directly.",
+        "Authorized purple-team or Atomic Red Team T1547.006 tests."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or a change ticket that the load was expected and the module is legitimate.",
+        "If you cannot confirm it, isolate the host from the network and capture memory and the .ko file before any reboot or unload.",
+        "Do not trust tools running on the host. A rootkit can falsify lsmod, ps and netstat, so analyze from a trusted image or offline.",
+        "Remove the persistence entries and the module file. Because the kernel may be compromised, prefer rebuilding the host from a known-good image.",
+        "Rotate credentials and keys that were used on the host, and enforce module signing or set kernel.modules_disabled where possible."
+      ],
+      "severity_rationale": "High fits because a successful insmod runs arbitrary code with kernel privileges, and loading modules directly from a file is uncommon in normal operations."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Root user loads a kernel module from /tmp with insmod; auditd SYSCALL record for finit_module.",
+        "event": {
+          "type": "SYSCALL",
+          "msg": "audit(1698242592.481:2214)",
+          "arch": "c000003e",
+          "syscall": "313",
+          "success": "yes",
+          "exit": "0",
+          "ppid": "4120",
+          "pid": "4188",
+          "auid": "1001",
+          "uid": "0",
+          "euid": "0",
+          "tty": "pts1",
+          "comm": "insmod",
+          "exe": "/usr/bin/kmod",
+          "key": "modules",
+          "hostname": "bastion-01"
+        }
+      },
+      {
+        "description": "Failed insmod attempt by a sudo session on a web server; still a SYSCALL with comm insmod and exe /usr/bin/kmod.",
+        "event": {
+          "type": "SYSCALL",
+          "msg": "audit(1698243011.102:2301)",
+          "arch": "c000003e",
+          "syscall": "313",
+          "success": "no",
+          "exit": "-1",
+          "ppid": "7731",
+          "pid": "7790",
+          "auid": "1003",
+          "uid": "0",
+          "euid": "0",
+          "tty": "pts0",
+          "comm": "insmod",
+          "exe": "/usr/bin/kmod",
+          "key": "modules",
+          "hostname": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal module load through modprobe: same kmod binary but comm is modprobe, so the rule does not match.",
+        "event": {
+          "type": "SYSCALL",
+          "msg": "audit(1698242700.220:2230)",
+          "arch": "c000003e",
+          "syscall": "313",
+          "success": "yes",
+          "exit": "0",
+          "ppid": "1",
+          "pid": "612",
+          "auid": "4294967295",
+          "uid": "0",
+          "euid": "0",
+          "tty": "(none)",
+          "comm": "modprobe",
+          "exe": "/usr/bin/kmod",
+          "key": "modules",
+          "hostname": "bastion-01"
+        }
+      },
+      {
+        "description": "EXECVE record for the insmod command line; it is not of type SYSCALL and carries no comm/exe fields.",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1698242592.481:2214)",
+          "argc": "2",
+          "a0": "insmod",
+          "a1": "/tmp/test.ko",
+          "hostname": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "0442defa-b4a2-41c9-ae2c-ea7042fc4701",
+    "title": "Potential Credential Dumping Attempt Using New NetworkProvider - REG",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_new_network_provider.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_new_network_provider.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó o modificó un valor bajo una clave NetworkProvider de un servicio que no es uno de los proveedores de red conocidos de Windows. Puede indicar el registro de una DLL maliciosa de proveedor de red para capturar credenciales en texto claro al iniciar sesión, al estilo de NPPSpy.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject contiene '\\System\\CurrentControlSet\\Services\\' y '\\NetworkProvider', excluyendo WebClient, LanmanWorkstation y RDPNP, así como las escrituras hechas por C:\\Windows\\System32\\poqexec.exe (instalación de actualizaciones).",
+      "why_it_matters": "Windows envía el usuario y la contraseña en texto claro a cada proveedor de red registrado mediante NPLogonNotify. Una DLL de proveedor maliciosa puede guardar o exfiltrar esas credenciales (ATT&CK T1003, volcado de credenciales) y además persiste tras reinicios.",
+      "triage_steps": [
+        "Revise TargetObject para identificar el nombre del servicio y el valor escrito (ProviderPath, Name, Class); anote Details, que normalmente contiene la ruta de la DLL.",
+        "Identifique el Image y el usuario que hicieron el cambio; reg.exe, powershell.exe o binarios en rutas de usuario son más sospechosos que un instalador firmado.",
+        "Ubique la DLL indicada en ProviderPath: verifique firma digital, hash, fecha de creación y reputación; compárela con el software instalado en el host.",
+        "Consulte HKLM\\SYSTEM\\CurrentControlSet\\Control\\NetworkProvider\\Order\\ProviderOrder para ver si el nuevo proveedor se agregó al orden activo.",
+        "Revise el árbol de procesos (ParentImage y procesos hijos) y la actividad del mismo host en +/- 15 minutos: creación de servicios, copias de DLL a System32, ejecución de scripts.",
+        "Busque archivos nuevos escritos por mpnotify.exe o winlogon.exe que puedan contener credenciales capturadas, y alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Software legítimo que instala su propio proveedor de red no filtrado por la regla, como clientes VPN, sistemas de archivos de red de terceros o soluciones de acceso remoto.",
+        "Proveedor P9NP de WSL en equipos que usan Windows Subsystem for Linux (su filtro está comentado en la regla).",
+        "Despliegues de software corporativo mediante herramientas de gestión que registran proveedores de red durante la instalación."
+      ],
+      "response_steps": [
+        "Valide con el responsable del equipo o el inventario de software si el proveedor y su DLL son legítimos antes de tomar acciones.",
+        "Si es malicioso, aísle el endpoint, conserve la DLL y la clave del registro como evidencia, y elimine el proveedor de ProviderOrder y de la clave del servicio.",
+        "Restablezca las contraseñas de todos los usuarios que iniciaron sesión en el host desde el cambio, priorizando cuentas privilegiadas.",
+        "Busque la misma clave, nombre de DLL o hash en el resto de la flota y documente los hallazgos para ajustar exclusiones legítimas."
+      ],
+      "severity_rationale": "Nivel medio porque la técnica permite robar credenciales en texto claro, pero algunos productos legítimos registran proveedores de red y requieren validación."
+    },
+    "en": {
+      "summary": "A value was created or changed under a service's NetworkProvider key that is not one of the known built-in Windows network providers. This may mean a malicious network provider DLL was registered to capture clear-text logon credentials, as NPPSpy does.",
+      "what_it_detects": "registry_set events where TargetObject contains '\\System\\CurrentControlSet\\Services\\' and '\\NetworkProvider', excluding WebClient, LanmanWorkstation and RDPNP, and excluding writes by C:\\Windows\\System32\\poqexec.exe (update servicing).",
+      "why_it_matters": "Windows passes the username and clear-text password to every registered network provider via NPLogonNotify. A rogue provider DLL can store or exfiltrate them (ATT&CK T1003, credential dumping) and persists across reboots.",
+      "triage_steps": [
+        "Read TargetObject to get the service name and value written (ProviderPath, Name, Class); note Details, which usually holds the DLL path.",
+        "Identify the Image and user that made the change; reg.exe, powershell.exe or binaries in user-writable paths are more suspicious than a signed installer.",
+        "Locate the DLL from ProviderPath: check signature, hash, creation time and reputation; compare it with installed software on the host.",
+        "Check HKLM\\SYSTEM\\CurrentControlSet\\Control\\NetworkProvider\\Order\\ProviderOrder to see whether the new provider was added to the active order.",
+        "Review the process tree (ParentImage, child processes) and same-host activity within +/- 15 minutes: service creation, DLL drops into System32, script execution.",
+        "Look for new files written by mpnotify.exe or winlogon.exe that may hold captured credentials, and earlier alerts for the same host or user."
+      ],
+      "false_positives": [
+        "Legitimate software installing its own network provider not filtered by the rule, such as VPN clients, third-party network file systems or remote access tools.",
+        "The WSL P9NP provider on hosts using Windows Subsystem for Linux (its filter is commented out in the rule).",
+        "Corporate software deployments via management tools that register network providers during installation."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or software inventory whether the provider and DLL are legitimate before acting.",
+        "If malicious, isolate the endpoint, preserve the DLL and registry key as evidence, and remove the provider from ProviderOrder and the service key.",
+        "Reset passwords for every user who logged on to the host since the change, prioritizing privileged accounts.",
+        "Hunt for the same key, DLL name or hash across the fleet, and record findings to tune legitimate exclusions."
+      ],
+      "severity_rationale": "Medium because the technique enables clear-text credential theft, but some legitimate products register network providers and need validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe registers a new network provider DLL path for an unknown service, NPPSpy-style",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\logonsync\\NetworkProvider\\ProviderPath",
+          "Details": "%SystemRoot%\\System32\\logonsync.dll"
+        }
+      },
+      {
+        "description": "PowerShell sets the Class value of a new network provider",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\logonsync\\NetworkProvider\\Class",
+          "Details": "DWORD (0x00000002)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Built-in LanmanWorkstation network provider value updated, excluded by filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\LanmanWorkstation\\NetworkProvider\\ProviderPath",
+          "Details": "%SystemRoot%\\System32\\ntlanman.dll"
+        }
+      },
+      {
+        "description": "Windows update servicing (poqexec.exe) writes a network provider key, excluded by filter_valid_procs",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\poqexec.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\P9NP\\NetworkProvider\\ProviderPath",
+          "Details": "%SystemRoot%\\System32\\p9np.dll"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

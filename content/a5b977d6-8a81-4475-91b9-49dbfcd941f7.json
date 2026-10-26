@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "a5b977d6-8a81-4475-91b9-49dbfcd941f7",
+    "title": "Remove Immutable File Attribute - Auditd",
+    "level": "medium",
+    "status": "test",
+    "author": "Jakob Weinzettl, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_chattr_immutable_removal.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_chattr_immutable_removal.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró la ejecución de chattr con el argumento -i, que quita el atributo inmutable de un archivo. Puede ser administración legítima o un paso previo para modificar archivos protegidos.",
+      "what_it_detects": "Registros EXECVE de auditd en los que a0 contiene 'chattr' y a1 contiene '-i', es decir, la eliminación del atributo inmutable (chattr -i) sobre uno o más archivos indicados en a2 y siguientes.",
+      "why_it_matters": "El atributo inmutable impide modificar o borrar un archivo incluso como root. Quitarlo permite alterar archivos críticos o de persistencia (passwd, shadow, crontab, authorized_keys). Corresponde a ATT&CK T1222.002, modificación de permisos de archivos en Linux.",
+      "triage_steps": [
+        "Identifique el archivo objetivo en a2 y argumentos siguientes; priorice /etc/passwd, /etc/shadow, /etc/sudoers, crontabs, authorized_keys, /etc/ld.so.preload y binarios del sistema.",
+        "Correlacione con el registro SYSCALL del mismo evento de audit (mismo número de serie en msg=audit(...)) para obtener auid, uid, exe, ppid, tty y ses.",
+        "Revise el proceso padre (ppid) y su cadena: shell interactiva por SSH, cron, servidor web o script desconocido.",
+        "Verifique si el auid corresponde a un administrador autorizado y si hay un ticket o ventana de cambio asociada.",
+        "Busque en el mismo host, +/- 15 minutos, escrituras o borrados del archivo (registros PATH, FIM), un chattr +i posterior y otros comandos del mismo ses.",
+        "Compruebe si el atributo se volvió a aplicar con lsattr y compare el contenido del archivo con una copia de referencia o backup.",
+        "Revise alertas previas del mismo host y usuario, como accesos SSH anómalos, descargas o nuevas tareas cron.",
+        "Tenga en cuenta que chattr -V -i deja -i en a2 y no dispara la regla; busque variantes similares manualmente."
+      ],
+      "false_positives": [
+        "Administradores que editan archivos inmutables, por ejemplo durante tareas de backup o restauración.",
+        "Gestión de configuración (Ansible, Puppet, Chef) que desbloquea y vuelve a bloquear archivos protegidos.",
+        "Actualizaciones de paquetes o scripts de mantenimiento que necesitan reemplazar archivos marcados como inmutables."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si el cambio fue autorizado; si lo fue, documente y considere una excepción acotada por usuario y ruta.",
+        "Si no está autorizado, aísle el host de la red manteniendo acceso de gestión y preserve logs de audit y una copia del archivo afectado.",
+        "Restaure el contenido legítimo del archivo desde backup, vuelva a aplicar chattr +i y elimine cuentas, llaves o tareas maliciosas agregadas.",
+        "Rote credenciales expuestas, revise otros hosts con el mismo usuario o IP de origen y refuerce las reglas de audit sobre chattr."
+      ],
+      "severity_rationale": "Nivel medio: la acción es común en administración legítima, pero sobre archivos críticos indica una posible preparación para persistencia o manipulación que requiere revisión."
+    },
+    "en": {
+      "summary": "Auditd recorded chattr running with the -i argument, which removes the immutable attribute from a file. This may be legitimate administration or a step toward modifying protected files.",
+      "what_it_detects": "Auditd EXECVE records where a0 contains 'chattr' and a1 contains '-i', meaning the immutable attribute is being removed (chattr -i) from the file(s) given in a2 onward.",
+      "why_it_matters": "The immutable attribute blocks changing or deleting a file, even as root. Removing it lets an attacker alter critical or persistence files such as passwd, shadow, crontab or authorized_keys. This maps to ATT&CK T1222.002, Linux file permissions modification.",
+      "triage_steps": [
+        "Identify the target file in a2 and later arguments; prioritize /etc/passwd, /etc/shadow, /etc/sudoers, crontabs, authorized_keys, /etc/ld.so.preload and system binaries.",
+        "Correlate with the SYSCALL record of the same audit event (same serial in msg=audit(...)) to get auid, uid, exe, ppid, tty and ses.",
+        "Review the parent process (ppid) and its chain: interactive SSH shell, cron, web server or an unknown script.",
+        "Check whether the auid belongs to an authorized administrator and whether a ticket or change window exists.",
+        "On the same host, +/- 15 minutes, look for writes or deletes of the file (PATH records, FIM), a later chattr +i and other commands in the same ses.",
+        "Check with lsattr whether the attribute was reapplied and compare the file with a known-good copy or backup.",
+        "Review earlier alerts for the same host and user, such as unusual SSH logins, downloads or new cron jobs.",
+        "Note that chattr -V -i puts -i in a2 and will not fire this rule; hunt for such variants manually."
+      ],
+      "false_positives": [
+        "Administrators editing immutable files, for example during backup or restore tasks.",
+        "Configuration management (Ansible, Puppet, Chef) unlocking and relocking protected files.",
+        "Package updates or maintenance scripts that must replace files marked immutable."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the change was authorized; if so, document it and consider a narrow exception by user and path.",
+        "If unauthorized, isolate the host while keeping management access, and preserve audit logs and a copy of the affected file.",
+        "Restore the legitimate file content from backup, reapply chattr +i and remove any malicious accounts, keys or scheduled tasks added.",
+        "Rotate exposed credentials, check other hosts for the same user or source IP, and strengthen audit rules for chattr."
+      ],
+      "severity_rationale": "Medium fits because the action is common in legitimate administration, but on critical files it suggests possible preparation for persistence or tampering that needs review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "chattr -i removing the immutable flag from /etc/passwd",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865000.123:4521)",
+          "host": "bastion-01",
+          "argc": 3,
+          "a0": "chattr",
+          "a1": "-i",
+          "a2": "/etc/passwd"
+        }
+      },
+      {
+        "description": "Full path chattr unlocking a user's authorized_keys file",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865412.877:4630)",
+          "host": "web-03",
+          "argc": 3,
+          "a0": "/usr/bin/chattr",
+          "a1": "-i",
+          "a2": "/home/jperez/.ssh/authorized_keys"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "chattr +i setting (not removing) the immutable attribute",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865100.456:4533)",
+          "host": "bastion-01",
+          "argc": 3,
+          "a0": "chattr",
+          "a1": "+i",
+          "a2": "/etc/resolv.conf"
+        }
+      },
+      {
+        "description": "chattr -a removing append-only, not the immutable attribute",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865200.789:4540)",
+          "host": "bastion-01",
+          "argc": 3,
+          "a0": "chattr",
+          "a1": "-a",
+          "a2": "/var/log/app/audit.log"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

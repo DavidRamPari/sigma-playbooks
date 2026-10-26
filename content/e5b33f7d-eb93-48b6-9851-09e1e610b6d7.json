@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "e5b33f7d-eb93-48b6-9851-09e1e610b6d7",
+    "title": "Credential Dumping Attempt Via WerFault",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_lsass_werfault.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_lsass_werfault.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "WerFault.exe abrió lsass.exe con acceso total (0x1FFFFF). Esto suele indicar un abuso de Windows Error Reporting para generar un volcado de memoria de LSASS y robar credenciales.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon Event ID 10) en los que SourceImage termina en \\WerFault.exe, TargetImage termina en \\lsass.exe y GrantedAccess es exactamente 0x1FFFFF (PROCESS_ALL_ACCESS). Herramientas como NanoDump pueden forzar a WerFault a volcar LSASS para que la lectura parezca legítima.",
+      "why_it_matters": "La memoria de LSASS contiene hashes NTLM, tickets Kerberos y a veces contraseñas en claro. Volcarla (ATT&CK T1003.001, LSASS Memory) permite el movimiento lateral y la escalada de privilegios. Como lo hace un binario firmado de Windows, puede evadir los controles básicos.",
+      "triage_steps": [
+        "Revise SourceProcessId, TargetProcessId, CallTrace y SourceUser del evento, y confirme que TargetImage sea C:\\Windows\\System32\\lsass.exe.",
+        "Busque la creación del proceso WerFault.exe (Event ID 1 / 4688): CommandLine, ParentImage y usuario. Un padre inusual o parámetros que apunten al PID de LSASS son sospechosos.",
+        "Revise si cambió el registro de SilentProcessExit\\lsass.exe o de Image File Execution Options\\lsass.exe (GlobalFlag, ReportingMode, LocalDumpFolder) en el mismo host dentro de +/- 15 minutos.",
+        "Busque archivos .dmp nuevos en LocalDumpFolder, %TEMP%, C:\\ProgramData\\Microsoft\\Windows\\WER o en rutas de usuario, y anote su hash, tamaño y autor.",
+        "Verifique si LSASS se cayó de verdad: Event ID 1000/1001 de Application Error, reinicio inesperado o BSOD alrededor de la hora del evento.",
+        "Correlacione con alertas previas del host y del usuario, y con conexiones salientes o copias a recursos compartidos que podrían exfiltrar el volcado."
+      ],
+      "false_positives": [
+        "Un fallo real de lsass.exe que genera un volcado de memoria por caída (poco probable y suele ir acompañado de un reinicio).",
+        "Otros casos desconocidos en los que WerFault accede a lsass.exe, por ejemplo durante diagnósticos autorizados de Microsoft o del proveedor."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el dueño del sistema; si no hay un fallo documentado de LSASS, trátelo como robo de credenciales.",
+        "Aísle el endpoint de la red con el EDR y preserve los archivos .dmp y las claves de registro modificadas como evidencia.",
+        "Elimine las claves SilentProcessExit/IFEO maliciosas y los volcados una vez preservados; busque persistencia y herramientas adicionales.",
+        "Restablezca las contraseñas de las cuentas que iniciaron sesión en el host, incluidas las cuentas de servicio y de administrador; considere rotar krbtgt si hubo cuentas de dominio privilegiadas.",
+        "Active o refuerce la protección de LSASS (RunAsPPL, Credential Guard) y revise los demás hosts en busca del mismo patrón."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque es muy raro que WerFault abra LSASS con acceso total sin un fallo real, y el impacto potencial es el compromiso de credenciales."
+    },
+    "en": {
+      "summary": "WerFault.exe opened lsass.exe with full access (0x1FFFFF). This usually means Windows Error Reporting is being abused to dump LSASS memory and steal credentials.",
+      "what_it_detects": "Process access events (Sysmon Event ID 10) where SourceImage ends with \\WerFault.exe, TargetImage ends with \\lsass.exe and GrantedAccess is exactly 0x1FFFFF (PROCESS_ALL_ACCESS). Tools such as NanoDump can make WerFault dump LSASS so the read looks legitimate.",
+      "why_it_matters": "LSASS memory holds NTLM hashes, Kerberos tickets and sometimes cleartext passwords. Dumping it (ATT&CK T1003.001, LSASS Memory) enables lateral movement and privilege escalation. Because a signed Windows binary does the work, basic controls may miss it.",
+      "triage_steps": [
+        "Review SourceProcessId, TargetProcessId, CallTrace and SourceUser in the event. Confirm that TargetImage is C:\\Windows\\System32\\lsass.exe.",
+        "Find the WerFault.exe process creation (Event ID 1 / 4688) and check its CommandLine, ParentImage and user. An odd parent or arguments that reference the LSASS PID are suspicious.",
+        "On the same host within +/- 15 minutes, check for changes to the SilentProcessExit\\lsass.exe or Image File Execution Options\\lsass.exe registry keys (GlobalFlag, ReportingMode, LocalDumpFolder).",
+        "Look for new .dmp files in LocalDumpFolder, %TEMP%, C:\\ProgramData\\Microsoft\\Windows\\WER or user paths. Record each file's hash, size and creator.",
+        "Check whether LSASS really crashed: look for Application Error events 1000/1001, an unexpected reboot or a BSOD near the event time.",
+        "Correlate with earlier alerts for the host and user, and with outbound connections or share copies that could exfiltrate the dump."
+      ],
+      "false_positives": [
+        "A real lsass.exe failure that writes a crash dump. This is unlikely and usually comes with a reboot.",
+        "Other unknown cases where WerFault accesses lsass.exe, such as authorized Microsoft or vendor diagnostics."
+      ],
+      "response_steps": [
+        "Confirm with the system owner. If there is no documented LSASS failure, treat this as credential theft.",
+        "Isolate the endpoint with the EDR. Preserve the .dmp files and modified registry keys as evidence.",
+        "After preserving evidence, remove the malicious SilentProcessExit/IFEO keys and the dumps. Hunt for persistence and other tools.",
+        "Reset passwords for all accounts that logged on to the host, including service and admin accounts. Consider rotating krbtgt if privileged domain accounts were exposed.",
+        "Enable or harden LSASS protection (RunAsPPL, Credential Guard) and check other hosts for the same pattern."
+      ],
+      "severity_rationale": "High fits because WerFault opening LSASS with full access is very rare without a genuine crash, and the possible impact is credential compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "WerFault.exe from System32 opens lsass.exe with PROCESS_ALL_ACCESS, consistent with a WER-based LSASS dump.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFault.exe",
+          "SourceProcessId": 6120,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "TargetProcessId": 712,
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\WerFault.exe+3a1f2",
+          "SourceUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "32-bit WerFault.exe from SysWOW64 accesses lsass.exe, with GrantedAccess logged in lowercase (matching is case-insensitive).",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-FS-02.andes.example.com",
+          "SourceImage": "C:\\Windows\\SysWOW64\\WerFault.exe",
+          "SourceProcessId": 4388,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "TargetProcessId": 668,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+a0c14|C:\\Windows\\SYSTEM32\\dbgcore.dll+6a2f",
+          "SourceUser": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WerFault.exe opens lsass.exe with limited query rights (0x1410), not full access, so the exact GrantedAccess value does not match.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFault.exe",
+          "SourceProcessId": 5204,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "TargetProcessId": 712,
+          "GrantedAccess": "0x1410",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2b8fe",
+          "SourceUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Legitimate crash handling: WerFault.exe opens a crashed explorer.exe with full access; the target is not lsass.exe.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\WerFault.exe",
+          "SourceProcessId": 7740,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetProcessId": 3912,
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e",
+          "SourceUser": "ANDES\\mlopez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

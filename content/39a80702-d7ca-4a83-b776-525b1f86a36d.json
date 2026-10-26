@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "39a80702-d7ca-4a83-b776-525b1f86a36d",
+    "title": "Potential Secure Deletion with SDelete",
+    "level": "medium",
+    "status": "test",
+    "author": "Thomas Patzke",
+    "path": "windows/builtin/security/win_security_sdelete_potential_secure_deletion.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_sdelete_potential_secure_deletion.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.005",
+      "T1070.004",
+      "T1485",
+      "T1553.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso abrió, accedió o cerró un handle sobre un archivo cuyo nombre termina en .AAA o .ZZZ, patrón típico de SDelete al renombrar archivos antes de borrarlos de forma segura.",
+      "what_it_detects": "Eventos de auditoría de acceso a objetos (4656, 4663, 4658) del log Security donde ObjectName termina en .AAA o .ZZZ. SDelete renombra cada archivo varias veces (por ejemplo AAAAAAAAAA.AAA hasta ZZZZZZZZZZ.ZZZ) para borrar también el nombre original. Requiere auditoría de sistema de archivos y SACL configuradas.",
+      "why_it_matters": "El borrado seguro elimina evidencia y datos sin posibilidad de recuperación forense. Corresponde a eliminación de archivos para ocultar rastros (T1070.004) y destrucción de datos (T1485); como SDelete está firmado por Microsoft, puede pasar inadvertido ante controles basados en firma.",
+      "triage_steps": [
+        "Revise ObjectName, EventID, ProcessName y AccessMask (por ejemplo DELETE 0x10000) para confirmar que el proceso es sdelete.exe, sdelete64.exe o un binario renombrado.",
+        "Identifique al usuario (SubjectUserName, SubjectDomainName) y su LogonId; confirme si es una cuenta administrativa o de servicio esperada.",
+        "Cuente cuántos archivos y directorios distintos se afectaron en el mismo host en +/- 15 minutos para estimar el alcance del borrado.",
+        "Busque en eventos 4688 o Sysmon 1 la línea de comandos de SDelete (-p, -s, -z, -accepteula) y su proceso padre.",
+        "Determine qué se eliminó: rutas de herramientas, logs, carpetas temporales o datos de negocio, y compárelo con actividad previa del mismo usuario.",
+        "Pivote sobre el host y el usuario: alertas previas de ejecución remota, borrado de logs (1102), creación de servicios o cifrado masivo.",
+        "Verifique el hash y la ubicación del binario; SDelete en rutas como C:\\Users\\Public o %TEMP% es más sospechoso."
+      ],
+      "false_positives": [
+        "Uso legítimo de SDelete por administradores al retirar equipos, sanear discos o cumplir políticas de eliminación de datos.",
+        "Scripts de mantenimiento o herramientas de borrado autorizadas que reutilizan SDelete de forma programada.",
+        "Archivos de aplicaciones que usan legítimamente las extensiones .AAA o .ZZZ."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el área de TI si existe un cambio o tarea autorizada que justifique el borrado.",
+        "Si no está autorizado, aísle el endpoint y preserve evidencia (memoria, MFT, USN Journal, logs) antes de cualquier reinicio.",
+        "Deshabilite o restablezca las credenciales de la cuenta involucrada y revise su actividad en otros hosts.",
+        "Elimine el binario no autorizado, investigue cómo llegó al host y bloquee su ejecución mediante AppLocker o WDAC donde aplique.",
+        "Restaure los datos afectados desde respaldos y documente la línea de tiempo del incidente."
+      ],
+      "severity_rationale": "Nivel medio: el patrón es característico de SDelete, pero la herramienta tiene usos administrativos legítimos y requiere contexto para confirmar actividad maliciosa."
+    },
+    "en": {
+      "summary": "A process requested, used or closed a handle on a file whose name ends in .AAA or .ZZZ, the pattern SDelete leaves when renaming files before securely deleting them.",
+      "what_it_detects": "Security log object-access events (4656, 4663, 4658) where ObjectName ends with .AAA or .ZZZ. SDelete renames each file repeatedly (for example AAAAAAAAAA.AAA through ZZZZZZZZZZ.ZZZ) to also wipe the original name. Requires file system auditing and SACLs.",
+      "why_it_matters": "Secure deletion destroys evidence and data beyond forensic recovery. It maps to file deletion to hide traces (T1070.004) and data destruction (T1485); because SDelete is Microsoft-signed, signature-based controls may trust it.",
+      "triage_steps": [
+        "Review ObjectName, EventID, ProcessName and AccessMask (for example DELETE 0x10000) to confirm the process is sdelete.exe, sdelete64.exe or a renamed binary.",
+        "Identify the user (SubjectUserName, SubjectDomainName) and LogonId; check whether it is an expected admin or service account.",
+        "Count distinct files and folders affected on the same host within +/- 15 minutes to scope the wipe.",
+        "Search 4688 or Sysmon 1 events for the SDelete command line (-p, -s, -z, -accepteula) and its parent process.",
+        "Determine what was wiped: tool paths, logs, temp folders or business data, and compare with the user's earlier activity.",
+        "Pivot on host and user: prior alerts for remote execution, log clearing (1102), service creation or mass encryption.",
+        "Check the binary's hash and location; SDelete running from C:\\Users\\Public or %TEMP% is more suspicious."
+      ],
+      "false_positives": [
+        "Legitimate SDelete use by administrators when decommissioning machines, sanitizing disks or enforcing data-disposal policy.",
+        "Authorized maintenance scripts or wiping tools that run SDelete on a schedule.",
+        "Application files that legitimately use .AAA or .ZZZ extensions."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or IT whether an approved change or task explains the deletion.",
+        "If unauthorized, isolate the endpoint and preserve evidence (memory, MFT, USN Journal, logs) before any reboot.",
+        "Disable or reset the involved account's credentials and review its activity on other hosts.",
+        "Remove the unauthorized binary, find how it arrived and block it with AppLocker or WDAC where applicable.",
+        "Restore affected data from backups and document the incident timeline."
+      ],
+      "severity_rationale": "Medium: the pattern is characteristic of SDelete, but the tool has legitimate admin uses and needs context to confirm malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "4663 access with DELETE on a file renamed by SDelete to the .ZZZ pattern",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\Documents\\ZZZZZZZZZZZZ.ZZZ",
+          "ProcessName": "C:\\Users\\Public\\sdelete64.exe",
+          "AccessMask": "0x10000",
+          "HandleId": "0x2a4"
+        }
+      },
+      {
+        "description": "4656 handle request on a file renamed to the .AAA pattern",
+        "event": {
+          "EventID": 4656,
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "ObjectName": "D:\\Shares\\Finanzas\\AAAAAAAAAAAA.AAA",
+          "ProcessName": "C:\\Windows\\Temp\\sd.exe",
+          "AccessMask": "0x110080",
+          "HandleId": "0x1f8"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "4663 access on a file whose name contains .AAA but does not end with it",
+        "event": {
+          "EventID": 4663,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\Documents\\report.AAA.tmp",
+          "ProcessName": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "AccessMask": "0x2",
+          "HandleId": "0x3b0"
+        }
+      },
+      {
+        "description": "Event ID 4660 (object deleted) is not one of the selected event IDs",
+        "event": {
+          "EventID": 4660,
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectName": "C:\\Users\\jperez\\Documents\\ZZZZZZZZZZZZ.ZZZ",
+          "ProcessName": "C:\\Users\\Public\\sdelete64.exe",
+          "HandleId": "0x2a4"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

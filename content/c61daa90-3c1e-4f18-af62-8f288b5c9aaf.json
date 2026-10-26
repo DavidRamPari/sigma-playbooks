@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "c61daa90-3c1e-4f18-af62-8f288b5c9aaf",
+    "title": "Uncommon File Creation By Mysql Daemon Process",
+    "level": "high",
+    "status": "test",
+    "author": "Joseph Kamau",
+    "path": "windows/file/file_event/file_event_win_mysqld_uncommon_file_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_mysqld_uncommon_file_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso del servicio MySQL (mysqld.exe o mysqld-nt.exe) creó un archivo con extensión ejecutable o de script. Puede indicar abuso de User Defined Functions (UDF) para escribir una DLL maliciosa o descargar malware.",
+      "what_it_detects": "Eventos file_event de Windows en los que Image termina en \\mysqld.exe o \\mysqld-nt.exe y TargetFilename termina en .bat, .dat, .dll, .exe, .ps1, .psm1, .vbe o .vbs.",
+      "why_it_matters": "Un atacante con acceso SQL privilegiado puede escribir una DLL en el directorio de plugins con SELECT ... INTO DUMPFILE, registrarla con CREATE FUNCTION ... SONAME y ejecutar comandos del sistema con la cuenta del servicio. Así descarga payloads y se oculta dentro de un proceso de confianza.",
+      "triage_steps": [
+        "Revise TargetFilename: una DLL en lib\\plugin, o un .exe/.ps1/.bat en carpetas Temp, Public o de datos, es muy sospechosa.",
+        "Obtenga el hash del archivo creado, consulte su reputación y verifique la firma digital y la fecha de compilación.",
+        "Busque procesos hijos de mysqld.exe en el mismo host +/- 15 minutos (cmd.exe, powershell.exe, certutil, bitsadmin, rundll32).",
+        "Revise el log general o de consultas de MySQL buscando INTO DUMPFILE, INTO OUTFILE, CREATE FUNCTION, SONAME o sys_exec.",
+        "Identifique las cuentas de MySQL que iniciaron sesión y sus IP de origen; correlacione con intentos de fuerza bruta contra el puerto 3306.",
+        "Revise conexiones de red salientes del host y de mysqld.exe hacia dominios o IP poco comunes en la misma ventana.",
+        "Busque alertas anteriores para el mismo host, la cuenta del servicio y las IP de origen."
+      ],
+      "false_positives": [
+        "Exportaciones legítimas con SELECT ... INTO OUTFILE hacia archivos .dat hechas por DBA o tareas programadas.",
+        "Instalación o actualización documentada de plugins o UDF legítimas en el directorio de plugins.",
+        "Herramientas de respaldo o migración que hacen que el servidor escriba archivos auxiliares con estas extensiones."
+      ],
+      "response_steps": [
+        "Confirme con el DBA si la escritura del archivo y las consultas relacionadas estaban autorizadas.",
+        "Si no lo estaban, aísle el endpoint y restrinja el acceso de red al puerto de MySQL.",
+        "Preserve el archivo y los logs de MySQL; luego elimine las UDF maliciosas con DROP FUNCTION y ponga el archivo en cuarentena.",
+        "Rote las credenciales de MySQL comprometidas, elimine cuentas no autorizadas y revise los privilegios FILE.",
+        "Configure secure_file_priv, quite el privilegio FILE donde no haga falta y ejecute el servicio con una cuenta de mínimos privilegios."
+      ],
+      "severity_rationale": "Nivel alto: un servidor de base de datos casi nunca escribe ejecutables o scripts, y hacerlo suele indicar ejecución de código mediante UDF."
+    },
+    "en": {
+      "summary": "The MySQL server process (mysqld.exe or mysqld-nt.exe) created a file with an executable or script extension. This may indicate User Defined Function (UDF) abuse to drop a malicious DLL or download malware.",
+      "what_it_detects": "Windows file_event records where Image ends with \\mysqld.exe or \\mysqld-nt.exe and TargetFilename ends with .bat, .dat, .dll, .exe, .ps1, .psm1, .vbe or .vbs.",
+      "why_it_matters": "An attacker with privileged SQL access can write a DLL to the plugin directory with SELECT ... INTO DUMPFILE, register it with CREATE FUNCTION ... SONAME and run OS commands as the service account. This lets them download payloads while hiding inside a trusted process.",
+      "triage_steps": [
+        "Check TargetFilename: a DLL in lib\\plugin, or an .exe/.ps1/.bat in Temp, Public or data folders, is highly suspicious.",
+        "Hash the created file, check its reputation, and verify its digital signature and compile time.",
+        "Look for child processes of mysqld.exe on the same host within +/- 15 minutes (cmd.exe, powershell.exe, certutil, bitsadmin, rundll32).",
+        "Review MySQL general or query logs for INTO DUMPFILE, INTO OUTFILE, CREATE FUNCTION, SONAME or sys_exec.",
+        "Identify which MySQL accounts logged in and from which source IPs; correlate with brute-force attempts against port 3306.",
+        "Check outbound network connections from the host and mysqld.exe to unusual domains or IPs in the same window.",
+        "Search for earlier alerts on the same host, service account and source IPs."
+      ],
+      "false_positives": [
+        "Legitimate SELECT ... INTO OUTFILE exports to .dat files by DBAs or scheduled jobs.",
+        "Documented installation or upgrade of legitimate plugins or UDFs in the plugin directory.",
+        "Backup or migration tools that make the server write helper files with these extensions."
+      ],
+      "response_steps": [
+        "Confirm with the DBA whether the file write and related queries were authorized.",
+        "If not, isolate the endpoint and restrict network access to the MySQL port.",
+        "Preserve the file and MySQL logs; then remove malicious UDFs with DROP FUNCTION and quarantine the file.",
+        "Rotate compromised MySQL credentials, remove unauthorized accounts and review FILE privileges.",
+        "Set secure_file_priv, revoke FILE privilege where unneeded and run the service under a least-privilege account."
+      ],
+      "severity_rationale": "High is appropriate because a database server rarely writes executables or scripts, and doing so usually indicates code execution through UDFs."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "mysqld.exe writes a DLL into the MySQL plugin directory, typical of UDF abuse via INTO DUMPFILE.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DB-SRV-03.andes.example.com",
+          "UtcTime": "2024-06-12 02:14:37.118",
+          "ProcessId": 2716,
+          "Image": "C:\\Program Files\\MySQL\\MySQL Server 5.7\\bin\\mysqld.exe",
+          "TargetFilename": "C:\\Program Files\\MySQL\\MySQL Server 5.7\\lib\\plugin\\udf_sys.dll",
+          "User": "NT AUTHORITY\\NETWORK SERVICE"
+        }
+      },
+      {
+        "description": "Legacy mysqld-nt.exe drops an executable into C:\\Windows\\Temp.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DB-LEGACY-01",
+          "UtcTime": "2024-06-12 02:16:05.442",
+          "ProcessId": 1488,
+          "Image": "C:\\mysql\\bin\\mysqld-nt.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\svchelper.exe",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "mysqld.exe creates a normal InnoDB table file (.ibd), which is not in the extension list.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DB-SRV-03.andes.example.com",
+          "UtcTime": "2024-06-12 09:30:12.004",
+          "ProcessId": 2716,
+          "Image": "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysqld.exe",
+          "TargetFilename": "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data\\shop\\orders.ibd",
+          "User": "NT AUTHORITY\\NETWORK SERVICE"
+        }
+      },
+      {
+        "description": "The MySQL client mysql.exe (not the daemon) writes a DLL; the Image does not end with \\mysqld.exe.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142",
+          "UtcTime": "2024-06-12 10:05:48.771",
+          "ProcessId": 6620,
+          "Image": "C:\\Program Files\\MySQL\\MySQL Server 8.0\\bin\\mysql.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\libmysql.dll",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "aa35a627-33fb-4d04-a165-d33b4afca3e8",
+    "title": "Remote LSASS Process Access Through Windows Remote Management",
+    "level": "high",
+    "status": "stable",
+    "author": "Patryk Prauze - ING Tech",
+    "path": "windows/process_access/proc_access_win_lsass_remote_access_trough_winrm.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_lsass_remote_access_trough_winrm.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001",
+      "T1021.006",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso que aloja las sesiones remotas de WinRM (wsmprovhost.exe) abrió un handle a LSASS con más permisos que la lectura genérica. Suele indicar un volcado de credenciales a través de PowerShell Remoting.",
+      "what_it_detects": "Eventos de acceso a procesos de Sysmon (Event ID 10) en los que SourceImage termina en \\Windows\\system32\\wsmprovhost.exe y TargetImage termina en \\lsass.exe. Se excluyen los eventos con GrantedAccess exactamente igual a 0x80000000 (lectura genérica).",
+      "why_it_matters": "wsmprovhost.exe ejecuta los comandos de las sesiones remotas de PowerShell. Si accede a la memoria de LSASS, es probable que un operador remoto esté volcando credenciales, por ejemplo con Mimikatz cargado en memoria (T1003.001), tras entrar por WinRM (T1021.006) y ejecutar PowerShell (T1059.001). Con los hashes y tickets robados, el atacante puede seguir moviéndose por la red.",
+      "triage_steps": [
+        "Revise GrantedAccess. Valores como 0x1010, 0x1410, 0x1438 o 0x1FFFFF incluyen PROCESS_VM_READ, lo que apunta a una lectura de memoria y no a una simple consulta.",
+        "Examine CallTrace en busca de dbghelp.dll, dbgcore.dll (MiniDumpWriteDump) o regiones UNKNOWN. Cualquiera de ellas sugiere un volcado o código inyectado.",
+        "Identifique la sesión WinRM de origen. Busque eventos Security 4624 con tipo de logon 3 en el host dentro de ±15 minutos y anote la IP de origen y la cuenta.",
+        "Revise los logs de PowerShell 4103/4104 y de WinRM Operational de esa ventana en busca de Invoke-Mimikatz, MiniDump, comsvcs.dll, sekurlsa o comandos codificados.",
+        "Busque archivos .dmp nuevos u otros archivos sospechosos creados por wsmprovhost.exe o por sus procesos hijos cerca de la hora de la alerta.",
+        "Pivotee sobre la IP de origen y la cuenta: otras sesiones WinRM, alertas previas y logons posteriores en otros hosts.",
+        "Confirme con el responsable del sistema si había alguna tarea administrativa, de EDR o un pentest programado para ese horario."
+      ],
+      "false_positives": [
+        "La regla considera improbables los falsos positivos. Una posible excepción son los scripts administrativos o de inventario que se ejecutan vía PowerShell Remoting y abren LSASS, como Get-Process -Module.",
+        "Ejercicios de red team o pruebas de penetración autorizadas que usan WinRM.",
+        "Herramientas de monitoreo, respaldo o seguridad que ejecutan verificaciones por WinRM y consultan LSASS con permisos de lectura."
+      ],
+      "response_steps": [
+        "Si el acceso no está autorizado, aísle el endpoint y termine la sesión WinRM (detenga el wsmprovhost.exe asociado) después de recolectar la evidencia.",
+        "Deshabilite la cuenta usada o restablezca su contraseña. Luego restablezca las credenciales de todas las cuentas con sesión activa en el host, empezando por las privilegiadas.",
+        "Bloquee WinRM desde la IP de origen e investigue ese equipo por posible compromiso.",
+        "Busque el mismo patrón de SourceImage y TargetImage en otros endpoints, así como logons con las credenciales expuestas.",
+        "Refuerce el host: habilite la protección LSA (RunAsPPL) y Credential Guard, y permita WinRM solo desde hosts de administración."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque una sesión remota que lee la memoria de LSASS casi siempre indica robo de credenciales, y los usos legítimos son raros."
+    },
+    "en": {
+      "summary": "A WinRM remote session host process (wsmprovhost.exe) opened a handle to LSASS with more access than generic read. This usually means someone is dumping credentials over PowerShell Remoting.",
+      "what_it_detects": "Sysmon process access events (Event ID 10) where SourceImage ends with \\Windows\\system32\\wsmprovhost.exe and TargetImage ends with \\lsass.exe. Events where GrantedAccess is exactly 0x80000000 (generic read) are excluded.",
+      "why_it_matters": "wsmprovhost.exe runs the commands of remote PowerShell sessions. If it touches LSASS memory, a remote operator is probably dumping credentials, for example with Mimikatz loaded in memory (T1003.001), after moving in through WinRM (T1021.006) and running PowerShell (T1059.001). Stolen hashes and tickets let the attacker move further through the network.",
+      "triage_steps": [
+        "Check GrantedAccess. Values like 0x1010, 0x1410, 0x1438 or 0x1FFFFF include PROCESS_VM_READ, which points to reading memory rather than a simple query.",
+        "Look at CallTrace for dbghelp.dll, dbgcore.dll (MiniDumpWriteDump) or UNKNOWN memory regions. Either one suggests a dump or injected code.",
+        "Find the WinRM session behind it. Look for Security 4624 logon type 3 on the host within ±15 minutes, and note the source IP and the account.",
+        "Review PowerShell 4103/4104 and WinRM Operational logs from the same window for Invoke-Mimikatz, MiniDump, comsvcs.dll, sekurlsa or encoded commands.",
+        "Look for new .dmp files or other suspicious files written by wsmprovhost.exe or its child processes around the alert time.",
+        "Pivot to the source IP and the account: other WinRM sessions, earlier alerts, and logons to other hosts afterwards.",
+        "Confirm with the system owner whether any administration, EDR task or pentest was scheduled for that time."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unlikely. Possible exceptions are admin or inventory scripts run over PowerShell Remoting that open LSASS, such as Get-Process -Module.",
+        "Authorized red team or penetration test exercises that use WinRM.",
+        "Monitoring, backup or security tools that run checks over WinRM and query LSASS with read access."
+      ],
+      "response_steps": [
+        "If the access is not authorized, isolate the host and end the WinRM session (stop the related wsmprovhost.exe) once you have collected the evidence.",
+        "Disable the account used, or reset its password. Then reset the credentials of every account that had an active session on the host, starting with privileged accounts.",
+        "Block WinRM from the source IP and investigate that source system for compromise.",
+        "Hunt for the same SourceImage and TargetImage pattern on other endpoints, and for logons with the exposed credentials.",
+        "Harden the host: enable LSA protection (RunAsPPL) and Credential Guard, and allow WinRM only from administration hosts."
+      ],
+      "severity_rationale": "High fits because a remote session reading LSASS memory almost always means credential theft, and legitimate causes are rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "wsmprovhost.exe opens LSASS with 0x1010 (PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ) during a remote PowerShell session",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\system32\\wsmprovhost.exe",
+          "SourceProcessId": 5124,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "TargetProcessId": 684,
+          "GrantedAccess": "0x1010",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00007FFB2A1C3E21)"
+        }
+      },
+      {
+        "description": "wsmprovhost.exe opens LSASS with full access 0x1FFFFF and a dbgcore.dll call trace (minidump)",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-FS-02.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\wsmprovhost.exe",
+          "SourceProcessId": 7720,
+          "SourceUser": "ANDES\\svc_backup",
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "TargetProcessId": 712,
+          "GrantedAccess": "0x1FFFFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\SYSTEM32\\dbgcore.DLL+7c1a|C:\\Windows\\System32\\comsvcs.dll+3c4f"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "wsmprovhost.exe accesses LSASS with only GENERIC_READ (0x80000000), which the filter excludes",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\system32\\wsmprovhost.exe",
+          "SourceProcessId": 5124,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "TargetProcessId": 684,
+          "GrantedAccess": "0x80000000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e"
+        }
+      },
+      {
+        "description": "Local svchost.exe (not the WinRM provider host) accesses LSASS",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\system32\\svchost.exe",
+          "SourceProcessId": 1032,
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "TargetProcessId": 684,
+          "GrantedAccess": "0x1010",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

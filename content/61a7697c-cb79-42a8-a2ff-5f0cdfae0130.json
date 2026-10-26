@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "61a7697c-cb79-42a8-a2ff-5f0cdfae0130",
+    "title": "Potential CobaltStrike Service Installations - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Wojciech Lesicki",
+    "path": "windows/registry/registry_set/registry_set_cobaltstrike_service_installs.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_cobaltstrike_service_installs.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002",
+      "T1543.003",
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió en la clave de un servicio de Windows un valor (normalmente ImagePath) que apunta a un ejecutable en el recurso ADMIN$ o que lanza PowerShell mediante %COMSPEC%. Es el patrón típico de Cobalt Strike al elevar privilegios o moverse lateralmente.",
+      "what_it_detects": "Eventos registry_set donde TargetObject contiene \\System\\CurrentControlSet\\Services o \\System\\ControlSet...\\Services, y Details contiene 'ADMIN$' y '.exe', o bien '%COMSPEC%', 'start' y 'powershell'.",
+      "why_it_matters": "Crear un servicio remoto o local que ejecuta un payload (T1543.003, T1569.002) le da al atacante ejecución como SYSTEM. El uso de ADMIN$ por SMB (T1021.002) indica movimiento lateral con credenciales administrativas válidas.",
+      "triage_steps": [
+        "Revise TargetObject: identifique el nombre del servicio. Los nombres aleatorios de 7 caracteres alfanuméricos son típicos de psexec en Cobalt Strike.",
+        "Analice Details: anote la ruta \\\\host\\ADMIN$\\*.exe o el comando %COMSPEC% /c start powershell y decodifique cualquier parámetro -encodedcommand en un entorno aislado.",
+        "Verifique Image: services.exe es lo normal para una instalación por SCM; identifique al usuario y el proceso que originó la solicitud.",
+        "Correlacione en el mismo host +/- 15 minutos: eventos 7045 (System), 4697, 4624 tipo 3 y 5145 sobre ADMIN$ para obtener la IP de origen y la cuenta usada.",
+        "Pivote al host de origen: busque procesos inyectados, conexiones salientes periódicas (beaconing) y named pipes inusuales.",
+        "Busque el mismo nombre de servicio, hash del ejecutable o cuenta en otros endpoints y en alertas previas."
+      ],
+      "false_positives": [
+        "Poco probable, según la regla.",
+        "Herramientas de administración remota tipo PsExec o agentes de despliegue que copian binarios a ADMIN$; confirme con el equipo de TI y una ventana de cambio.",
+        "Ejercicios autorizados de red team o pentest."
+      ],
+      "response_steps": [
+        "Confirme con TI si existe una tarea legítima; si no, trate el evento como incidente.",
+        "Aísle el host de destino y el de origen tras preservar memoria, el binario de ADMIN$ y la clave del servicio.",
+        "Deshabilite y elimine el servicio malicioso una vez recopilada la evidencia; bloquee el hash y los C2 identificados.",
+        "Restablezca las credenciales de la cuenta usada y revise otras cuentas privilegiadas expuestas.",
+        "Busque persistencia adicional en todo el entorno antes de devolver los equipos a producción."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el patrón casi no aparece en uso legítimo e implica ejecución como SYSTEM y movimiento lateral activo."
+    },
+    "en": {
+      "summary": "A Windows service key received a value (usually ImagePath) that runs an executable from the ADMIN$ share or launches PowerShell through %COMSPEC%. Cobalt Strike typically does this during privilege escalation or lateral movement.",
+      "what_it_detects": "registry_set events where TargetObject contains \\System\\CurrentControlSet\\Services or \\System\\ControlSet...\\Services, and Details contains 'ADMIN$' and '.exe', or '%COMSPEC%', 'start' and 'powershell'.",
+      "why_it_matters": "A local or remote service that runs a payload (T1543.003, T1569.002) gives the attacker SYSTEM execution. Using ADMIN$ over SMB (T1021.002) means lateral movement with valid admin credentials.",
+      "triage_steps": [
+        "Check TargetObject for the service name. Random 7-character alphanumeric names are typical of Cobalt Strike psexec.",
+        "Inspect Details: record the \\\\host\\ADMIN$\\*.exe path or the %COMSPEC% /c start powershell command, and decode any -encodedcommand in a sandbox.",
+        "Check Image: services.exe is expected when the SCM installs a service. Find the requesting user and the originating process.",
+        "Correlate on the same host within +/- 15 minutes: events 7045, 4697, 4624 type 3 and 5145 on ADMIN$, to find the source IP and account.",
+        "Pivot to the source host: look for injected processes, periodic outbound connections (beaconing) and unusual named pipes.",
+        "Search other endpoints and earlier alerts for the same service name, executable hash or account."
+      ],
+      "false_positives": [
+        "Unlikely, according to the rule.",
+        "PsExec-style admin tools or deployment agents that copy binaries to ADMIN$. Confirm with IT and a change window.",
+        "Authorized red team or penetration test exercises."
+      ],
+      "response_steps": [
+        "Ask IT whether there was a legitimate task. If there wasn't, treat this as an incident.",
+        "Preserve memory, the ADMIN$ binary and the service key, then isolate the target and source hosts.",
+        "After collecting evidence, disable and delete the malicious service. Block the hash and any identified C2.",
+        "Reset the credentials of the account used and review other exposed privileged accounts.",
+        "Hunt for more persistence across the environment before returning hosts to production."
+      ],
+      "severity_rationale": "High fits because this pattern rarely shows up in legitimate use and means SYSTEM execution and active lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service ImagePath that points to a randomly named executable on the ADMIN$ share (Cobalt Strike psexec style)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\a1b2c3d\\ImagePath",
+          "Details": "\\\\WS-0142\\ADMIN$\\a1b2c3d.exe",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Service ImagePath under ControlSet001 that launches hidden PowerShell through %COMSPEC% (psexec_psh style)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\ControlSet001\\Services\\7f3e9a1\\ImagePath",
+          "Details": "%COMSPEC% /b /c start /b /min powershell -nop -w hidden -encodedcommand PLACEHOLDER_BASE64",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Print Spooler service ImagePath: has .exe but no ADMIN$ or %COMSPEC%/PowerShell pattern",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\services.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Spooler\\ImagePath",
+          "Details": "%SystemRoot%\\System32\\spoolsv.exe",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "ADMIN$ executable path written to a user RunMRU key, not under a Services key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\explorer.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU\\a",
+          "Details": "\\\\FS-01\\ADMIN$\\setup.exe\\1",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

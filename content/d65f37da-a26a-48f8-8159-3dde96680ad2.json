@@ -1,0 +1,118 @@
+{
+  "rule": {
+    "id": "d65f37da-a26a-48f8-8159-3dde96680ad2",
+    "title": "Process Execution Error In JVM Based Application",
+    "level": "high",
+    "status": "test",
+    "author": "Moti Harmats",
+    "path": "application/jvm/java_rce_exploitation_attempt.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/jvm/java_rce_exploitation_attempt.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una aplicación basada en JVM registró un error relacionado con la ejecución de procesos del sistema operativo. Suele indicar un intento de ejecución remota de código (RCE) que llegó a invocar un comando del sistema.",
+      "what_it_detects": "Líneas de logs de error de aplicaciones JVM que contienen 'Cannot run program', 'java.lang.ProcessImpl' o 'java.lang.ProcessBuilder'. Estas cadenas aparecen en excepciones y stack traces cuando la aplicación intenta lanzar un proceso externo y falla.",
+      "why_it_matters": "Si una aplicación expuesta intenta ejecutar un comando que normalmente no ejecuta, puede ser explotación de una aplicación pública (T1190): inyección de comandos, deserialización insegura o inyección de expresiones. Un intento fallido también muestra que el atacante ya consigue ejecutar código.",
+      "triage_steps": [
+        "Lea el stack trace completo y extraiga el programa y los argumentos que aparecen después de 'Cannot run program'. Busque shells, whoami, id, curl, wget o powershell.",
+        "Identifique la aplicación, el host y el thread. Revise los logs de acceso del mismo host en una ventana de +/- 15 minutos para encontrar la petición que causó el error.",
+        "De esa petición, extraiga la IP de origen, la URI, los parámetros, el user agent y el usuario autenticado. Busque payloads como ${jndi:, OGNL, SpEL u objetos serializados.",
+        "Revise en el EDR los procesos hijos del proceso java en ese host. Verifique si algún otro comando sí se ejecutó, si hubo conexiones salientes o si se escribieron archivos nuevos.",
+        "Confirme con el equipo responsable si la aplicación lanza binarios externos de forma legítima, como ImageMagick, ffmpeg o git, y si ese programa es uno de ellos.",
+        "Busque la misma IP de origen y el mismo payload en otros servidores y revise si hubo alertas anteriores para esa aplicación o ese host."
+      ],
+      "false_positives": [
+        "Bugs de la aplicación, como rutas mal configuradas o un binario que falta después de un despliegue.",
+        "Funciones legítimas que llaman herramientas externas (conversores de imágenes o PDF, git, scripts) y fallan por permisos o dependencias.",
+        "Escaneos de vulnerabilidades o pruebas de penetración autorizadas contra la aplicación."
+      ],
+      "response_steps": [
+        "Confirme si la actividad es maliciosa comparando el comando y la petición con el comportamiento esperado de la aplicación.",
+        "Si se confirma, bloquee la IP de origen en el WAF o firewall y considere aislar el host después de coordinar con el responsable del servicio.",
+        "Preserve los logs de la aplicación y de acceso, la lista de procesos y, si es posible, un volcado de memoria antes de hacer cambios.",
+        "Identifique y corrija el componente vulnerable. Rote las credenciales y secretos a los que la aplicación tenía acceso.",
+        "Busque persistencia como web shells, cron jobs o usuarios nuevos. Si hay compromiso, restaure el host desde una imagen confiable."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque, en un servidor de aplicaciones, las excepciones al ejecutar procesos suelen indicar intentos de RCE contra servicios expuestos, aunque el comando haya fallado."
+    },
+    "en": {
+      "summary": "A JVM-based application logged an error about running an operating system process. This often means a remote code execution (RCE) attempt reached a system command call.",
+      "what_it_detects": "JVM application error log lines that contain 'Cannot run program', 'java.lang.ProcessImpl' or 'java.lang.ProcessBuilder'. These strings appear in exceptions and stack traces when the application tries to start an external process and fails.",
+      "why_it_matters": "If an exposed application tries to run a command it normally doesn't, this may be exploitation of a public-facing application (T1190): command injection, unsafe deserialization or expression injection. A failed attempt still shows the attacker can already execute code.",
+      "triage_steps": [
+        "Read the full stack trace and pull out the program and arguments after 'Cannot run program'. Look for shells, whoami, id, curl, wget or powershell.",
+        "Identify the application, host and thread. Check that host's access logs within +/- 15 minutes to find the request that caused the error.",
+        "From that request, pull the source IP, URI, parameters, user agent and authenticated user. Look for payloads such as ${jndi:, OGNL, SpEL or serialized objects.",
+        "In EDR, check the java process's child processes on the host. Confirm whether any other command did run, and look for outbound connections or newly written files.",
+        "Ask the application owners whether the app legitimately runs external binaries, such as ImageMagick, ffmpeg or git, and whether this program is one of them.",
+        "Search other servers for the same source IP and payload, and check for earlier alerts on this application or host."
+      ],
+      "false_positives": [
+        "Application bugs, such as misconfigured paths or a binary missing after a deployment.",
+        "Legitimate features that call external tools (image or PDF converters, git, scripts) and fail because of permissions or missing dependencies.",
+        "Authorized vulnerability scans or penetration tests against the application."
+      ],
+      "response_steps": [
+        "Decide whether the activity is malicious by comparing the command and request with how the application normally behaves.",
+        "If it is, block the source IP at the WAF or firewall. Coordinate with the service owner before you isolate the host.",
+        "Before making changes, preserve the application and access logs, the process list and, if you can, a memory dump.",
+        "Find and patch the vulnerable component. Rotate the credentials and secrets the application could reach.",
+        "Hunt for persistence such as web shells, cron jobs or new users. If the host is compromised, rebuild it from a trusted image."
+      ],
+      "severity_rationale": "High fits because process-execution exceptions in an application server often point to RCE attempts against exposed services, even when the command itself failed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Spring Boot error log showing a failed attempt to run whoami from a web request thread ('Cannot run program').",
+        "event": {
+          "message": "2023-10-25 14:03:12.481 ERROR 2114 --- [nio-8080-exec-7] o.a.c.c.C.[.[.[/].[dispatcherServlet] : Servlet.service() for servlet [dispatcherServlet] threw exception java.io.IOException: Cannot run program \"whoami\": error=2, No such file or directory",
+          "host": "app-web-01",
+          "service": "orders-api",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "Stack trace frame from a Tomcat application showing ProcessBuilder.start in the error log.",
+        "event": {
+          "message": "2023-10-25 14:03:12,486 ERROR [http-nio-8443-exec-3] com.example.report.ExportController - Export failed\n\tat java.lang.ProcessBuilder.start(ProcessBuilder.java:1128)",
+          "host": "app-web-02",
+          "service": "reporting",
+          "level": "ERROR"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Ordinary application error (NullPointerException) with no process-execution strings.",
+        "event": {
+          "message": "2023-10-25 14:05:40.112 ERROR 2114 --- [nio-8080-exec-2] c.e.orders.OrderService : Failed to load order 48213 java.lang.NullPointerException: Cannot invoke \"com.example.orders.Customer.getId()\" because \"customer\" is null",
+          "host": "app-web-01",
+          "service": "orders-api",
+          "level": "ERROR"
+        }
+      },
+      {
+        "description": "Near-miss: an error mentioning java.lang.ProcessHandle, which matches none of the keywords.",
+        "event": {
+          "message": "2023-10-25 14:07:02,903 ERROR [main] com.example.health.PidReporter - Unable to resolve PID via java.lang.ProcessHandle: operation not supported",
+          "host": "app-web-02",
+          "service": "reporting",
+          "level": "ERROR"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

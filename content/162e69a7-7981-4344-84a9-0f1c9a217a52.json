@@ -1,0 +1,108 @@
+{
+  "rule": {
+    "id": "162e69a7-7981-4344-84a9-0f1c9a217a52",
+    "title": "Powershell Directory Enumeration",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_directory_enum.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_directory_enum.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell recorrió directorios en un bucle con Get-ChildItem, suprimió errores y añadió los resultados a un archivo con Out-File -Append. Este patrón coincide con el reconocimiento de archivos documentado en incidentes de ransomware MAZE.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene a la vez foreach, Get-ChildItem, '-Path ', '-ErrorAction ', SilentlyContinue, 'Out-File ' y '-append'. Juntos indican una enumeración masiva y silenciosa de carpetas que se guarda en un archivo local.",
+      "why_it_matters": "Corresponde a File and Directory Discovery (T1083). Antes de cifrar o exfiltrar, los operadores de ransomware generan inventarios de perfiles de usuario, recursos compartidos y documentos para elegir objetivos. Detectarlo a tiempo permite cortar el ataque antes del impacto.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si MessageTotal es mayor que 1, reconstruya el bloque uniendo los eventos con el mismo ScriptBlockId.",
+        "Identifique las rutas en -Path (C:\\Users, unidades de red, recursos compartidos) y el archivo de salida de Out-File. Verifique si ese archivo existe y qué contiene.",
+        "Determine el usuario y el proceso que ejecutó PowerShell: revise el evento 4103 o 4688/Sysmon 1 en el mismo host y su ParentImage.",
+        "Revise el campo Path del 4104: un script en Temp, Downloads o ProgramData es más sospechoso que uno en un repositorio de administración conocido.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, otra actividad de descubrimiento (net view, nltest, whoami), compresión de archivos, conexiones salientes o borrado de shadow copies.",
+        "Consulte alertas anteriores del mismo usuario y del mismo host, y si el mismo ScriptBlockText aparece en otros equipos."
+      ],
+      "false_positives": [
+        "Scripts legítimos de inventario, auditoría o limpieza de perfiles que recorren carpetas de usuario y registran el resultado en un log.",
+        "Herramientas de migración o respaldo que usan PowerShell para listar archivos antes de copiarlos.",
+        "Ejercicios de Atomic Red Team o pruebas de purple team autorizadas para T1083."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del script o con el equipo de TI si la ejecución estaba prevista. Si lo estaba, documente la exclusión por ruta de script y host.",
+        "Si no hay justificación, aísle el endpoint desde el EDR y conserve el archivo de salida, los eventos de PowerShell y el script original.",
+        "Deshabilite o restablezca las credenciales de la cuenta involucrada y revise si se usó en otros hosts.",
+        "Busque en toda la flota indicadores relacionados (hash del script, nombre del archivo de salida) y escale como posible precursor de ransomware."
+      ],
+      "severity_rationale": "Medium es adecuado porque el patrón es un indicador de reconocimiento sólido, pero no confirma actividad maliciosa por sí solo y coincide con algunos scripts administrativos."
+    },
+    "en": {
+      "summary": "A PowerShell script block looped over directories with Get-ChildItem, suppressed errors and appended the results to a file with Out-File -Append. This pattern matches file reconnaissance documented in MAZE ransomware incidents.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains all of foreach, Get-ChildItem, '-Path ', '-ErrorAction ', SilentlyContinue, 'Out-File ' and '-append'. Taken together, these point to bulk, silent folder enumeration saved to a local file.",
+      "why_it_matters": "This is File and Directory Discovery (T1083). Before encrypting or exfiltrating data, ransomware operators build inventories of user profiles, shares and documents to choose targets. Catching it early lets you stop the attack before impact.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If MessageTotal is greater than 1, rebuild the block by joining the events that share the same ScriptBlockId.",
+        "Identify the -Path targets (C:\\Users, network drives, shares) and the Out-File output file. Check whether that file exists and what it contains.",
+        "Find the user and the process that ran PowerShell: check event 4103 or 4688/Sysmon 1 on the same host and its ParentImage.",
+        "Check the 4104 Path field: a script in Temp, Downloads or ProgramData is more suspicious than one in a known admin repository.",
+        "On the same host within +/- 15 minutes, look for other discovery (net view, nltest, whoami), archiving, outbound connections or shadow copy deletion.",
+        "Review earlier alerts for the same user and host, and check whether the same ScriptBlockText appears on other machines."
+      ],
+      "false_positives": [
+        "Legitimate inventory, audit or profile-cleanup scripts that walk user folders and log the results.",
+        "Migration or backup tooling that uses PowerShell to list files before copying them.",
+        "Authorized Atomic Red Team or purple team tests for T1083."
+      ],
+      "response_steps": [
+        "Ask the script owner or IT whether the run was expected. If it was, document an exclusion scoped to the script path and host.",
+        "If there is no justification, isolate the endpoint via EDR and preserve the output file, the PowerShell events and the original script.",
+        "Disable or reset the credentials of the account involved and check whether it was used on other hosts.",
+        "Hunt fleet-wide for related indicators (script hash, output file name) and escalate as a possible ransomware precursor."
+      ],
+      "severity_rationale": "Medium fits because the pattern is a strong reconnaissance signal, but it does not prove malicious activity on its own and some admin scripts match it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic Red Team T1083-style enumeration of user folders appended to a temp file",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "$folderarray = @(\"Desktop\", \"Downloads\", \"Documents\", \"AppData/Local\", \"AppData/Roaming\")\nGet-ChildItem -Path \"C:/Users\" | foreach { $path = $_; $folderarray | foreach { Get-ChildItem -Path \"C:/Users/$path/$_\" -ErrorAction SilentlyContinue | Out-File -FilePath $env:TEMP\\T1083Test4.txt -Append } }",
+          "ScriptBlockId": "7d1c2a3e-4b5f-4c6d-8e9f-0a1b2c3d4e5f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\enum.ps1",
+          "UserID": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin inventory script that enumerates folders silently but exports to CSV instead of Out-File -Append",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE01.andes.example.com",
+          "ScriptBlockText": "$shares = @(\"D:\\Finance\", \"D:\\HR\")\nforeach ($s in $shares) { Get-ChildItem -Path $s -Recurse -ErrorAction SilentlyContinue | Select-Object FullName, Length | Export-Csv -Path C:\\Reports\\inventory.csv -NoTypeInformation }",
+          "ScriptBlockId": "a2b3c4d5-e6f7-4890-a1b2-c3d4e5f60718",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\AdminScripts\\Get-ShareInventory.ps1",
+          "UserID": "ANDES\\svc_inventory"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

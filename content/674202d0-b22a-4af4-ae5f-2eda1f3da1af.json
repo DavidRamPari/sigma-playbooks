@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "674202d0-b22a-4af4-ae5f-2eda1f3da1af",
+    "title": "Bypass UAC Using Event Viewer",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_bypass_uac_using_eventviewer.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_bypass_uac_using_eventviewer.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.010"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso modificó el valor predeterminado de mscfile\\shell\\open\\command en el hive de clases del usuario (HKCU) con un comando distinto de mmc.exe. Es la técnica conocida para evadir UAC mediante eventvwr.exe y ejecutar código con integridad alta sin mostrar el aviso.",
+      "what_it_detects": "Eventos registry_set donde TargetObject termina en '_Classes\\mscfile\\shell\\open\\command\\(Default)' y Details no empieza con '%SystemRoot%\\system32\\mmc.exe \"%1\" %', es decir, un secuestro del manejador de archivos .msc por usuario.",
+      "why_it_matters": "eventvwr.exe se eleva automáticamente y busca primero en HKCU el manejador de .msc; si un atacante lo reemplaza, su payload se ejecuta con privilegios de administrador sin aviso de UAC (ATT&CK T1548.002, Bypass User Account Control). La regla también está etiquetada como persistencia.",
+      "triage_steps": [
+        "Lea Details: identifique el ejecutable o la línea de comandos que se registró (cmd.exe, powershell.exe, un binario en %TEMP% o AppData).",
+        "Revise Image y User del evento: ¿qué proceso escribió la clave y en el hive de qué SID? Valide si el usuario pertenece al grupo de administradores locales.",
+        "Busque en el mismo host, en un rango de +/- 15 minutos, la creación de procesos de eventvwr.exe y de mmc.exe, y sus procesos hijos con integridad alta.",
+        "Reconstruya el árbol de procesos padre del Image que modificó el registro para hallar el vector inicial (documento, script, descarga).",
+        "Verifique si la clave se eliminó poco después (limpieza típica) o si sigue presente; consulte su valor actual en el endpoint.",
+        "Obtenga el hash del payload referenciado en Details y consúltelo en su plataforma de threat intel y en su EDR.",
+        "Busque alertas anteriores del mismo host y usuario, y modificaciones similares en otros equipos (ms-settings, Folder\\shell)."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; una asociación legítima de .msc por usuario con otra herramienta de administración es posible pero rara.",
+        "Ejercicios de Red Team o pruebas de Atomic Red Team (T1548.002) en equipos de laboratorio."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y el equipo de TI si existe una razón legítima; si no la hay, trate el caso como compromiso.",
+        "Aísle el endpoint desde el EDR y termine los procesos lanzados por eventvwr.exe con el payload.",
+        "Preserve evidencia (export de la clave, payload, memoria) y luego elimine la clave HKCU\\Software\\Classes\\mscfile maliciosa y los artefactos asociados.",
+        "Restablezca las credenciales del usuario, revise persistencias adicionales y retire derechos de administrador local innecesarios; considere UAC en 'Notificar siempre'."
+      ],
+      "severity_rationale": "Es alta porque esta modificación casi nunca es legítima y permite ejecutar código con privilegios elevados sin interacción del usuario."
+    },
+    "en": {
+      "summary": "A process set the default value of mscfile\\shell\\open\\command in the user's classes hive (HKCU) to something other than mmc.exe. This is the known Event Viewer UAC bypass used to run code at high integrity without a prompt.",
+      "what_it_detects": "registry_set events where TargetObject ends with '_Classes\\mscfile\\shell\\open\\command\\(Default)' and Details does not start with '%SystemRoot%\\system32\\mmc.exe \"%1\" %', meaning a per-user hijack of the .msc file handler.",
+      "why_it_matters": "eventvwr.exe auto-elevates and checks HKCU for the .msc handler first; replacing it makes the attacker's payload run as administrator with no UAC prompt (ATT&CK T1548.002, Bypass User Account Control). The rule is also tagged for persistence.",
+      "triage_steps": [
+        "Read Details: identify the executable or command line registered (cmd.exe, powershell.exe, a binary in %TEMP% or AppData).",
+        "Check Image and User: which process wrote the key and into which SID's hive? Confirm whether the user is a local administrator.",
+        "On the same host within +/- 15 minutes, look for eventvwr.exe and mmc.exe process creation and any high-integrity child processes.",
+        "Rebuild the parent process tree of the writing Image to find the initial vector (document, script, download).",
+        "Check whether the key was deleted shortly after (typical cleanup) or still exists; query its current value on the endpoint.",
+        "Hash the payload referenced in Details and look it up in threat intel and your EDR.",
+        "Search earlier alerts for the same host and user, and similar hijacks elsewhere (ms-settings, Folder\\shell)."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; a legitimate per-user .msc association set by another admin tool is possible but rare.",
+        "Red team exercises or Atomic Red Team T1548.002 tests on lab machines."
+      ],
+      "response_steps": [
+        "Confirm with the user and IT whether there is a legitimate reason; if not, treat it as a compromise.",
+        "Isolate the endpoint via EDR and terminate processes spawned by eventvwr.exe with the payload.",
+        "Preserve evidence (key export, payload, memory), then remove the malicious HKCU\\Software\\Classes\\mscfile key and related artifacts.",
+        "Reset the user's credentials, hunt for further persistence, remove unneeded local admin rights and consider setting UAC to 'Always notify'."
+      ],
+      "severity_rationale": "High because this change is almost never legitimate and enables elevated code execution without user interaction."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "cmd.exe hijacks the per-user .msc handler to launch a payload via Event Viewer (Atomic Red Team style).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\mscfile\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Windows\\System32\\cmd.exe"
+        }
+      },
+      {
+        "description": "PowerShell sets the handler to a binary in the user's temp folder.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1210_Classes\\mscfile\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Users\\mrodriguez\\AppData\\Local\\Temp\\update.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Per-user handler set to the standard mmc.exe value, excluded by the filter.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\explorer.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\mscfile\\shell\\open\\command\\(Default)",
+          "Details": "%SystemRoot%\\system32\\mmc.exe \"%1\" %*"
+        }
+      },
+      {
+        "description": "Machine-wide HKLM handler written during servicing; path lacks the '_Classes' user hive suffix.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\mscfile\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Windows\\System32\\mmc.exe \"%1\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

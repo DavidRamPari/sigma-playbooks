@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "9691f58d-92c1-4416-8bf3-2edd753ec9cf",
+    "title": "ESXi Admin Permission Assigned To Account Via ESXCLI",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_esxcli_permission_change_admin.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_esxcli_permission_change_admin.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.012",
+      "T1098"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó esxcli en un host ESXi para asignar el rol Admin a una cuenta mediante 'system permission set'. Si no hay un cambio autorizado, puede tratarse de persistencia o escalamiento de privilegios en el hipervisor.",
+      "what_it_detects": "Detecta procesos cuyo Image termina en '/esxcli' y cuyo CommandLine contiene 'system', ' permission ', ' set' y 'Admin', por ejemplo 'esxcli system permission set --id=usuario --role=Admin'.",
+      "why_it_matters": "Con una cuenta Admin en ESXi un atacante controla todas las VM del host. Puede apagarlas, borrarlas o cifrarlas, y conservar el acceso aunque cambien otras credenciales. Corresponde a ATT&CK T1098 (Account Manipulation) y T1059.012 (Hypervisor CLI).",
+      "triage_steps": [
+        "Revise el CommandLine y extraiga la cuenta del parámetro --id y el rol asignado. Confirme si la cuenta es nueva, desconocida o de servicio.",
+        "Identifique el User que ejecutó el proceso y el ParentImage (sh, sshd o un script). Determine si la sesión entró por SSH, por ESXi Shell o por la DCUI.",
+        "Busque la IP de origen de la sesión en /var/log/auth.log y hostd.log y compárela con las estaciones de administración autorizadas.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque 'esxcli system account add', cambios de contraseña, activación de SSH o comandos vim-cmd.",
+        "Busque en otros hosts ESXi ejecuciones similares hechas por el mismo usuario o desde la misma IP, y revise alertas previas de esas entidades.",
+        "Consulte con el equipo de virtualización si existe un ticket de cambio que justifique la asignación del rol Admin."
+      ],
+      "false_positives": [
+        "Administradores que asignan permisos Admin a cuentas nuevas durante el aprovisionamiento o la configuración inicial del host.",
+        "Scripts de automatización o gestión de configuración que aplican roles a cuentas de servicio en ESXi.",
+        "Pruebas en laboratorios o entornos de preproducción."
+      ],
+      "response_steps": [
+        "Valide con el responsable del host si el cambio estaba autorizado antes de actuar.",
+        "Si no estaba autorizado, quite el permiso con 'esxcli system permission unset --id=<cuenta>' y deshabilite la cuenta después de confirmar que no es legítima.",
+        "Rote las credenciales de root y de las cuentas administrativas. Deshabilite SSH y ESXi Shell, y active lockdown mode si aplica.",
+        "Busque otra persistencia o preparativos de impacto: cuentas adicionales, VIB no firmados, cambios en /etc/rc.local.d y VM apagadas o cifradas.",
+        "Preserve los logs del host, documente la línea de tiempo y escale a respuesta a incidentes."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque otorgar el rol Admin en un hipervisor da control total sobre todas sus VM, y este cambio es poco frecuente fuera de un mantenimiento planificado."
+    },
+    "en": {
+      "summary": "esxcli was run on an ESXi host to grant the Admin role to an account via 'system permission set'. Without an approved change, this may be hypervisor persistence or privilege escalation.",
+      "what_it_detects": "Processes whose Image ends with '/esxcli' and whose CommandLine contains 'system', ' permission ', ' set' and 'Admin', e.g. 'esxcli system permission set --id=user --role=Admin'.",
+      "why_it_matters": "An Admin account on ESXi controls every VM on the host. An attacker can stop, delete or encrypt VMs and keep access even after other credentials change. This maps to ATT&CK T1098 (Account Manipulation) and T1059.012 (Hypervisor CLI).",
+      "triage_steps": [
+        "Read the CommandLine and extract the account in --id and the assigned role. Check whether the account is new, unknown or a service account.",
+        "Identify the executing User and the ParentImage (sh, sshd or a script). Determine whether the session came through SSH, ESXi Shell or the DCUI.",
+        "Find the session source IP in /var/log/auth.log and hostd.log and compare it with approved admin workstations.",
+        "On the same host within +/- 15 minutes, look for 'esxcli system account add', password changes, SSH being enabled or vim-cmd commands.",
+        "Search other ESXi hosts for similar runs by the same user or from the same IP, and review earlier alerts for those entities.",
+        "Ask the virtualization team whether a change ticket covers this Admin assignment."
+      ],
+      "false_positives": [
+        "Administrators granting Admin to new accounts during provisioning or initial host setup.",
+        "Automation or configuration management scripts that apply roles to service accounts on ESXi.",
+        "Testing in lab or pre-production environments."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether the change was authorized before you act.",
+        "If it was not authorized, remove the grant with 'esxcli system permission unset --id=<account>'. Disable the account once you confirm it is illegitimate.",
+        "Rotate root and admin credentials. Disable SSH and ESXi Shell, and enable lockdown mode where applicable.",
+        "Hunt for other persistence or impact staging: extra accounts, unsigned VIBs, changes in /etc/rc.local.d, and stopped or encrypted VMs.",
+        "Preserve host logs, document the timeline and escalate to incident response."
+      ],
+      "severity_rationale": "High fits because granting Admin on a hypervisor gives full control of all its VMs, and this change is rare outside planned maintenance."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unknown account is granted the Admin role through esxcli from an SSH shell session.",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system permission set --id=svc-backup2 --role=Admin",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "ProcessId": 48213,
+          "Computer": "esxi-prod-03.example.com"
+        }
+      },
+      {
+        "description": "An Admin role assignment using the space-separated option syntax.",
+        "event": {
+          "Image": "/usr/bin/esxcli",
+          "CommandLine": "/usr/bin/esxcli system permission set --id jperez --role Admin",
+          "ParentImage": "/bin/ash",
+          "User": "root",
+          "ProcessId": 51102,
+          "Computer": "esxi-lab-01.example.org"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A legitimate read-only role assignment. 'Admin' is not present, so the rule does not match.",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system permission set --id=monitor01 --role=ReadOnly",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "ProcessId": 47001,
+          "Computer": "esxi-prod-03.example.com"
+        }
+      },
+      {
+        "description": "An administrator lists existing permissions. ' set' and 'Admin' are missing.",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli system permission list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "ProcessId": 47210,
+          "Computer": "esxi-prod-03.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

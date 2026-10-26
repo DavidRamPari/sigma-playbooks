@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "b3e6418f-7c7a-4fad-993a-93b65027a9f1",
+    "title": "DNS Query To Visual Studio Code Tunnels Domain",
+    "level": "medium",
+    "status": "test",
+    "author": "citron_ninja",
+    "path": "windows/dns_query/dns_query_win_vscode_tunnel_communication.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/dns_query/dns_query_win_vscode_tunnel_communication.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1071.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso del endpoint resolvió un subdominio de *.tunnels.api.visualstudio.com, el servicio que usan los túneles remotos de Visual Studio Code. Esto puede ser uso legítimo de un desarrollador o un canal de acceso remoto y C2 creado por un atacante.",
+      "what_it_detects": "Eventos de consulta DNS en Windows (por ejemplo, Sysmon Event ID 22) cuyo QueryName termina en '.tunnels.api.visualstudio.com'.",
+      "why_it_matters": "La función 'code tunnel' permite que alguien controle el equipo desde vscode.dev o desde otro VS Code, con terminal incluida, mediante tráfico HTTPS hacia infraestructura de Microsoft que pocas veces se bloquea. Un atacante puede usarla como reverse shell, para persistencia o para exfiltrar datos (T1071.001, protocolos web).",
+      "triage_steps": [
+        "Revise Image y ProcessId del evento: verifique si es code.exe o code-tunnel.exe en una ruta de instalación esperada, o un binario renombrado en Temp, Downloads o ProgramData.",
+        "Obtenga la creación del proceso (Event ID 4688 o Sysmon 1): busque en CommandLine 'tunnel', '--accept-server-license-terms', '--name' o 'service install', y revise ParentImage.",
+        "Valide el usuario y el rol del host: ¿es un desarrollador con VS Code aprobado o es un servidor, un equipo de finanzas o una cuenta de servicio?",
+        "Busque persistencia: un servicio o una tarea programada 'code-tunnel', y archivos en %USERPROFILE%\\.vscode-cli o junto al ejecutable.",
+        "Pivotee en el mismo host +/- 15 minutos: procesos hijos del túnel (cmd.exe, powershell.exe), descargas, conexiones a *.devtunnels.ms o github.com/login/device.",
+        "Revise alertas anteriores del mismo host y del mismo usuario, en especial reglas relacionadas de conexión de red a DevTunnels o VS Code."
+      ],
+      "false_positives": [
+        "Desarrolladores que usan VS Code Remote Tunnels de forma legítima para trabajar a distancia en su propio equipo o en una VM de desarrollo.",
+        "Equipos de plataforma o DevOps que exponen hosts de compilación mediante túneles autorizados y documentados.",
+        "Pruebas de extensiones o laboratorios de capacitación que inician 'code tunnel' de forma temporal."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o su responsable si el túnel fue iniciado a propósito y con una cuenta GitHub o Microsoft corporativa.",
+        "Si no está autorizado, aísle el endpoint, detenga el proceso del túnel y bloquee *.tunnels.api.visualstudio.com y *.devtunnels.ms en el proxy de ese host.",
+        "Elimine la persistencia, como el servicio o la tarea 'code-tunnel' y el binario renombrado, después de preservar los artefactos y el hash para el análisis forense.",
+        "Revise qué comandos se ejecutaron desde el túnel, rote las credenciales expuestas y restaure el equipo si hay indicios de compromiso.",
+        "Si es legítimo, documente la excepción por usuario o host, y la ruta de Image, para reducir el ruido."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el túnel da control remoto completo, aunque en entornos con desarrolladores su uso legítimo es frecuente y hace falta contexto para confirmar abuso."
+    },
+    "en": {
+      "summary": "A process on the endpoint resolved a subdomain of *.tunnels.api.visualstudio.com, the service behind Visual Studio Code Remote Tunnels. A developer may be using it legitimately, or an attacker may have set up remote access and C2.",
+      "what_it_detects": "Windows DNS query events (for example, Sysmon Event ID 22) where QueryName ends with '.tunnels.api.visualstudio.com'.",
+      "why_it_matters": "'code tunnel' lets someone control the machine from vscode.dev or another VS Code, terminal included. The traffic is HTTPS to Microsoft infrastructure that is rarely blocked. Attackers abuse it for reverse shells, persistence and exfiltration (T1071.001, web protocols).",
+      "triage_steps": [
+        "Check Image and ProcessId: is it code.exe or code-tunnel.exe in an expected install path, or a renamed binary in Temp, Downloads or ProgramData?",
+        "Pull the process creation event (4688 or Sysmon 1). Look in CommandLine for 'tunnel', '--accept-server-license-terms', '--name' or 'service install', and review ParentImage.",
+        "Validate the user and the host role: is this a developer with approved VS Code, or a server, a finance workstation or a service account?",
+        "Hunt for persistence: a 'code-tunnel' service or scheduled task, and files in %USERPROFILE%\\.vscode-cli or next to the binary.",
+        "Pivot on the same host within +/- 15 minutes: tunnel child processes (cmd.exe, powershell.exe), downloads, connections to *.devtunnels.ms or github.com/login/device.",
+        "Review earlier alerts for the same host and user, especially the related DevTunnels and VS Code network connection rules."
+      ],
+      "false_positives": [
+        "Developers legitimately using VS Code Remote Tunnels to reach their own workstation or a dev VM.",
+        "Platform or DevOps teams exposing build hosts through authorized, documented tunnels.",
+        "Extension testing or training labs that start 'code tunnel' temporarily."
+      ],
+      "response_steps": [
+        "Confirm with the user or their manager that the tunnel was started on purpose and with a corporate GitHub or Microsoft account.",
+        "If it is unauthorized, isolate the endpoint, stop the tunnel process and block *.tunnels.api.visualstudio.com and *.devtunnels.ms for that host at the proxy.",
+        "Preserve artifacts and hashes, then remove persistence: the 'code-tunnel' service or task and any renamed binary.",
+        "Review the commands run through the tunnel, rotate exposed credentials and reimage the machine if there are signs of compromise.",
+        "If the use is legitimate, document a scoped exception by user or host and Image path."
+      ],
+      "severity_rationale": "Medium fits: the tunnel gives full remote control, but legitimate developer use is common, so context is needed to confirm abuse."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Renamed VS Code CLI in a user's Temp folder resolves the global tunnel relay endpoint",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\winupd.exe",
+          "ProcessId": 6412,
+          "QueryName": "global.rel.tunnels.api.visualstudio.com",
+          "QueryStatus": "0",
+          "QueryResults": "type:  5 tunnels-prod-rel-tm.trafficmanager.net;::ffff:203.0.113.25;"
+        }
+      },
+      {
+        "description": "Standard code.exe resolves a regional tunnel cluster during a 'code tunnel' session",
+        "event": {
+          "EventID": 22,
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code-tunnel.exe",
+          "ProcessId": 9120,
+          "QueryName": "usw2.rel.tunnels.api.visualstudio.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:198.51.100.40;"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "VS Code checking for updates resolves a visualstudio.com host that is not a tunnel domain",
+        "event": {
+          "EventID": 22,
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+          "ProcessId": 4388,
+          "QueryName": "update.code.visualstudio.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:198.51.100.12;"
+        }
+      },
+      {
+        "description": "Bare apex tunnels.api.visualstudio.com has no leading subdomain label, so it does not end with '.tunnels.api.visualstudio.com'",
+        "event": {
+          "EventID": 22,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+          "ProcessId": 5520,
+          "QueryName": "tunnels.api.visualstudio.com",
+          "QueryStatus": "0",
+          "QueryResults": "::ffff:203.0.113.30;"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

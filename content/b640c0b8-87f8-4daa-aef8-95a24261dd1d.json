@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "b640c0b8-87f8-4daa-aef8-95a24261dd1d",
+    "title": "MITRE BZAR Indicators for Execution",
+    "level": "medium",
+    "status": "test",
+    "author": "@neu5ron, SOC Prime",
+    "path": "network/zeek/zeek_dce_rpc_mitre_bzar_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_dce_rpc_mitre_bzar_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1047",
+      "T1053.002",
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un host invocó por DCE-RPC una función remota de Windows que permite ejecutar código en otro sistema: crear o iniciar servicios, registrar o ejecutar tareas programadas, o llamar métodos WMI.",
+      "what_it_detects": "Eventos del log dce_rpc de Zeek cuyos campos endpoint y operation coinciden con 10 pares de BZAR: svcctl CreateService/StartService (A/W), ITaskSchedulerService SchRpcRegisterTask/SchRpcEnableTask/SchRpcRun, IWbemServices ExecMethod/ExecMethodAsync y atsvc JobAdd. Nota: la regla define el par atsvc con los campos invertidos (endpoint JobAdd, operation atsvc), así que es posible que no detecte los eventos atsvc reales.",
+      "why_it_matters": "Estas llamadas permiten la ejecución remota y el movimiento lateral: WMI (T1047), tareas programadas con at (T1053.002) y ejecución de servicios (T1569.002), al estilo de PsExec, Impacket o schtasks /S. Un atacante con credenciales válidas puede ejecutar payloads y obtener persistencia o privilegios SYSTEM.",
+      "triage_steps": [
+        "Identifique el origen (id.orig_h), el destino (id.resp_h), el endpoint y la operation. Determine si el origen es un servidor de administración, de despliegue o de monitoreo conocido.",
+        "Revise named_pipe (\\pipe\\svcctl, \\pipe\\atsvc, \\pipe\\epmapper) y busque en el mismo uid otras operaciones, como OpenSCManagerW seguido de CreateServiceW y StartServiceW.",
+        "Busque en el log smb_files de Zeek, entre 15 minutos antes y 15 minutos después, escrituras en ADMIN$ o C$ del mismo destino, por ejemplo ejecutables con nombres aleatorios.",
+        "En el destino, revise los eventos 7045/4697 (servicio nuevo), 4698 (tarea creada) o la actividad WMI-Activity, y relaciónelos con la hora de la alerta.",
+        "Correlacione los inicios de sesión 4624 de tipo 3 en el destino: qué cuenta se usó y desde qué IP.",
+        "Determine si el mismo origen contactó muchos destinos con operaciones similares, lo que indicaría propagación lateral.",
+        "Busque alertas previas sobre el origen o la cuenta, como credential dumping, escaneo o phishing."
+      ],
+      "false_positives": [
+        "Administradores que crean o reinician servicios de forma remota durante tareas de mantenimiento o diagnóstico.",
+        "Herramientas de despliegue o gestión (SCCM, PsExec autorizado, agentes de inventario) que instalan servicios o usan WMI.",
+        "Scripts de administración que registran tareas programadas en varios equipos.",
+        "Soluciones de monitoreo o backup que ejecutan métodos WMI de forma periódica."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host de origen o de la cuenta si la actividad estaba autorizada y forma parte de un cambio documentado.",
+        "Si no estaba autorizada, aísle el origen y el destino, y deshabilite o restablezca las credenciales utilizadas.",
+        "Identifique el servicio, la tarea o el proceso WMI creado en el destino. Preserve el binario y su hash antes de eliminarlo.",
+        "Busque la misma actividad en otros hosts, elimine la persistencia confirmada y restaure los sistemas afectados."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estas funciones indican ejecución remota real, pero también son habituales en la administración legítima de Windows y requieren contexto."
+    },
+    "en": {
+      "summary": "A host made a DCE-RPC call to a Windows function that runs code on another system: creating or starting a service, registering or running a scheduled task, or calling a WMI method.",
+      "what_it_detects": "Zeek dce_rpc events whose endpoint and operation fields match 10 BZAR pairs: svcctl CreateService/StartService (A/W), ITaskSchedulerService SchRpcRegisterTask/SchRpcEnableTask/SchRpcRun, IWbemServices ExecMethod/ExecMethodAsync, and atsvc JobAdd. Note: the rule swaps the fields for the atsvc pair (endpoint JobAdd, operation atsvc), so it may miss real atsvc events.",
+      "why_it_matters": "These calls enable remote execution and lateral movement: WMI (T1047), at scheduled tasks (T1053.002) and service execution (T1569.002), as done by PsExec, Impacket or schtasks /S. With valid credentials, an attacker can run payloads and gain persistence or SYSTEM privileges.",
+      "triage_steps": [
+        "Identify the source (id.orig_h), the destination (id.resp_h), the endpoint and the operation. Check whether the source is a known admin, deployment or monitoring server.",
+        "Check named_pipe and look for other operations in the same uid, such as OpenSCManagerW followed by CreateServiceW and StartServiceW.",
+        "Search Zeek smb_files for writes to ADMIN$ or C$ on the same destination within 15 minutes before or after, especially executables with random names.",
+        "On the destination, review events 7045/4697 (new service), 4698 (task created) or WMI-Activity logs around the alert time.",
+        "Correlate type 3 logons (4624) on the destination to find which account was used and from which IP.",
+        "Check whether the same source sent similar operations to many destinations, which would suggest lateral spread.",
+        "Look for earlier alerts on the source or account, such as credential dumping, scanning or phishing."
+      ],
+      "false_positives": [
+        "Administrators creating or restarting services remotely during maintenance or troubleshooting.",
+        "Deployment or management tools (SCCM, authorized PsExec, inventory agents) that install services or use WMI.",
+        "Admin scripts that register scheduled tasks across many hosts.",
+        "Monitoring or backup products that call WMI methods on a schedule."
+      ],
+      "response_steps": [
+        "Confirm with the owner of the source host or account whether the activity was authorized and part of a documented change.",
+        "If it was not authorized, isolate the source and destination, and disable or reset the credentials that were used.",
+        "Identify the service, task or WMI process created on the destination. Preserve the binary and its hash before removing it.",
+        "Hunt for the same activity on other hosts, remove confirmed persistence and restore affected systems."
+      ],
+      "severity_rationale": "Medium fits because these functions show real remote execution but are also common in legitimate Windows administration, so the alert needs context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote service creation over svcctl (PsExec-style), matching op8",
+        "event": {
+          "ts": 1700000000.123,
+          "uid": "CHhAvVGS1DHFjwGM9",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49822,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "rtt": 0.0012,
+          "named_pipe": "\\pipe\\svcctl",
+          "endpoint": "svcctl",
+          "operation": "CreateServiceW"
+        }
+      },
+      {
+        "description": "Remote scheduled task registration via ITaskSchedulerService, matching op3",
+        "event": {
+          "ts": 1700000123.456,
+          "uid": "C4J4Th3PJpwUYZZ6gc",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49901,
+          "id.resp_h": "198.51.100.21",
+          "id.resp_p": 49668,
+          "rtt": 0.0021,
+          "named_pipe": "49668",
+          "endpoint": "ITaskSchedulerService",
+          "operation": "SchRpcRegisterTask"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Opening the Service Control Manager only, without creating or starting a service",
+        "event": {
+          "ts": 1700000000.101,
+          "uid": "CHhAvVGS1DHFjwGM9",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 49822,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "rtt": 0.0009,
+          "named_pipe": "\\pipe\\svcctl",
+          "endpoint": "svcctl",
+          "operation": "OpenSCManagerW"
+        }
+      },
+      {
+        "description": "Read-only WMI query (ExecQuery) from a monitoring server, not a method execution",
+        "event": {
+          "ts": 1700000300.789,
+          "uid": "CtPZjS20MLrsMUOJi2",
+          "id.orig_h": "203.0.113.10",
+          "id.orig_p": 50110,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 49670,
+          "rtt": 0.0015,
+          "named_pipe": "49670",
+          "endpoint": "IWbemServices",
+          "operation": "ExecQuery"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

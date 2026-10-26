@@ -1,0 +1,158 @@
+{
+  "rule": {
+    "id": "eed82177-38f5-4299-8a76-098d50d225ab",
+    "title": "Kubernetes Admission Controller Modification",
+    "level": "medium",
+    "status": "test",
+    "author": "kelnage",
+    "path": "application/kubernetes/audit/kubernetes_audit_change_admission_controller.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_change_admission_controller.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078",
+      "T1552",
+      "T1552.007"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un usuario o service account creó, modificó o eliminó una configuración de webhook de admisión (mutating o validating) en Kubernetes. Puede ser una tarea normal de un operador o de GitOps, pero también un atacante que busca persistencia, robar credenciales o desactivar políticas.",
+      "what_it_detects": "Eventos de auditoría de Kubernetes donde objectRef.apiGroup es admissionregistration.k8s.io, objectRef.resource es mutatingwebhookconfigurations o validatingwebhookconfigurations y verb es create, delete, patch, replace o update.",
+      "why_it_matters": "Los webhooks de admisión reciben las solicitudes a la API y los mutating pueden modificarlas. Un webhook malicioso puede inyectar contenedores o service accounts en pods nuevos (persistencia), recibir cuerpos de solicitud con secretos o tokens (T1552.007, credenciales de la API de contenedores) o eliminarse para que dejen de aplicarse políticas de seguridad. Si se abusa de una cuenta válida, corresponde a T1078.",
+      "triage_steps": [
+        "Identifique al actor con user.username, user.groups, sourceIPs y userAgent. Verifique si es un administrador conocido, una identidad de CI/GitOps (Argo CD, Flux, Helm) o una service account inesperada.",
+        "Revise objectRef.name y responseStatus.code para saber qué configuración cambió y si la solicitud tuvo éxito.",
+        "Analice requestObject o el objeto vigente: clientConfig.url o service, rules (operaciones y recursos como pods o secrets), failurePolicy, namespaceSelector y caBundle.",
+        "Considere de alto riesgo una clientConfig.url externa, un webhook que intercepte secrets o serviceaccounts, o la eliminación del webhook de un motor de políticas (Gatekeeper, Kyverno).",
+        "Relacione el cambio con un ticket de cambio, un release de Helm o un commit de Git del operador dueño del webhook.",
+        "Pivotee por el mismo usuario y las mismas sourceIPs en +/- 15 minutos: bindings de RBAC, lectura de secrets, creación de pods, deployments o service accounts, y uso de exec.",
+        "Busque alertas previas de la misma identidad y pods creados después del cambio que tengan contenedores, volúmenes o variables inesperadas."
+      ],
+      "false_positives": [
+        "Administradores que instalan o actualizan controladores de admisión como cert-manager, service mesh, Gatekeeper o Kyverno.",
+        "Procesos automatizados, como operadores que rotan el caBundle o controladores de Helm o GitOps que reconcilian webhooks. Una vez validados, fíltrelos por identidad.",
+        "Actualizaciones del clúster o componentes de la plataforma gestionada que modifican los webhooks integrados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del clúster o del webhook si el cambio estaba autorizado antes de actuar.",
+        "Si no estaba autorizado, exporte la configuración actual como evidencia y luego elimínela o restáurela desde la fuente confiable de Git o Helm.",
+        "Revoque o rote las credenciales del actor y restrinja el RBAC sobre los recursos de admissionregistration.k8s.io.",
+        "Revise los pods creados mientras el webhook estuvo activo y recree los que fueron modificados. Rote los secretos y tokens que el webhook pudo recibir.",
+        "Agregue una lista de permitidos validada para las identidades de automatización legítimas y documente las lecciones aprendidas."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque los operadores legítimos cambian webhooks con frecuencia, pero un cambio no autorizado otorga persistencia y acceso a credenciales, así que cada alerta requiere revisión humana pronta."
+    },
+    "en": {
+      "summary": "A user or service account created, modified or deleted a Kubernetes mutating or validating webhook configuration. This can be routine operator or GitOps activity, but it can also be an attacker setting up persistence, stealing credentials or turning off policy enforcement.",
+      "what_it_detects": "Kubernetes audit events where objectRef.apiGroup is admissionregistration.k8s.io, objectRef.resource is mutatingwebhookconfigurations or validatingwebhookconfigurations, and verb is create, delete, patch, replace or update.",
+      "why_it_matters": "Admission webhooks see API requests and mutating webhooks can rewrite them. A rogue webhook can inject containers or service accounts into new pods (persistence), receive request bodies that hold secrets or tokens (T1552.007, Container API credentials), or be deleted so security policies stop applying. A valid account abused this way maps to T1078.",
+      "triage_steps": [
+        "Identify the actor: user.username, user.groups, sourceIPs and userAgent. Check whether it is a known admin, a CI/GitOps identity (Argo CD, Flux, Helm) or an unexpected service account.",
+        "Check objectRef.name and responseStatus.code to see which webhook configuration changed and whether the request succeeded.",
+        "Review requestObject or the live object: clientConfig.url or service, rules (operations and resources such as pods or secrets), failurePolicy, namespaceSelector and caBundle.",
+        "Treat an external clientConfig.url, a webhook that intercepts secrets or serviceaccounts, or deletion of a policy engine webhook (Gatekeeper, Kyverno) as high-risk.",
+        "Match the change to a change ticket, Helm release or Git commit for the operator that owns the webhook.",
+        "Pivot on the same user and sourceIPs within +/- 15 minutes: RBAC bindings, secret reads, new pods, deployments or service accounts, and exec calls.",
+        "Look for earlier alerts on the same identity, and for pods created after the change that contain unexpected containers, volumes or env vars."
+      ],
+      "false_positives": [
+        "Administrators installing or upgrading admission controllers such as cert-manager, service meshes, Gatekeeper or Kyverno.",
+        "Automated processes such as operators rotating caBundle, Helm or GitOps controllers reconciling webhook configurations. Filter these by identity once you have validated them.",
+        "Cluster upgrades or managed-platform components that update built-in webhooks."
+      ],
+      "response_steps": [
+        "Confirm with the cluster or webhook owner whether the change was authorized before taking action.",
+        "If it was not authorized, export the current configuration as evidence, then delete or restore it from the trusted Git or Helm source.",
+        "Revoke or rotate the credentials of the actor and tighten RBAC on admissionregistration.k8s.io resources.",
+        "Review pods created while the webhook was active and rebuild any that were mutated. Rotate secrets and tokens the webhook could have received.",
+        "Add a validated allowlist for legitimate automation identities and record the lessons learned."
+      ],
+      "severity_rationale": "Medium fits because legitimate operators often change webhooks, yet an unauthorized change gives strong persistence and credential access, so each alert needs prompt human review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user creates a mutating webhook configuration with kubectl from an external IP",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.apiGroup": "admissionregistration.k8s.io",
+          "objectRef.apiVersion": "v1",
+          "objectRef.resource": "mutatingwebhookconfigurations",
+          "objectRef.name": "pod-defaults-injector",
+          "requestURI": "/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 201
+        }
+      },
+      {
+        "description": "Service account deletes the validating webhook configuration of a policy engine",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "delete",
+          "objectRef.apiGroup": "admissionregistration.k8s.io",
+          "objectRef.apiVersion": "v1",
+          "objectRef.resource": "validatingwebhookconfigurations",
+          "objectRef.name": "gatekeeper-validating-webhook-configuration",
+          "requestURI": "/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations/gatekeeper-validating-webhook-configuration",
+          "user.username": "system:serviceaccount:default:build-runner",
+          "sourceIPs": "198.51.100.23",
+          "userAgent": "curl/8.5.0",
+          "responseStatus.code": 200
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only list of mutating webhook configurations (verb not in the rule)",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "objectRef.apiGroup": "admissionregistration.k8s.io",
+          "objectRef.apiVersion": "v1",
+          "objectRef.resource": "mutatingwebhookconfigurations",
+          "requestURI": "/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations?limit=500",
+          "user.username": "system:kube-controller-manager",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kube-controller-manager/v1.29.2",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "Patch on a deployment in the apps API group, not an admission webhook resource",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "patch",
+          "objectRef.apiGroup": "apps",
+          "objectRef.apiVersion": "v1",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "api-gateway",
+          "requestURI": "/apis/apps/v1/namespaces/payments/deployments/api-gateway",
+          "user.username": "system:serviceaccount:argocd:argocd-application-controller",
+          "sourceIPs": "192.0.2.34",
+          "userAgent": "argocd-application-controller/v2.10.4",
+          "responseStatus.code": 200
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

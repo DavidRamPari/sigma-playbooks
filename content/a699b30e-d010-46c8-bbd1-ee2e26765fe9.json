@@ -1,0 +1,111 @@
+{
+  "rule": {
+    "id": "a699b30e-d010-46c8-bbd1-ee2e26765fe9",
+    "title": "Powershell Store File In Alternate Data Stream",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_store_file_in_alternate_data_stream.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_store_file_in_alternate_data_stream.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1564.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell lanzó cmd.exe mediante Start-Process con \"$env:comspec\" y una redirección '>', el patrón que se usa para escribir contenido en un Alternate Data Stream (ADS) de NTFS. Puede indicar que se está ocultando un payload dentro de un archivo aparentemente legítimo.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging cuyo ScriptBlockText contiene a la vez 'Start-Process', '-FilePath \"$env:comspec\" ', '-ArgumentList ' y '>'. Es la técnica de la prueba T1564.004 de Atomic Red Team: cmd /c type origen > destino:stream.",
+      "why_it_matters": "Los ADS (T1564.004, Hide Artifacts: NTFS File Attributes) permiten guardar datos que no se ven en el tamaño del archivo ni en un listado normal. Malware como Astaroth los usa para esconder payloads y evadir controles.",
+      "triage_steps": [
+        "Revise el ScriptBlockText completo: identifique el archivo de origen, el destino y si el destino tiene la forma archivo:nombre_stream.",
+        "Reconstruya el script entero uniendo los fragmentos con el mismo ScriptBlockId y revise el campo Path para saber de dónde salió el script.",
+        "Identifique el usuario y el proceso padre de powershell.exe (eventos 4688 o Sysmon 1) en el mismo host, +/- 15 minutos.",
+        "En el endpoint, ejecute 'Get-Item <archivo> -Stream *' sobre el destino y obtenga el hash del contenido del stream sin ejecutarlo.",
+        "Busque eventos Sysmon 15 (FileCreateStreamHash) y la ejecución posterior del stream (wmic, rundll32, mshta o powershell leyendo -Stream).",
+        "Revise alertas previas del mismo host y usuario, y conexiones de red salientes cerca del evento."
+      ],
+      "false_positives": [
+        "Ejecuciones autorizadas de Atomic Red Team o ejercicios de red team que prueban T1564.004.",
+        "Scripts de administración que lanzan cmd con redirección a un archivo de log normal; confirme que el destino no tenga ':stream'."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host o con el equipo de pruebas si la actividad estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint y conserve el archivo con su ADS y los logs de PowerShell como evidencia.",
+        "Analice el contenido del stream en sandbox; busque el hash en otros equipos y bloquee los IOC.",
+        "Elimine el stream (Remove-Item -Stream) solo después de recolectar evidencia, quite la persistencia relacionada y restablezca las credenciales afectadas."
+      ],
+      "severity_rationale": "Nivel medio: el patrón es poco común en uso legítimo y se asocia a ocultamiento, pero por sí solo no prueba que haya ejecución maliciosa."
+    },
+    "en": {
+      "summary": "A PowerShell script launched cmd.exe through Start-Process with \"$env:comspec\" and a '>' redirection, the pattern used to write content into an NTFS Alternate Data Stream (ADS). It may mean a payload is being hidden inside a benign-looking file.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains all of 'Start-Process', '-FilePath \"$env:comspec\" ', '-ArgumentList ' and '>'. This matches the Atomic Red Team T1564.004 test: cmd /c type source > target:stream.",
+      "why_it_matters": "ADS (T1564.004, Hide Artifacts: NTFS File Attributes) hides data from file size and normal directory listings. Malware such as Astaroth uses it to conceal payloads and evade defenses.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: identify the source file, the target, and whether the target uses the file:streamname form.",
+        "Rebuild the whole script from fragments sharing the same ScriptBlockId, and check the Path field to learn where the script came from.",
+        "Identify the user and the parent of powershell.exe (4688 or Sysmon 1) on the same host within +/- 15 minutes.",
+        "On the endpoint, run 'Get-Item <file> -Stream *' on the target and hash the stream content without executing it.",
+        "Look for Sysmon 15 (FileCreateStreamHash) and later execution of the stream (wmic, rundll32, mshta, or PowerShell reading -Stream).",
+        "Review earlier alerts for the same host and user, and outbound connections around the event."
+      ],
+      "false_positives": [
+        "Authorized Atomic Red Team runs or red team exercises testing T1564.004.",
+        "Admin scripts that launch cmd and redirect output to a normal log file; confirm the target has no ':stream' suffix."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or testing team whether the activity was authorized.",
+        "If not, isolate the endpoint and preserve the file with its ADS and the PowerShell logs as evidence.",
+        "Analyze the stream content in a sandbox; hunt for its hash on other hosts and block the IOCs.",
+        "Remove the stream (Remove-Item -Stream) only after collecting evidence, clean related persistence, and reset affected credentials."
+      ],
+      "severity_rationale": "Medium: the pattern is rare in legitimate use and tied to hiding data, but on its own it does not prove malicious execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic-style ADS write: cmd type redirected into a named stream via Start-Process with $env:comspec",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c41-7b1e-4d8a-9e55-1c0d2b6a7f10",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "Start-Process -FilePath \"$env:comspec\" -ArgumentList \"/c,type,$env:temp\\payload.txt,>,$env:temp\\readme.txt:adstest.txt\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Start-Process with $env:comspec but no redirection, just listing a directory",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "8b7c6d5e-1a2b-4c3d-9e8f-0a1b2c3d4e5f",
+          "Path": "C:\\Scripts\\inventory.ps1",
+          "ScriptBlockText": "Start-Process -FilePath \"$env:comspec\" -ArgumentList \"/c dir C:\\Temp\" -Wait -NoNewWindow"
+        }
+      },
+      {
+        "description": "Writing a stream with Add-Content -Stream, without Start-Process or comspec",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "c1d2e3f4-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
+          "Path": "C:\\Scripts\\tagfile.ps1",
+          "ScriptBlockText": "Add-Content -Path C:\\Data\\report.docx -Stream Zone.Identifier -Value '[ZoneTransfer]'"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

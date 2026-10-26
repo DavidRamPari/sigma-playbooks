@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "9e3357ba-09d4-4fbd-a7c5-ad6386314513",
+    "title": "Change the Fax Dll",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_fax_dll_persistance.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_fax_dll_persistance.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor ImageName de un proveedor de dispositivos de Fax en el registro con una DLL distinta de la predeterminada (fxst30.dll). Esto puede indicar que alguien preparó el servicio de Fax para cargar una DLL maliciosa cuando se reinicie.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene '\\Software\\Microsoft\\Fax\\Device Providers\\' y '\\ImageName', y Details no es exactamente '%systemroot%\\system32\\fxst30.dll'.",
+      "why_it_matters": "El servicio de Fax (fxssvc.exe) carga la DLL indicada en ImageName al iniciar. Si un atacante cambia este valor, de forma local o mediante Remote Registry, logra persistencia o movimiento lateral con privilegios de SYSTEM. Corresponde a la técnica T1112 (Modify Registry).",
+      "triage_steps": [
+        "Revise Details: identifique la ruta de la DLL y confirme si apunta a una ubicación inusual, como Users, ProgramData, Temp o un recurso UNC.",
+        "Obtenga el hash, la firma y la fecha de creación de la DLL. Busque eventos de creación de archivos con esa ruta en el mismo host dentro de +/- 15 minutos.",
+        "Identifique el Image y el User que escribieron el valor. Si es svchost.exe de RemoteRegistry, investigue los inicios de sesión de red (4624, tipo 3) y su IP de origen.",
+        "Revise si el servicio de Fax se detuvo, se inició o se reconfiguró (eventos 7036 y 7040) y si fxssvc.exe cargó la DLL (Sysmon 7).",
+        "Revise el proceso padre y la línea de comandos de reg.exe, PowerShell u otra herramienta que haya escrito la clave.",
+        "Busque el mismo cambio en ImageName en otros hosts y revise alertas anteriores para el usuario y la IP de origen."
+      ],
+      "false_positives": [
+        "Software de fax de terceros que registra legítimamente su propio proveedor de dispositivos con otra DLL.",
+        "El valor predeterminado escrito con la ruta expandida (C:\\Windows\\System32\\fxst30.dll) o con variantes por versión de Windows, que el filtro exacto no excluye."
+      ],
+      "response_steps": [
+        "Verifique con el equipo responsable si existe un producto de fax autorizado. Si no existe, trate el evento como compromiso.",
+        "Aísle el endpoint y preserve la DLL y la exportación de la clave antes de modificar algo.",
+        "Detenga el servicio de Fax, restaure ImageName a '%systemroot%\\system32\\fxst30.dll' y elimine la DLL maliciosa después de analizarla.",
+        "Restablezca las credenciales usadas y bloquee la IP de origen. Revise si hay movimiento lateral hacia otros hosts.",
+        "Considere deshabilitar Fax y Remote Registry donde no se necesiten."
+      ],
+      "severity_rationale": "El nivel high se justifica porque modificar este valor es poco común en entornos legítimos y permite ejecutar código como SYSTEM a través de un servicio de Windows."
+    },
+    "en": {
+      "summary": "The ImageName value of a Fax device provider was set to a DLL other than the default fxst30.dll. Someone may have set up the Fax service to load a malicious DLL the next time it restarts.",
+      "what_it_detects": "registry_set events where TargetObject contains '\\Software\\Microsoft\\Fax\\Device Providers\\' and '\\ImageName', and Details is not exactly '%systemroot%\\system32\\fxst30.dll'.",
+      "why_it_matters": "The Fax service (fxssvc.exe) loads the DLL named in ImageName when it starts. An attacker who changes this value, locally or through Remote Registry, gets persistence or lateral movement with SYSTEM privileges. This is T1112 (Modify Registry).",
+      "triage_steps": [
+        "Inspect Details to get the DLL path. Flag unusual locations such as Users, ProgramData, Temp or UNC shares.",
+        "Get the DLL's hash, signature and creation time. Search for file-creation events for that path on the same host within +/- 15 minutes.",
+        "Identify the Image and User that wrote the value. If the writer is the RemoteRegistry svchost.exe, review network logons (4624, type 3) and their source IP.",
+        "Check whether the Fax service was stopped, started or reconfigured (events 7036 and 7040) and whether fxssvc.exe loaded the DLL (Sysmon 7).",
+        "Review the parent process and command line of reg.exe, PowerShell or whatever tool wrote the key.",
+        "Hunt for the same ImageName change on other hosts and check earlier alerts for the same user and source IP."
+      ],
+      "false_positives": [
+        "Third-party fax software that legitimately registers its own device provider DLL.",
+        "The default value written as an expanded path (C:\\Windows\\System32\\fxst30.dll) or a version-specific variant, which the exact-match filter does not exclude."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether an approved fax product is installed. If not, treat the event as a compromise.",
+        "Isolate the endpoint. Preserve the DLL and an export of the key before you change anything.",
+        "Stop the Fax service, restore ImageName to '%systemroot%\\system32\\fxst30.dll', and delete the malicious DLL after analysis.",
+        "Reset the credentials involved and block the source IP. Investigate lateral movement to other hosts.",
+        "Consider disabling Fax and Remote Registry where they are not needed."
+      ],
+      "severity_rationale": "High fits because legitimate changes to this value are rare, and the change gives an attacker SYSTEM-level code execution through a Windows service."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote Registry sets the Fax provider ImageName to a DLL in C:\\Users\\Public",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-10-25 14:03:12.512",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\LOCAL SERVICE",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Fax\\Device Providers\\{F10A5326-0261-4715-B367-2970427BBD99}\\ImageName",
+          "Details": "C:\\Users\\Public\\fxsupd.dll"
+        }
+      },
+      {
+        "description": "reg.exe run by a user points ImageName at a DLL on a UNC share",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-10-25 15:20:44.101",
+          "ComputerName": "WS-0177.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Fax\\Device Providers\\{F10A5326-0261-4715-B367-2970427BBD99}\\ImageName",
+          "Details": "\\\\198.51.100.23\\share\\fax.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Default value restored by Windows servicing; excluded by the filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-10-25 03:11:09.870",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Fax\\Device Providers\\{F10A5326-0261-4715-B367-2970427BBD99}\\ImageName",
+          "Details": "%systemroot%\\system32\\fxst30.dll"
+        }
+      },
+      {
+        "description": "FriendlyName of the Fax provider changed, not ImageName",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-10-25 09:45:30.004",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\admin.ops",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Fax\\Device Providers\\{F10A5326-0261-4715-B367-2970427BBD99}\\FriendlyName",
+          "Details": "Windows Telephony Service Provider for Modems"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

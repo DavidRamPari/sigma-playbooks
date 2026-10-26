@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "0cb8d736-995d-4ce7-a31e-1e8d452a1459",
+    "title": "Potential EventLog File Location Tampering",
+    "level": "high",
+    "status": "test",
+    "author": "D3F7A5105",
+    "path": "windows/registry/registry_set/registry_set_evtx_file_key_tamper.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_evtx_file_key_tamper.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso modificó el valor \"File\" de un registro de eventos clásico de Windows bajo la clave del servicio EventLog, apuntándolo fuera de la carpeta predeterminada System32\\Winevt\\Logs. Esto puede desviar u ocultar los logs frente a la recolección y las alertas.",
+      "what_it_detects": "Eventos de escritura en el registro donde TargetObject contiene \\SYSTEM\\CurrentControlSet\\Services\\EventLog\\ y termina en \\File, salvo que Details (la nueva ruta) contenga \\System32\\Winevt\\Logs\\.",
+      "why_it_matters": "Mover un archivo .evtx a una ubicación inesperada permite a un atacante romper la recolección de logs, ocultar actividad o dirigir el log a un lugar que controla. La regla lo etiqueta como deterioro de defensas (ATT&CK T1685.001). El cambio suele aplicarse al reiniciar el servicio EventLog o el equipo.",
+      "triage_steps": [
+        "Revisar TargetObject para identificar el log afectado (Security, System, Application o personalizado) y Details para ver la nueva ruta del archivo.",
+        "Evaluar la ruta: carpetas escribibles por usuarios, Temp, recursos compartidos, unidades inexistentes o nombres extraños son sospechosos; un volumen dedicado a logs puede ser planificado.",
+        "Revisar Image, su proceso padre y CommandLine (reg.exe, powershell.exe, wevtutil.exe, binarios desconocidos) y el User que hizo el cambio.",
+        "Buscar tickets de cambio, GPO o registros de gestión de configuración que justifiquen la reubicación en este host.",
+        "Pivotar en el mismo host +/- 15 minutos: reinicios del servicio EventLog, reinicios del equipo, borrado de logs (1102, 104), cambios de política de auditoría y otras alertas de evasión.",
+        "Confirmar si el SIEM dejó de recibir eventos de ese log tras el cambio y si existe el nuevo archivo .evtx.",
+        "Buscar el mismo cambio en otros hosts y alertas previas del mismo usuario o Image."
+      ],
+      "false_positives": [
+        "Administradores que mueven logs a un volumen dedicado por tamaño o retención, mediante el Visor de eventos, wevtutil o scripts.",
+        "Instaladores de software que registran un log personalizado con archivo fuera de la carpeta predeterminada.",
+        "Scripts de hardening o de creación de imágenes que definen rutas de logs."
+      ],
+      "response_steps": [
+        "Verificar con el responsable del sistema y los registros de cambios si la reubicación estaba autorizada.",
+        "Si no lo estaba, preservar el archivo en la nueva ruta y el valor del registro como evidencia antes de modificar nada.",
+        "Restaurar File a %SystemRoot%\\System32\\Winevt\\Logs\\<NombreLog>.evtx y reiniciar el servicio EventLog en una ventana controlada.",
+        "Aislar el host si hay otra actividad maliciosa y restablecer las credenciales de la cuenta que hizo el cambio.",
+        "Buscar cambios similares en toda la flota y documentar excepciones para rutas legítimas conocidas."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque redirigir archivos de logs debilita directamente la detección y rara vez ocurre fuera de una administración planificada."
+    },
+    "en": {
+      "summary": "A process changed the \"File\" value of a classic Windows event log under the EventLog service key, pointing it outside the default System32\\Winevt\\Logs folder. This can redirect or hide log data from collection and alerting.",
+      "what_it_detects": "Registry set events where TargetObject contains \\SYSTEM\\CurrentControlSet\\Services\\EventLog\\ and ends with \\File, unless Details (the new path) contains \\System32\\Winevt\\Logs\\.",
+      "why_it_matters": "Moving an .evtx file somewhere unexpected lets an attacker break log collection, hide activity or point the log at a location they control. The rule tags this as defense impairment (ATT&CK T1685.001). The change usually takes effect after the EventLog service restarts or the host reboots.",
+      "triage_steps": [
+        "Read TargetObject to identify the affected log (Security, System, Application or custom) and Details to see the new file path.",
+        "Judge the new path: user-writable folders, Temp, network shares, nonexistent drives or odd file names are suspicious; a dedicated log volume may be planned.",
+        "Review Image, its parent process and CommandLine (reg.exe, powershell.exe, wevtutil.exe, unknown binaries) and the User that made the change.",
+        "Check change tickets or GPO and configuration-management records for a planned log relocation on this host.",
+        "Pivot on the same host +/- 15 minutes: EventLog service restarts, reboots, log cleared events (1102, 104), audit policy changes and other defense-evasion alerts.",
+        "Confirm whether the SIEM stopped receiving events from that log after the change, and whether the new .evtx file exists.",
+        "Search for the same value change on other hosts and for earlier alerts on the same user or Image."
+      ],
+      "false_positives": [
+        "Administrators moving event logs to a dedicated volume for size or retention reasons, via Event Viewer, wevtutil or scripts.",
+        "Software installers that register a custom event log with a file outside the default folder.",
+        "Hardening or imaging scripts that set log paths during build."
+      ],
+      "response_steps": [
+        "Verify with the system owner and change records whether the relocation was authorized.",
+        "If unauthorized, preserve the file at the new path and the registry value as evidence before changing anything.",
+        "Restore the File value to the default %SystemRoot%\\System32\\Winevt\\Logs\\<LogName>.evtx and restart the EventLog service in a controlled window.",
+        "Isolate the host if other malicious activity is found, and reset credentials of the account that made the change.",
+        "Hunt the fleet for similar changes and add allowlisting for documented legitimate log paths."
+      ],
+      "severity_rationale": "High fits because redirecting event log files directly undermines detection and is rarely done outside planned administration."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe redirects the Security log file to a user-writable public folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Security\\File",
+          "Details": "C:\\Users\\Public\\Libraries\\sec.evtx"
+        }
+      },
+      {
+        "description": "PowerShell points the System log file to the Windows Temp folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\System\\File",
+          "Details": "C:\\Windows\\Temp\\sys01.evtx"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "File value reset to the default Winevt\\Logs location, excluded by the filter",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Security\\File",
+          "Details": "%SystemRoot%\\System32\\Winevt\\Logs\\Security.evtx"
+        }
+      },
+      {
+        "description": "Change to the MaxSize value of the Security log, not the File value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "Image": "C:\\Windows\\System32\\wevtutil.exe",
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Security\\MaxSize",
+          "Details": "DWORD (0x08000000)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

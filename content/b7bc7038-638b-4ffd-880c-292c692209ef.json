@@ -1,0 +1,118 @@
+{
+  "rule": {
+    "id": "b7bc7038-638b-4ffd-880c-292c692209ef",
+    "title": "Certificate Request Export to Exchange Webserver",
+    "level": "critical",
+    "status": "test",
+    "author": "Max Altgelt (Nextron Systems)",
+    "path": "windows/builtin/msexchange/win_exchange_proxyshell_certificate_generation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/msexchange/win_exchange_proxyshell_certificate_generation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1505.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El log MSExchange Management registró una ejecución de New-ExchangeCertificate que genera una solicitud de certificado (CSR) binaria y la escribe en una ruta web, en un recurso administrativo C$ local o en un archivo .aspx. Es una técnica conocida para dejar un webshell en un servidor Exchange.",
+      "what_it_detects": "Entradas del log MSExchange Management que contienen New-ExchangeCertificate con -GenerateRequest, -BinaryEncoded y -RequestFile, junto con \\\\localhost\\C$, \\\\127.0.0.1\\C$, C:\\inetpub o la extensión .aspx.",
+      "why_it_matters": "En las cadenas de explotación tipo ProxyShell, el atacante mete código ASPX en los campos de la CSR y la escribe en un directorio que publica IIS. Así obtiene un webshell persistente (ATT&CK T1505.003, Web Shell) y ejecución remota de código en Exchange.",
+      "triage_steps": [
+        "Lea el mensaje completo del evento: anote el valor de -RequestFile, -SubjectName y las demás opciones, el usuario que lo ejecutó y el servidor Exchange.",
+        "Confirme si el archivo indicado en -RequestFile existe, por ejemplo en inetpub\\wwwroot\\aspnet_client o en FrontEnd\\HttpProxy. Calcule su hash y revise su contenido sin ejecutarlo.",
+        "Busque en los logs de IIS solicitudes a ese archivo .aspx, a /autodiscover/autodiscover.json o a /mapi/nspi en una ventana de ±15 minutos, y anote las IP de origen y los user agent.",
+        "En el mismo log MSExchange Management, revise los cmdlets que corrieron antes en el mismo host: New-ManagementRoleAssignment, New-MailboxExportRequest y Set-MailboxExportRequest.",
+        "Revise si w3wp.exe (MSExchange pools) lanzó procesos hijos como cmd.exe o powershell.exe después de la hora del evento.",
+        "Busque alertas previas sobre el mismo servidor, la misma cuenta y las mismas IP de origen, y revise también los demás servidores Exchange."
+      ],
+      "false_positives": [
+        "La regla indica que es poco probable. Podría tratarse de un administrador que, por error, guarda una CSR legítima en C:\\inetpub o en un recurso C$ local. Valídelo con el cambio aprobado y con el contenido del archivo."
+      ],
+      "response_steps": [
+        "Si el archivo contiene código ASPX o no hay un cambio aprobado, trate el caso como un compromiso. Aísle el servidor Exchange o quítelo del balanceador.",
+        "Preserve evidencia antes de borrar nada: el archivo, los logs de IIS y de Exchange, y una imagen de memoria si es posible.",
+        "Elimine los webshells que confirme, los role assignments y export requests no autorizados, y las cuentas o tareas de persistencia que encuentre.",
+        "Restablezca las credenciales que pudieron quedar expuestas, aplique las actualizaciones de seguridad de Exchange y bloquee las IP de origen identificadas.",
+        "Antes de volver a publicar el servidor, busque archivos .aspx recientes en los directorios web de todos los servidores Exchange."
+      ],
+      "severity_rationale": "El nivel crítico corresponde porque escribir una CSR como .aspx en un directorio web casi nunca es legítimo y suele indicar un webshell ya instalado."
+    },
+    "en": {
+      "summary": "The MSExchange Management log recorded New-ExchangeCertificate generating a binary certificate request (CSR) and writing it to a web path, a local C$ admin share or an .aspx file. Attackers use this technique to plant a webshell on Exchange.",
+      "what_it_detects": "MSExchange Management log entries containing New-ExchangeCertificate with -GenerateRequest, -BinaryEncoded and -RequestFile, plus \\\\localhost\\C$, \\\\127.0.0.1\\C$, C:\\inetpub or an .aspx extension.",
+      "why_it_matters": "In ProxyShell-style exploitation chains, attackers put ASPX code into CSR fields and write the file to an IIS-served directory. This gives them a persistent webshell (ATT&CK T1505.003, Web Shell) and remote code execution on Exchange.",
+      "triage_steps": [
+        "Read the full event message. Record the -RequestFile path, -SubjectName and other options, the executing user and the Exchange server.",
+        "Check whether the -RequestFile target exists, for example in inetpub\\wwwroot\\aspnet_client or FrontEnd\\HttpProxy. Hash the file and review its content without executing it.",
+        "Search IIS logs within ±15 minutes for requests to that .aspx file, /autodiscover/autodiscover.json or /mapi/nspi. Note the source IPs and user agents.",
+        "In the same MSExchange Management log, check for earlier cmdlets on that host: New-ManagementRoleAssignment, New-MailboxExportRequest and Set-MailboxExportRequest.",
+        "Check whether w3wp.exe (MSExchange pools) spawned child processes such as cmd.exe or powershell.exe after the event time.",
+        "Look for earlier alerts on the same server, account and source IPs, and check the other Exchange servers."
+      ],
+      "false_positives": [
+        "The rule says this is unlikely. An administrator might mistakenly save a legitimate CSR under C:\\inetpub or a local C$ share. Confirm it against an approved change and the file content."
+      ],
+      "response_steps": [
+        "If the file contains ASPX code or there is no approved change, treat this as a compromise. Isolate the Exchange server or remove it from the load balancer.",
+        "Preserve evidence before deleting anything: the file, IIS and Exchange logs, and a memory image if feasible.",
+        "Remove the confirmed webshells, unauthorized role assignments and export requests, and any persistence accounts or tasks you find.",
+        "Reset credentials that may be exposed, apply Exchange security updates and block the identified source IPs.",
+        "Before republishing the server, sweep the web directories of all Exchange servers for recently created .aspx files."
+      ],
+      "severity_rationale": "Critical fits because writing a CSR as .aspx into a web directory is almost never legitimate and usually means a webshell is already in place."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CSR written as an .aspx file under aspnet_client through the \\\\localhost\\C$ share",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Computer": "EXCH-01.andes.example.com",
+          "message": "Cmdlet suceeded. Cmdlet New-ExchangeCertificate, parameters -GenerateRequest \"True\" -BinaryEncoded \"True\" -RequestFile \"\\\\localhost\\C$\\inetpub\\wwwroot\\aspnet_client\\k3x9.aspx\" -SubjectName \"CN=placeholder\" -DomainName {mail.example.com}."
+        }
+      },
+      {
+        "description": "CSR written as .aspx into the Exchange HttpProxy folder through \\\\127.0.0.1\\C$",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Computer": "EXCH-02.andes.example.com",
+          "message": "Cmdlet suceeded. Cmdlet New-ExchangeCertificate, parameters -GenerateRequest \"True\" -BinaryEncoded \"True\" -RequestFile \"\\\\127.0.0.1\\C$\\Program Files\\Microsoft\\Exchange Server\\V15\\FrontEnd\\HttpProxy\\owa\\auth\\errorFE2.aspx\" -SubjectName \"CN=test\"."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate CSR for a certificate renewal saved as a .req file in an admin folder",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Computer": "EXCH-01.andes.example.com",
+          "message": "Cmdlet suceeded. Cmdlet New-ExchangeCertificate, parameters -GenerateRequest \"True\" -BinaryEncoded \"True\" -RequestFile \"D:\\Certs\\mail-example-com-2024.req\" -SubjectName \"CN=mail.example.com, O=Example, C=US\" -DomainName {mail.example.com, autodiscover.example.com}."
+        }
+      },
+      {
+        "description": "Self-signed certificate creation without a request file",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Computer": "EXCH-02.andes.example.com",
+          "message": "Cmdlet suceeded. Cmdlet New-ExchangeCertificate, parameters -SubjectName \"CN=EXCH-02\" -DomainName {exch-02.andes.example.com} -Services \"IIS, SMTP\" -PrivateKeyExportable \"True\"."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

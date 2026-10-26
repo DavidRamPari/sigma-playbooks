@@ -1,0 +1,112 @@
+{
+  "rule": {
+    "id": "08200f85-2678-463e-9c32-88dce2f073d1",
+    "title": "MSSQL Add Account To Sysadmin Role",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/application/mssqlserver/win_mssql_add_sysadmin_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/mssqlserver/win_mssql_add_sysadmin_account.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una instancia de SQL Server registró una sentencia ALTER SERVER ROLE [sysadmin] ADD MEMBER, es decir, se agregó una cuenta al rol fijo de servidor sysadmin. Puede ser una puerta trasera para mantener persistencia con control total de la instancia.",
+      "what_it_detects": "Eventos 33205 de SQL Server Audit en el log Application (Provider_Name que contiene 'MSSQL') cuyo campo Data incluye 'object_name:sysadmin' y la sentencia 'alter server role [sysadmin] add member'. Requiere que la auditoría de MSSQL esté habilitada.",
+      "why_it_matters": "Un miembro de sysadmin controla toda la instancia: lee y modifica cualquier base, crea logins, ejecuta código del sistema operativo con xp_cmdshell y configura procedimientos de inicio. Agregar una cuenta propia permite al atacante mantener persistencia (TA0003) aunque pierda el acceso inicial.",
+      "triage_steps": [
+        "En Data, identifique server_principal_name (quién ejecutó), la cuenta agregada en el statement, succeeded, client_ip, application_name y la instancia o host del evento.",
+        "Confirme si existe un ticket o cambio aprobado que justifique otorgar sysadmin a esa cuenta y que lo haya ejecutado un DBA autorizado.",
+        "Revise la cuenta agregada: fecha de creación (eventos CREATE LOGIN previos), tipo SQL o Windows, nombre genérico o parecido a cuentas de servicio.",
+        "Busque en la misma instancia, +/- 15 minutos, otros eventos 33205: CREATE LOGIN, sp_configure de xp_cmdshell, sp_procoption o creación de jobs del Agent.",
+        "Verifique client_ip y application_name: conexiones desde estaciones no habituales, sqlcmd, PowerShell o herramientas ofensivas son sospechosas.",
+        "Revise en el host de origen procesos y logons del usuario ejecutor en la misma ventana, y alertas previas de ese usuario o IP.",
+        "Consulte sys.server_role_members para confirmar si la membresía sigue activa."
+      ],
+      "false_positives": [
+        "Actividad administrativa legítima y poco frecuente de DBAs, por ejemplo al instalar o migrar una instancia.",
+        "Despliegues o scripts de aprovisionamiento que otorgan sysadmin a cuentas de servicio de aplicaciones o backup.",
+        "Herramientas de gestión de terceros que configuran sus propias cuentas durante la instalación."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la instancia y el equipo de DBA si el cambio fue autorizado antes de actuar.",
+        "Si no está autorizado, quite la cuenta del rol sysadmin y deshabilite el login, conservando evidencia del audit log.",
+        "Restablezca credenciales del principal que ejecutó la sentencia y revise su sesión de origen como posible compromiso.",
+        "Busque y elimine otra persistencia: logins nuevos, procedimientos de inicio, jobs del Agent, triggers y xp_cmdshell habilitado.",
+        "Revise todas las instancias del entorno buscando el mismo login o patrón y refuerce el monitoreo de cambios de roles."
+      ],
+      "severity_rationale": "Es alta porque otorgar sysadmin da control total de la instancia y este cambio rara vez es legítimo fuera de una ventana de cambios aprobada."
+    },
+    "en": {
+      "summary": "A SQL Server instance audited an ALTER SERVER ROLE [sysadmin] ADD MEMBER statement, meaning an account was added to the sysadmin fixed server role. This may be a backdoor account for persistent full control.",
+      "what_it_detects": "SQL Server Audit event 33205 in the Application log (Provider_Name containing 'MSSQL') whose Data field contains 'object_name:sysadmin' and the statement 'alter server role [sysadmin] add member'. MSSQL auditing must be enabled.",
+      "why_it_matters": "A sysadmin member controls the whole instance: reads or changes any database, creates logins, runs OS commands via xp_cmdshell and sets startup procedures. Adding an attacker-owned account provides persistence (TA0003) even if initial access is lost.",
+      "triage_steps": [
+        "From Data, extract server_principal_name (who ran it), the added account in the statement, succeeded, client_ip, application_name and the instance or host.",
+        "Check for an approved change or ticket justifying sysadmin for that account, executed by an authorized DBA.",
+        "Review the added account: creation time (earlier CREATE LOGIN events), SQL vs Windows login, generic or service-like name.",
+        "On the same instance within +/- 15 minutes, look for other 33205 events: CREATE LOGIN, sp_configure xp_cmdshell, sp_procoption or new Agent jobs.",
+        "Assess client_ip and application_name: unusual workstations, sqlcmd, PowerShell or offensive tooling are suspicious.",
+        "On the source host, review processes and logons of the executing user in the same window, and earlier alerts for that user or IP.",
+        "Query sys.server_role_members to confirm whether the membership is still present."
+      ],
+      "false_positives": [
+        "Rare legitimate DBA administration, such as instance installation or migration.",
+        "Deployment or provisioning scripts granting sysadmin to application or backup service accounts.",
+        "Third-party management tools configuring their own accounts during setup."
+      ],
+      "response_steps": [
+        "Confirm with the instance owner and DBA team whether the change was authorized before acting.",
+        "If unauthorized, remove the account from sysadmin and disable the login, preserving audit log evidence.",
+        "Reset credentials of the executing principal and investigate its source session as a possible compromise.",
+        "Hunt for and remove other persistence: new logins, startup procedures, Agent jobs, triggers and enabled xp_cmdshell.",
+        "Sweep other instances for the same login or pattern and tighten monitoring of server role changes."
+      ],
+      "severity_rationale": "High fits because sysadmin grants full instance control and this change is rarely legitimate outside an approved change window."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SQL Server audit event: Windows user adds an unknown SQL login to the sysadmin role from sqlcmd.",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Computer": "SQL-01.andes.example.com",
+          "Data": "audit_schema_version:1 event_time:2024-07-02 03:14:55.1234567 sequence_number:1 action_id:APRL succeeded:true is_column_permission:false session_id:61 server_principal_id:259 database_principal_id:1 target_server_principal_id:0 target_database_principal_id:0 object_id:3 user_defined_event_id:0 transaction_id:0 class_type:SG duration_milliseconds:0 response_rows:0 affected_rows:0 client_ip:192.0.2.45 permission_bitmask:00000000000000000000000000000000 sequence_group_id:0 session_server_principal_name:ANDES\\jperez server_principal_name:ANDES\\jperez server_principal_sid:010500000000000515000000 database_principal_name:dbo target_server_principal_name: target_server_principal_sid: target_database_principal_name: server_instance_name:SQL-01 database_name:master schema_name: object_name:sysadmin statement:ALTER SERVER ROLE [sysadmin] ADD MEMBER [svc_backup2] additional_information: user_defined_information: application_name:SQLCMD host_name:WS-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same audit event type, but the login is added to the dbcreator role instead of sysadmin.",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Computer": "SQL-01.andes.example.com",
+          "Data": "audit_schema_version:1 event_time:2024-07-02 10:05:12.5550000 sequence_number:1 action_id:APRL succeeded:true session_id:58 client_ip:198.51.100.20 server_principal_name:ANDES\\dba_mlopez database_principal_name:dbo server_instance_name:SQL-01 database_name:master schema_name: object_name:dbcreator statement:ALTER SERVER ROLE [dbcreator] ADD MEMBER [app_deploy] additional_information: application_name:Microsoft SQL Server Management Studio host_name:WS-0201"
+        }
+      },
+      {
+        "description": "sysadmin role change that removes a member (DROP MEMBER), not an addition.",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "MSSQLSERVER",
+          "EventID": 33205,
+          "Computer": "SQL-01.andes.example.com",
+          "Data": "audit_schema_version:1 event_time:2024-07-03 09:20:40.0000000 sequence_number:1 action_id:APRL succeeded:true session_id:72 client_ip:198.51.100.20 server_principal_name:ANDES\\dba_mlopez database_principal_name:dbo server_instance_name:SQL-01 database_name:master object_name:sysadmin statement:ALTER SERVER ROLE [sysadmin] DROP MEMBER [svc_backup2] additional_information: application_name:Microsoft SQL Server Management Studio host_name:WS-0201"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "rule": {
+    "id": "516376b4-05cd-4122-bae0-ad7641c38d48",
+    "title": "Mailbox Export to Exchange Webserver",
+    "level": "critical",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Rich Warren, Christian Burkard (Nextron Systems)",
+    "path": "windows/builtin/msexchange/win_exchange_proxyshell_mailbox_export.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/msexchange/win_exchange_proxyshell_mailbox_export.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1505.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cmdlet de administración de Exchange exportó un buzón a un recurso compartido UNC o a un archivo con extensión .aspx, o asignó a un usuario el rol \"Mailbox Import Export\". Esta técnica, conocida por ProxyShell, se usa para dejar una webshell en el servidor web de Exchange.",
+      "what_it_detects": "Eventos del log MSExchange Management con New-MailboxExportRequest con -Mailbox y un -FilePath UNC entre comillas o un nombre .aspx, o New-ManagementRoleAssignment que otorga \"Mailbox Import Export\" a un usuario.",
+      "why_it_matters": "El atacante exporta un buzón con un elemento manipulado a un .aspx dentro de los directorios web de IIS/Exchange, y así el PST queda convertido en una webshell (T1505.003, persistencia). La asignación del rol es el paso previo.",
+      "triage_steps": [
+        "Lea el cmdlet completo en message: anote -Mailbox, el destino de -FilePath (host, recurso compartido, carpeta, extensión) y el -User que recibió el rol.",
+        "Verifique si -FilePath apunta a inetpub, FrontEnd\\HttpProxy, owa o ecp, o termina en .aspx; trátelo como malicioso hasta demostrar lo contrario.",
+        "Identifique la cuenta que ejecutó el cmdlet y confirme si es un administrador de Exchange con un cambio aprobado.",
+        "Revise el mismo servidor +/- 15 minutos buscando New-ManagementRoleAssignment, New-MailboxExportRequest, Remove-MailboxExportRequest y cmdlets Set-*.",
+        "Revise los logs de IIS cerca de la hora de la alerta: solicitudes a autodiscover.json con query inusual o URIs del backend de PowerShell, y sus IP de origen.",
+        "Liste archivos .aspx nuevos o modificados en los directorios web y busque w3wp.exe ejecutando cmd.exe o powershell.exe.",
+        "Busque alertas previas del mismo servidor, cuenta e IP de origen."
+      ],
+      "false_positives": [
+        "Exportaciones PST aprobadas a un recurso compartido para eDiscovery, retención legal o bajas de personal. Exchange exige rutas UNC, así que valide el recurso y el ticket.",
+        "Administradores que asignan \"Mailbox Import Export\" a una cuenta de servicio de migración o respaldo en un proyecto documentado."
+      ],
+      "response_steps": [
+        "Si el destino es .aspx o un directorio web, aísle el servidor Exchange de Internet sin apagarlo, para preservar evidencia.",
+        "Recolecte el archivo exportado, los logs de IIS y los de administración de Exchange antes de borrar nada; luego elimine la webshell confirmada.",
+        "Quite asignaciones de rol y solicitudes de exportación ilegítimas y restablezca las credenciales de las cuentas involucradas.",
+        "Aplique parches a Exchange, busque otras webshells y persistencias, y restablezca el servicio solo cuando esté limpio."
+      ],
+      "severity_rationale": "El nivel crítico se justifica porque el patrón es una técnica directa para plantar webshells en un servidor expuesto a Internet, y los casos legítimos son pocos y fáciles de verificar."
+    },
+    "en": {
+      "summary": "An Exchange management cmdlet exported a mailbox to a UNC share or to a file ending in .aspx, or granted a user the \"Mailbox Import Export\" role. This is a known ProxyShell-style way to drop a webshell on the Exchange web server.",
+      "what_it_detects": "MSExchange Management log entries containing New-MailboxExportRequest with -Mailbox and either a quoted UNC -FilePath or an .aspx name, or New-ManagementRoleAssignment granting \"Mailbox Import Export\" to a user.",
+      "why_it_matters": "Attackers export a mailbox holding a crafted item to an .aspx file under the IIS/Exchange web directories, turning the PST into a server-side web shell (T1505.003, persistence). The role assignment is the prerequisite step.",
+      "triage_steps": [
+        "Read the full cmdlet text in the message: note the -Mailbox, the -FilePath target (host, share, folder, extension) and any -User given the role.",
+        "Check whether -FilePath points to inetpub, FrontEnd\\HttpProxy, owa or ecp folders, or ends in .aspx; treat either as confirmed malicious until proven otherwise.",
+        "Identify who ran the cmdlet (the caller account in the event) and whether it is a known Exchange admin working under an approved change.",
+        "Pivot on the same Exchange server +/- 15 minutes for New-ManagementRoleAssignment, New-MailboxExportRequest, Remove-MailboxExportRequest and Set-* cmdlets.",
+        "Review IIS logs for requests to autodiscover.json with unusual query strings or PowerShell backend URIs, plus their source IPs, around the alert time.",
+        "List new or modified .aspx files in the web directories and check for w3wp.exe spawning cmd.exe or powershell.exe.",
+        "Search earlier alerts for the same server, caller account and source IPs."
+      ],
+      "false_positives": [
+        "Approved PST exports to a file share for eDiscovery, legal hold or offboarding. Exchange requires UNC paths, so check the share and the ticket.",
+        "Admins granting \"Mailbox Import Export\" to a migration or backup service account during a documented project."
+      ],
+      "response_steps": [
+        "If a target is .aspx or a web directory, isolate the Exchange server from the internet, keeping it running so evidence is preserved.",
+        "Collect the exported file, IIS logs and Exchange management logs before removing anything; then delete the confirmed webshell.",
+        "Remove illegitimate role assignments and export requests, reset credentials of the calling and abused accounts.",
+        "Patch Exchange, hunt for other webshells and persistence, and restore service only after it is clean."
+      ],
+      "severity_rationale": "Critical fits because the matched patterns are a direct webshell-planting technique on an internet-facing server, and legitimate matches are few and easy to verify."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Mailbox exported to an .aspx file in the Exchange web directory via a UNC path",
+        "event": {
+          "EventID": 1,
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.example.com",
+          "message": "Cmdlet succeeded. New-MailboxExportRequest -Mailbox \"jperez@example.com\" -FilePath \"\\\\EXCH-01\\c$\\Program Files\\Microsoft\\Exchange Server\\V15\\FrontEnd\\HttpProxy\\owa\\auth\\errorx.aspx\" -ContentFilter \"Subject -eq 'invoice'\""
+        }
+      },
+      {
+        "description": "Mailbox Import Export role granted to a user",
+        "event": {
+          "EventID": 1,
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.example.com",
+          "message": "Cmdlet succeeded. New-ManagementRoleAssignment -Role \"Mailbox Import Export\" -User \"ANDES\\svc-legacy\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin only checks status of existing export requests",
+        "event": {
+          "EventID": 1,
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.example.com",
+          "message": "Cmdlet succeeded. Get-MailboxExportRequest -Mailbox \"jperez@example.com\" -Status Completed"
+        }
+      },
+      {
+        "description": "Role assignment for a different role (Mailbox Search)",
+        "event": {
+          "EventID": 1,
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.example.com",
+          "message": "Cmdlet succeeded. New-ManagementRoleAssignment -Role \"Mailbox Search\" -User \"ANDES\\mlopez\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

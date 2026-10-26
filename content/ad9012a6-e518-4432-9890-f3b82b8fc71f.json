@@ -1,0 +1,161 @@
+{
+  "rule": {
+    "id": "ad9012a6-e518-4432-9890-f3b82b8fc71f",
+    "title": "Potential Sidecar Injection Into Running Deployment",
+    "level": "medium",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_sidecar_injection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_sidecar_injection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1609"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad envió una solicitud PATCH sobre un Deployment del grupo de API apps. Puede ser un cambio rutinario o la inyección de un contenedor sidecar para ejecutar código oculto dentro de una carga de trabajo legítima.",
+      "what_it_detects": "Eventos de auditoría de Kubernetes con verb 'patch', apiGroup 'apps' y objectRef.resource 'deployments'. La regla coincide con cualquier patch a un Deployment, no solo con los que agregan un contenedor, así que hay que revisar el cuerpo de la solicitud.",
+      "why_it_matters": "Un atacante que agrega un sidecar a un Deployment existente ejecuta código con la service account, el acceso de red y los secretos montados del pod, y se camufla entre pods legítimos. Corresponde a ATT&CK T1609, Container Administration Command (Ejecución).",
+      "triage_steps": [
+        "Registre user.username, user.groups, sourceIPs, userAgent, objectRef.namespace, objectRef.name y responseStatus.code. Verifique si el patch se aplicó.",
+        "Si se registra requestObject, revise si spec.template.spec.containers o initContainers tienen una entrada nueva. Anote la imagen, el comando, los volúmenes montados y el securityContext.",
+        "Compare las revisiones de ReplicaSet con 'kubectl rollout history deployment/<nombre> -n <ns> --revision=N' para ver el cambio real del spec.",
+        "Confirme si la identidad es una cuenta conocida de CI/CD o GitOps (Argo CD, Flux, Helm) y si su userAgent e IP de origen coinciden con su patrón habitual.",
+        "Busque actividad del mismo usuario e IP de origen en +/- 15 minutos: lectura de secrets, pods/exec, cambios de RBAC o service accounts nuevas.",
+        "Confirme con el responsable de la carga de trabajo si hay un ticket de cambio o un pull request aprobado que coincida con la hora.",
+        "Valide el registry y el digest de la imagen nueva contra los registries aprobados, y revise el tráfico de salida de los pods nuevos."
+      ],
+      "false_positives": [
+        "Pipelines de CI/CD, upgrades de Helm o controladores GitOps que aplican patch a Deployments durante despliegues normales.",
+        "'kubectl rollout restart', 'kubectl set image' o escalados, que generan patch sin agregar contenedores.",
+        "Administradores que agregan sidecars aprobados de logging, proxy o monitoreo, o anotaciones para la inyección del service mesh."
+      ],
+      "response_steps": [
+        "Verifique con el responsable. Si el cambio no está autorizado, conserve los eventos de auditoría y el manifiesto actual del Deployment como evidencia.",
+        "Revierta con 'kubectl rollout undo' a la última revisión confiable, o escale el Deployment a cero si el código inyectado está activo.",
+        "Revoque o rote las credenciales o el token que hizo el patch, y también los secretos accesibles desde los pods afectados.",
+        "Revise el RBAC para que solo las identidades previstas puedan hacer patch a Deployments. Evalúe políticas de admisión que restrinjan imágenes y contenedores.",
+        "Busque patches similares en otros Deployments, DaemonSets y StatefulSets, y bloquee la imagen inyectada."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque un sidecar no autorizado da ejecución sigilosa, pero los patch a Deployments son frecuentes en la operación normal y requieren contexto para confirmarse."
+    },
+    "en": {
+      "summary": "A principal sent a PATCH request against a Deployment in the apps API group. This may be a routine change, or someone injecting a sidecar container to run hidden code inside a legitimate workload.",
+      "what_it_detects": "Kubernetes audit events where verb is 'patch', apiGroup is 'apps' and objectRef.resource is 'deployments'. The rule matches every patch to a Deployment, not only ones that add a container, so the request body needs review.",
+      "why_it_matters": "An attacker who adds a sidecar to an existing Deployment can run code with the pod's service account, network access and mounted secrets, and blends in with legitimate pods. This maps to ATT&CK T1609, Container Administration Command (Execution).",
+      "triage_steps": [
+        "Record user.username, user.groups, sourceIPs, userAgent, objectRef.namespace, objectRef.name and responseStatus.code. Check whether the patch succeeded.",
+        "If requestObject is logged, check whether spec.template.spec.containers or initContainers gained an entry. Note the new image, command, volume mounts and securityContext.",
+        "Compare ReplicaSet revisions with 'kubectl rollout history deployment/<name> -n <ns> --revision=N' to see the actual spec change.",
+        "Check whether the identity is a known CI/CD or GitOps account (Argo CD, Flux, Helm) and whether its userAgent and source IP match its usual pattern.",
+        "Pivot on the same user and source IP within +/- 15 minutes for secrets reads, pods/exec, RBAC changes or new service accounts.",
+        "Confirm with the workload owner whether a change ticket or merged pull request matches the timestamp.",
+        "Check the new image's registry and digest against approved registries, and look at egress from the new pods."
+      ],
+      "false_positives": [
+        "CI/CD pipelines, Helm upgrades or GitOps controllers patching Deployments during normal releases.",
+        "'kubectl rollout restart', 'kubectl set image' or scaling, which issue patch requests without adding containers.",
+        "Administrators adding approved logging, proxy or monitoring sidecars, or annotations for service-mesh injection."
+      ],
+      "response_steps": [
+        "Verify with the owner. If the change is unauthorized, preserve the audit events and the current Deployment manifest as evidence.",
+        "Roll back with 'kubectl rollout undo' to the last known-good revision, or scale the Deployment to zero if the injected code is active.",
+        "Revoke or rotate the credentials or token that made the patch, plus any secrets the affected pods could reach.",
+        "Review RBAC so only intended identities can patch Deployments. Consider admission policies that restrict images and containers.",
+        "Hunt for similar patches to other Deployments, DaemonSets and StatefulSets, and block the injected image."
+      ],
+      "severity_rationale": "Medium fits because unauthorized sidecars give stealthy code execution, but Deployment patches are common in normal operations and need context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unknown user patches a production Deployment with kubectl to add a sidecar container.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "RequestResponse",
+          "stage": "ResponseComplete",
+          "verb": "patch",
+          "apiGroup": "apps",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "checkout-api",
+          "objectRef.apiVersion": "v1",
+          "requestURI": "/apis/apps/v1/namespaces/payments/deployments/checkout-api?fieldManager=kubectl-patch",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:03:12.418Z"
+        }
+      },
+      {
+        "description": "A service account patches a Deployment through a client library from an internal IP.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Request",
+          "stage": "ResponseComplete",
+          "verb": "patch",
+          "apiGroup": "apps",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "default",
+          "objectRef.name": "web-frontend",
+          "requestURI": "/apis/apps/v1/namespaces/default/deployments/web-frontend",
+          "user.username": "system:serviceaccount:default:builder",
+          "sourceIPs": "198.51.100.23",
+          "userAgent": "python-requests/2.31.0",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:07:40.002Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A patch to a DaemonSet in the apps group. Its resource is not deployments.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Request",
+          "stage": "ResponseComplete",
+          "verb": "patch",
+          "apiGroup": "apps",
+          "objectRef.resource": "daemonsets",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "node-exporter",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "A read-only get of a Deployment. The verb is not patch.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "get",
+          "apiGroup": "apps",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "checkout-api",
+          "user.username": "system:serviceaccount:argocd:argocd-application-controller",
+          "sourceIPs": "198.51.100.10",
+          "userAgent": "argocd-application-controller/v2.10.4",
+          "responseStatus.code": 200
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

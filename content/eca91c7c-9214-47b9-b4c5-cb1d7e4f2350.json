@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "eca91c7c-9214-47b9-b4c5-cb1d7e4f2350",
+    "title": "Uncommon Outbound Kerberos Connection - Security",
+    "level": "medium",
+    "status": "test",
+    "author": "Ilyas Ochkov, oscd.community",
+    "path": "windows/builtin/security/win_security_susp_outbound_kerberos_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_outbound_kerberos_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso distinto de lsass.exe (y de los navegadores o Tomcat excluidos) estableció una conexión permitida por Windows Filtering Platform hacia el puerto 88 (Kerberos). Puede indicar que una herramienta como Rubeus solicita o manipula tickets Kerberos directamente.",
+      "what_it_detects": "Eventos 5156 del log Security con DestPort 88 cuyo campo Application no es lsass.exe en System32 ni Chrome, Firefox o tomcat8.exe en sus rutas habituales.",
+      "why_it_matters": "En Windows, normalmente solo LSASS habla Kerberos con el controlador de dominio. Si otro proceso lo hace, podría tratarse de Kerberoasting (T1558.003), pass-the-ticket o abuso de delegación, que facilitan el robo de credenciales y el movimiento lateral.",
+      "triage_steps": [
+        "Revise el campo Application: ruta, nombre y ubicación (Temp, AppData, Users, ProgramData). Obtenga el hash del binario y verifique su firma y su reputación.",
+        "Confirme que DestAddress pertenece a un controlador de dominio legítimo. Si la IP no es un DC conocido, escale de inmediato.",
+        "Con el ProcessID, identifique el proceso en EDR o Sysmon (evento 1): CommandLine, ParentImage, usuario y hora de inicio.",
+        "Busque en CommandLine argumentos típicos de Rubeus o similares: kerberoast, asktgt, asktgs, s4u, ptt, dump, tgtdeleg.",
+        "En los DC, revise los eventos 4768 y 4769 originados desde la IP del host en un rango de +/- 15 minutos, en especial tickets RC4 (0x17) o muchas solicitudes TGS a cuentas de servicio.",
+        "Revise el host y el usuario en +/- 15 minutos: inicios de sesión 4624/4648, nuevos servicios y conexiones SMB/WinRM hacia otros equipos.",
+        "Consulte alertas anteriores del mismo host, usuario y Application para saber si el proceso forma parte de la línea base."
+      ],
+      "false_positives": [
+        "Navegadores o aplicaciones de terceros con autenticación Kerberos integrada instalados en rutas no estándar (por ejemplo, Chrome portable o Edge).",
+        "Clientes Java, servidores de aplicaciones o agentes de monitoreo y backup que implementan su propio cliente Kerberos.",
+        "Herramientas administrativas o de auditoría autorizadas, como pruebas de penetración aprobadas."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema y con el usuario si el proceso y su actividad Kerberos son legítimos. Si lo son, documéntelo y ajuste la línea base.",
+        "Si es malicioso, aísle el endpoint desde el EDR y preserve la memoria y el binario para análisis.",
+        "Restablezca las contraseñas de las cuentas de servicio que pudieron ser objeto de Kerberoasting y de las cuentas usadas en el host. Considere purgar los tickets con klist purge.",
+        "Elimine el binario y los mecanismos de persistencia. Revise la configuración de delegación en AD y fuerce el uso de AES en lugar de RC4 donde sea posible."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el patrón coincide con herramientas de ataque Kerberos, pero algunas aplicaciones legítimas también lo generan y es necesaria una línea base."
+    },
+    "en": {
+      "summary": "A process other than lsass.exe (or the excluded browsers and Tomcat) made a connection to port 88 (Kerberos) that Windows Filtering Platform allowed. This may mean a tool such as Rubeus is requesting or manipulating Kerberos tickets directly.",
+      "what_it_detects": "Security log event 5156 with DestPort 88 where Application is not System32 lsass.exe, or Chrome, Firefox or tomcat8.exe in their standard paths.",
+      "why_it_matters": "On Windows, normally only LSASS talks Kerberos to domain controllers. When another process does, it may be Kerberoasting (T1558.003), pass-the-ticket or delegation abuse, which lead to credential theft and lateral movement.",
+      "triage_steps": [
+        "Check the Application field: its path, its name and where it lives (Temp, AppData, Users, ProgramData). Get the binary's hash and check its signature and reputation.",
+        "Confirm that DestAddress is a legitimate domain controller. Escalate right away if the IP is not a known DC.",
+        "Use the ProcessID to find the process in EDR or Sysmon (event 1): CommandLine, ParentImage, user and start time.",
+        "Look for Rubeus-style arguments in CommandLine: kerberoast, asktgt, asktgs, s4u, ptt, dump, tgtdeleg.",
+        "On the DCs, check 4768 and 4769 events from the host's IP within +/- 15 minutes. Watch for RC4 (0x17) tickets or bursts of TGS requests for service accounts.",
+        "Check the host and user within +/- 15 minutes: 4624/4648 logons, new services, and SMB or WinRM connections to other machines.",
+        "Look for earlier alerts for the same host, user and Application to see whether the process is part of the baseline."
+      ],
+      "false_positives": [
+        "Browsers or third-party apps with integrated Kerberos authentication installed in non-standard paths (for example, portable Chrome or Edge).",
+        "Java clients, application servers, or monitoring and backup agents that ship their own Kerberos client.",
+        "Authorized admin or audit tools, such as approved penetration tests."
+      ],
+      "response_steps": [
+        "Ask the system owner and the user whether the process and its Kerberos activity are legitimate. If they are, document it and update the baseline.",
+        "If it is malicious, isolate the endpoint through EDR and preserve memory and the binary for analysis.",
+        "Reset passwords for service accounts that may have been Kerberoasted and for accounts used on the host. Consider purging tickets with klist purge.",
+        "Remove the binary and any persistence. Review delegation settings in AD and enforce AES over RC4 where possible."
+      ],
+      "severity_rationale": "Medium fits because the pattern matches Kerberos attack tools, but some legitimate applications also produce it and a baseline is needed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unsigned binary in the user's Temp folder connects to a DC on port 88, matching Rubeus Kerberoasting behavior.",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "Application": "\\device\\harddiskvolume3\\users\\jperez\\appdata\\local\\temp\\rubeus.exe",
+          "ProcessID": 6124,
+          "Direction": "%%14593",
+          "SourceAddress": "192.0.2.45",
+          "SourcePort": 51234,
+          "DestAddress": "192.0.2.10",
+          "DestPort": 88,
+          "Protocol": 6
+        }
+      },
+      {
+        "description": "PowerShell connects directly to the Kerberos port, which the lsass, browser and Tomcat filters do not exclude.",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0087.andes.example.com",
+          "Application": "\\device\\harddiskvolume2\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
+          "ProcessID": 4410,
+          "Direction": "%%14593",
+          "SourceAddress": "192.0.2.77",
+          "SourcePort": 50112,
+          "DestAddress": "192.0.2.11",
+          "DestPort": 88,
+          "Protocol": 17
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal Kerberos traffic from lsass.exe in System32, excluded by filter_main_lsass.",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "Application": "\\device\\harddiskvolume3\\windows\\system32\\lsass.exe",
+          "ProcessID": 812,
+          "Direction": "%%14593",
+          "SourceAddress": "192.0.2.45",
+          "SourcePort": 51240,
+          "DestAddress": "192.0.2.10",
+          "DestPort": 88,
+          "Protocol": 6
+        }
+      },
+      {
+        "description": "Same suspicious binary, but it connects to LDAP port 389, so DestPort 88 does not match.",
+        "event": {
+          "EventID": 5156,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "Application": "\\device\\harddiskvolume3\\users\\jperez\\appdata\\local\\temp\\rubeus.exe",
+          "ProcessID": 6124,
+          "Direction": "%%14593",
+          "SourceAddress": "192.0.2.45",
+          "SourcePort": 51250,
+          "DestAddress": "192.0.2.10",
+          "DestPort": 389,
+          "Protocol": 6
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "b07e58cf-cacc-4135-8473-ccb2eba63dd2",
+    "title": "Potential Kerberos Coercion by Spoofing SPNs via DNS Manipulation",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/builtin/security/win_security_kerberos_coercion_via_dns_object.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_kerberos_coercion_via_dns_object.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1557.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó o accedió a un registro DNS integrado en Active Directory (dnsNode) cuyo nombre contiene una estructura CREDENTIAL_TARGET_INFORMATION serializada en base64. Es un indicador fuerte de preparación de un ataque de coerción Kerberos mediante suplantación de SPN por DNS.",
+      "what_it_detects": "Eventos 5136/5137 con ObjectClass dnsNode, o 4662, donde ObjectDN o AdditionalInfo contienen 'UWhRCA', 'BAAAA' y 'CN=MicrosoftDNS', el patrón 1UWhRCAAAAA...BAAAA de un nombre de destino serializado.",
+      "why_it_matters": "Un atacante con una cuenta de bajos privilegios puede registrar este nombre en ADIDNS para que las víctimas forzadas a autenticarse obtengan tickets Kerberos de un SPN legítimo y los envíen a su host, lo que permite relay o reflexión (T1557.003, como en CVE-2025-33073).",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId. Determine si la cuenta suele administrar DNS; una cuenta estándar o de equipo es muy sospechosa.",
+        "Lea ObjectDN o AdditionalInfo: el prefijo antes del blob (por ejemplo 'srv1') indica qué host se suplanta; confirme a qué servidor o controlador de dominio corresponde.",
+        "Busque eventos 5136 del mismo objeto con AttributeLDAPDisplayName dnsRecord para conocer la IP a la que apunta el registro, en un rango de +/- 15 minutos.",
+        "Correlacione el SubjectLogonId con eventos 4624 en el controlador de dominio para obtener la IP y la estación de origen del cambio.",
+        "Revise si la IP de destino del registro recibió autenticaciones (4624, tráfico SMB/HTTP/LDAP) de servidores o controladores de dominio después del cambio.",
+        "Busque alertas relacionadas: consultas DNS con el mismo patrón, llamadas RPC de coerción y alertas previas para el mismo usuario o host de origen."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; un nombre DNS con este blob casi nunca es legítimo.",
+        "Ejercicios autorizados de red team o pruebas de pentesting sobre coerción Kerberos; confirme con el equipo responsable y la ventana aprobada."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la cuenta y con los equipos de DNS y red team si el cambio estaba autorizado.",
+        "Si no lo estaba, deshabilite o restablezca la cuenta implicada y aísle el endpoint de origen según el procedimiento de IR.",
+        "Preserve los eventos y una exportación del objeto dnsNode y luego elimine el registro malicioso de la zona.",
+        "Verifique que los parches relacionados (CVE-2025-33073) estén aplicados y que la firma SMB y la protección contra relay estén activas.",
+        "Considere restringir el permiso CreateChild en las zonas ADIDNS para usuarios autenticados y mantenga la auditoría habilitada."
+      ],
+      "severity_rationale": "El nivel high es adecuado: el patrón es muy específico de esta técnica, casi no tiene usos legítimos y antecede el robo o relay de credenciales privilegiadas."
+    },
+    "en": {
+      "summary": "An Active Directory-integrated DNS record (dnsNode) was created, modified or accessed with a name containing a base64-marshaled CREDENTIAL_TARGET_INFORMATION structure. This strongly suggests someone is staging Kerberos coercion by spoofing SPNs through DNS.",
+      "what_it_detects": "Event 5136/5137 with ObjectClass dnsNode, or event 4662, where ObjectDN or AdditionalInfo contains 'UWhRCA', 'BAAAA' and 'CN=MicrosoftDNS'. This is the 1UWhRCAAAAA...BAAAA pattern of a marshaled target name.",
+      "why_it_matters": "A low-privileged account can register this name in ADIDNS. Coerced victims then request Kerberos tickets for a legitimate SPN and send them to the attacker's host, enabling relay or reflection (T1557.003, as in CVE-2025-33073).",
+      "triage_steps": [
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId. Check whether the account normally manages DNS. A standard user or machine account is highly suspicious.",
+        "Parse ObjectDN or AdditionalInfo. The prefix before the blob (e.g. 'srv1') names the spoofed host. Confirm which server or domain controller that is.",
+        "Find 5136 events for the same object with AttributeLDAPDisplayName dnsRecord within +/- 15 minutes to learn which IP the record points to.",
+        "Correlate SubjectLogonId with 4624 events on the domain controller to find the source IP and workstation of the change.",
+        "Check whether the record's target IP received authentications (4624, SMB/HTTP/LDAP traffic) from servers or domain controllers after the change.",
+        "Look for related alerts: DNS queries with the same pattern, coercion RPC calls, and earlier alerts for the same user or source host."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. A DNS name carrying this blob is almost never legitimate.",
+        "Authorized red team or penetration tests of Kerberos coercion. Confirm with the owning team and the approved window."
+      ],
+      "response_steps": [
+        "Ask the account owner and the DNS and red teams whether the change was authorized.",
+        "If it was not, disable or reset the account and isolate the source endpoint following your IR procedure.",
+        "Preserve the events and an export of the dnsNode object, then delete the malicious record from the zone.",
+        "Verify that related patches (CVE-2025-33073) are applied and that SMB signing and relay protections are enforced.",
+        "Consider restricting CreateChild on ADIDNS zones for Authenticated Users, and keep auditing enabled."
+      ],
+      "severity_rationale": "High fits because the pattern is specific to this technique, has almost no legitimate use and comes before theft or relay of privileged credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "5137 creation of a dnsNode whose DN embeds the marshaled CREDENTIAL_TARGET_INFORMATION blob, by a low-privileged user",
+        "event": {
+          "EventID": 5137,
+          "Computer": "DC-01.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectClass": "dnsNode",
+          "ObjectDN": "DC=srv1UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAwbEAYBAAAA,DC=example.com,CN=MicrosoftDNS,DC=DomainDnsZones,DC=example,DC=com",
+          "ObjectGUID": "{6f1c2a4e-1b2d-4c3e-9a8b-0d1e2f3a4b5c}",
+          "DSName": "example.com"
+        }
+      },
+      {
+        "description": "4662 directory service access on the spoofed DNS object with the blob in AdditionalInfo",
+        "event": {
+          "EventID": 4662,
+          "Computer": "DC-01.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "DS",
+          "ObjectType": "%{e0fa1e8c-9b45-11d0-afdd-00c04fd930c9}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x1",
+          "AdditionalInfo": "DC=srv1UWhRCAAAAAAAAAAAAAAAAAAAAAAAAAAAAwbEAYBAAAA,DC=example.com,CN=MicrosoftDNS,DC=DomainDnsZones,DC=example,DC=com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate creation of a normal dnsNode record by a DNS administrator; no marshaled blob in the DN",
+        "event": {
+          "EventID": 5137,
+          "Computer": "DC-01.example.com",
+          "SubjectUserName": "adm-dns",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x51C2B0",
+          "ObjectClass": "dnsNode",
+          "ObjectDN": "DC=fileserver01,DC=example.com,CN=MicrosoftDNS,DC=DomainDnsZones,DC=example,DC=com",
+          "ObjectGUID": "{9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d}",
+          "DSName": "example.com"
+        }
+      },
+      {
+        "description": "4662 access to an ordinary DNS record; AdditionalInfo lacks the UWhRCA/BAAAA pattern",
+        "event": {
+          "EventID": 4662,
+          "Computer": "DC-01.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x6A1D44",
+          "ObjectServer": "DS",
+          "ObjectType": "%{e0fa1e8c-9b45-11d0-afdd-00c04fd930c9}",
+          "OperationType": "Object Access",
+          "AccessMask": "0x1",
+          "AdditionalInfo": "DC=WS-0142,DC=example.com,CN=MicrosoftDNS,DC=DomainDnsZones,DC=example,DC=com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "53059bc0-1472-438b-956a-7508a94a91f0",
+    "title": "Disable System Firewall",
+    "level": "high",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/service_stop/lnx_auditd_disable_system_firewall.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/service_stop/lnx_auditd_disable_system_firewall.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un evento SERVICE_STOP para firewalld, iptables o ufw: se detuvo el firewall del host. Puede ser mantenimiento legítimo o un atacante que elimina restricciones de red.",
+      "what_it_detects": "Registros auditd con type=SERVICE_STOP y unit igual a firewalld, iptables o ufw. systemd (pid 1) emite el evento cuando la unidad se detiene, por ejemplo con systemctl stop, ufw disable o service iptables stop.",
+      "why_it_matters": "Detener el firewall del host elimina los controles que limitan conexiones entrantes y salientes. Así se facilitan el C2, el movimiento lateral y la exfiltración. Es una técnica de debilitamiento de defensas (la regla usa la etiqueta T1686; la referencia de Atomic Red Team corresponde a T1562.004).",
+      "triage_steps": [
+        "Identifique el host, la unidad (unit) y la hora del evento, y confirme si existe un cambio aprobado o una ventana de mantenimiento.",
+        "El evento lo emite systemd con auid sin asignar. Correlacione en +/- 15 minutos con registros USER_CMD, EXECVE o sudo de systemctl, ufw o service para identificar al usuario real.",
+        "Revise si hubo un SERVICE_START posterior de la misma unidad. Un stop seguido de un start indica un reinicio; un stop sin start indica que el firewall quedó deshabilitado.",
+        "Revise el origen de la sesión del usuario (SSH, IP de origen en 192.0.2.0/24 u otra, hora inusual) y si es una cuenta de servicio o una cuenta comprometida.",
+        "Busque en el mismo host actividad cercana: descargas con curl o wget, nuevos procesos escuchando, cron o servicios nuevos y conexiones salientes inusuales.",
+        "Revise alertas previas del mismo host y del mismo usuario, y busque la misma acción en otros servidores al mismo tiempo."
+      ],
+      "false_positives": [
+        "Administradores que detienen el firewall de forma temporal para diagnosticar problemas de conectividad.",
+        "Herramientas de gestión de configuración (Ansible, Puppet) que cambian de ufw a firewalld o a nftables.",
+        "Reinicios, apagados o actualizaciones de paquetes que detienen la unidad como parte del proceso normal."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del sistema si la acción fue autorizada y documentada.",
+        "Si no fue autorizada, reactive el firewall (systemctl start firewalld o ufw enable) y valide que las reglas sigan intactas.",
+        "Aísle el host o restrinja su tráfico en el firewall perimetral mientras investiga si hay indicios de compromiso.",
+        "Restablezca o bloquee la cuenta implicada, revise las claves SSH y los permisos de sudo, y elimine la persistencia que encuentre.",
+        "Habilite reglas de auditd para systemctl y para los binarios del firewall, y monitoree el host durante los días siguientes."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque deshabilitar el firewall del host elimina un control de red clave y suele preceder al C2 o al movimiento lateral, aunque puede ser trabajo administrativo."
+    },
+    "en": {
+      "summary": "auditd recorded a SERVICE_STOP event for firewalld, iptables or ufw, so the host firewall was stopped. This may be maintenance, or an attacker removing network restrictions.",
+      "what_it_detects": "auditd records with type=SERVICE_STOP and unit equal to firewalld, iptables or ufw. systemd (pid 1) emits the record when the unit stops, for example after systemctl stop, ufw disable or service iptables stop.",
+      "why_it_matters": "Stopping the host firewall removes controls on inbound and outbound connections, which makes C2, lateral movement and exfiltration easier. This is defense impairment (the rule is tagged T1686; the Atomic Red Team reference is T1562.004).",
+      "triage_steps": [
+        "Note the host, the unit and the event time. Check for an approved change or maintenance window.",
+        "systemd emits the event with an unset auid. Correlate USER_CMD, EXECVE or sudo records for systemctl, ufw or service within +/- 15 minutes to find the real user.",
+        "Look for a later SERVICE_START of the same unit. Stop then start means a restart; a stop with no start means the firewall was left disabled.",
+        "Check the user's session origin (SSH source IP, unusual hours) and whether the account is a service account or may be compromised.",
+        "Hunt for nearby activity on the host: curl or wget downloads, new listening processes, new cron jobs or services, and unusual outbound connections.",
+        "Review earlier alerts for the same host and user. Check whether other servers stopped their firewalls at the same time."
+      ],
+      "false_positives": [
+        "Administrators temporarily stopping the firewall to troubleshoot connectivity.",
+        "Configuration management (Ansible, Puppet) switching from ufw to firewalld or nftables.",
+        "Reboots, shutdowns or package upgrades that stop the unit as part of normal operation."
+      ],
+      "response_steps": [
+        "Confirm with the system owner that the action was authorized and documented.",
+        "If it was not authorized, restart the firewall (systemctl start firewalld or ufw enable) and check that the rules are intact.",
+        "Isolate the host or restrict its traffic at the perimeter while you look for signs of compromise.",
+        "Reset or lock the account involved, review SSH keys and sudo rights, and remove any persistence you find.",
+        "Add auditd rules for systemctl and the firewall binaries, and monitor the host closely over the next few days."
+      ],
+      "severity_rationale": "High fits because disabling the host firewall removes a key network control and often comes before C2 or lateral movement, even though admins also do it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "systemd reports firewalld stopped after an interactive systemctl stop firewalld",
+        "event": {
+          "type": "SERVICE_STOP",
+          "unit": "firewalld",
+          "pid": 1,
+          "uid": 0,
+          "auid": 4294967295,
+          "ses": 4294967295,
+          "comm": "systemd",
+          "exe": "/usr/lib/systemd/systemd",
+          "res": "success",
+          "host": "bastion-01",
+          "msg": "audit(1642850532.417:2381): pid=1 uid=0 auid=4294967295 ses=4294967295 msg='unit=firewalld comm=\"systemd\" exe=\"/usr/lib/systemd/systemd\" hostname=? addr=? terminal=? res=success'"
+        }
+      },
+      {
+        "description": "ufw unit stopped on an Ubuntu web server",
+        "event": {
+          "type": "SERVICE_STOP",
+          "unit": "ufw",
+          "pid": 1,
+          "uid": 0,
+          "auid": 4294967295,
+          "ses": 4294967295,
+          "comm": "systemd",
+          "exe": "/lib/systemd/systemd",
+          "res": "success",
+          "host": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "firewalld started again (SERVICE_START), not stopped",
+        "event": {
+          "type": "SERVICE_START",
+          "unit": "firewalld",
+          "pid": 1,
+          "uid": 0,
+          "auid": 4294967295,
+          "ses": 4294967295,
+          "comm": "systemd",
+          "exe": "/usr/lib/systemd/systemd",
+          "res": "success",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Unrelated service stopped (cups), not a firewall unit",
+        "event": {
+          "type": "SERVICE_STOP",
+          "unit": "cups",
+          "pid": 1,
+          "uid": 0,
+          "auid": 4294967295,
+          "ses": 4294967295,
+          "comm": "systemd",
+          "exe": "/usr/lib/systemd/systemd",
+          "res": "success",
+          "host": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

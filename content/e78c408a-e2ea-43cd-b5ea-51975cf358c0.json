@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "e78c408a-e2ea-43cd-b5ea-51975cf358c0",
+    "title": "Disable Windows Firewall by Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_disable_windows_firewall.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_disable_windows_firewall.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso estableció EnableFirewall en 0 bajo la clave de directivas de Windows Firewall para el perfil Standard o Domain, lo que desactiva el firewall del host por directiva.",
+      "what_it_detects": "Eventos registry_set (por ejemplo Sysmon EventID 13) donde TargetObject termina en \\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\StandardProfile\\EnableFirewall o \\DomainProfile\\EnableFirewall y Details es DWORD (0x00000000). El perfil Public no está cubierto.",
+      "why_it_matters": "Desactivar el firewall es una forma de debilitar defensas (Disable or Modify System Firewall, T1562.004; la regla lo etiqueta como t1686.003). Facilita movimiento lateral, conexiones entrantes y propagación; la simulación asociada reproduce el comportamiento de LockBit Black.",
+      "triage_steps": [
+        "Revise Image, ProcessId y User del evento: reg.exe, powershell.exe, cmd.exe o binarios en rutas de usuario son más sospechosos que svchost.exe aplicando GPO.",
+        "Busque el evento de creación de proceso de ese ProcessId para obtener CommandLine y ParentImage; identifique quién lanzó el cambio.",
+        "Valide si existe una GPO o política MDM legítima que fije EnableFirewall=0 (gpresult /h, consola de GPO, Intune) y si hay ticket de cambio.",
+        "Verifique en el mismo host otras claves de WindowsFirewall (PublicProfile, reglas añadidas) y comandos netsh advfirewall en +/- 15 minutos.",
+        "Pivote por el mismo host +/- 15 minutos: borrado de logs, desactivación de Defender, eliminación de shadow copies o herramientas de acceso remoto.",
+        "Revise conexiones de red entrantes y logons remotos (4624 tipo 3/10) posteriores al cambio, y alertas previas para el mismo usuario y host.",
+        "Busque el mismo cambio en otros endpoints en la misma ventana para detectar despliegue masivo vía PsExec, WMI o GPO maliciosa."
+      ],
+      "false_positives": [
+        "GPO o perfil MDM legítimo que desactiva el firewall en ciertos equipos (laboratorios, servidores detrás de firewall perimetral).",
+        "Instalación de un firewall de terceros o agente de seguridad que deshabilita Windows Firewall por directiva.",
+        "Scripts de administradores o de troubleshooting de red documentados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o de GPO si el cambio fue autorizado antes de actuar.",
+        "Si no está autorizado, aísle el endpoint desde el EDR y preserve evidencia (eventos de registro, procesos, memoria si aplica).",
+        "Restablezca EnableFirewall=1 o elimine el valor de directiva y fuerce gpupdate; confirme el estado con netsh advfirewall show allprofiles.",
+        "Elimine el proceso o artefacto responsable, revise persistencia y restablezca credenciales de la cuenta usada.",
+        "Busque el mismo indicador en toda la flota y trate múltiples hosts afectados como posible incidente de ransomware."
+      ],
+      "severity_rationale": "Medium es adecuado: desactivar el firewall es una debilitación clara de defensas, pero existen escenarios administrativos legítimos vía directiva que deben descartarse."
+    },
+    "en": {
+      "summary": "A process set EnableFirewall to 0 under the Windows Firewall policy key for the Standard or Domain profile, disabling the host firewall through policy.",
+      "what_it_detects": "registry_set events (for example Sysmon EventID 13) where TargetObject ends with \\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\StandardProfile\\EnableFirewall or \\DomainProfile\\EnableFirewall and Details is DWORD (0x00000000). The Public profile is not covered.",
+      "why_it_matters": "Disabling the firewall impairs defenses (Disable or Modify System Firewall, T1562.004; the rule tags it t1686.003). It eases lateral movement, inbound access and spreading; the linked simulation reproduces LockBit Black behavior.",
+      "triage_steps": [
+        "Check the event's Image, ProcessId and User: reg.exe, powershell.exe, cmd.exe or binaries in user paths are more suspicious than svchost.exe applying GPO.",
+        "Find the process creation event for that ProcessId to get CommandLine and ParentImage; identify who launched the change.",
+        "Confirm whether a legitimate GPO or MDM policy sets EnableFirewall=0 (gpresult /h, GPO console, Intune) and whether a change ticket exists.",
+        "On the same host, check other WindowsFirewall keys (PublicProfile, added rules) and netsh advfirewall commands within +/- 15 minutes.",
+        "Pivot on the same host +/- 15 minutes: log clearing, Defender tampering, shadow copy deletion or remote access tools.",
+        "Review inbound connections and remote logons (4624 type 3/10) after the change, plus earlier alerts for the same user and host.",
+        "Search for the same change on other endpoints in the same window to spot mass deployment via PsExec, WMI or a malicious GPO."
+      ],
+      "false_positives": [
+        "Legitimate GPO or MDM profile disabling the firewall on specific machines (labs, servers behind a perimeter firewall).",
+        "Installation of a third-party firewall or security agent that disables Windows Firewall via policy.",
+        "Documented administrator or network troubleshooting scripts."
+      ],
+      "response_steps": [
+        "Confirm with the system or GPO owner whether the change was authorized before acting.",
+        "If unauthorized, isolate the endpoint via EDR and preserve evidence (registry events, processes, memory if needed).",
+        "Restore EnableFirewall=1 or remove the policy value and run gpupdate; verify with netsh advfirewall show allprofiles.",
+        "Remove the responsible process or artifact, check persistence and reset credentials of the account used.",
+        "Hunt for the same indicator fleet-wide and treat multiple affected hosts as a possible ransomware incident."
+      ],
+      "severity_rationale": "Medium fits: disabling the firewall is a clear defense impairment, but legitimate policy-driven administrative cases exist and must be ruled out."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe launched from cmd disables the DomainProfile firewall via the policy key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4812,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\DomainProfile\\EnableFirewall",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "PowerShell disables the StandardProfile firewall via the policy key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "User": "ANDES\\svc-backup",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 7320,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\StandardProfile\\EnableFirewall",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy re-enables the DomainProfile firewall (value 1)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "ProcessId": 1288,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\DomainProfile\\EnableFirewall",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "PublicProfile set to 0, a profile this rule does not cover",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 5544,
+          "TargetObject": "HKLM\\SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\PublicProfile\\EnableFirewall",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "b6ea3cc7-542f-43ef-bbe4-980fbed444c7",
+    "title": "Remote Server Service Abuse",
+    "level": "high",
+    "status": "test",
+    "author": "Sagie Dulce, Dekel Paz",
+    "path": "application/rpc_firewall/rpc_firewall_remote_server_service_abuse.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/rpc_firewall/rpc_firewall_remote_server_service_abuse.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "RPC Firewall registró una llamada RPC remota a la interfaz MS-SRVS (Server Service, srvsvc) en este host. Puede indicar creación o enumeración remota de recursos compartidos y sesiones como paso de movimiento lateral.",
+      "what_it_detects": "Eventos RPCFW con EventID 3 (llamada a servidor RPC) cuyo InterfaceUuid es 4b324fc8-1670-01d3-1278-5a47bf6ee188, es decir, MS-SRVS. Según la configuración requerida (audit:true action:block), la llamada queda auditada y normalmente bloqueada. La descripción del rule habla de un servicio de cifrado, pero el UUID corresponde a Server Service.",
+      "why_it_matters": "MS-SRVS permite agregar, eliminar y enumerar recursos compartidos (NetrShareAdd, NetrShareEnum), además de enumerar sesiones y archivos abiertos. Un atacante puede usarlo para preparar shares para staging de herramientas o para reconocimiento de usuarios conectados antes de moverse lateralmente (táctica ATT&CK Lateral Movement).",
+      "triage_steps": [
+        "Identifique el cliente en ClientNetworkAddress y el usuario o SID del evento; determine si es un servidor de administración, un equipo de usuario o un origen desconocido.",
+        "Revise OpNum o Function: 14 (NetrShareAdd) o 18 (NetrShareDel) implican cambios; 12 (NetrSessionEnum) o 15 (NetrShareEnum) sugieren reconocimiento.",
+        "Cuente cuántos hosts recibieron llamadas MS-SRVS desde la misma IP en +/- 15 minutos; un barrido amplio apunta a enumeración automatizada.",
+        "En el host destino, busque eventos 5142/5143/5144 (share agregado/modificado/eliminado) y 5140/5145 (acceso a share) cercanos al alerta.",
+        "Correlacione con inicios de sesión de red (4624 tipo 3) del mismo usuario e IP y con otras alertas RPCFW (SCMR, TSCH) del mismo origen.",
+        "En el equipo cliente, identifique el proceso que generó la llamada (por ejemplo net.exe, PowerShell, binarios desconocidos o herramientas tipo impacket) y su proceso padre."
+      ],
+      "false_positives": [
+        "Creación legítima de recursos compartidos remotos por administradores o scripts de aprovisionamiento.",
+        "Consolas de administración (Computer Management, Server Manager) o herramientas de inventario que enumeran shares y sesiones.",
+        "Escáneres de vulnerabilidades o soluciones de monitoreo autorizadas que consultan srvsvc."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o el equipo de TI si la actividad desde esa IP y usuario estaba autorizada.",
+        "Si no está autorizada, aísle el equipo de origen y deshabilite o restablezca la cuenta usada, tras confirmar el impacto operativo.",
+        "Revise y, con aprobación, elimine shares creados sin autorización, conservando antes evidencia de su contenido.",
+        "Busque persistencia y movimiento lateral adicional desde el origen; documente y ajuste exclusiones solo para orígenes administrativos verificados."
+      ],
+      "severity_rationale": "El nivel high se justifica porque las llamadas remotas a MS-SRVS desde orígenes no administrativos son poco comunes y pueden preceder al movimiento lateral."
+    },
+    "en": {
+      "summary": "RPC Firewall logged a remote RPC call to the MS-SRVS (Server Service, srvsvc) interface on this host. It may indicate remote share or session enumeration or creation as part of lateral movement.",
+      "what_it_detects": "RPCFW events with EventID 3 (RPC server call) where InterfaceUuid is 4b324fc8-1670-01d3-1278-5a47bf6ee188, the MS-SRVS interface. With the required policy (audit:true action:block) the call is audited and usually blocked. The rule description mentions an encryption service, but the UUID is Server Service.",
+      "why_it_matters": "MS-SRVS lets a client add, delete and enumerate shares (NetrShareAdd, NetrShareEnum) and enumerate sessions and open files. Attackers use it to stage tools on new shares or to find logged-on users before moving laterally (ATT&CK Lateral Movement tactic).",
+      "triage_steps": [
+        "Identify the client in ClientNetworkAddress and the user or SID; decide whether it is an admin server, a workstation or an unknown source.",
+        "Check OpNum or Function: 14 (NetrShareAdd) or 18 (NetrShareDel) mean changes; 12 (NetrSessionEnum) or 15 (NetrShareEnum) suggest reconnaissance.",
+        "Count hosts receiving MS-SRVS calls from the same IP within +/- 15 minutes; a wide sweep points to automated enumeration.",
+        "On the target, look for events 5142/5143/5144 (share added/modified/deleted) and 5140/5145 (share access) near the alert time.",
+        "Correlate with network logons (4624 type 3) for the same user and IP, and other RPCFW alerts (SCMR, TSCH) from that source.",
+        "On the client, find the process that made the call (net.exe, PowerShell, unknown binaries, impacket-style tools) and its parent process."
+      ],
+      "false_positives": [
+        "Legitimate remote share creation by administrators or provisioning scripts.",
+        "Admin consoles (Computer Management, Server Manager) or inventory tools enumerating shares and sessions.",
+        "Authorized vulnerability scanners or monitoring products querying srvsvc."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or IT whether activity from that IP and user was authorized.",
+        "If unauthorized, isolate the source host and disable or reset the account used, after checking operational impact.",
+        "Review shares created without authorization; preserve their contents as evidence, then remove them with approval.",
+        "Hunt for persistence and further lateral movement from the source; tune exclusions only for verified admin sources."
+      ],
+      "severity_rationale": "High fits because remote MS-SRVS calls from non-administrative sources are uncommon and can precede lateral movement."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote NetrShareAdd call over SMB named pipe srvsvc from a workstation, audited and blocked by RPC Firewall",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "4b324fc8-1670-01d3-1278-5a47bf6ee188",
+          "OpNum": 14,
+          "Function": "NetrShareAdd",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\srvsvc",
+          "ClientNetworkAddress": "192.0.2.45",
+          "ServerNetworkAddress": "198.51.100.20",
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "SID": "S-1-5-21-1111111111-2222222222-3333333333-1104",
+          "AuthenticationLevel": 6,
+          "Computer": "SRV-FILE-02.example.com"
+        }
+      },
+      {
+        "description": "Remote NetrSessionEnum reconnaissance call to MS-SRVS",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "4B324FC8-1670-01D3-1278-5A47BF6EE188",
+          "OpNum": 12,
+          "Function": "NetrSessionEnum",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\srvsvc",
+          "ClientNetworkAddress": "203.0.113.77",
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Computer": "WS-0142.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "RPC Firewall EventID 3 for a different interface (MS-SCMR service control manager), not MS-SRVS",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "367abb81-9844-35f1-ad32-98f038001003",
+          "OpNum": 12,
+          "Function": "RCreateServiceW",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\PIPE\\svcctl",
+          "ClientNetworkAddress": "192.0.2.45",
+          "Computer": "SRV-FILE-02.example.com"
+        }
+      },
+      {
+        "description": "RPCFW protection-status event (EventID 1) mentioning the MS-SRVS UUID, not an RPC call",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 1,
+          "InterfaceUuid": "4b324fc8-1670-01d3-1278-5a47bf6ee188",
+          "ImagePath": "C:\\Windows\\System32\\svchost.exe",
+          "Computer": "SRV-FILE-02.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

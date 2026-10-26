@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "b6d235fc-1d38-4b12-adbe-325f06728f37",
+    "title": "CMSTP App Paths Registry Key Modification",
+    "level": "high",
+    "status": "stable",
+    "author": "Nik Seetharaman",
+    "path": "windows/registry/registry_event/registry_event_cmstp_execution_by_registry.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_cmstp_execution_by_registry.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó un valor bajo la clave App Paths de cmmgr32.exe con un dato distinto del valor legítimo de Windows. Puede indicar que se está preparando CMSTP para cargar una DLL arbitraria o para evadir el UAC.",
+      "what_it_detects": "Eventos de registro (por ejemplo, Sysmon 12/13/14) cuyo TargetObject contiene SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cmmgr32.exe\\. Excluye CmstpExtensionDll cuando apunta a cmcfg32.dll en System32 o SysWOW64, y los valores con Details '(Empty)'.",
+      "why_it_matters": "CMSTP.exe es un binario firmado por Microsoft que instala perfiles de Connection Manager. Si un atacante altera estos valores, puede ejecutar código a través de un proceso de confianza (T1218.003, ejecución mediante proxy de binario del sistema) y en algunos casos elevar privilegios sin que aparezca el aviso de UAC.",
+      "triage_steps": [
+        "Revise TargetObject y Details: identifique el valor modificado (CmstpExtensionDll, ProfileInstallPath u otro) y la ruta de la DLL o del directorio indicado.",
+        "Identifique Image y User del evento: un proceso como powershell.exe, rundll32.exe o un binario en una carpeta del usuario resulta sospechoso.",
+        "Obtenga el hash y la firma del archivo indicado en Details; búsquelo en EDR y en la inteligencia de amenazas interna.",
+        "Busque ejecuciones de cmstp.exe en el mismo host dentro de +/- 15 minutos, sobre todo con /s, /ns, /au o con archivos .inf en rutas temporales.",
+        "Revise el árbol de procesos: el proceso padre del que modificó el registro y los procesos hijo de cmstp.exe o dllhost.exe con integridad elevada.",
+        "Verifique si hay archivos .inf recientes en %TEMP% o en perfiles de usuario y revise sus secciones RegisterOCXSection o RunPreSetupCommandsSection.",
+        "Busque alertas anteriores del mismo host o usuario y conexiones de red salientes de cmstp.exe."
+      ],
+      "false_positives": [
+        "Instalación legítima de perfiles VPN o de acceso telefónico con Connection Manager (CMAK); es poco común en entornos empresariales actuales.",
+        "Reparación de Windows o herramientas de imagen que reescriben estos valores con rutas no estándar pero de confianza."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo o el área de TI si hubo una instalación de perfil de Connection Manager autorizada.",
+        "Si no está autorizada, aísle el endpoint desde el EDR y conserve la DLL, los archivos .inf y la exportación de la clave como evidencia.",
+        "Restaure el valor CmstpExtensionDll a cmcfg32.dll, elimine los valores agregados y, tras el análisis, borre los archivos maliciosos.",
+        "Restablezca las credenciales del usuario afectado y busque el mismo hash o la misma ruta en otros equipos.",
+        "Considere bloquear cmstp.exe con WDAC o AppLocker si el negocio no lo usa."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque estos valores casi nunca cambian legítimamente y su modificación prepara ejecución de código mediante un binario firmado o una evasión de UAC."
+    },
+    "en": {
+      "summary": "A value under the cmmgr32.exe App Paths registry key was changed to something other than the legitimate Windows default. This may mean CMSTP is being set up to load an arbitrary DLL or bypass UAC.",
+      "what_it_detects": "Registry events (for example Sysmon 12/13/14) where TargetObject contains SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cmmgr32.exe\\. It excludes CmstpExtensionDll when it points to cmcfg32.dll in System32 or SysWOW64, and values whose Details are '(Empty)'.",
+      "why_it_matters": "CMSTP.exe is a Microsoft-signed binary that installs Connection Manager profiles. An attacker who changes these values can run code through a trusted process (T1218.003, system binary proxy execution) and sometimes elevate privileges without a UAC prompt.",
+      "triage_steps": [
+        "Review TargetObject and Details: identify which value changed (CmstpExtensionDll, ProfileInstallPath or other) and the DLL or directory path it references.",
+        "Identify the event's Image and User; powershell.exe, rundll32.exe or a binary in a user-writable folder is suspicious.",
+        "Get the hash and signature of the file in Details; look it up in EDR and internal threat intelligence.",
+        "Search for cmstp.exe executions on the same host within +/- 15 minutes, especially with /s, /ns, /au or .inf files in temp paths.",
+        "Walk the process tree: the parent of the modifying process, and children of cmstp.exe or dllhost.exe running elevated.",
+        "Look for recent .inf files in %TEMP% or user profiles and inspect RegisterOCXSection or RunPreSetupCommandsSection.",
+        "Check earlier alerts for the same host or user and outbound network connections from cmstp.exe."
+      ],
+      "false_positives": [
+        "Legitimate VPN or dial-up profile installation with Connection Manager (CMAK); uncommon in modern enterprises.",
+        "Windows repair or imaging tools rewriting these values with non-standard but trusted paths."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether an authorized Connection Manager profile installation took place.",
+        "If unauthorized, isolate the endpoint via EDR and preserve the DLL, .inf files and an export of the key as evidence.",
+        "Restore CmstpExtensionDll to cmcfg32.dll, remove added values and, after analysis, delete the malicious files.",
+        "Reset the affected user's credentials and hunt for the same hash or path on other hosts.",
+        "Consider blocking cmstp.exe with WDAC or AppLocker if the business does not use it."
+      ],
+      "severity_rationale": "High fits because these values rarely change legitimately, and a modification prepares signed-binary proxy execution or a UAC bypass."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell points CmstpExtensionDll at a DLL in the user's temp folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cmmgr32.exe\\CmstpExtensionDll",
+          "Details": "C:\\Users\\jperez\\AppData\\Local\\Temp\\cmext.dll"
+        }
+      },
+      {
+        "description": "cmstp.exe writes ProfileInstallPath to a user-writable directory",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\cmstp.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cmmgr32.exe\\ProfileInstallPath",
+          "Details": "C:\\Users\\mrojas\\AppData\\Roaming\\cmprofile"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate default: CmstpExtensionDll points to System32 cmcfg32.dll (excluded by filter_main_cmcfg32)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cmmgr32.exe\\CmstpExtensionDll",
+          "Details": "C:\\Windows\\System32\\cmcfg32.dll"
+        }
+      },
+      {
+        "description": "Value written with empty data (excluded by filter_main_empty)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0311.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\cmmgr32.exe\\ProfileInstallPath",
+          "Details": "(Empty)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

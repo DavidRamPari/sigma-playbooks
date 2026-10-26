@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "2625cc59-0634-40d0-821e-cb67382a3dd7",
+    "title": "Service Reload or Start - Linux",
+    "level": "low",
+    "status": "test",
+    "author": "Jakob Weinzettl, oscd.community, CheraghiMilad",
+    "path": "linux/auditd/execve/lnx_auditd_susp_service_reload_or_restart.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_susp_service_reload_or_restart.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró un EXECVE en el que a0 contiene systemctl o service y a1 contiene reload o start. Indica que alguien inició, reinició o recargó un servicio o la configuración de systemd en el host.",
+      "what_it_detects": "Ejecuciones registradas por auditd como 'systemctl start|restart|reload|daemon-reload <unidad>'. Como 'restart' y 'daemon-reload' contienen 'start' y 'reload', también coinciden. 'service <nombre> start' solo coincide si a1 (el nombre) contiene esas cadenas.",
+      "why_it_matters": "Un atacante con privilegios puede crear o modificar una unidad systemd y luego ejecutar daemon-reload y start para mantener persistencia o ejecutar código como root (ATT&CK T1543.002, Systemd Service).",
+      "triage_steps": [
+        "Revise a0, a1 y a2 del EXECVE para identificar la acción y el nombre de la unidad afectada.",
+        "Correlacione con el registro SYSCALL del mismo evento de audit (mismo número de serie en msg) para obtener auid, uid, exe, ppid y tty.",
+        "Identifique el proceso padre (ppid): shell interactiva, sesión SSH, cron, gestor de configuración o un proceso web inesperado.",
+        "Ubique el archivo de la unidad (systemctl cat <unidad>) y revise ExecStart, User y la ruta: /etc/systemd/system, /run o ~/.config/systemd/user.",
+        "Compare la fecha de modificación del archivo de la unidad y del binario de ExecStart con la hora de la alerta.",
+        "Busque en el mismo host, +/- 15 minutos, escrituras en directorios de systemd, descargas (curl, wget) o cambios de cuentas.",
+        "Verifique si hay ventana de cambio, ticket o despliegue (apt, dnf, Ansible) que explique la acción, y revise alertas previas del mismo usuario y host."
+      ],
+      "false_positives": [
+        "Instalación o actualización legítima de paquetes que crean o reinician servicios.",
+        "Reconfiguración legítima de un servicio por un administrador o herramienta de gestión de configuración.",
+        "Ejecuciones de systemctl daemon-reload tras editar unidades o durante despliegues automatizados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si la acción y la unidad son esperadas.",
+        "Si la unidad es desconocida o apunta a un binario sospechoso, preserve el archivo de la unidad, el binario y los logs antes de cambiar nada.",
+        "Contenga: detenga y deshabilite la unidad maliciosa (systemctl stop/disable) y aísle el host si hay más indicadores.",
+        "Erradique: elimine la unidad y el payload verificados, ejecute daemon-reload y rote credenciales de la cuenta utilizada.",
+        "Recupere y monitoree: valide el resto de unidades del host y vigile nuevas creaciones de servicios."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque iniciar o recargar servicios es una tarea administrativa muy frecuente; solo gana relevancia junto con unidades nuevas o contexto sospechoso."
+    },
+    "en": {
+      "summary": "Auditd logged an EXECVE where a0 contains systemctl or service and a1 contains reload or start. Someone started, restarted or reloaded a service or the systemd configuration on the host.",
+      "what_it_detects": "Auditd-recorded executions such as 'systemctl start|restart|reload|daemon-reload <unit>'. 'restart' and 'daemon-reload' match because they contain 'start' and 'reload'. 'service <name> start' only matches if a1 (the name) contains those strings.",
+      "why_it_matters": "An attacker with privileges can create or modify a systemd unit, then run daemon-reload and start to gain persistence or run code as root (ATT&CK T1543.002, Systemd Service).",
+      "triage_steps": [
+        "Read a0, a1 and a2 of the EXECVE record to identify the action and the target unit.",
+        "Correlate with the SYSCALL record of the same audit event (same serial in msg) to get auid, uid, exe, ppid and tty.",
+        "Identify the parent process (ppid): interactive shell, SSH session, cron, config management, or an unexpected web process.",
+        "Locate the unit file (systemctl cat <unit>) and review ExecStart, User and its path: /etc/systemd/system, /run or ~/.config/systemd/user.",
+        "Compare modification times of the unit file and ExecStart binary with the alert time.",
+        "On the same host within +/- 15 minutes, look for writes to systemd directories, downloads (curl, wget) or account changes.",
+        "Check for a change window, ticket or deployment (apt, dnf, Ansible), and review earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate package installs or upgrades that create or restart services.",
+        "Legitimate service reconfiguration by an administrator or configuration management tool.",
+        "systemctl daemon-reload runs after editing units or during automated deployments."
+      ],
+      "response_steps": [
+        "Confirm with the system owner that the action and unit are expected.",
+        "If the unit is unknown or points to a suspicious binary, preserve the unit file, binary and logs before changing anything.",
+        "Contain: stop and disable the malicious unit (systemctl stop/disable) and isolate the host if other indicators exist.",
+        "Eradicate: remove the verified unit and payload, run daemon-reload, and rotate credentials of the account used.",
+        "Recover and monitor: review other units on the host and watch for new service creation."
+      ],
+      "severity_rationale": "Low fits because starting or reloading services is a very common admin task; it matters mainly alongside new units or other suspicious context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "systemctl starts an unfamiliar unit, as after planting a persistence service",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865012.431:48213)",
+          "argc": 3,
+          "a0": "systemctl",
+          "a1": "start",
+          "a2": "sys-update.service",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "systemd configuration reload; a1 'daemon-reload' contains 'reload'",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865009.118:48207)",
+          "argc": 2,
+          "a0": "/usr/bin/systemctl",
+          "a1": "daemon-reload",
+          "host": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "systemctl status query; a1 contains neither 'start' nor 'reload'",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865100.502:48250)",
+          "argc": 3,
+          "a0": "systemctl",
+          "a1": "status",
+          "a2": "nginx.service",
+          "host": "web-03"
+        }
+      },
+      {
+        "description": "'service nginx restart' where a1 is the service name, so the a1 condition does not match",
+        "event": {
+          "type": "EXECVE",
+          "msg": "audit(1729865150.774:48266)",
+          "argc": 3,
+          "a0": "service",
+          "a1": "nginx",
+          "a2": "restart",
+          "host": "web-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

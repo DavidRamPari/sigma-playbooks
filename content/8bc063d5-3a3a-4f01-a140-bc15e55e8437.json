@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "8bc063d5-3a3a-4f01-a140-bc15e55e8437",
+    "title": "Suspicious GetTypeFromCLSID ShellExecute",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_gettypefromclsid.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_gettypefromclsid.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.015"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell ejecutó un script block que instancia un objeto COM con GetTypeFromCLSID y lanza un programa mediante su método ShellExecute. Es una técnica conocida para ejecutar comandos de forma indirecta, a veces en otro equipo.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging cuyo ScriptBlockText contiene a la vez '::GetTypeFromCLSID(' y '.ShellExecute('. Es el patrón de la prueba de Atomic Red Team para T1546.015, que usa CLSID como ShellWindows o ShellBrowserWindow.",
+      "why_it_matters": "Si se lanza un proceso a través de un objeto COM de Explorer, el padre aparente es explorer.exe y no PowerShell, lo que rompe la cadena de procesos. Si se pasa un nombre de equipo, sirve para movimiento lateral por DCOM. ATT&CK la asocia a T1546.015 (secuestro de COM): persistencia y escalamiento de privilegios.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si el script es largo, reúna todos los fragmentos del mismo ScriptBlockId y revise el campo Path para saber de qué archivo .ps1 viene.",
+        "Identifique el CLSID usado y revise si GetTypeFromCLSID recibe un segundo argumento con un nombre de equipo, lo que indica ejecución remota por DCOM.",
+        "Revise los argumentos de ShellExecute: ejecutable, parámetros, directorio, verbo (por ejemplo 'runas') y estilo de ventana (0 = oculta).",
+        "Busque creación de procesos (Sysmon 1 o 4688) en el host durante +/- 15 minutos, sobre todo procesos hijos inesperados de explorer.exe.",
+        "Si hubo un destino remoto, busque en ese equipo inicios de sesión de red y procesos creados por explorer.exe o DllHost.exe a la misma hora.",
+        "Identifique al usuario y el proceso padre de powershell.exe, y confirme si la ejecución fue interactiva, por tarea programada o desde un documento.",
+        "Busque claves nuevas en HKCU\\Software\\Classes\\CLSID que puedan indicar un secuestro de COM, y revise alertas anteriores para el mismo host y usuario."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que automatizan Explorer o abren archivos y URL con objetos COM de Shell.",
+        "Instaladores o herramientas de despliegue que lanzan procesos a través de COM.",
+        "Pruebas autorizadas de red team o de Atomic Red Team sobre T1546.015."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del script o con el usuario si la ejecución era esperada y está documentada.",
+        "Si es maliciosa, aísle el endpoint y, si corresponde, también el equipo remoto, y conserve los eventos 4104 y la memoria.",
+        "Termine los procesos lanzados, elimine scripts, tareas o claves COM añadidas y restablezca las credenciales de la cuenta implicada.",
+        "Si es legítima, cree una exclusión acotada por Path o hash del script y por host, sin excluir todo el patrón."
+      ],
+      "severity_rationale": "Medio: la combinación casi no aparece en scripts habituales y permite ejecución indirecta o remota, pero por sí sola no prueba que haya actividad maliciosa."
+    },
+    "en": {
+      "summary": "PowerShell ran a script block that creates a COM object with GetTypeFromCLSID and starts a program through its ShellExecute method. Attackers use this to run commands indirectly, sometimes on a remote host.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains both '::GetTypeFromCLSID(' and '.ShellExecute('. This is the pattern of the Atomic Red Team test for T1546.015, which uses CLSIDs such as ShellWindows or ShellBrowserWindow.",
+      "why_it_matters": "When a process starts through an Explorer COM object, its apparent parent is explorer.exe, not PowerShell, which breaks the process lineage. If a computer name is supplied, the same call allows DCOM lateral movement. ATT&CK maps it to T1546.015 (COM hijacking), covering persistence and privilege escalation.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. For long scripts, collect every fragment with the same ScriptBlockId, and check Path to find the source .ps1 file.",
+        "Identify the CLSID. Check whether GetTypeFromCLSID has a second argument with a computer name, which means remote execution over DCOM.",
+        "Review the ShellExecute arguments: executable, parameters, directory, verb (for example 'runas') and window style (0 = hidden).",
+        "Look for process creation events (Sysmon 1 or 4688) on the host within +/- 15 minutes, especially unexpected children of explorer.exe.",
+        "If a remote target is named, check that host for network logons and for processes started by explorer.exe or DllHost.exe at the same time.",
+        "Identify the user and the parent of powershell.exe. Find out whether the run was interactive, a scheduled task or launched from a document.",
+        "Look for new keys under HKCU\\Software\\Classes\\CLSID that could mean COM hijacking, and check earlier alerts for the same host and user."
+      ],
+      "false_positives": [
+        "Legitimate admin scripts that automate Explorer or open files and URLs through Shell COM objects.",
+        "Installers or deployment tools that start processes through COM.",
+        "Authorized red team or Atomic Red Team tests of T1546.015."
+      ],
+      "response_steps": [
+        "Ask the script owner or the user whether the run was expected and documented.",
+        "If it is malicious, isolate the endpoint (and the remote target, if one was used) and preserve the 4104 events and memory.",
+        "Kill the spawned processes, remove any added scripts, tasks or COM registry keys, and reset the credentials of the account involved.",
+        "If it is legitimate, add a narrow exclusion by script Path or hash and by host. Do not exclude the whole pattern."
+      ],
+      "severity_rationale": "Medium: this combination is rare in normal scripts and allows indirect or remote execution, but on its own it does not prove malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic-style local execution through the ShellWindows COM object with a hidden window",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c11-2b6d0f5a8e31",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$o = [activator]::CreateInstance([type]::GetTypeFromCLSID(\"9BA05972-F6A8-11CF-A442-00A0C90A8F39\")); $item = $o.Item(); $item.Document.Application.ShellExecute(\"cmd.exe\",\"/c calc.exe\",\"C:\\windows\\system32\",$null,0)"
+        }
+      },
+      {
+        "description": "Remote DCOM execution through ShellBrowserWindow against another workstation",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0077.andes.example.com",
+          "ScriptBlockId": "a81c44d2-0e5f-4b39-8d7e-6c2f19b3e470",
+          "Path": "",
+          "ScriptBlockText": "$com = [Type]::GetTypeFromCLSID('C08AFD90-F2A1-11D1-8455-00A0C91F3880','WS-0142'); $obj = [System.Activator]::CreateInstance($com); $obj.Document.Application.ShellExecute('cmd.exe','/c whoami > C:\\Windows\\Temp\\o.txt','C:\\Windows\\System32',$null,0)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script that uses ShellExecute through New-Object -ComObject Shell.Application, without GetTypeFromCLSID",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5d0e7b2a-91c3-4f6e-a2b8-0c4e7d9f1a62",
+          "Path": "C:\\Scripts\\Open-Report.ps1",
+          "ScriptBlockText": "$shell = New-Object -ComObject Shell.Application; $shell.ShellExecute('C:\\Reports\\monthly.xlsx')"
+        }
+      },
+      {
+        "description": "Script that creates a COM object with GetTypeFromCLSID but never calls ShellExecute",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "ScriptBlockId": "c7f3a0e9-24b1-4d8c-b6e5-9a1f3e2d7c08",
+          "Path": "C:\\Scripts\\Check-Updates.ps1",
+          "ScriptBlockText": "$t = [type]::GetTypeFromCLSID('4CB43D7F-7EEE-4906-8698-60DA1C38F2FE'); $session = [activator]::CreateInstance($t); $searcher = $session.CreateUpdateSearcher(); $searcher.Search('IsInstalled=0').Updates.Count"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

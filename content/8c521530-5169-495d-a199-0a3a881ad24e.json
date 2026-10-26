@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "8c521530-5169-495d-a199-0a3a881ad24e",
+    "title": "NTFS Alternate Data Stream",
+    "level": "high",
+    "status": "test",
+    "author": "Sami Ruohonen",
+    "path": "windows/powershell/powershell_script/posh_ps_ntfs_ads_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_ntfs_ads_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001",
+      "T1564.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell usó Set-Content o Add-Content junto con -Stream, lo que probablemente indica que escribió datos en un flujo de datos alternativo (ADS) de NTFS. Los atacantes usan los ADS para ocultar payloads o scripts dentro de archivos de apariencia normal.",
+      "what_it_detects": "Eventos de Script Block Logging (Event ID 4104) cuyo ScriptBlockText contiene 'set-content' o 'add-content' y además '-stream'. La coincidencia es por subcadena y no distingue mayúsculas de minúsculas, así que basta un solo script block que contenga ambas cadenas.",
+      "why_it_matters": "Los flujos alternativos ocultan datos al Explorador y al comando 'dir' simple, y el tamaño visible del archivo no cambia (T1564.004, Hide Artifacts: NTFS File Attributes). PowerShell (T1059.001) puede escribir un payload en un flujo y ejecutarlo después, lo que le ayuda a evadir la detección basada en archivos.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si el script se dividió en varios eventos 4104 (MessageNumber/MessageTotal), reconstrúyalo con el ScriptBlockId.",
+        "Identifique el archivo destino (-Path), el nombre del flujo (-Stream) y lo que se escribió (-Value). Busque base64, cabeceras PE, código de script o URLs.",
+        "Descarte nombres benignos como Zone.Identifier solo después de confirmar que el valor es un bloque ZoneTransfer normal.",
+        "Identifique al usuario y el proceso host de PowerShell. Revise su proceso padre con Sysmon Event ID 1 o Security Event ID 4688, y el campo Path para ubicar el script de origen.",
+        "Revise el archivo en el equipo con 'Get-Item <archivo> -Stream *' o 'dir /r'. Registre el tamaño y el hash de cada flujo.",
+        "Busque actividad en el mismo equipo dentro de +/- 15 minutos de la alerta, sobre todo ejecución desde flujos: Get-Content -Stream enviado a iex, wmic/rundll32/cscript con rutas 'archivo:flujo' o tareas programadas que apunten a un flujo.",
+        "Revise alertas previas del mismo usuario y equipo, y verifique si el mismo nombre de flujo aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts de despliegue o empaquetado que escriben un flujo Zone.Identifier a propósito para marcar o quitar la Mark of the Web.",
+        "Herramientas administrativas o de respaldo que guardan metadatos, etiquetas o checksums en flujos alternativos.",
+        "Pruebas autorizadas de red team o de Atomic Red Team para T1564.004.",
+        "Scripts donde '-stream' forma parte de un nombre de archivo o argumento (por ejemplo 'upload-stream.log') junto a Set-Content."
+      ],
+      "response_steps": [
+        "Confirme que la actividad es maliciosa. Luego copie el contenido del flujo y registre su hash antes de modificar nada.",
+        "Aísle el endpoint si el flujo contiene código ejecutable o si el script muestra ejecución o persistencia.",
+        "Elimine el flujo malicioso con 'Remove-Item <archivo> -Stream <nombre>' solo después de preservar la evidencia. Elimine también la persistencia asociada.",
+        "Busque en otros equipos los mismos nombres de flujo y hashes. Si la cuenta parece comprometida, restablezca sus credenciales.",
+        "Documente los scripts benignos confirmados y agregue exclusiones acotadas por ruta del script y nombre del flujo."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque escribir en un ADS desde PowerShell es poco común en la administración normal y es una técnica conocida para ocultar y preparar payloads."
+    },
+    "en": {
+      "summary": "A PowerShell script block used Set-Content or Add-Content together with -Stream, which means it probably wrote data into an NTFS alternate data stream (ADS). Attackers use ADS to hide payloads or scripts inside files that look normal.",
+      "what_it_detects": "Script Block Logging events (Event ID 4104) where ScriptBlockText contains both 'set-content' or 'add-content' and '-stream'. The match is a case-insensitive substring match, so one script block that contains both strings is enough.",
+      "why_it_matters": "Alternate data streams hide data from Explorer and plain 'dir' listings, and the file's visible size does not change (T1564.004, Hide Artifacts: NTFS File Attributes). PowerShell (T1059.001) can write a payload into a stream and run it later, which helps it avoid file-based detection.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If the script was split across several 4104 events (MessageNumber/MessageTotal), rebuild it using ScriptBlockId.",
+        "Find the target file (-Path), the stream name (-Stream) and what was written (-Value). Look for base64, PE headers, script code or URLs.",
+        "Ignore benign stream names such as Zone.Identifier only after you confirm that the value is a normal ZoneTransfer block.",
+        "Identify the user and the PowerShell host process. Check its parent with Sysmon Event ID 1 or Security Event ID 4688, and review Path for the source script file.",
+        "Check the file on the host with 'Get-Item <file> -Stream *' or 'dir /r'. Record each stream's size and hash.",
+        "Search the same host for activity within +/- 15 minutes of the alert, especially execution from streams: Get-Content -Stream piped to iex, wmic/rundll32/cscript with 'file:stream' paths, or scheduled tasks pointing at a stream.",
+        "Review earlier alerts for the same user and host, and check whether the same stream name appears on other endpoints."
+      ],
+      "false_positives": [
+        "Deployment or packaging scripts that write a Zone.Identifier stream on purpose to set or clear the Mark of the Web.",
+        "Admin or backup tools that store metadata, tags or checksums in alternate streams.",
+        "Authorized red team or Atomic Red Team tests of T1564.004.",
+        "Scripts where '-stream' is part of a file name or argument (for example 'upload-stream.log') next to Set-Content."
+      ],
+      "response_steps": [
+        "Confirm that the activity is malicious. Then copy the stream content and record its hash before you change anything.",
+        "Isolate the endpoint if the stream holds executable code or the script shows execution or persistence.",
+        "Remove the malicious stream with 'Remove-Item <file> -Stream <name>' only after you collect the evidence. Remove any related persistence too.",
+        "Scan other hosts for the same stream names and hashes. If the account looks compromised, reset its credentials.",
+        "Document confirmed benign scripts and add narrow exclusions by script path and stream name."
+      ],
+      "severity_rationale": "High fits because writing to an ADS from PowerShell is uncommon in normal administration and is a known way to hide and stage payloads."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Set-Content writes a base64 blob into a hidden stream of a harmless-looking text file.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b44-4d2a-9e61-0c5b8a2d1f10",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$p = 'SQBFAFgAIAAoACcAaABlAGwAbABvACcAKQA='; Set-Content -Path C:\\Users\\Public\\readme.txt -Stream payload.ps1 -Value $p"
+        }
+      },
+      {
+        "description": "Add-Content appends script code to an alternate stream, written in mixed case.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "a81d0b52-1c3e-4f7a-8b29-5d6e7f901234",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "ADD-CONTENT -Path 'C:\\ProgramData\\logs\\app.log' -STREAM 'cfg' -Value 'Invoke-WebRequest https://updates.example.com/a.txt'"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only access to the Zone.Identifier stream. There is no Set-Content or Add-Content, so the content selection does not match.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5c7e1a90-2b3d-4e8f-9a01-b2c3d4e5f678",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\check_motw.ps1",
+          "ScriptBlockText": "Get-Content -Path C:\\Users\\jperez\\Downloads\\setup.msi -Stream Zone.Identifier"
+        }
+      },
+      {
+        "description": "Normal Set-Content to a log file without -Stream. The stream selection does not match.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-01.andes.example.com",
+          "ScriptBlockId": "9d0e1f23-4a5b-4c6d-8e7f-a0b1c2d3e4f5",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\daily_report.ps1",
+          "ScriptBlockText": "Set-Content -Path C:\\Reports\\daily.txt -Value (Get-Date -Format o)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

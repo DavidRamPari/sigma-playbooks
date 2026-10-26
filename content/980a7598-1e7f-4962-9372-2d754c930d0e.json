@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "980a7598-1e7f-4962-9372-2d754c930d0e",
+    "title": "Google Full Network Traffic Packet Capture",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_full_network_traffic_packet_capture.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_full_network_traffic_packet_capture.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1074"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró una llamada a la API de Packet Mirroring de Compute Engine en los audit logs de GCP. Packet Mirroring clona el tráfico de las VM hacia un colector y puede usarse para capturar tráfico interno sin cifrar.",
+      "what_it_detects": "Eventos de gcp.audit cuyo gcp.audit.method_name corresponde a Get, List, aggregatedList, Insert, Patch o Delete en Compute.PacketMirrorings, en cualquier versión de API v*.",
+      "why_it_matters": "Un atacante con permisos en el proyecto puede crear o modificar una política de mirroring para copiar todo el tráfico de subredes o instancias hacia una VM bajo su control. Así recolecta credenciales y datos sensibles (ATT&CK T1074, Data Staged).",
+      "triage_steps": [
+        "Revise gcp.audit.method_name: Insert y Patch crean o modifican la captura; Delete puede ser limpieza; Get, List y aggregatedList indican reconocimiento.",
+        "Identifique al principal (principal_email), la IP de origen y el user agent. Determine si es una cuenta de administrador de red conocida o una service account inesperada.",
+        "Revise la política afectada con gcloud compute packet-mirrorings describe: redes, subredes, instancias o tags espejados, filtros y el ILB colector de destino.",
+        "Verifique quién controla las VM del backend del colector y si están en un proyecto o red inusual, o tienen IP externa.",
+        "Pivotee en el mismo proyecto y principal en +/- 15 minutos: creación de instancias, forwarding rules, firewalls, claves de service account o cambios de IAM.",
+        "Busque alertas previas para el mismo principal o IP de origen y confirme si existe un ticket de cambio o una tarea de troubleshooting aprobada."
+      ],
+      "false_positives": [
+        "Administradores de red o seguridad que configuran Packet Mirroring para troubleshooting o para alimentar un IDS/NDR aprobado.",
+        "Herramientas de inventario, CSPM o Terraform que listan o consultan políticas de mirroring de forma periódica.",
+        "Retiro planificado de políticas de mirroring antiguas."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad con el dueño del proyecto y el equipo de red antes de cualquier cambio.",
+        "Si no está autorizada, exporte la configuración de la política y luego desactívela o elimínela para detener la captura.",
+        "Suspenda o rote las credenciales del principal involucrado y revise sus roles IAM (compute.packetMirroringAdmin, compute.networkAdmin).",
+        "Aísle y preserve con snapshots las VM colectoras para análisis forense del tráfico capturado.",
+        "Rote los secretos y credenciales que pudieron transitar en texto plano por las redes espejadas y priorice el cifrado del tráfico interno."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque estas llamadas pueden ser administración legítima, pero una captura no autorizada expone tráfico interno sensible y requiere revisión oportuna."
+    },
+    "en": {
+      "summary": "A Compute Engine Packet Mirroring API call was recorded in GCP audit logs. Packet Mirroring clones VM traffic to a collector and can be abused to capture unencrypted internal traffic.",
+      "what_it_detects": "gcp.audit events whose gcp.audit.method_name is Get, List, aggregatedList, Insert, Patch or Delete on Compute.PacketMirrorings, for any v* API version.",
+      "why_it_matters": "An attacker with project permissions can create or modify a mirroring policy that copies traffic from subnets or instances to a VM they control, collecting credentials and sensitive data (ATT&CK T1074, Data Staged).",
+      "triage_steps": [
+        "Check gcp.audit.method_name: Insert and Patch create or change capture; Delete may be cleanup; Get, List and aggregatedList suggest reconnaissance.",
+        "Identify the principal (principal_email), source IP and user agent. Decide whether it is a known network admin or an unexpected service account.",
+        "Inspect the policy with gcloud compute packet-mirrorings describe: mirrored networks, subnets, instances or tags, filters, and the collector ILB.",
+        "Verify who owns the collector backend VMs and whether they sit in an unusual project or network, or have external IPs.",
+        "Pivot on the same project and principal within +/- 15 minutes: new instances, forwarding rules, firewall rules, service account keys or IAM changes.",
+        "Look for earlier alerts for the same principal or source IP and confirm a change ticket or approved troubleshooting task."
+      ],
+      "false_positives": [
+        "Network or security admins configuring Packet Mirroring for troubleshooting or to feed an approved IDS/NDR.",
+        "Inventory, CSPM or Terraform tooling periodically listing or reading mirroring policies.",
+        "Planned removal of old mirroring policies."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the project owner and network team before changing anything.",
+        "If unauthorized, export the policy configuration, then disable or delete it to stop the capture.",
+        "Suspend or rotate the principal's credentials and review its IAM roles (compute.packetMirroringAdmin, compute.networkAdmin).",
+        "Isolate and snapshot collector VMs to preserve evidence of captured traffic.",
+        "Rotate secrets that may have crossed mirrored networks in cleartext and prioritize encrypting internal traffic."
+      ],
+      "severity_rationale": "Medium fits because these calls are often legitimate administration, but unauthorized capture exposes sensitive internal traffic and needs prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unexpected service account creates a packet mirroring policy",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.packetMirrorings.insert",
+          "gcp.audit.principal_email": "build-runner@prj-example-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/prj-example-prod/regions/us-central1/packetMirrorings/pm-debug-01",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0",
+          "cloud.project.id": "prj-example-prod"
+        }
+      },
+      {
+        "description": "User lists packet mirroring policies across all regions (reconnaissance)",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.packetMirrorings.aggregatedList",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "google-api-python-client/2.100.0",
+          "cloud.project.id": "prj-example-prod"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "IAM permission check on packet mirroring, a method not in the rule list",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.packetMirrorings.testIamPermissions",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "source.ip": "198.51.100.23",
+          "cloud.project.id": "prj-example-prod"
+        }
+      },
+      {
+        "description": "Ordinary firewall rule creation, unrelated to packet mirroring",
+        "event": {
+          "gcp.audit.method_name": "v1.compute.firewalls.insert",
+          "gcp.audit.principal_email": "netadmin@example.com",
+          "gcp.audit.resource_name": "projects/prj-example-prod/global/firewalls/allow-health-checks",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "source.ip": "192.0.2.10",
+          "cloud.project.id": "prj-example-prod"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

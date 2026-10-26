@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "c4042d54-110d-45dd-a0e1-05c47822c937",
+    "title": "Python Spawning Pretty TTY Via PTY Module",
+    "level": "medium",
+    "status": "test",
+    "author": "Nextron Systems",
+    "path": "linux/process_creation/proc_creation_lnx_python_pty_spawn.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_python_pty_spawn.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de Python importó el módulo pty y llamó a spawn para abrir una TTY interactiva. Suele ser el paso que sigue a una reverse shell, cuando el atacante convierte una shell básica en una terminal completa.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /python, /python2 o /python3, o contiene /python2. o /python3., y el CommandLine contiene 'import pty' o 'from pty ' junto con 'spawn', por ejemplo python3 -c 'import pty; pty.spawn(\"/bin/bash\")'.",
+      "why_it_matters": "Corresponde a ATT&CK T1059 (Command and Scripting Interpreter). Con una TTY completa, el atacante puede usar sudo, su, editores y autocompletado, y así operar con más comodidad después de explotar un servicio expuesto, como en la explotación de Confluence citada en las referencias.",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique qué binario se lanza con pty.spawn (/bin/bash, /bin/sh) y si el comando viene de -c en línea o de un script.",
+        "Identifique el proceso padre (ParentImage, ParentCommandLine). Si el padre es un servidor web, java, tomcat, node, php-fpm o una shell lanzada por estos, es muy sospechoso.",
+        "Verifique el User: las cuentas de servicio como www-data, confluence, tomcat o nobody no deberían abrir TTY interactivas.",
+        "Busque conexiones de red salientes del mismo host entre 15 minutos antes y 15 minutos después, sobre todo hacia IP externas en puertos poco comunes y hechas por el padre o los ancestros del proceso.",
+        "Revise los procesos hijos de la shell creada: whoami, id, uname, sudo -l, descargas con curl o wget, cambios en crontab o en authorized_keys.",
+        "Revise los logs del servicio expuesto (accesos web, errores de la aplicación) en esa ventana de tiempo para buscar peticiones de explotación.",
+        "Busque alertas anteriores sobre el mismo host o el mismo usuario, y la misma línea de comandos en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores o pentesters autorizados que mejoran una shell durante pruebas o tareas de soporte.",
+        "Herramientas o scripts internos que usan pty.spawn para automatizar sesiones interactivas, como wrappers de SSH, pruebas automatizadas o laboratorios de CTF."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host si la actividad estaba autorizada. Si no lo estaba, trátela como un incidente.",
+        "Aísle el host o bloquee en el firewall las conexiones salientes hacia la IP remota identificada, y conserve primero la evidencia volátil (procesos, conexiones).",
+        "Termine los procesos de la shell solo después de documentar el árbol de procesos. Elimine la persistencia que encuentre (cron, claves SSH, servicios).",
+        "Corrija la vulnerabilidad del servicio explotado, rote las credenciales expuestas en el host y vigile si la actividad se repite."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque esta técnica se usa con frecuencia después de una explotación, pero también puede aparecer en trabajo administrativo o pruebas autorizadas, así que hace falta contexto para confirmarla."
+    },
+    "en": {
+      "summary": "A Python process imported the pty module and called spawn to open an interactive TTY. This is usually the step after a reverse shell, when an attacker upgrades a basic shell into a full terminal.",
+      "what_it_detects": "Linux process creation events where Image ends with /python, /python2 or /python3, or contains /python2. or /python3., and CommandLine contains 'import pty' or 'from pty ' plus 'spawn', for example python3 -c 'import pty; pty.spawn(\"/bin/bash\")'.",
+      "why_it_matters": "This maps to ATT&CK T1059 (Command and Scripting Interpreter). A full TTY lets an attacker use sudo, su, editors and tab completion, which makes hands-on work easier after exploiting an exposed service, such as the Confluence exploitation in the rule's references.",
+      "triage_steps": [
+        "Read the full CommandLine: note which binary pty.spawn launches (/bin/bash, /bin/sh) and whether the code is inline (-c) or comes from a script.",
+        "Identify the parent process (ParentImage, ParentCommandLine). A web server, java, tomcat, node or php-fpm parent, or a shell spawned by one of them, is highly suspicious.",
+        "Check the User: service accounts such as www-data, confluence, tomcat or nobody should not open interactive TTYs.",
+        "On the same host, look for outbound network connections within +/- 15 minutes, especially to external IPs on unusual ports, made by the process or its ancestors.",
+        "Review children of the spawned shell: whoami, id, uname, sudo -l, curl/wget downloads, crontab or authorized_keys changes.",
+        "Check the exposed service's logs (web access, application errors) in that time window for exploitation requests.",
+        "Search for earlier alerts on the same host or user, and for the same command line on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators or authorized penetration testers upgrading a shell during testing or support work.",
+        "Internal tools or scripts that use pty.spawn to automate interactive sessions, such as SSH wrappers, test harnesses or CTF labs."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether the activity was authorized. If it was not, treat it as an incident.",
+        "Isolate the host or block egress to the remote IP you identified, after capturing volatile evidence (processes, connections).",
+        "Kill the shell processes only after documenting the process tree. Remove any persistence you find (cron, SSH keys, services).",
+        "Fix the exploited service, rotate credentials exposed on the host and monitor for recurrence."
+      ],
+      "severity_rationale": "Medium fits because attackers commonly use this technique after exploitation, but admins and authorized testers also use it, so you need context to confirm it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Confluence service account runs python3 inline to spawn a bash TTY via pty.spawn",
+        "event": {
+          "Image": "/usr/bin/python3",
+          "CommandLine": "python3 -c import pty; pty.spawn(\"/bin/bash\")",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "/bin/sh -i",
+          "User": "confluence",
+          "CurrentDirectory": "/opt/atlassian/confluence/bin",
+          "Computer": "wiki-01",
+          "ProcessId": 48213
+        }
+      },
+      {
+        "description": "Versioned python3.10 binary using 'from pty import spawn' to launch /bin/sh",
+        "event": {
+          "Image": "/usr/bin/python3.10",
+          "CommandLine": "python3.10 -c from pty import spawn; spawn('/bin/sh')",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash",
+          "User": "www-data",
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-02",
+          "ProcessId": 30177
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Python imports pty but never calls spawn, so the spawn selection does not match",
+        "event": {
+          "Image": "/usr/bin/python3",
+          "CommandLine": "python3 -c import pty; print(pty.STDIN_FILENO)",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01",
+          "ProcessId": 5120
+        }
+      },
+      {
+        "description": "Shell upgrade with the script utility instead of Python, so the image selection does not match",
+        "event": {
+          "Image": "/usr/bin/script",
+          "CommandLine": "script -qc /bin/bash /dev/null",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "/bin/sh -i",
+          "User": "jperez",
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01",
+          "ProcessId": 5188
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

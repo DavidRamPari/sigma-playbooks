@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "e2326866-609f-4015-aea9-7ec634e8aa04",
+    "title": "Shell Execution via Rsync - Linux",
+    "level": "high",
+    "status": "experimental",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.), Florian Roth",
+    "path": "linux/process_creation/proc_creation_lnx_rsync_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_rsync_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó rsync con la opción -e (shell remoto) apuntando a un intérprete de comandos como sh o bash. Es una técnica documentada en GTFOBins para obtener una shell a través de rsync.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /rsync o /rsyncd, CommandLine contiene ' -e ' y además menciona un shell (ash, bash, dash, csh, sh, zsh, tcsh, ksh) precedido de '/' o de comilla simple.",
+      "why_it_matters": "rsync -e permite indicar qué programa usar como transporte. Si se pasa un shell, rsync lo lanza y entrega una shell interactiva (ATT&CK T1059, intérprete de comandos). Con sudo o SUID sirve para escalar privilegios o escapar de shells restringidas.",
+      "triage_steps": [
+        "Revise el CommandLine completo: un -e con 'sh -c \"sh 0<&2 1>&2\"' o destino 127.0.0.1:/dev/null indica abuso, no un respaldo real.",
+        "Identifique el usuario efectivo y el ParentImage: ¿rsync corrió con sudo, desde un servicio web o desde una shell restringida?",
+        "Busque procesos hijos de rsync en el mismo host (sh, bash, etc.) y los comandos que ejecutaron en los siguientes 15 minutos.",
+        "Consulte /etc/sudoers y sudoers.d para ver si el usuario tiene rsync permitido con sudo, y si rsync tiene bit SUID.",
+        "Revise logs de autenticación y sudo del mismo host +/- 15 minutos: inicio de sesión, IP de origen y entradas sudo COMMAND=.",
+        "Busque alertas previas del mismo usuario o host, como reconocimiento, descargas o cambios en cuentas.",
+        "Confirme con el dueño del sistema si existe un script o tarea programada que use rsync con un shell como transporte."
+      ],
+      "false_positives": [
+        "Scripts de administración o respaldo que, de forma legítima, usan rsync -e con un wrapper de shell (por ejemplo, '/bin/sh -c ...').",
+        "Pruebas de seguridad o ejercicios de red team autorizados que reproducen técnicas de GTFOBins.",
+        "Pipelines de CI/CD o herramientas de despliegue que encapsulan el transporte de rsync en un shell."
+      ],
+      "response_steps": [
+        "Verifique con el usuario y el responsable del host si la ejecución estaba autorizada antes de actuar.",
+        "Si no está autorizada, termine la shell resultante, bloquee la cuenta o la sesión y considere aislar el endpoint.",
+        "Elimine el permiso sudo de rsync o el bit SUID si no es necesario, y revise persistencia: cron, claves SSH y cuentas nuevas.",
+        "Restablezca credenciales comprometidas, documente el incidente y ajuste la regla con exclusiones solo para usos legítimos verificados."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque rsync rara vez lanza un shell legítimamente con -e y el patrón coincide con una técnica conocida de escalada de privilegios y escape de shell."
+    },
+    "en": {
+      "summary": "rsync was run with the -e (remote shell) option pointing to a command interpreter such as sh or bash. This is a GTFOBins-documented way to spawn a shell through rsync.",
+      "what_it_detects": "Linux process creation events where Image ends in /rsync or /rsyncd, CommandLine contains ' -e ', and the command line names a shell (ash, bash, dash, csh, sh, zsh, tcsh, ksh) preceded by '/' or a single quote.",
+      "why_it_matters": "rsync -e sets the program used as transport. Passing a shell makes rsync launch it, giving an interactive shell (ATT&CK T1059, command interpreter). Through sudo or SUID it enables privilege escalation or restricted-shell escape.",
+      "triage_steps": [
+        "Read the full CommandLine: -e with 'sh -c \"sh 0<&2 1>&2\"' or a 127.0.0.1:/dev/null target indicates abuse, not a real transfer.",
+        "Identify the effective user and ParentImage: did rsync run via sudo, from a web service, or from a restricted shell?",
+        "Find child processes of rsync on the same host (sh, bash, etc.) and the commands they ran over the next 15 minutes.",
+        "Check /etc/sudoers and sudoers.d for rsync rules for this user, and whether rsync has the SUID bit set.",
+        "Review auth and sudo logs on the host within +/- 15 minutes: login, source IP and sudo COMMAND= entries.",
+        "Look for earlier alerts on the same user or host, such as reconnaissance, downloads or account changes.",
+        "Confirm with the system owner whether a script or scheduled job uses rsync with a shell transport."
+      ],
+      "false_positives": [
+        "Admin or backup scripts that legitimately use rsync -e with a shell wrapper (for example '/bin/sh -c ...').",
+        "Authorized penetration tests or red team exercises reproducing GTFOBins techniques.",
+        "CI/CD pipelines or deployment tools that wrap rsync transport in a shell."
+      ],
+      "response_steps": [
+        "Verify with the user and host owner whether the execution was authorized before acting.",
+        "If unauthorized, kill the resulting shell, lock the account or session, and consider isolating the endpoint.",
+        "Remove unneeded sudo rights for rsync or its SUID bit, and check persistence: cron, SSH keys, new accounts.",
+        "Reset compromised credentials, document the incident, and tune the rule only with exclusions for verified legitimate use."
+      ],
+      "severity_rationale": "High fits because rsync rarely launches a shell via -e legitimately and the pattern matches a known privilege-escalation and shell-escape technique."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GTFOBins-style shell spawn via sudo rsync with a quoted sh transport",
+        "event": {
+          "Image": "/usr/bin/rsync",
+          "CommandLine": "rsync -e 'sh -c \"sh 0<&2 1>&2\"' 127.0.0.1:/dev/null",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo rsync -e 'sh -c \"sh 0<&2 1>&2\"' 127.0.0.1:/dev/null",
+          "User": "root",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "rsync with an absolute path to bash as remote shell, launched from a restricted shell",
+        "event": {
+          "Image": "/usr/bin/rsync",
+          "CommandLine": "rsync -e /bin/bash -c 'bash 0<&2 1>&2' 127.0.0.1:/dev/null",
+          "ParentImage": "/usr/bin/rbash",
+          "User": "jperez",
+          "ProcessId": 51077,
+          "Computer": "app-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate backup using rsync over SSH with a custom port; no shell interpreter in the transport",
+        "event": {
+          "Image": "/usr/bin/rsync",
+          "CommandLine": "rsync -avz -e 'ssh -p 2222 -i /home/backup/.ssh/id_ed25519' /var/www/ backup@backup-01.example.com:/srv/backup/",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "backup",
+          "ProcessId": 30211,
+          "Computer": "web-01"
+        }
+      },
+      {
+        "description": "ssh child spawned by rsync as transport; Image is not rsync and no ' -e ' option",
+        "event": {
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "ssh -l backup backup-01.example.com rsync --server -vlogDtprze.iLsfxCIvu . /srv/backup/",
+          "ParentImage": "/usr/bin/rsync",
+          "User": "backup",
+          "ProcessId": 30212,
+          "Computer": "web-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

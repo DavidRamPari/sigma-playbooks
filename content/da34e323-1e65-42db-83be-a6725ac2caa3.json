@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "da34e323-1e65-42db-83be-a6725ac2caa3",
+    "title": "Potential Packet Capture Activity Via Start-NetEventSession - ScriptBlock",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_packet_capture.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_packet_capture.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1040"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un bloque de script de PowerShell que llama al cmdlet Start-NetEventSession. Este cmdlet inicia una sesión de NetEventPacketCapture que puede guardar en un archivo el tráfico de red del equipo.",
+      "what_it_detects": "Eventos de Script Block Logging de PowerShell (Event ID 4104) cuyo ScriptBlockText contiene 'Start-NetEventSession'. El cmdlet inicia una sesión que normalmente se crea antes con New-NetEventSession y Add-NetEventPacketCaptureProvider.",
+      "why_it_matters": "La captura de tráfico de red (ATT&CK T1040) permite a un atacante obtener tráfico, nombres de equipos y credenciales enviadas por protocolos sin cifrar. Usa cmdlets nativos, así que no necesita instalar un sniffer y puede pasar por diagnóstico administrativo.",
+      "triage_steps": [
+        "Revise el ScriptBlockText completo. Si el script se dividió en varios eventos, reconstrúyalo con el ScriptBlockId y busque New-NetEventSession, Add-NetEventPacketCaptureProvider y el valor de -LocalFilePath.",
+        "Identifique el usuario y el equipo (campo Computer). ¿Es un administrador o ingeniero de redes que suele hacer diagnósticos en ese equipo?",
+        "Revise el campo Path y use los eventos de creación de procesos para encontrar el powershell.exe que lo lanzó y su ParentImage. Busque tareas programadas, sesiones remotas (wsmprovhost.exe) o procesos de Office o de scripts.",
+        "Verifique si la sesión sigue activa (Get-NetEventSession). Luego ubique el archivo de captura, por lo general .etl, obtenga su hash y anote su tamaño y fechas.",
+        "Revise el mismo equipo en +/- 15 minutos: busque Stop-NetEventSession, copias o compresión de archivos .etl y transferencias salientes.",
+        "Busque otras herramientas de captura en el mismo equipo o usuario, como netsh trace o pktmon, y alertas previas de las mismas entidades.",
+        "Compare con tickets de cambio o con los scripts de diagnóstico conocidos en su entorno."
+      ],
+      "false_positives": [
+        "Scripts legítimos de diagnóstico de red que ejecutan administradores o personal de soporte.",
+        "Herramientas de soporte de Microsoft o de otros fabricantes que recolectan trazas de red con NetEventPacketCapture.",
+        "Pruebas autorizadas de laboratorio, rendimiento o seguridad, como las pruebas T1040 de Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del sistema si la captura estaba autorizada y asociada a un ticket.",
+        "Si no estaba autorizada, conserve como evidencia el archivo .etl y el script. Después detenga y elimine la sesión con Stop-NetEventSession y Remove-NetEventSession.",
+        "Aísle el equipo si encuentra exfiltración u otra actividad maliciosa, e investigue cómo se comprometió la cuenta.",
+        "Restablezca las credenciales que pudieron viajar sin cifrar desde ese equipo y busque los mismos cmdlets en otros endpoints."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la captura de paquetes puede exponer credenciales, pero también es un diagnóstico administrativo común, así que el contexto define si es maliciosa."
+    },
+    "en": {
+      "summary": "A PowerShell script block that calls the Start-NetEventSession cmdlet was logged. This starts a NetEventPacketCapture session, which can capture network traffic on the host to a file.",
+      "what_it_detects": "PowerShell Script Block Logging events (Event ID 4104) where ScriptBlockText contains 'Start-NetEventSession'. This cmdlet starts a session usually created earlier with New-NetEventSession and Add-NetEventPacketCaptureProvider.",
+      "why_it_matters": "Network sniffing (ATT&CK T1040) lets an attacker collect traffic, hostnames and credentials sent over unencrypted protocols. Built-in cmdlets avoid installing a sniffer and can blend in with admin diagnostics.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If the script was split across several events, rebuild it by ScriptBlockId and check for New-NetEventSession, Add-NetEventPacketCaptureProvider and the -LocalFilePath value.",
+        "Identify the user and host (Computer field). Is this an administrator or network engineer who normally runs diagnostics on this host?",
+        "Check the Path field and use process creation events to find the launching powershell.exe and its ParentImage. Look for scheduled tasks, remote sessions (wsmprovhost.exe) or Office/script hosts.",
+        "Check whether the session is still running (Get-NetEventSession), then find and hash the capture file, usually .etl, and note its size and timestamps.",
+        "Pivot on the same host within +/- 15 minutes for Stop-NetEventSession, file copies or archiving of .etl files, and outbound transfers.",
+        "Look for other capture tools on the same host or user, such as netsh trace or pktmon, and for earlier alerts on the same entities.",
+        "Compare against change tickets or known diagnostic scripts in your environment."
+      ],
+      "false_positives": [
+        "Legitimate network diagnostic scripts run by administrators or support staff.",
+        "Vendor or Microsoft troubleshooting tools that collect network traces with NetEventPacketCapture.",
+        "Authorized lab, performance or security testing, such as Atomic Red Team T1040 tests."
+      ],
+      "response_steps": [
+        "Confirm with the user or system owner whether the capture was authorized and tied to a ticket.",
+        "If it was not authorized, keep the .etl file and the script as evidence, then stop and remove the session with Stop-NetEventSession and Remove-NetEventSession.",
+        "Isolate the host if you see exfiltration or other malicious activity, and investigate how the account was compromised.",
+        "Reset credentials that may have crossed the network in cleartext from this host, and hunt for the same cmdlets on other endpoints."
+      ],
+      "severity_rationale": "Medium fits because packet capture can expose credentials but is also a normal admin diagnostic, so context decides whether it is malicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script that creates a NetEvent session, adds the packet capture provider and starts the capture into a file in a public folder",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9c21-5d6f0a1b2c3d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\Public\\diag.ps1",
+          "ScriptBlockText": "New-NetEventSession -Name 'Capture007' -LocalFilePath 'C:\\Users\\Public\\net.etl'\nAdd-NetEventPacketCaptureProvider -SessionName 'Capture007' -TruncationLength 100\nStart-NetEventSession -Name 'Capture007'"
+        }
+      },
+      {
+        "description": "Interactive one-liner typed in a console that starts an existing capture session (lowercase still matches because matching is case-insensitive)",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ScriptBlockId": "a1b2c3d4-0000-4abc-8def-112233445566",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "start-neteventsession -Name Sniff01; Start-Sleep -Seconds 300"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator lists and stops existing NetEvent sessions without starting one",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "9e8d7c6b-5a4f-4321-bcde-0f1e2d3c4b5a",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "Get-NetEventSession | Stop-NetEventSession; Get-NetEventSession | Remove-NetEventSession"
+        }
+      },
+      {
+        "description": "Network diagnostic script that only uses Test-NetConnection and Get-NetAdapter, with no packet capture",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-01.andes.example.com",
+          "ScriptBlockId": "5c4b3a29-1817-4f6e-9d5c-4b3a29181716",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\netcheck.ps1",
+          "ScriptBlockText": "Get-NetAdapter | Select-Object Name, Status; Test-NetConnection -ComputerName www.example.com -Port 443"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

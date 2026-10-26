@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "503fe26e-b5f2-4944-a126-eab405cc06e5",
+    "title": "Kerberos Network Traffic RC4 Ticket Encryption",
+    "level": "medium",
+    "status": "test",
+    "author": "sigma",
+    "path": "network/zeek/zeek_susp_kerberos_rc4.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_susp_kerberos_rc4.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró una solicitud Kerberos TGS con cifrado RC4 (rc4-hmac) para un servicio que no empieza con '$'. Esto puede indicar kerberoasting: solicitar tickets de servicio débiles para crackear offline la contraseña de la cuenta de servicio.",
+      "what_it_detects": "Eventos de Zeek kerberos.log con request_type = TGS y cipher = rc4-hmac, excluyendo los valores de service que empiezan con '$'. Ojo: las cuentas de equipo suelen terminar en '$', así que ese filtro no las excluye siempre.",
+      "why_it_matters": "En kerberoasting (ATT&CK T1558.003), cualquier usuario del dominio pide tickets de servicio cifrados con RC4. Esos tickets se pueden crackear offline y revelar contraseñas de cuentas de servicio, que a menudo tienen privilegios altos.",
+      "triage_steps": [
+        "Identifica client (usuario@REALM), id.orig_h (host de origen), id.resp_h (DC) y service (SPN solicitado) en el evento.",
+        "Cuenta cuántos SPN distintos pidió con RC4 el mismo client o id.orig_h en +/- 15 minutos; muchos servicios en poco tiempo sugieren kerberoasting.",
+        "Revisa si la cuenta del SPN admite AES (msDS-SupportedEncryptionTypes); que un cliente moderno pida RC4 cuando hay AES disponible es sospechoso.",
+        "Correlaciona con el evento 4769 del DC con Ticket Encryption Type 0x17 para el mismo usuario y servicio.",
+        "En el endpoint de origen, busca procesos como Rubeus, GetUserSPNs de Impacket o PowerShell con consultas LDAP de SPN en la misma ventana de tiempo.",
+        "Revisa alertas anteriores del mismo usuario y host, y si el host es un sistema legacy o un appliance conocido que solo soporta RC4."
+      ],
+      "false_positives": [
+        "Solicitudes normales de SPN en la empresa desde clientes o aplicaciones legacy que solo soportan RC4.",
+        "Cuentas de servicio sin AES configurado, que hacen que el DC emita tickets RC4.",
+        "Appliances, sistemas no Windows o librerías Kerberos antiguas que negocian rc4-hmac por defecto.",
+        "Cuentas de equipo cuyo service termina en '$' y que el filtro no excluye."
+      ],
+      "response_steps": [
+        "Verifica con el dueño del usuario y del host si la actividad es legítima antes de actuar.",
+        "Si es sospechosa, aísla el host de origen y suspende o restablece las credenciales del usuario solicitante.",
+        "Restablece las contraseñas de las cuentas de servicio afectadas con valores largos y aleatorios, o migra a gMSA.",
+        "Habilita AES en las cuentas de servicio y planifica deshabilitar RC4 en el dominio; vigila nuevos accesos con esas cuentas."
+      ],
+      "severity_rationale": "Medium es adecuado: RC4 en TGS es una señal fuerte de kerberoasting, pero los clientes legacy lo generan con frecuencia y hace falta correlacionar antes de escalar."
+    },
+    "en": {
+      "summary": "Zeek recorded a Kerberos TGS request using RC4 (rc4-hmac) encryption for a service not starting with '$'. This may indicate kerberoasting: requesting weak service tickets to crack the service account password offline.",
+      "what_it_detects": "Zeek kerberos.log events with request_type = TGS and cipher = rc4-hmac, excluding service values that start with '$'. Note: computer accounts usually end with '$', so that filter does not always exclude them.",
+      "why_it_matters": "In kerberoasting (ATT&CK T1558.003), any domain user requests RC4-encrypted service tickets. Those tickets can be cracked offline to reveal service account passwords, which are often highly privileged.",
+      "triage_steps": [
+        "Note client (user@REALM), id.orig_h (source host), id.resp_h (DC) and service (requested SPN) in the event.",
+        "Count distinct SPNs requested with RC4 by the same client or id.orig_h within +/- 15 minutes; many services in a short time suggests kerberoasting.",
+        "Check whether the SPN account supports AES (msDS-SupportedEncryptionTypes); a modern client requesting RC4 when AES is available is suspicious.",
+        "Correlate with DC event 4769 showing Ticket Encryption Type 0x17 for the same user and service.",
+        "On the source endpoint, look for Rubeus, Impacket GetUserSPNs or PowerShell running SPN LDAP queries in the same time window.",
+        "Review earlier alerts for the same user and host, and whether the host is a known legacy system or appliance limited to RC4."
+      ],
+      "false_positives": [
+        "Normal enterprise SPN requests from legacy clients or applications that only support RC4.",
+        "Service accounts without AES configured, causing the DC to issue RC4 tickets.",
+        "Appliances, non-Windows systems or old Kerberos libraries that negotiate rc4-hmac by default.",
+        "Computer accounts whose service ends with '$', which the filter does not exclude."
+      ],
+      "response_steps": [
+        "Verify with the user and host owners whether the activity is legitimate before acting.",
+        "If suspicious, isolate the source host and suspend or reset the requesting user's credentials.",
+        "Reset passwords of the targeted service accounts to long random values, or migrate them to gMSA.",
+        "Enable AES on service accounts and plan to disable RC4 domain-wide; monitor new logons by those accounts."
+      ],
+      "severity_rationale": "Medium fits: RC4 in TGS requests is a strong kerberoasting signal, but legacy clients often produce it, so correlation is needed before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "TGS request with rc4-hmac for an MSSQL service SPN from a workstation, typical kerberoasting pattern.",
+        "event": {
+          "ts": "2024-10-25T14:03:12.418Z",
+          "uid": "CkT9xQ2bH7fLr1aZ3",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 51522,
+          "id.resp_h": "192.0.2.10",
+          "id.resp_p": 88,
+          "request_type": "TGS",
+          "client": "jperez/ANDES.EXAMPLE.COM",
+          "service": "MSSQLSvc/sql01.andes.example.com:1433",
+          "success": true,
+          "cipher": "rc4-hmac",
+          "forwardable": true,
+          "renewable": true
+        }
+      },
+      {
+        "description": "TGS request with rc4-hmac for an HTTP service SPN from the same client.",
+        "event": {
+          "ts": "2024-10-25T14:03:13.102Z",
+          "uid": "Cm4LpW8sV2nQe6yT1",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 51524,
+          "id.resp_h": "192.0.2.10",
+          "id.resp_p": 88,
+          "request_type": "TGS",
+          "client": "jperez/ANDES.EXAMPLE.COM",
+          "service": "HTTP/intranet.andes.example.com",
+          "success": true,
+          "cipher": "rc4-hmac",
+          "forwardable": true,
+          "renewable": true
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same TGS request for the MSSQL SPN but using AES256, so cipher does not match.",
+        "event": {
+          "ts": "2024-10-25T14:10:44.903Z",
+          "uid": "Cx7RbN1kJ5uMa9dE2",
+          "id.orig_h": "192.0.2.61",
+          "id.orig_p": 49811,
+          "id.resp_h": "192.0.2.10",
+          "id.resp_p": 88,
+          "request_type": "TGS",
+          "client": "mrojas/ANDES.EXAMPLE.COM",
+          "service": "MSSQLSvc/sql01.andes.example.com:1433",
+          "success": true,
+          "cipher": "aes256-cts-hmac-sha1-96",
+          "forwardable": true,
+          "renewable": true
+        }
+      },
+      {
+        "description": "AS request (TGT) with rc4-hmac from a legacy client; request_type is AS, not TGS.",
+        "event": {
+          "ts": "2024-10-25T14:12:05.377Z",
+          "uid": "Cq2HsD6fP0wZt4gU8",
+          "id.orig_h": "198.51.100.23",
+          "id.orig_p": 40122,
+          "id.resp_h": "192.0.2.10",
+          "id.resp_p": 88,
+          "request_type": "AS",
+          "client": "scanner01/ANDES.EXAMPLE.COM",
+          "service": "krbtgt/ANDES.EXAMPLE.COM",
+          "success": true,
+          "cipher": "rc4-hmac",
+          "forwardable": true,
+          "renewable": true
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

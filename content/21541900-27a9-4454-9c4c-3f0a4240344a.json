@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "21541900-27a9-4454-9c4c-3f0a4240344a",
+    "title": "OMIGOD SCX RunAsProvider ExecuteShellCommand",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research), MSTIC",
+    "path": "linux/process_creation/proc_creation_lnx_omigod_scx_runasprovider_executeshellcommand.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_omigod_scx_runasprovider_executeshellcommand.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068",
+      "T1190",
+      "T1203"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso se ejecutó como root (LogonId 0) desde el directorio de trabajo de SCX /var/opt/microsoft/scx/tmp con /bin/sh en la línea de comandos. Esto coincide con un comando ejecutado mediante SCX RunAsProvider Invoke_ExecuteShellCommand a través de OMI.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde User es root, LogonId es 0, CurrentDirectory es /var/opt/microsoft/scx/tmp y CommandLine contiene /bin/sh, el patrón de ejecución de comandos del proveedor SCX RunAsProvider.",
+      "why_it_matters": "OMI/SCX viene instalado en VMs de Azure y en agentes de SCOM/OMS. Las vulnerabilidades OMIGOD permiten ejecutar comandos remotos como root sin autenticación (T1190, T1203, T1068), lo que da control total del host.",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique el comando pasado a /bin/sh (descargas, reverse shells, creación de usuarios, cambios en cron o SSH).",
+        "Confirme el ParentImage: se espera omiagent u omiengine. Un padre diferente cambia la hipótesis y merece revisión aparte.",
+        "Revise los procesos hijos y las conexiones de red del mismo host en +/- 15 minutos, sobre todo conexiones salientes hacia IPs externas.",
+        "Busque conexiones entrantes a los puertos de OMI (5985, 5986, 1270) y determine si la IP de origen es un servidor de administración conocido.",
+        "Valide con el equipo de plataforma si hubo actividad legítima de SCOM, Azure Automation o extensiones de VM en ese momento.",
+        "Verifique la versión instalada del paquete omi y si está parcheada contra OMIGOD.",
+        "Busque alertas anteriores para el mismo host y la misma IP de origen, y ejecuciones similares en otras VMs."
+      ],
+      "false_positives": [
+        "Uso legítimo de SCX RunAsProvider Invoke_ExecuteShellCommand por System Center Operations Manager para monitoreo o tareas de diagnóstico.",
+        "Scripts de administración o automatización de Azure/OMS que invocan comandos de shell mediante OMI desde servidores de gestión conocidos."
+      ],
+      "response_steps": [
+        "Verifique con los responsables de SCOM/Azure si la ejecución fue autorizada; documente comando, origen y horario.",
+        "Si no está autorizada, aísle el host o bloquee los puertos de OMI (5985, 5986, 1270) hacia redes no confiables.",
+        "Preserve evidencia: lista de procesos, conexiones, logs de OMI en /var/opt/omi/log e historial de comandos antes de limpiar.",
+        "Elimine la persistencia identificada (cron, claves SSH, usuarios, binarios) y rote las credenciales expuestas en el host.",
+        "Actualice OMI a una versión corregida en todas las VMs afectadas y restrinja su exposición de red."
+      ],
+      "severity_rationale": "Es alta porque implica ejecución de comandos como root a través de un servicio expuesto a ataques remotos sin autenticación, aunque puede haber uso administrativo legítimo."
+    },
+    "en": {
+      "summary": "A process ran as root (LogonId 0) from the SCX working directory /var/opt/microsoft/scx/tmp with /bin/sh in its command line. This matches a command run through SCX RunAsProvider Invoke_ExecuteShellCommand via OMI.",
+      "what_it_detects": "Linux process creation events where User is root, LogonId is 0, CurrentDirectory is /var/opt/microsoft/scx/tmp and CommandLine contains /bin/sh, the execution pattern of the SCX RunAsProvider.",
+      "why_it_matters": "OMI/SCX ships on Azure VMs and SCOM/OMS agents. The OMIGOD flaws allow unauthenticated remote command execution as root (T1190, T1203, T1068), giving full host control.",
+      "triage_steps": [
+        "Read the full CommandLine: identify what /bin/sh runs (downloads, reverse shells, user creation, cron or SSH changes).",
+        "Confirm ParentImage is omiagent or omiengine; an unexpected parent changes the hypothesis and needs separate review.",
+        "Review child processes and network connections on the same host within +/- 15 minutes, especially outbound connections to external IPs.",
+        "Look for inbound connections to OMI ports (5985, 5986, 1270) and check whether the source IP is a known management server.",
+        "Ask the platform team whether SCOM, Azure Automation or VM extension activity was expected at that time.",
+        "Check the installed omi package version and whether it is patched against OMIGOD.",
+        "Search earlier alerts for the same host and source IP, and similar executions on other VMs."
+      ],
+      "false_positives": [
+        "Legitimate use of SCX RunAsProvider Invoke_ExecuteShellCommand by System Center Operations Manager for monitoring or diagnostic tasks.",
+        "Azure/OMS automation or admin scripts invoking shell commands through OMI from known management servers."
+      ],
+      "response_steps": [
+        "Confirm with SCOM/Azure owners whether the execution was authorized; record command, source and time.",
+        "If unauthorized, isolate the host or block OMI ports (5985, 5986, 1270) from untrusted networks.",
+        "Preserve evidence first: process list, connections, OMI logs in /var/opt/omi/log and shell history.",
+        "Remove identified persistence (cron, SSH keys, users, binaries) and rotate credentials exposed on the host.",
+        "Upgrade OMI to a fixed version on all affected VMs and restrict its network exposure."
+      ],
+      "severity_rationale": "High because it indicates root command execution through a service exposed to unauthenticated remote attacks, though legitimate admin use exists."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "OMI agent runs a shell command as root from the SCX tmp directory, as with Invoke_ExecuteShellCommand.",
+        "event": {
+          "User": "root",
+          "LogonId": 0,
+          "CurrentDirectory": "/var/opt/microsoft/scx/tmp",
+          "CommandLine": "/bin/sh -c id; uname -a",
+          "Image": "/bin/sh",
+          "ParentImage": "/opt/omi/bin/omiagent",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "Computer": "azvm-web-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same shell command as root, but run from the SCX log directory instead of /var/opt/microsoft/scx/tmp.",
+        "event": {
+          "User": "root",
+          "LogonId": 0,
+          "CurrentDirectory": "/var/opt/microsoft/scx/log",
+          "CommandLine": "/bin/sh -c id; uname -a",
+          "Image": "/bin/sh",
+          "ParentImage": "/usr/sbin/cron",
+          "ProcessId": 50110,
+          "ParentProcessId": 50101,
+          "Computer": "azvm-web-01"
+        }
+      },
+      {
+        "description": "Process in the SCX tmp directory run by the omsagent service account without /bin/sh in the command line.",
+        "event": {
+          "User": "omsagent",
+          "LogonId": 998,
+          "CurrentDirectory": "/var/opt/microsoft/scx/tmp",
+          "CommandLine": "/opt/microsoft/scx/bin/tools/scxadmin -status",
+          "Image": "/opt/microsoft/scx/bin/tools/scxadmin",
+          "ParentImage": "/opt/omi/bin/omiagent",
+          "ProcessId": 51002,
+          "ParentProcessId": 48190,
+          "Computer": "azvm-web-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

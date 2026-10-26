@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "b61e87c0-50db-4b2e-8986-6a2be94b33b0",
+    "title": "Directory Service Restore Mode(DSRM) Registry Value Tampering",
+    "level": "high",
+    "status": "test",
+    "author": "Nischal Khadgi",
+    "path": "windows/registry/registry_set/registry_set_dsrm_tampering.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_dsrm_tampering.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1556"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor de registro DsrmAdminLogonBehavior en un equipo Windows y se le asignó un valor distinto del predeterminado (0). Esto puede permitir que la cuenta local de administrador DSRM de un controlador de dominio inicie sesión fuera del modo de restauración.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject termina en \\Control\\Lsa\\DsrmAdminLogonBehavior y Details no es 'DWORD (0x00000000)'. En la práctica son los valores 1 o 2, aunque la regla también alerta con cualquier otro valor.",
+      "why_it_matters": "Con el valor 2, la cuenta DSRM se puede usar siempre, incluso por red, con un hash de contraseña que casi nunca se rota. Así un atacante conserva acceso al controlador de dominio. Corresponde a ATT&CK T1556 (modificación del proceso de autenticación) y sirve para persistencia y acceso a credenciales.",
+      "triage_steps": [
+        "Confirme el host y verifique si es un controlador de dominio. Anote el valor exacto de Details (0x1 o 0x2).",
+        "Revise Image y el usuario del proceso que escribió la clave (reg.exe, powershell.exe, herramientas remotas) y su proceso padre.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, comandos de ntdsutil ('set dsrm password'), mimikatz (lsadump::sam) o volcados de SAM/LSASS.",
+        "Busque inicios de sesión de la cuenta Administrator local del DC (eventos 4624 con el nombre del DC como dominio), sobre todo de red (tipo 3) o RDP.",
+        "Pregunte al equipo de AD si hay un cambio aprobado o una tarea de recuperación en curso.",
+        "Revise alertas anteriores del mismo usuario y del mismo host, y movimientos laterales desde la IP de origen."
+      ],
+      "false_positives": [
+        "La regla lista falsos positivos desconocidos; el cambio legítimo es poco común.",
+        "Un administrador de AD configura temporalmente el valor 1 durante un mantenimiento con AD DS detenido.",
+        "Scripts de laboratorio, endurecimiento o auditoría que escriben la clave en entornos de prueba."
+      ],
+      "response_steps": [
+        "Si el cambio no está autorizado, trate el DC como comprometido y escale de inmediato a respuesta a incidentes.",
+        "Restablezca DsrmAdminLogonBehavior a 0 o elimine el valor, después de preservar la evidencia.",
+        "Restablezca la contraseña DSRM en cada DC con ntdsutil y rote las credenciales privilegiadas que pudieron quedar expuestas.",
+        "Investigue el acceso inicial y contenga la cuenta y el host que hicieron el cambio; luego monitoree nuevos accesos con la cuenta DSRM."
+      ],
+      "severity_rationale": "La severidad es alta porque el cambio da persistencia con privilegios de administrador en un controlador de dominio y casi nunca tiene una causa legítima."
+    },
+    "en": {
+      "summary": "The DsrmAdminLogonBehavior registry value on a Windows host was set to something other than the default of 0. This can let a domain controller's local DSRM administrator account log on outside restore mode.",
+      "what_it_detects": "registry_set events where TargetObject ends with \\Control\\Lsa\\DsrmAdminLogonBehavior and Details is not 'DWORD (0x00000000)'. In practice that means 1 or 2, but any other value also triggers.",
+      "why_it_matters": "With value 2 the DSRM account can always log on, including over the network, using a password hash that is rarely rotated. That gives an attacker lasting access to the DC. This is ATT&CK T1556 (Modify Authentication Process), used for persistence and credential access.",
+      "triage_steps": [
+        "Confirm whether the host is a domain controller and record the exact Details value (0x1 or 0x2).",
+        "Check Image, the process user and the parent process that wrote the value, such as reg.exe, powershell.exe or a remote tool.",
+        "On the same host within +/- 15 minutes, look for ntdsutil 'set dsrm password', mimikatz lsadump::sam, or SAM/LSASS dumping.",
+        "Look for logons by the DC's local Administrator (4624 events with the DC name as domain), especially network (type 3) or RDP logons.",
+        "Ask the AD team whether an approved change or recovery task is under way.",
+        "Review earlier alerts for the same user and host, and lateral movement from the source IP."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unknown, so legitimate changes are rare.",
+        "An AD admin temporarily sets the value to 1 for maintenance while AD DS is stopped.",
+        "Lab, hardening or audit scripts that write the key in test environments."
+      ],
+      "response_steps": [
+        "If the change is unauthorized, treat the DC as compromised and escalate to incident response right away.",
+        "Preserve evidence first, then set DsrmAdminLogonBehavior back to 0 or remove the value.",
+        "Reset the DSRM password on every DC with ntdsutil and rotate any privileged credentials that may be exposed.",
+        "Find the initial access, contain the account and host that made the change, and watch for further DSRM account logons."
+      ],
+      "severity_rationale": "High fits because the change gives persistent admin-level access to a domain controller and rarely has a legitimate cause."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets DsrmAdminLogonBehavior to 2 on a domain controller, which allows DSRM logons at any time",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DsrmAdminLogonBehavior",
+          "Details": "DWORD (0x00000002)"
+        }
+      },
+      {
+        "description": "PowerShell sets the value to 1, which allows DSRM logons while AD DS is stopped",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DC-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\mrojas",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DsrmAdminLogonBehavior",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The value is reset to the default of 0, which the filter excludes",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\DsrmAdminLogonBehavior",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "A different LSA value is changed, so TargetObject does not end with DsrmAdminLogonBehavior",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\RunAsPPL",
+          "Details": "DWORD (0x00000001)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

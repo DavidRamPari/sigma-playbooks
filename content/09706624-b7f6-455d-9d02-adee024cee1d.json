@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "09706624-b7f6-455d-9d02-adee024cee1d",
+    "title": "HackTool - CobaltStrike BOF Injection Pattern",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/process_access/proc_access_win_hktl_cobaltstrike_bof_injection_pattern.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_hktl_cobaltstrike_bof_injection_pattern.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1106",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso abrió un handle a otro proceso con permisos de inyección (0x1028 o 0x1fffff), y la llamada se originó en memoria que no pertenece a ningún módulo cargado. Es el patrón típico de un BOF de Cobalt Strike que inyecta en otro proceso.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon EventID 10) cuyo CallTrace contiene solo ntdll.dll, KERNELBASE.dll y un marco UNKNOWN(...), lo que indica código sin módulo de respaldo, con GrantedAccess 0x1028 (escritura y operación en memoria virtual) o 0x1fffff (acceso total).",
+      "why_it_matters": "Los BOF se ejecutan dentro de la memoria del beacon y usan la API nativa de Windows (T1106) para inyectar código, por ejemplo para parchear AMSI o lanzar procesos de sacrificio. La regla también lo etiqueta como debilitamiento de defensas (T1685). Indica un posible implante activo.",
+      "triage_steps": [
+        "Identifique SourceImage, SourceProcessId y SourceUser: ¿es un binario esperado o un proceso inusual (rundll32, dllhost, un ejecutable en una ruta temporal)?",
+        "Revise TargetImage: inyectar en powershell.exe, notepad.exe, svchost.exe o en un proceso recién creado por el mismo origen es muy sospechoso.",
+        "Confirme el marco UNKNOWN del CallTrace: indica código en memoria sin respaldo; recolecte la memoria del SourceProcessId si su EDR lo permite.",
+        "Revise el árbol de procesos del origen: proceso padre, línea de comandos y procesos hijos creados en +/- 15 minutos.",
+        "Busque conexiones de red salientes periódicas (beaconing) desde el proceso origen hacia dominios o IP poco comunes.",
+        "Busque otros eventos de acceso a procesos, carga de DLL o creación de hilos remotos en el mismo host en +/- 15 minutos.",
+        "Revise alertas previas del mismo host y usuario, y busque el mismo hash de SourceImage en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Software de seguridad, anti-cheat o protección DRM que ejecuta código dinámico (JIT o shellcode legítimo) y abre procesos con acceso total.",
+        "Ejercicios autorizados de red team o pruebas de penetración con Cobalt Strike u otros frameworks que usan BOF."
+      ],
+      "response_steps": [
+        "Verifique con el equipo de red team o el responsable del activo si existe un ejercicio autorizado antes de escalar.",
+        "Si no hay justificación, aísle el endpoint desde el EDR y preserve la memoria de los procesos origen y destino.",
+        "Bloquee los dominios o IP de C2 identificados y busque el mismo indicador en toda la flota.",
+        "Restablezca las credenciales del usuario afectado y revise movimiento lateral desde ese host.",
+        "Erradique la persistencia encontrada y reconstruya el equipo desde una imagen confiable si se confirma el compromiso."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el acceso para inyectar desde memoria sin respaldo casi nunca ocurre en software legítimo y sugiere un implante activo."
+    },
+    "en": {
+      "summary": "A process opened a handle to another process with injection-capable rights (0x1028 or 0x1fffff), and the call came from memory not backed by any loaded module. This is the typical pattern of a Cobalt Strike BOF injecting into another process.",
+      "what_it_detects": "Process access events (Sysmon EventID 10) whose CallTrace contains only ntdll.dll, KERNELBASE.dll and an UNKNOWN(...) frame, meaning code with no backing module, with GrantedAccess 0x1028 (virtual memory write and operation) or 0x1fffff (full access).",
+      "why_it_matters": "BOFs run inside beacon memory and use the native Windows API (T1106) to inject code, for example to patch AMSI or spawn sacrificial processes. The rule also tags this as defense impairment (T1685). It points to a likely active implant.",
+      "triage_steps": [
+        "Identify SourceImage, SourceProcessId and SourceUser: is it an expected binary or an unusual process (rundll32, dllhost, an executable in a temp path)?",
+        "Review TargetImage: injection into powershell.exe, notepad.exe, svchost.exe or a process freshly spawned by the same source is highly suspicious.",
+        "Confirm the UNKNOWN frame in CallTrace: it means unbacked memory; collect memory from SourceProcessId if your EDR supports it.",
+        "Review the source process tree: parent, command line and child processes created within +/- 15 minutes.",
+        "Look for periodic outbound connections (beaconing) from the source process to uncommon domains or IPs.",
+        "Search for other process access, DLL load or remote thread events on the same host within +/- 15 minutes.",
+        "Check earlier alerts for the same host and user, and hunt for the SourceImage hash on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Security, anti-cheat or DRM software that runs dynamic code (JIT or legitimate shellcode) and opens processes with full access.",
+        "Authorized red team exercises or penetration tests using Cobalt Strike or other BOF-capable frameworks."
+      ],
+      "response_steps": [
+        "Check with the red team or asset owner whether an authorized exercise is running before escalating.",
+        "If unexplained, isolate the endpoint through the EDR and preserve memory of the source and target processes.",
+        "Block identified C2 domains or IPs and hunt for the same indicators across the fleet.",
+        "Reset credentials of the affected user and review lateral movement from the host.",
+        "Remove any persistence found and rebuild the host from a trusted image if compromise is confirmed."
+      ],
+      "severity_rationale": "High fits because injection-level access from unbacked memory is rare in legitimate software and suggests an active implant."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unbacked code inside rundll32.exe opens notepad.exe with PROCESS_ALL_ACCESS via ntdll and KERNELBASE only",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\rundll32.exe",
+          "SourceProcessId": 4312,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\System32\\notepad.exe",
+          "TargetProcessId": 6120,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00000000027A0D8F)"
+        }
+      },
+      {
+        "description": "BOF-style AMSI patch: unbacked code opens powershell.exe with 0x1028 (VM write and operation)",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceImage": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\updater.exe",
+          "SourceProcessId": 7788,
+          "SourceUser": "ANDES\\mrojas",
+          "TargetImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetProcessId": 5034,
+          "GrantedAccess": "0x1028",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+a0f44|C:\\Windows\\System32\\KERNELBASE.dll+71b6|UNKNOWN(000001F3A4C21B5E)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same suspicious call trace shape but only query/read access (0x1010), not in the GrantedAccess list",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\rundll32.exe",
+          "SourceProcessId": 4312,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Windows\\System32\\notepad.exe",
+          "TargetProcessId": 6120,
+          "GrantedAccess": "0x1010",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00000000027A0D8F)"
+        }
+      },
+      {
+        "description": "Legitimate Task Manager opening a process with full access; call trace is fully module-backed and longer",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceImage": "C:\\Windows\\System32\\Taskmgr.exe",
+          "SourceProcessId": 2210,
+          "SourceUser": "ANDES\\jperez",
+          "TargetImage": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+          "TargetProcessId": 9012,
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\system32\\Taskmgr.exe+5a1f2|C:\\Windows\\System32\\KERNEL32.DLL+17034|C:\\Windows\\SYSTEM32\\ntdll.dll+52651"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "9b2cc4c4-2ad4-416d-8e8e-ee6aa6f5035a",
+    "title": "End User Consent",
+    "level": "low",
+    "status": "test",
+    "author": "Bailey Bercik '@baileybercik', Mark Morowczynski '@markmorow'",
+    "path": "cloud/azure/audit_logs/azure_app_end_user_consent.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_app_end_user_consent.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1528"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un usuario sin rol de administrador otorgó consentimiento a una aplicación en Microsoft Entra ID, lo que le da acceso delegado a sus datos. Puede ser una autorización legítima o parte de un ataque de consentimiento ilícito (illicit consent grant).",
+      "what_it_detects": "Eventos de Azure AD/Entra ID Audit Logs en los que ConsentContext.IsAdminConsent es 'false', es decir, consentimientos otorgados por el usuario final y no por un administrador en nombre de toda la organización.",
+      "why_it_matters": "Los atacantes envían enlaces de consentimiento OAuth para obtener tokens de acceso y de actualización con permisos como Mail.Read u offline_access (ATT&CK T1528, robo de tokens de acceso de aplicaciones). Ese acceso sigue funcionando aunque se cambie la contraseña y no requiere MFA posterior.",
+      "triage_steps": [
+        "Identifique al usuario que otorgó el consentimiento (InitiatedBy.user.userPrincipalName), la IP de origen y la hora del evento.",
+        "Identifique la aplicación: nombre, AppId, publicador, si el publicador está verificado y si la app es de un tenant externo.",
+        "Revise los permisos concedidos en ConsentAction.Permissions; priorice Mail.*, Files.ReadWrite.All, Contacts.Read, offline_access y otros scopes amplios.",
+        "Revise los sign-in logs del usuario +/- 15 minutos: IP, país, user agent, riesgo de inicio de sesión y si hubo MFA.",
+        "Busque otros usuarios que hayan consentido la misma aplicación; varios consentimientos en poco tiempo sugieren una campaña de phishing.",
+        "Revise el correo del usuario en busca de mensajes con enlaces a login.microsoftonline.com con parámetros client_id y redirect_uri sospechosos.",
+        "Consulte la actividad del service principal (sign-ins de aplicación, acceso a Graph) y las alertas previas del usuario."
+      ],
+      "false_positives": [
+        "Usuarios que consienten aplicaciones de productividad legítimas permitidas por la política de consentimiento del tenant.",
+        "Desarrolladores que prueban sus propias aplicaciones registradas en el tenant.",
+        "Consentimiento a permisos de bajo riesgo (User.Read, openid, profile) de publicadores verificados y conocidos."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con el dueño de la aplicación si el consentimiento fue intencional y la app es necesaria.",
+        "Si es malicioso, revoque los OAuth2PermissionGrants de la app y deshabilite su service principal en el tenant.",
+        "Revoque las sesiones y refresh tokens del usuario; si hay indicios de compromiso, restablezca credenciales y revise el método MFA.",
+        "Revise qué datos accedió la aplicación (buzón, archivos) y elimine reglas de bandeja o reenvíos creados.",
+        "Busque y revoque consentimientos de la misma app en otros usuarios, y restrinja el consentimiento de usuario a publicadores verificados o flujo de aprobación."
+      ],
+      "severity_rationale": "Nivel bajo porque el consentimiento de usuario final es habitual y suele estar permitido, pero debe escalarse cuando la app es desconocida o pide permisos amplios."
+    },
+    "en": {
+      "summary": "A non-admin user granted consent to an application in Microsoft Entra ID, giving it delegated access to that user's data. This may be a legitimate authorization or part of an illicit consent grant attack.",
+      "what_it_detects": "Azure AD/Entra ID Audit Log events where ConsentContext.IsAdminConsent is 'false', meaning the consent was given by the end user rather than by an administrator on behalf of the organization.",
+      "why_it_matters": "Attackers send OAuth consent links to obtain access and refresh tokens with scopes such as Mail.Read or offline_access (ATT&CK T1528, Steal Application Access Token). That access survives password resets and needs no further MFA.",
+      "triage_steps": [
+        "Identify the consenting user (InitiatedBy.user.userPrincipalName), source IP and event time.",
+        "Identify the application: display name, AppId, publisher, whether the publisher is verified and whether the app comes from an external tenant.",
+        "Review granted permissions in ConsentAction.Permissions; prioritize Mail.*, Files.ReadWrite.All, Contacts.Read, offline_access and other broad scopes.",
+        "Check the user's sign-in logs +/- 15 minutes: IP, country, user agent, sign-in risk and whether MFA was satisfied.",
+        "Search for other users consenting to the same app; several consents in a short window suggest a phishing campaign.",
+        "Check the user's mailbox for messages linking to login.microsoftonline.com with suspicious client_id and redirect_uri parameters.",
+        "Review the service principal's activity (app sign-ins, Graph access) and earlier alerts for the user."
+      ],
+      "false_positives": [
+        "Users consenting to legitimate productivity apps allowed by the tenant's consent policy.",
+        "Developers testing their own applications registered in the tenant.",
+        "Consent to low-risk scopes (User.Read, openid, profile) from known, verified publishers."
+      ],
+      "response_steps": [
+        "Confirm with the user and the app owner whether the consent was intentional and the app is needed.",
+        "If malicious, revoke the app's OAuth2PermissionGrants and disable its service principal in the tenant.",
+        "Revoke the user's sessions and refresh tokens; if compromise is suspected, reset credentials and review MFA methods.",
+        "Determine what data the app accessed (mailbox, files) and remove any inbox rules or forwarding it created.",
+        "Find and revoke consents to the same app by other users; restrict user consent to verified publishers or an admin approval workflow."
+      ],
+      "severity_rationale": "Low because end-user consent is common and often permitted, but escalate when the app is unknown or requests broad permissions."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "End user consents to an unverified external app requesting mail read and offline access",
+        "event": {
+          "Category": "ApplicationManagement",
+          "OperationName": "Consent to application",
+          "Result": "success",
+          "ConsentContext.IsAdminConsent": "false",
+          "ConsentContext.OnBehalfOfAll": "false",
+          "InitiatedBy.user.userPrincipalName": "jperez@example.com",
+          "InitiatedBy.user.ipAddress": "203.0.113.45",
+          "TargetResources.displayName": "Mail Sync Helper",
+          "TargetResources.type": "ServicePrincipal",
+          "ConsentAction.Permissions": "Scope: openid profile offline_access Mail.Read User.Read",
+          "CorrelationId": "3f2a9c1e-7b44-4d2a-9e10-1a2b3c4d5e6f",
+          "ActivityDateTime": "2024-05-14T13:02:11Z"
+        }
+      },
+      {
+        "description": "End user consents to a known productivity app with basic scopes",
+        "event": {
+          "Category": "ApplicationManagement",
+          "OperationName": "Consent to application",
+          "Result": "success",
+          "ConsentContext.IsAdminConsent": "False",
+          "ConsentContext.OnBehalfOfAll": "false",
+          "InitiatedBy.user.userPrincipalName": "mrodriguez@example.com",
+          "InitiatedBy.user.ipAddress": "198.51.100.20",
+          "TargetResources.displayName": "Example Calendar Planner",
+          "TargetResources.type": "ServicePrincipal",
+          "ConsentAction.Permissions": "Scope: User.Read Calendars.Read",
+          "CorrelationId": "8d1e4b2a-0c55-4f7e-b3a9-6e7f8a9b0c1d",
+          "ActivityDateTime": "2024-05-14T15:40:03Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator grants tenant-wide admin consent to an application",
+        "event": {
+          "Category": "ApplicationManagement",
+          "OperationName": "Consent to application",
+          "Result": "success",
+          "ConsentContext.IsAdminConsent": "true",
+          "ConsentContext.OnBehalfOfAll": "true",
+          "InitiatedBy.user.userPrincipalName": "admin.it@example.com",
+          "InitiatedBy.user.ipAddress": "192.0.2.10",
+          "TargetResources.displayName": "Example HR Portal",
+          "TargetResources.type": "ServicePrincipal",
+          "ConsentAction.Permissions": "Scope: User.Read.All",
+          "CorrelationId": "b7c6d5e4-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
+          "ActivityDateTime": "2024-05-14T09:15:27Z"
+        }
+      },
+      {
+        "description": "Service principal creation event without any consent context",
+        "event": {
+          "Category": "ApplicationManagement",
+          "OperationName": "Add service principal",
+          "Result": "success",
+          "InitiatedBy.user.userPrincipalName": "dev.lopez@example.com",
+          "InitiatedBy.user.ipAddress": "192.0.2.33",
+          "TargetResources.displayName": "Internal Build Bot",
+          "TargetResources.type": "ServicePrincipal",
+          "CorrelationId": "c1d2e3f4-5a6b-4c7d-9e8f-1a2b3c4d5e6f",
+          "ActivityDateTime": "2024-05-14T10:22:48Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

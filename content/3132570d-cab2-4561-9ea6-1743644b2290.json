@@ -1,0 +1,161 @@
+{
+  "rule": {
+    "id": "3132570d-cab2-4561-9ea6-1743644b2290",
+    "title": "Kubernetes Events Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_events_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_events_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad eliminó uno o más objetos Event de Kubernetes mediante la API. Puede ser una limpieza administrativa o un intento de borrar el rastro de actividad maliciosa en el clúster.",
+      "what_it_detects": "Registros de auditoría de Kubernetes con verb igual a 'delete' sobre objectRef.resource igual a 'events'. No cubre el verbo 'deletecollection' ni la expiración automática de eventos por TTL.",
+      "why_it_matters": "Los eventos de Kubernetes muestran la creación de pods, fallos de imagen, reinicios y cambios de programación. Borrarlos oculta actividad reciente del atacante: es eliminación de indicadores (ATT&CK T1070) y figura en el Threat Matrix for Kubernetes de Microsoft.",
+      "triage_steps": [
+        "Identifique al actor: user.username, user.groups, sourceIPs y userAgent. Determine si es una persona, un service account o un controlador.",
+        "Revise objectRef.namespace y objectRef.name: qué eventos se borraron y a qué pods, nodos o despliegues se referían.",
+        "Confirme el resultado en responseStatus.code: un 200 indica borrado exitoso; un 403 indica un intento bloqueado por RBAC, igualmente relevante.",
+        "Mida el volumen: cuente los borrados de events del mismo usuario en +/- 15 minutos; borrados masivos o en varios namespaces son más sospechosos.",
+        "Pivote por el mismo usuario y sourceIPs en +/- 15 minutos: busque pods/exec, creación de pods privilegiados, lectura de secrets o cambios de rolebindings.",
+        "Si el actor es un service account, identifique el pod que usa ese token y valide si la herramienta legítimamente limpia eventos.",
+        "Recupere los eventos borrados desde un sink externo (SIEM, exportador de eventos) si existe, y revise alertas previas para el mismo usuario o namespace.",
+        "Consulte con el dueño del clúster si existe un ticket de cambio o mantenimiento que justifique la limpieza."
+      ],
+      "false_positives": [
+        "Administradores que ejecutan kubectl delete events para limpiar ruido durante una depuración.",
+        "Operadores o herramientas de limpieza que borran eventos antiguos de forma programada.",
+        "Pipelines de CI/CD o pruebas que restablecen clústeres o namespaces efímeros."
+      ],
+      "response_steps": [
+        "Verifique con el responsable de la identidad si la acción fue autorizada antes de tomar medidas.",
+        "Si no fue autorizada, preserve los logs de auditoría y los eventos exportados para la investigación.",
+        "Revoque o rote las credenciales, tokens o kubeconfig del actor y suspenda el service account comprometido.",
+        "Investigue y revierta los cambios que el atacante intentó ocultar: pods, workloads, rolebindings o secrets accedidos.",
+        "Restrinja en RBAC el permiso delete sobre events a las identidades que realmente lo necesitan y envíe los eventos a un almacenamiento externo."
+      ],
+      "severity_rationale": "Severidad media: la acción tiene usos administrativos legítimos, pero borrar eventos indica posible evasión y amerita revisión del contexto."
+    },
+    "en": {
+      "summary": "An identity deleted one or more Kubernetes Event objects through the API. This may be administrative cleanup or an attempt to erase traces of malicious activity in the cluster.",
+      "what_it_detects": "Kubernetes audit records with verb equal to 'delete' on objectRef.resource equal to 'events'. It does not cover the 'deletecollection' verb or automatic TTL expiry of events.",
+      "why_it_matters": "Kubernetes events record pod creation, image pull failures, restarts and scheduling changes. Deleting them hides recent attacker activity: indicator removal (ATT&CK T1070), listed in Microsoft's Threat Matrix for Kubernetes.",
+      "triage_steps": [
+        "Identify the actor: user.username, user.groups, sourceIPs and userAgent. Decide whether it is a person, a service account or a controller.",
+        "Review objectRef.namespace and objectRef.name: which events were deleted and which pods, nodes or deployments they referenced.",
+        "Check responseStatus.code: 200 means the deletion succeeded; 403 means RBAC blocked an attempt, which is still relevant.",
+        "Measure volume: count event deletions by the same user within +/- 15 minutes; bulk or multi-namespace deletions are more suspicious.",
+        "Pivot on the same user and sourceIPs within +/- 15 minutes: look for pods/exec, privileged pod creation, secret reads or rolebinding changes.",
+        "If the actor is a service account, find the pod using that token and confirm whether the tool legitimately cleans up events.",
+        "Recover deleted events from an external sink (SIEM, event exporter) if available, and check earlier alerts for the same user or namespace.",
+        "Ask the cluster owner whether a change ticket or maintenance window justifies the cleanup."
+      ],
+      "false_positives": [
+        "Administrators running kubectl delete events to clear noise while debugging.",
+        "Operators or cleanup tools that delete old events on a schedule.",
+        "CI/CD pipelines or tests that reset ephemeral clusters or namespaces."
+      ],
+      "response_steps": [
+        "Confirm with the identity's owner whether the action was authorized before acting.",
+        "If unauthorized, preserve audit logs and exported events for the investigation.",
+        "Revoke or rotate the actor's credentials, tokens or kubeconfig and disable the compromised service account.",
+        "Investigate and roll back what the attacker tried to hide: pods, workloads, rolebindings or accessed secrets.",
+        "Restrict RBAC delete permission on events to identities that need it, and ship events to external storage."
+      ],
+      "severity_rationale": "Medium fits because the action has legitimate admin uses, but deleting events suggests possible evasion and warrants a context review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An interactive user deletes an event in the payments namespace with kubectl from an external IP.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "delete",
+          "objectRef.resource": "events",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "api-7d9f8c6b5-x2kqp.17c3a1b2e4f5a6b7",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:03:12.418Z"
+        }
+      },
+      {
+        "description": "A service account deletes an event in kube-system shortly after a pod exec.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "delete",
+          "objectRef.resource": "events",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "debug-shell.17c3a1c09d8e7f01",
+          "objectRef.apiVersion": "events.k8s.io/v1",
+          "user.username": "system:serviceaccount:default:build-runner",
+          "sourceIPs": "198.51.100.23",
+          "userAgent": "python-requests/2.31.0",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:07:55.102Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A user lists events with kubectl get events; the verb is list, not delete.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "objectRef.resource": "events",
+          "objectRef.namespace": "payments",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T13:58:40.774Z"
+        }
+      },
+      {
+        "description": "A user deletes a pod; the verb is delete but the resource is pods, not events.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "delete",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "api-7d9f8c6b5-x2kqp",
+          "objectRef.apiVersion": "v1",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:01:05.330Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

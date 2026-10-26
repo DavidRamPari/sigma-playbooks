@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "af6925b0-8826-47f1-9324-337507a0babd",
+    "title": "Azure DNS Zone Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_dns_zone_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_dns_zone_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1565.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó o eliminó una zona DNS pública de Azure o uno de sus conjuntos de registros. Si el cambio no estaba autorizado, el tráfico de los dominios de la organización podría estar redirigido.",
+      "what_it_detects": "Eventos de Azure Activity Log cuyo operationName empieza con MICROSOFT.NETWORK/DNSZONES y termina en /WRITE o /DELETE. Incluye la zona completa y sus registros (A, CNAME, MX, NS, TXT, etc.). Las zonas privadas (privateDnsZones) y las lecturas no se detectan.",
+      "why_it_matters": "Si alguien altera el DNS, puede desviar sitios web, correo o APIs hacia infraestructura del atacante, interceptar credenciales o dejar servicios sin funcionar. Corresponde a manipulación de datos almacenados (T1565.001) con impacto en la disponibilidad y la integridad.",
+      "triage_steps": [
+        "Revise operationName y resourceId para identificar la zona, el tipo de registro y si fue creación/modificación (WRITE) o eliminación (DELETE).",
+        "Confirme status/resultType: un cambio Succeeded es prioritario; los intentos fallidos pueden indicar exploración de permisos.",
+        "Identifique caller, callerIpAddress y el user agent (portal, CLI, Terraform, pipeline). Compruebe si es un administrador o una service principal esperada.",
+        "Busque un ticket de cambio o un despliegue de IaC relacionado usando el correlationId y el horario del evento.",
+        "Compare el valor actual del registro con su versión anterior: busque NS, MX o CNAME que apunten a dominios externos desconocidos, o TXT nuevos de verificación.",
+        "Pivote sobre el mismo caller en +/- 15 minutos: asignaciones de roles, eliminación de bloqueos, cambios en Key Vault u otras zonas.",
+        "Revise los Sign-in logs de Entra ID del caller: ubicación, dispositivo, MFA y alertas previas de riesgo."
+      ],
+      "false_positives": [
+        "Administradores de red o DNS que hacen cambios planificados desde el portal o la CLI.",
+        "Pipelines de IaC (Terraform, Bicep, ARM) o herramientas como cert-manager y external-dns que actualizan registros automáticamente.",
+        "Validaciones de dominio que crean registros TXT o CNAME temporales para certificados o servicios SaaS."
+      ],
+      "response_steps": [
+        "Valide el cambio con el dueño de la zona antes de actuar; si es legítimo, documente y considere excluir esa identidad o pipeline.",
+        "Si no está autorizado, restaure los registros desde IaC o una exportación previa de la zona y confirme la resolución pública.",
+        "Contenga la identidad: revoque sesiones, rote secretos de la service principal y quite roles como DNS Zone Contributor.",
+        "Aplique bloqueos de recursos (CanNotDelete o ReadOnly) a las zonas críticas y aplique mínimo privilegio en el RBAC.",
+        "Busque phishing o certificados emitidos para los dominios afectados mientras el cambio estuvo activo."
+      ],
+      "severity_rationale": "Es medium porque los cambios de DNS son frecuentes y suelen ser legítimos, pero un cambio no autorizado puede redirigir tráfico crítico de inmediato."
+    },
+    "en": {
+      "summary": "An identity created, modified or deleted a public Azure DNS zone or one of its record sets. If unauthorized, traffic for the organization's domains may be redirected.",
+      "what_it_detects": "Azure Activity Log events where operationName starts with MICROSOFT.NETWORK/DNSZONES and ends with /WRITE or /DELETE. This covers whole zones and their record sets (A, CNAME, MX, NS, TXT and others). Private zones (privateDnsZones) and reads are not matched.",
+      "why_it_matters": "An attacker who tampers with DNS can send websites, mail or APIs to their own infrastructure, capture credentials, or take services offline. This is stored data manipulation (T1565.001), with impact on integrity and availability.",
+      "triage_steps": [
+        "Read operationName and resourceId to identify the zone, the record type, and whether it was a create/update (WRITE) or a deletion (DELETE).",
+        "Check status/resultType. Prioritize Succeeded changes; failed attempts may indicate permission probing.",
+        "Identify caller, callerIpAddress and user agent (portal, CLI, Terraform, pipeline). Confirm whether this is an expected admin or service principal.",
+        "Look for a matching change ticket or IaC deployment using correlationId and the event time.",
+        "Compare the current record value with its prior version. Look for NS, MX or CNAME records pointing to unknown external domains, or new TXT verification records.",
+        "Pivot on the same caller within +/- 15 minutes: role assignments, lock removals, Key Vault changes, edits to other zones.",
+        "Review the caller's Entra ID sign-in logs for location, device, MFA and earlier risk alerts."
+      ],
+      "false_positives": [
+        "Network or DNS administrators making planned changes from the portal or CLI.",
+        "IaC pipelines (Terraform, Bicep, ARM) or tools like cert-manager and external-dns that update records automatically.",
+        "Domain validation that creates temporary TXT or CNAME records for certificates or SaaS onboarding."
+      ],
+      "response_steps": [
+        "Confirm the change with the zone owner before acting. If it was legitimate, document it and consider excluding that identity or pipeline.",
+        "If unauthorized, restore the records from IaC or a previous zone export, then check public resolution.",
+        "Contain the identity: revoke sessions, rotate service principal secrets, and remove roles such as DNS Zone Contributor.",
+        "Put resource locks (CanNotDelete or ReadOnly) on critical zones and enforce least-privilege RBAC.",
+        "Look for phishing or certificates issued for the affected domains while the change was live."
+      ],
+      "severity_rationale": "Medium fits because DNS changes are common and usually legitimate, but an unauthorized change can redirect critical traffic immediately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful deletion of a public DNS zone by an unfamiliar user from the Azure portal",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/DNSZONES/DELETE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/dnszones/example.com",
+          "correlationId": "11111111-2222-3333-4444-555555555555",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+      },
+      {
+        "description": "CNAME record set written in a public zone by a service principal (mixed-case operationName, matched case-insensitively)",
+        "event": {
+          "operationName": "Microsoft.Network/dnsZones/CNAME/write",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "a1b2c3d4-0000-4000-8000-000000000001",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/dnszones/example.com/CNAME/login",
+          "correlationId": "66666666-7777-8888-9999-000000000000",
+          "userAgent": "azure-cli/2.61.0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of a DNS zone, which does not end with /WRITE or /DELETE",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/DNSZONES/READ",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/dnszones/example.com"
+        }
+      },
+      {
+        "description": "Write to a private DNS zone, which uses PRIVATEDNSZONES and does not start with MICROSOFT.NETWORK/DNSZONES",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/PRIVATEDNSZONES/WRITE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "terraform-sp@example.org",
+          "callerIpAddress": "198.51.100.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-net/providers/Microsoft.Network/privateDnsZones/internal.example.org"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

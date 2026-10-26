@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "547dfc53-ebf6-4afe-8d2e-793d9574975d",
+    "title": "OpenCanary - REDIS Action Command Attempt",
+    "level": "high",
+    "status": "test",
+    "author": "Security Onion Solutions",
+    "path": "application/opencanary/opencanary_redis_command.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/opencanary/opencanary_redis_command.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003",
+      "T1213"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente se conectó al servicio REDIS simulado de un honeypot OpenCanary y envió un comando (logtype 17001). Ningún sistema legítimo debería comunicarse con un canary, así que el origen se considera sospechoso.",
+      "what_it_detects": "Eventos de OpenCanary con logtype 17001 (comando REDIS). El servicio REDIS emulado registra cada comando que envía un cliente, como AUTH, CONFIG, KEYS, GET o INFO, junto con el host y puerto de origen.",
+      "why_it_matters": "Los atacantes buscan REDIS expuestos para leer datos almacenados (T1213, datos de repositorios de información), robar credenciales o secretos guardados en claves (T1003) o abusar de CONFIG/SAVE para escribir archivos. Una conexión al canary suele indicar un escaneo interno o un host comprometido.",
+      "triage_steps": [
+        "Revise src_host, src_port, dst_host, dst_port y node_id. Identifique el activo y el responsable de src_host en la CMDB o en los logs de DHCP o VPN.",
+        "Revise logdata para ver el comando y sus argumentos: intentos de AUTH, CONFIG SET dir/dbfilename, SLAVEOF, MODULE LOAD o EVAL indican explotación y no solo sondeo.",
+        "Pivotee por src_host en todos los nodos OpenCanary en +/- 15 minutos: conexiones SSH, HTTP, FTP o SMB a varios canaries indican un escaneo activo.",
+        "Consulte firewall, NetFlow y EDR para ver si src_host se conectó a servidores REDIS reales en el puerto 6379 o a muchos hosts y puertos.",
+        "En el endpoint de origen, identifique el proceso que abrió la conexión (redis-cli, python, nmap, masscan o un binario desconocido) y el usuario que lo ejecutó.",
+        "Busque alertas anteriores para la misma IP, host o usuario, y verifique si src_host es un escáner de vulnerabilidades autorizado."
+      ],
+      "false_positives": [
+        "Escáneres de vulnerabilidades autorizados o pruebas de penetración que sondean REDIS en todos los hosts que alcanzan.",
+        "Aplicaciones o administradores con un hostname o IP de REDIS mal configurado que apunta al canary.",
+        "Herramientas de descubrimiento de activos o de monitoreo que revisan servicios en el puerto 6379."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del escáner o del pentest si la actividad estaba autorizada; si lo estaba, documéntela y ajuste la alerta.",
+        "Si no estaba autorizada, aísle src_host mediante EDR o NAC y preserve los datos volátiles y los logs.",
+        "Revise los servidores REDIS reales en busca de los mismos comandos, cambios de configuración, claves nuevas o archivos escritos, y rote las contraseñas o secretos de REDIS que pudieron quedar expuestos.",
+        "Elimine las herramientas o la persistencia maliciosas, luego reconstruya o limpie el host y reincorpórelo a la red cuando se confirme que está limpio."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el tráfico hacia un honeypot casi siempre es indeseado, y enviar un comando muestra una interacción deliberada que va más allá de un simple escaneo de puertos."
+    },
+    "en": {
+      "summary": "Someone connected to the fake REDIS service on an OpenCanary honeypot and sent a command (OpenCanary logtype 17001). No legitimate system should talk to a canary, so treat the source as suspect.",
+      "what_it_detects": "OpenCanary events with logtype 17001 (REDIS command). The emulated REDIS service logs every command a client sends, such as AUTH, CONFIG, KEYS, GET or INFO, with the source host and port.",
+      "why_it_matters": "Attackers scan for exposed REDIS to read stored data (T1213, data from information repositories), take credentials or secrets stored in keys (T1003), or abuse CONFIG/SAVE to write files. Hits on a canary often mean an internal host is scanning or has been compromised.",
+      "triage_steps": [
+        "Read src_host, src_port, dst_host, dst_port and node_id. Find the asset and owner of src_host in the CMDB, DHCP or VPN logs.",
+        "Look at logdata for the command and arguments: AUTH attempts, CONFIG SET dir/dbfilename, SLAVEOF, MODULE LOAD or EVAL point to exploitation, not just probing.",
+        "Pivot on src_host across all OpenCanary nodes within +/- 15 minutes: SSH, HTTP, FTP or SMB hits on several canaries mean active scanning.",
+        "Check firewall, NetFlow and EDR data for src_host connecting to real REDIS servers on 6379 or to many hosts on many ports.",
+        "On the source endpoint, find the process that opened the connection (redis-cli, python, nmap, masscan or an unknown binary) and the user who ran it.",
+        "Look for earlier alerts on the same source IP, host or user, and check whether src_host is an approved vulnerability scanner."
+      ],
+      "false_positives": [
+        "Authorized vulnerability scanners or penetration tests that probe REDIS on every host they reach.",
+        "Applications or admins with a wrong REDIS hostname or IP that points to the canary.",
+        "Asset discovery or monitoring tools that check services on 6379."
+      ],
+      "response_steps": [
+        "Confirm with the scanner or pentest owner whether the activity was authorized; if it was, document it and tune the alert.",
+        "If it was not authorized, isolate src_host through EDR or NAC and keep volatile data and logs.",
+        "Check real REDIS servers for the same commands, changed config, new keys or written files, and rotate any REDIS passwords or secrets that may have been exposed.",
+        "Remove the malicious tooling or persistence, then rebuild or clean the host and put it back on the network after it is verified clean."
+      ],
+      "severity_rationale": "High fits because honeypot traffic is nearly always unwanted and a sent command shows deliberate interaction, beyond a simple port scan."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An internal host sends CONFIG SET dir to the OpenCanary REDIS service",
+        "event": {
+          "logtype": 17001,
+          "node_id": "canary-dc-01",
+          "src_host": "192.0.2.45",
+          "src_port": 51522,
+          "dst_host": "198.51.100.10",
+          "dst_port": 6379,
+          "logdata.CMD": "CONFIG",
+          "logdata.ARGS": "SET dir /var/spool/cron",
+          "local_time": "2024-03-08 14:03:12.512345",
+          "utc_time": "2024-03-08 14:03:12.512345"
+        }
+      },
+      {
+        "description": "AUTH attempt against the canary REDIS service",
+        "event": {
+          "logtype": 17001,
+          "node_id": "canary-dmz-02",
+          "src_host": "203.0.113.77",
+          "src_port": 40112,
+          "dst_host": "198.51.100.20",
+          "dst_port": 6379,
+          "logdata.CMD": "AUTH",
+          "logdata.ARGS": "redis123",
+          "local_time": "2024-03-08 14:05:40.101010",
+          "utc_time": "2024-03-08 14:05:40.101010"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same canary records an SSH login attempt (logtype 4002), not a REDIS command",
+        "event": {
+          "logtype": 4002,
+          "node_id": "canary-dc-01",
+          "src_host": "192.0.2.45",
+          "src_port": 51600,
+          "dst_host": "198.51.100.10",
+          "dst_port": 22,
+          "logdata.USERNAME": "root",
+          "logdata.PASSWORD": "admin",
+          "local_time": "2024-03-08 14:04:01.000001",
+          "utc_time": "2024-03-08 14:04:01.000001"
+        }
+      },
+      {
+        "description": "OpenCanary boot message (logtype 1001)",
+        "event": {
+          "logtype": 1001,
+          "node_id": "canary-dc-01",
+          "src_host": "",
+          "src_port": -1,
+          "dst_host": "",
+          "dst_port": -1,
+          "logdata.msg": "Canary running!!!",
+          "local_time": "2024-03-08 08:00:00.000000",
+          "utc_time": "2024-03-08 08:00:00.000000"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

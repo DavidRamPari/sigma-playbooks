@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "847def9e-924d-4e90-b7c4-5f581395a2b4",
+    "title": "HackTool - QuarksPwDump Dump File",
+    "level": "critical",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_hktl_quarkspw_filedump.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_hktl_quarkspw_filedump.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en el directorio temporal de un perfil de usuario un archivo con el patrón SAM-*.dmp, que es el archivo de volcado que escribe la herramienta QuarksPwDump. Es un indicio fuerte de que alguien intentó extraer hashes de contraseñas locales.",
+      "what_it_detects": "Eventos de creación de archivos en Windows (file_event, por ejemplo Sysmon EventID 11) en los que TargetFilename contiene tanto '\\AppData\\Local\\Temp\\SAM-' como '.dmp'. QuarksPwDump escribe allí una copia temporal de la colmena SAM mientras extrae credenciales.",
+      "why_it_matters": "QuarksPwDump vuelca hashes NTLM/LM de la base SAM local (ATT&CK T1003.002, Security Account Manager). Con esos hashes un atacante puede hacer pass-the-hash, descifrar contraseñas offline y moverse lateralmente usando cuentas locales, entre ellas el administrador local.",
+      "triage_steps": [
+        "Revise TargetFilename, Image, User y el host del evento. Anote la ruta completa del proceso que creó el archivo .dmp.",
+        "Obtenga el hash del Image y búsquelo en su inventario y en sus fuentes de reputación. Los nombres renombrados son habituales, así que no confíe en el nombre del binario.",
+        "Revise la creación de procesos del mismo host en +/- 15 minutos: cadena ParentImage, CommandLine con opciones como --dump-hash-local, y shells o sesiones remotas que lo lanzaron.",
+        "Confirme si el archivo SAM-*.dmp sigue en disco y si otros archivos aparecieron junto a él en Temp (salidas de texto o volcados de NTDS).",
+        "Busque en los logs de autenticación de esa cuenta y de ese host inicios de sesión recientes de tipo 3/10 y un uso anómalo de privilegios.",
+        "Busque en el resto de los endpoints el mismo hash, la misma ruta de Image o archivos SAM-*.dmp, y revise las alertas previas de este usuario y este host."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos. Un caso posible son las pruebas de pentesting o red team autorizadas; confírmelas con un ticket o una ventana aprobada.",
+        "Algún software interno que, por casualidad, cree archivos temporales llamados SAM-*.dmp. Es poco probable; verifíquelo con el hash y con el editor del binario."
+      ],
+      "response_steps": [
+        "Si no hay una prueba autorizada, aísle el endpoint de la red con su EDR y conserve el archivo .dmp y el binario como evidencia antes de eliminarlos.",
+        "Asuma que las credenciales locales están comprometidas: rote la contraseña del administrador local (LAPS) y las de las cuentas locales del host.",
+        "Revise si hubo pass-the-hash con esas cuentas en otros hosts y contenga los sistemas afectados.",
+        "Erradique la herramienta y el mecanismo de acceso inicial, y restablezca el host desde una imagen confiable si se confirma el compromiso."
+      ],
+      "severity_rationale": "Es critical porque el patrón del archivo es casi exclusivo de QuarksPwDump e indica un robo activo de credenciales con privilegios elevados."
+    },
+    "en": {
+      "summary": "A file matching SAM-*.dmp was created in a user profile's Temp directory. QuarksPwDump writes this dump file, so the alert strongly suggests someone tried to dump local password hashes.",
+      "what_it_detects": "Windows file creation events (file_event, for example Sysmon EventID 11) where TargetFilename contains both '\\AppData\\Local\\Temp\\SAM-' and '.dmp'. QuarksPwDump writes a temporary copy of the SAM hive there while it extracts credentials.",
+      "why_it_matters": "QuarksPwDump dumps NTLM/LM hashes from the local SAM database (ATT&CK T1003.002, Security Account Manager). With these hashes an attacker can pass the hash, crack passwords offline and move laterally with local accounts, including the local administrator.",
+      "triage_steps": [
+        "Review TargetFilename, Image, User and the host. Note the full path of the process that wrote the .dmp file.",
+        "Hash the Image and check it against your inventory and reputation sources. Tools are often renamed, so don't rely on the binary name.",
+        "Review process creation on the same host within +/- 15 minutes: the ParentImage chain, CommandLine flags such as --dump-hash-local, and any shells or remote sessions that launched it.",
+        "Check whether the SAM-*.dmp file is still on disk and whether other files appeared next to it in Temp, such as text output or NTDS dumps.",
+        "Check authentication logs for that user and host for recent logon type 3/10 sessions and unusual privilege use.",
+        "Hunt across other endpoints for the same hash, the same Image path or SAM-*.dmp files, and review earlier alerts for this user and host."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. One possible cause is authorized penetration testing or red team activity; confirm it with a ticket or an approved test window.",
+        "Internal software that happens to create temp files named SAM-*.dmp. This is unlikely; verify it with the hash and the binary's publisher."
+      ],
+      "response_steps": [
+        "If no authorized test explains it, isolate the endpoint with your EDR. Keep the .dmp file and the binary as evidence before you remove them.",
+        "Treat local credentials as compromised: rotate the local administrator password (LAPS) and the passwords of all local accounts on the host.",
+        "Look for pass-the-hash with those accounts on other hosts and contain any affected systems.",
+        "Remove the tool and the initial access method. If compromise is confirmed, rebuild the host from a trusted image."
+      ],
+      "severity_rationale": "It is critical because this file pattern is nearly unique to QuarksPwDump and points to active credential theft with elevated privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "QuarksPwDump, renamed and run from Downloads, writes its temporary SAM dump file to the user's Temp folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\qpd.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\SAM-24519.dmp",
+          "CreationUtcTime": "2024-07-02 14:03:12.481"
+        }
+      },
+      {
+        "description": "Dump file created under the administrator profile's Temp folder by a binary in ProgramData",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-FS-02.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "Image": "C:\\ProgramData\\svc\\quarks.exe",
+          "ProcessId": 3384,
+          "TargetFilename": "C:\\Users\\adm-mrojas\\AppData\\Local\\Temp\\SAM-7731.dmp",
+          "CreationUtcTime": "2024-07-02 22:41:05.112"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows Error Reporting writes a crash dump to the user's Temp folder; the name does not contain 'SAM-'",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WerFault.exe",
+          "ProcessId": 4410,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\WER-2210.dmp",
+          "CreationUtcTime": "2024-07-02 09:15:44.003"
+        }
+      },
+      {
+        "description": "A file named SAM-*.dmp in C:\\Windows\\Temp, not in a profile's AppData\\Local\\Temp, so the path does not match",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Program Files\\ExampleBackup\\agent.exe",
+          "ProcessId": 2096,
+          "TargetFilename": "C:\\Windows\\Temp\\SAM-backup.dmp",
+          "CreationUtcTime": "2024-07-02 03:00:10.550"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

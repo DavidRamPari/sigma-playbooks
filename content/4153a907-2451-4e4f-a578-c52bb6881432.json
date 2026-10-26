@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "4153a907-2451-4e4f-a578-c52bb6881432",
+    "title": "Suspicious DNS Query with B64 Encoded String",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "network/dns/net_dns_susp_b64_queries.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/dns/net_dns_susp_b64_queries.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1048.003",
+      "T1071.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente resolvió un nombre DNS que contiene la secuencia '==.', es decir, una etiqueta que termina con el relleno típico de Base64. Puede indicar exfiltración o comando y control mediante túnel DNS.",
+      "what_it_detects": "Consultas DNS cuyo campo query contiene '==.'. Esto ocurre cuando una etiqueta del nombre está codificada en Base64 con doble relleno y le sigue el dominio padre, por ejemplo 'ZXhmaWwgZGF0YQ==.data.example.com'.",
+      "why_it_matters": "Los atacantes pueden codificar datos en subdominios para sacarlos de la red a través de un servidor DNS autoritativo que controlan (T1048.003, exfiltración por protocolo no cifrado) o para recibir órdenes de C2 por DNS (T1071.004). El tráfico DNS rara vez se bloquea, lo que facilita la evasión.",
+      "triage_steps": [
+        "Identifique el cliente de origen (IP y hostname) y el resolver que registró la consulta; confirme el valor exacto del campo query y el tipo de registro (A, TXT, CNAME).",
+        "Decodifique la etiqueta Base64 en un entorno seguro y revise si contiene texto legible, nombres de usuario, rutas, hostnames o fragmentos de archivos.",
+        "Cuente las consultas al mismo dominio padre desde ese cliente en +/- 15 minutos: muchas etiquetas únicas, largas o de alta entropía sugieren túnel o exfiltración.",
+        "Verifique si otros hosts consultan el mismo dominio padre y revise su reputación, antigüedad de registro y servidores autoritativos.",
+        "En el endpoint, identifique el proceso que generó la consulta (por ejemplo Sysmon Event ID 22) y revise su Image, CommandLine, ParentImage y firma.",
+        "Revise las respuestas (campo answer), sobre todo registros TXT con contenido codificado que pudieran ser órdenes de C2.",
+        "Busque alertas previas del mismo host o usuario: ejecución sospechosa, acceso a credenciales o recopilación de archivos."
+      ],
+      "false_positives": [
+        "Productos de seguridad, telemetría o servicios de reputación que codifican identificadores o hashes en etiquetas DNS.",
+        "Herramientas internas o de monitoreo que usan DNS como canal de señalización.",
+        "Ejercicios autorizados de red team o pruebas de túneles DNS."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema y el inventario de software si el dominio y el proceso son legítimos; documente las excepciones aprobadas.",
+        "Si es malicioso, bloquee el dominio padre en el resolver interno, en el DNS firewall o en el proxy y aísle el host afectado.",
+        "Preserve evidencia: logs DNS, captura de tráfico si la hay, binario y memoria del proceso responsable.",
+        "Determine qué datos salieron decodificando las consultas y, si hay credenciales expuestas, restablézcalas.",
+        "Elimine el malware o la persistencia, busque el mismo dominio en toda la flota y restaure el host desde una imagen confiable si es necesario."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el patrón es un indicador fuerte de datos codificados en DNS, pero algunos servicios legítimos también lo generan y se requiere contexto del proceso y del volumen."
+    },
+    "en": {
+      "summary": "A client resolved a DNS name containing '==.', a label ending with typical Base64 padding. This may indicate exfiltration or command and control over a DNS tunnel.",
+      "what_it_detects": "DNS queries whose query field contains '==.'. This happens when a name label is Base64-encoded with double padding and followed by the parent domain, for example 'ZXhmaWwgZGF0YQ==.data.example.com'.",
+      "why_it_matters": "Attackers encode data in subdomains to move it out through an authoritative DNS server they control (T1048.003, exfiltration over an unencrypted protocol) or to receive C2 commands over DNS (T1071.004). DNS is rarely blocked, which helps evasion.",
+      "triage_steps": [
+        "Identify the source client (IP and hostname) and the resolver that logged it; confirm the exact query value and record type (A, TXT, CNAME).",
+        "Decode the Base64 label in a safe environment and check for readable text, usernames, paths, hostnames or file fragments.",
+        "Count queries to the same parent domain from that client within +/- 15 minutes; many unique, long or high-entropy labels suggest tunneling or exfiltration.",
+        "Check whether other hosts query the same parent domain, and review its reputation, registration age and authoritative name servers.",
+        "On the endpoint, find the process that issued the query (for example Sysmon Event ID 22) and review its Image, CommandLine, ParentImage and signature.",
+        "Review the answers (answer field), especially TXT records with encoded content that could carry C2 commands.",
+        "Look for earlier alerts on the same host or user: suspicious execution, credential access or file collection."
+      ],
+      "false_positives": [
+        "Security products, telemetry or reputation services that encode identifiers or hashes in DNS labels.",
+        "Internal or monitoring tools that use DNS as a signaling channel.",
+        "Authorized red team exercises or DNS tunneling tests."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and software inventory whether the domain and process are legitimate; document approved exceptions.",
+        "If malicious, block the parent domain on the internal resolver, DNS firewall or proxy, and isolate the affected host.",
+        "Preserve evidence: DNS logs, packet capture if available, and the responsible process binary and memory.",
+        "Determine what data left by decoding the queries; reset any exposed credentials.",
+        "Remove malware or persistence, hunt for the same domain across the fleet, and reimage the host from a trusted image if needed."
+      ],
+      "severity_rationale": "Medium fits because the pattern strongly suggests encoded data in DNS, but some legitimate services produce it too, so process and volume context are needed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A-record query with a Base64 label (double padding) followed by an external parent domain, typical of DNS exfiltration.",
+        "event": {
+          "query": "ZXhmaWwgZGF0YSBmcm9tIFdTLTAxNDI==.data.example.com",
+          "record_type": "A",
+          "src_ip": "192.0.2.45",
+          "client_hostname": "WS-0142",
+          "answer": "203.0.113.10",
+          "rcode": "NOERROR"
+        }
+      },
+      {
+        "description": "TXT query with a Base64-encoded beacon label, consistent with DNS-based C2.",
+        "event": {
+          "query": "aG9zdD1XUy0wMTQy==.c2.example.org",
+          "record_type": "TXT",
+          "src_ip": "192.0.2.61",
+          "client_hostname": "WS-0201",
+          "answer": "\"cGluZw==\"",
+          "rcode": "NOERROR"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Label ends with single '=' padding, so the query contains '=.' but not '==.'.",
+        "event": {
+          "query": "ZXhmaWw=.data.example.com",
+          "record_type": "A",
+          "src_ip": "192.0.2.45",
+          "client_hostname": "WS-0142",
+          "answer": "203.0.113.10",
+          "rcode": "NOERROR"
+        }
+      },
+      {
+        "description": "Ordinary business hostname lookup with no Base64 padding.",
+        "event": {
+          "query": "login.example.com",
+          "record_type": "A",
+          "src_ip": "192.0.2.77",
+          "client_hostname": "WS-0310",
+          "answer": "198.51.100.20",
+          "rcode": "NOERROR"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

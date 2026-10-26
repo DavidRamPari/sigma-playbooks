@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "166e9c50-8cd9-44af-815d-d1f0c0e90dde",
+    "title": "Suspicious Svchost Process Access",
+    "level": "high",
+    "status": "test",
+    "author": "Tim Burrell",
+    "path": "windows/process_access/proc_access_win_svchost_susp_access_request.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_access/proc_access_win_svchost_susp_access_request.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso abrió svchost.exe con acceso total (0x1F3FFF) desde código sin módulo respaldado (UNKNOWN en CallTrace), patrón usado por Invoke-Phant0m para matar los hilos del servicio de registro de eventos de Windows.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon ID 10) donde TargetImage termina en \\Windows\\System32\\svchost.exe, GrantedAccess es 0x1F3FFF y CallTrace contiene UNKNOWN, lo que indica código inyectado o shellcode. Se excluye MSBuild de Visual Studio con trazas .NET legítimas.",
+      "why_it_matters": "Si se matan los hilos del servicio EventLog, este sigue apareciendo en ejecución pero deja de registrar eventos, y el atacante opera sin dejar rastro. Es una técnica de deterioro de defensas (etiqueta T1685.001 de la regla).",
+      "triage_steps": [
+        "Revise SourceImage, su ruta, firma y hash; un binario en Temp, AppData o un powershell.exe es altamente sospechoso.",
+        "Pivote con SourceProcessGUID al evento de creación de proceso (ID 1) para obtener CommandLine, ParentImage y el usuario.",
+        "Confirme si el TargetProcessId corresponde al svchost que aloja el servicio EventLog (tasklist /svc o Get-CimInstance Win32_Service).",
+        "Busque huecos en los registros Security y System del host después de la hora del alerta, comparando con el SIEM o el EDR.",
+        "Revise logs de PowerShell (Script Block 4104) del mismo host por referencias a Phant0m, OpenThread o TerminateThread.",
+        "Correlacione otras alertas del mismo host y usuario en +/- 15 minutos: inyección, volcado de credenciales o movimiento lateral."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; ocasionalmente herramientas de desarrollo, depuradores o software de seguridad con código JIT pueden generar CallTrace UNKNOWN."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo y el inventario si el SourceImage es una herramienta autorizada antes de actuar.",
+        "Si se confirma actividad maliciosa, aísle el endpoint desde el EDR y preserve memoria y artefactos del proceso origen.",
+        "Restablezca el registro reiniciando el servicio EventLog o el equipo, y valide que vuelvan a generarse eventos.",
+        "Elimine la herramienta y su persistencia, restablezca credenciales del usuario implicado y reconstruya la línea de tiempo con fuentes alternas."
+      ],
+      "severity_rationale": "Nivel alto porque el acceso total con código no respaldado sobre svchost indica intento deliberado de cegar el registro de eventos, con pocos usos legítimos."
+    },
+    "en": {
+      "summary": "A process opened svchost.exe with full access (0x1F3FFF) from unbacked code (UNKNOWN in CallTrace), the pattern Invoke-Phant0m uses to kill Windows event logging service threads.",
+      "what_it_detects": "Process access events (Sysmon ID 10) where TargetImage ends with \\Windows\\System32\\svchost.exe, GrantedAccess is 0x1F3FFF and CallTrace contains UNKNOWN, suggesting injected code or shellcode. Visual Studio MSBuild with legitimate .NET call traces is excluded.",
+      "why_it_matters": "Killing EventLog service threads leaves the service apparently running while it stops recording, so the attacker operates without traces. This is defense impairment (rule tag T1685.001).",
+      "triage_steps": [
+        "Check SourceImage path, signature and hash; binaries in Temp, AppData or powershell.exe are highly suspicious.",
+        "Pivot on SourceProcessGUID to the process creation event (ID 1) for CommandLine, ParentImage and user.",
+        "Confirm whether TargetProcessId is the svchost hosting the EventLog service (tasklist /svc or Get-CimInstance Win32_Service).",
+        "Look for gaps in the host's Security and System logs after the alert time, comparing SIEM and EDR telemetry.",
+        "Review PowerShell Script Block logs (4104) on the host for Phant0m, OpenThread or TerminateThread references.",
+        "Correlate other alerts for the same host and user within +/- 15 minutes: injection, credential dumping, lateral movement."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; occasionally developer tools, debuggers or security software running JIT code may produce UNKNOWN call traces."
+      ],
+      "response_steps": [
+        "Verify with the host owner and inventory whether SourceImage is an authorized tool before acting.",
+        "If malicious, isolate the endpoint via EDR and preserve memory and source process artifacts.",
+        "Restore logging by restarting the EventLog service or rebooting, then confirm events are generated again.",
+        "Remove the tool and persistence, reset the involved user's credentials and rebuild the timeline from alternate sources."
+      ],
+      "severity_rationale": "High because full access from unbacked code to svchost indicates a deliberate attempt to blind event logging, with few legitimate uses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell running injected code opens svchost hosting EventLog with full access",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessGUID": "{3f1a2b4c-1111-6000-0000-00100a9c0000}",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetProcessId": 1488,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "GrantedAccess": "0x1F3FFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00000231A5B21234)",
+          "SourceUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Unknown binary from Temp opens svchost with full access from unbacked memory",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 4432,
+          "SourceImage": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\upd.exe",
+          "TargetProcessId": 1320,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "GrantedAccess": "0x1F3FFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|UNKNOWN(0000000000401A2F)",
+          "SourceUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Visual Studio MSBuild with .NET native image call trace is excluded by the filter",
+        "event": {
+          "EventID": 10,
+          "Computer": "DEV-0031.andes.example.com",
+          "SourceProcessId": 9012,
+          "SourceImage": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\MSBuild\\Current\\Bin\\MSBuild.exe",
+          "TargetProcessId": 1488,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "GrantedAccess": "0x1F3FFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\assembly\\NativeImages_v4.0.30319_64\\System\\abc123\\System.ni.dll+3f1a2|UNKNOWN(00007FF8A1B20000)",
+          "SourceUser": "ANDES\\lgarcia"
+        }
+      },
+      {
+        "description": "Task Manager queries svchost with limited access and fully backed call trace",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 7720,
+          "SourceImage": "C:\\Windows\\System32\\Taskmgr.exe",
+          "TargetProcessId": 1488,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "GrantedAccess": "0x1000",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\System32\\Taskmgr.exe+5a1c0",
+          "SourceUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

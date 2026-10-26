@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "493fb4ab-cdcc-4c4f-818c-0e363bd1e4bb",
+    "title": "WMI Event Consumer Created Named Pipe",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/pipe_created/pipe_created_scrcons_wmi_consumer_namedpipe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/pipe_created/pipe_created_scrcons_wmi_consumer_namedpipe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1047"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "scrcons.exe, el proceso de WMI que ejecuta scripts de ActiveScriptEventConsumer, creó un named pipe o se conectó a uno. Esto es poco común y puede indicar que una suscripción de eventos WMI ejecuta código que se comunica por pipes, una técnica de movimiento lateral fileless.",
+      "what_it_detects": "Eventos de pipe de Sysmon (ID 17 de creación, 18 de conexión) en los que Image termina en \\scrcons.exe. La regla no filtra por PipeName, así que el analista debe revisar el nombre del pipe.",
+      "why_it_matters": "Los atacantes abusan de Windows Management Instrumentation (ATT&CK T1047) registrando de forma remota un ActiveScriptEventConsumer. El script se ejecuta dentro de scrcons.exe y puede cargar payloads .NET que usan named pipes para comando y control, como muestra la referencia LiquidSnake.",
+      "triage_steps": [
+        "Revise PipeName, ProcessId, User y el host. Anote si los nombres de pipe parecen aleatorios o tipo GUID, o si las creaciones se repiten.",
+        "Busque eventos Sysmon 19/20/21 (filtro, consumer y binding de WMI) anteriores a la alerta, sobre todo ActiveScriptEventConsumer, y quién los creó.",
+        "En el host, liste __EventFilter, __EventConsumer y __FilterToConsumerBinding en root\\subscription. Guarde ScriptText y CreatorSID.",
+        "Revise los eventos 7 (carga de imágenes) de scrcons.exe, como clr.dll, mscoree.dll o DLL sin firma, porque indican código .NET en el proceso.",
+        "Revise los inicios de sesión de red (4624 tipo 3) y el tráfico DCOM/WMI en +/- 15 minutos para identificar el host remoto y la cuenta de origen.",
+        "Busque eventos 18 con el mismo PipeName para saber qué proceso se conectó, y revise procesos hijos o conexiones de red de scrcons.exe.",
+        "Busque alertas previas del mismo host, usuario e IP de origen, y busque el mismo nombre de pipe en todo el parque."
+      ],
+      "false_positives": [
+        "Scripts heredados de administración o monitoreo que se ejecutan como ActiveScriptEventConsumer y usan pipes para comunicarse entre procesos.",
+        "Agentes de gestión, inventario o respaldo de proveedores que registran consumers de script en WMI.",
+        "Pruebas autorizadas de red team o de detección con herramientas de persistencia y movimiento lateral vía WMI."
+      ],
+      "response_steps": [
+        "Confirme con los responsables del sistema si una suscripción WMI documentada explica la actividad. Si es así, regístrela y evalúe una exclusión acotada por PipeName.",
+        "Si no se puede explicar, aísle el host y capture la memoria de scrcons.exe y una exportación de las suscripciones WMI antes de modificar nada.",
+        "Después de preservar la evidencia, elimine el filtro, el consumer y el binding maliciosos, e investigue el host remoto que los creó.",
+        "Restablezca las credenciales de la cuenta que registró la suscripción y busque el mismo consumer o nombre de pipe en otros endpoints."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque scrcons.exe rara vez usa named pipes y es un patrón de abuso conocido, pero la regla no filtra por nombre ni contexto y requiere corroboración."
+    },
+    "en": {
+      "summary": "scrcons.exe, the WMI host process that runs ActiveScriptEventConsumer scripts, created or connected to a named pipe. This is uncommon and can mean a WMI event subscription is running code that talks over a pipe, a technique used for fileless lateral movement.",
+      "what_it_detects": "Sysmon pipe events (Event ID 17 created, 18 connected) where Image ends with \\scrcons.exe. The rule matches on any pipe name, so analysts must review PipeName themselves.",
+      "why_it_matters": "Attackers abuse Windows Management Instrumentation (ATT&CK T1047) by registering an ActiveScriptEventConsumer remotely. The consumer's script runs inside scrcons.exe and can load .NET payloads that use named pipes for command and control, as the LiquidSnake reference shows.",
+      "triage_steps": [
+        "Review PipeName, ProcessId, User and the host. Note random-looking or GUID-like pipe names and repeated creations.",
+        "Look for Sysmon Event ID 19/20/21 (WMI filter, consumer, binding) on the host before the alert, especially ActiveScriptEventConsumer entries and who created them.",
+        "On the host, list root\\subscription __EventFilter, __EventConsumer and __FilterToConsumerBinding. Save the ScriptText and CreatorSID.",
+        "Check Event ID 7 image loads for scrcons.exe (clr.dll, mscoree.dll, unsigned DLLs), which point to .NET code running in the process.",
+        "Check network logons (4624 type 3) and DCOM/WMI traffic within +/- 15 minutes to find the remote source host and account.",
+        "Pivot on Event ID 18 for the same PipeName to find which process connected, and look at any child processes or network connections from scrcons.exe.",
+        "Search earlier alerts for the same host, user and source IP, and search the fleet for the same pipe name."
+      ],
+      "false_positives": [
+        "Legacy admin or monitoring scripts that run as ActiveScriptEventConsumer and use pipes for inter-process communication.",
+        "Vendor management, inventory or backup agents that register WMI script consumers.",
+        "Authorized red team or detection tests of WMI persistence and lateral movement tools."
+      ],
+      "response_steps": [
+        "Check with system owners whether a documented WMI subscription explains the activity. If one does, record it and consider a scoped exclusion on PipeName.",
+        "If you can't explain it, isolate the host and collect memory of scrcons.exe plus an export of WMI subscriptions before you change anything.",
+        "After you capture evidence, remove the malicious filter, consumer and binding, and investigate the remote host that created them.",
+        "Reset credentials for the account that registered the subscription, then hunt for the same consumer or pipe name on other endpoints."
+      ],
+      "severity_rationale": "Medium fits because scrcons.exe seldom uses named pipes and this is a known abuse pattern, but the rule has no pipe-name or context filter, so it needs corroboration."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "scrcons.exe creates a GUID-like named pipe after a WMI ActiveScriptEventConsumer runs",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-03-12 14:03:12.481",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessGuid": "{5a1c3e2b-6f10-65f0-a301-000000000c00}",
+          "ProcessId": 4312,
+          "PipeName": "\\8a3f2c1e-77d4-4b9e-9c21-5f0e6d1a2b34",
+          "Image": "C:\\Windows\\System32\\wbem\\scrcons.exe",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "scrcons.exe connects to a named pipe (Sysmon Event ID 18), with the image path in upper case",
+        "event": {
+          "EventID": 18,
+          "EventType": "ConnectPipe",
+          "UtcTime": "2024-03-12 14:03:15.020",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 4312,
+          "PipeName": "\\liquidpipe_test",
+          "Image": "C:\\WINDOWS\\system32\\wbem\\SCRCONS.EXE",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The WMI provider host WmiPrvSE.exe creates a pipe; the Image is not scrcons.exe",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-03-12 14:05:40.112",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 2876,
+          "PipeName": "\\PSHost.133548123456789012.2876.DefaultAppDomain.wmiprvse",
+          "Image": "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe",
+          "User": "NT AUTHORITY\\NETWORK SERVICE"
+        }
+      },
+      {
+        "description": "A renamed backup copy whose path does not end with \\scrcons.exe",
+        "event": {
+          "EventID": 17,
+          "EventType": "CreatePipe",
+          "UtcTime": "2024-03-12 15:10:02.334",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "ProcessId": 6120,
+          "PipeName": "\\mojo.6120.7788.123456789",
+          "Image": "C:\\Tools\\archive\\scrcons.exe.bak.exe",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

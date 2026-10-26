@@ -1,0 +1,119 @@
+{
+  "rule": {
+    "id": "28036918-04d3-423d-91c0-55ecf99fb892",
+    "title": "NET NGenAssemblyUsageLog Registry Key Tamper",
+    "level": "high",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_net_cli_ngenassemblyusagelog.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_net_cli_ngenassemblyusagelog.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor de registro NGenAssemblyUsageLog en la clave .NETFramework. Esto puede impedir que el CLR genere los Usage Logs de .NET y ocultar así la ejecución de assemblies .NET.",
+      "what_it_detects": "Eventos registry_set (por ejemplo, Sysmon Event ID 13) donde TargetObject termina en SOFTWARE\\Microsoft\\.NETFramework\\NGenAssemblyUsageLog, en HKLM o en el hive de un usuario (HKU\\<SID>).",
+      "why_it_matters": "El CLR escribe archivos en %LOCALAPPDATA%\\Microsoft\\CLR_v4.0\\UsageLogs cuando un proceso carga .NET, y los EDR y analistas los usan para detectar ejecución de assemblies en memoria. Si se cambia este valor por una ruta falsa o datos basura, esos logs dejan de crearse. Corresponde a modificación del registro (T1112) para debilitar las defensas.",
+      "triage_steps": [
+        "Revise Image, User y Details del evento: qué proceso escribió el valor, con qué cuenta y qué ruta o dato puso.",
+        "Determine el alcance: HKLM afecta a todo el equipo y HKU\\<SID> solo al usuario de ese SID. Escribir en HKLM requiere privilegios de administrador.",
+        "Obtenga el árbol de procesos de Image: su ParentImage, su CommandLine y si es reg.exe, powershell.exe o un binario sin firma ubicado en una ruta de usuario.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque procesos .NET inusuales, cargas de clr.dll en procesos no .NET, conexiones de red y creación de servicios o tareas.",
+        "Revise las carpetas UsageLogs del perfil afectado para ver si faltan logs o tienen fechas recientes, y busque la variable de entorno COMPlus_NGenAssemblyUsageLog.",
+        "Busque alertas previas del mismo host y del mismo usuario, y el mismo cambio de registro en otros equipos."
+      ],
+      "false_positives": [
+        "El campo falsepositives de la regla dice Unknown. En la práctica, esta configuración casi no tiene uso legítimo.",
+        "Pruebas autorizadas de red team o de detección, como emulaciones de técnicas de evasión .NET.",
+        "Investigación o depuración del CLR por desarrolladores, que debe estar documentada."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o con el equipo de pruebas si el cambio está autorizado. Si no lo está, escale como posible evasión de defensas.",
+        "Aísle el endpoint desde el EDR si hay indicios de ejecución maliciosa, por ejemplo assemblies cargados en memoria o C2.",
+        "Exporte el valor como evidencia y después elimínelo o restáurelo. Recolecte también el binario de Image con su hash.",
+        "Busque persistencia y actividad posterior, y restablezca las credenciales de la cuenta involucrada si se usó de forma indebida."
+      ],
+      "severity_rationale": "Es alta porque manipular este valor tiene casi siempre el propósito de ocultar la ejecución de .NET al EDR, y su uso legítimo es muy raro."
+    },
+    "en": {
+      "summary": "The NGenAssemblyUsageLog value under the .NETFramework key was written. This can stop the CLR from producing .NET Usage Logs, which hides .NET assembly execution.",
+      "what_it_detects": "registry_set events (for example Sysmon Event ID 13) where TargetObject ends with SOFTWARE\\Microsoft\\.NETFramework\\NGenAssemblyUsageLog, under HKLM or a user hive (HKU\\<SID>).",
+      "why_it_matters": "The CLR writes files to %LOCALAPPDATA%\\Microsoft\\CLR_v4.0\\UsageLogs when a process loads .NET. EDRs and analysts use these files to spot in-memory assembly execution. Pointing this value at a fake path or junk data stops the logs from being created. This is registry modification (T1112) used to weaken defenses.",
+      "triage_steps": [
+        "Check Image, User and Details: which process wrote the value, under which account, and what path or data it set.",
+        "Determine the scope. HKLM affects the whole host and needs admin rights. HKU\\<SID> affects only the user with that SID.",
+        "Build the process tree for Image: its ParentImage and CommandLine, and whether it is reg.exe, powershell.exe or an unsigned binary in a user path.",
+        "On the same host within +/- 15 minutes, look for unusual .NET processes, clr.dll loaded by non-.NET processes, network connections, and new services or tasks.",
+        "Check the affected profile's UsageLogs folders for missing or recently dated logs. Also look for the COMPlus_NGenAssemblyUsageLog environment variable.",
+        "Search for earlier alerts on the same host and user, and for the same registry change on other hosts."
+      ],
+      "false_positives": [
+        "The rule's falsepositives field says Unknown. In practice this setting has almost no legitimate use.",
+        "Authorized red team or detection-validation exercises that emulate .NET evasion.",
+        "Documented CLR research or debugging by developers."
+      ],
+      "response_steps": [
+        "Ask the host owner or the testing team whether the change was authorized. If it was not, escalate as possible defense evasion.",
+        "Isolate the endpoint through the EDR if there are signs of malicious execution, such as in-memory assemblies or C2 traffic.",
+        "Export the value as evidence, then delete or restore it. Collect the Image binary and its hash.",
+        "Hunt for persistence and follow-on activity. Reset credentials for the involved account if it was misused."
+      ],
+      "severity_rationale": "High fits because tampering with this value is almost always meant to hide .NET execution from the EDR, and legitimate use is very rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets NGenAssemblyUsageLog to a junk value in HKLM to suppress .NET Usage Logs.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\.NETFramework\\NGenAssemblyUsageLog",
+          "Details": "x",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120
+        }
+      },
+      {
+        "description": "PowerShell writes NGenAssemblyUsageLog in the current user's hive, pointing it at a fake path.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\SOFTWARE\\Microsoft\\.NETFramework\\NGenAssemblyUsageLog",
+          "Details": "C:\\nonexistent\\path",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4388
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An administrator sets SchUseStrongCrypto under the same .NETFramework branch. This is a legitimate hardening change, and TargetObject does not end with NGenAssemblyUsageLog.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\.NETFramework\\v4.0.30319\\SchUseStrongCrypto",
+          "Details": "DWORD (0x00000001)",
+          "User": "ANDES\\adm_lgarcia",
+          "ProcessId": 5012
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

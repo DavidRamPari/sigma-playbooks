@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "c52a914f-3d8b-4b2a-bb75-b3991e75f8ba",
+    "title": "Binary Padding - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Igor Fits, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_binary_padding.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_binary_padding.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un EXECVE de truncate con -s, o de dd con if= pero sin of=. Ambos patrones pueden añadir bytes basura a un archivo para cambiar su hash y su tamaño (binary padding).",
+      "what_it_detects": "Registros EXECVE que contienen las palabras 'truncate' y '-s', o 'dd' e 'if=' sin 'of=' (dd envía la salida a stdout, normalmente redirigida con >> hacia un binario existente).",
+      "why_it_matters": "El relleno de binarios (ATT&CK T1027.001, Obfuscated Files: Binary Padding) cambia el hash y el tamaño del archivo. Así evade listas de bloqueo por hash y puede superar los límites de tamaño de los escáneres sin dejar de ejecutarse con normalidad.",
+      "triage_steps": [
+        "Revise los argumentos a0..aN: el tamaño después de -s, los valores bs y count, y la ruta destino. Los destinos en /tmp, /dev/shm, /var/tmp o directorios home son más sospechosos.",
+        "Con el ID msg=audit(timestamp:serial), busque los registros SYSCALL, CWD y PATH del mismo evento. Obtenga auid, uid, exe, ppid y el directorio de trabajo.",
+        "Si es dd sin of=, revise el shell padre (ppid) y el historial en busca de una redirección '>>'. Así sabrá qué archivo recibió el relleno.",
+        "Analice el archivo destino: si es ELF o script, si tiene permisos de ejecución, su propietario y mtime, y si su hash es conocido. Compárelo con copias previas.",
+        "Revise el mismo host en +/- 15 minutos: descargas (curl, wget), chmod +x, ejecución posterior del archivo y nuevas tareas cron o unidades systemd.",
+        "Busque alertas previas del mismo auid o host. Verifique si la sesión SSH vino de una IP de origen inusual."
+      ],
+      "false_positives": [
+        "Administradores que usan truncate -s para crear archivos dispersos, imágenes de disco o swap, o para vaciar logs (truncate -s 0).",
+        "dd que lee dispositivos hacia stdout en pipelines, como dd if=/dev/sda bs=512 count=1 | xxd, o scripts de respaldo e imágenes.",
+        "Procesos de compilación, pruebas o empaquetado que preasignan o redimensionan archivos.",
+        "Coincidencia amplia por subcadena: 'dd' y '-s' aparecen en muchos argumentos no relacionados."
+      ],
+      "response_steps": [
+        "Confirme la intención con el usuario o el responsable de la tarea. Si es legítimo y recurrente, documéntelo y ajuste la regla por usuario, exe o ruta.",
+        "Si es malicioso, guarde una copia del archivo rellenado y del original, registre sus hashes y aísle el host de la red.",
+        "Termine los procesos iniciados desde el archivo rellenado. Elimine la persistencia encontrada solo después de recolectar evidencia.",
+        "Restablezca las credenciales del auid involucrado y busque los mismos hashes y rutas en otros hosts."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el relleno se hace a propósito para evadir la detección por hash. Sin embargo, los usos legítimos de estos comandos son comunes, por lo que la alerta exige validar el contexto rápidamente."
+    },
+    "en": {
+      "summary": "auditd logged an EXECVE of truncate with -s, or of dd with if= but without of=. Both patterns can append junk bytes to a file to change its hash and size (binary padding).",
+      "what_it_detects": "EXECVE records with keywords 'truncate' and '-s', or 'dd' and 'if=' with no 'of=' (dd output sent to stdout, usually redirected with >> into an existing binary).",
+      "why_it_matters": "Padding a binary (ATT&CK T1027.001, Obfuscated Files: Binary Padding) changes its hash and size. This defeats hash blocklists and can push a file past scanner size limits while it still runs normally.",
+      "triage_steps": [
+        "Read the a0..aN arguments: the size argument after -s, bs/count values, and the target path. Treat targets in /tmp, /dev/shm, /var/tmp or home directories as more suspicious.",
+        "Use the msg=audit(timestamp:serial) ID to find the matching SYSCALL, CWD and PATH records. Get auid, uid, exe, ppid and the working directory.",
+        "For dd without of=, check the parent shell (ppid) and shell history for a '>>' redirection, which shows which file received the padding.",
+        "Check the target file: is it ELF or a script, is it executable, what are its owner and mtime, and is its hash known. Compare it with any earlier copy.",
+        "Check the same host for +/- 15 minutes: downloads (curl, wget), chmod +x, later execution of the padded file, new cron or systemd units.",
+        "Look for earlier alerts for the same auid or host, and check whether the session came from an unusual source IP over SSH."
+      ],
+      "false_positives": [
+        "Admins using truncate -s to create sparse files, disk images or swap files, or to empty logs (truncate -s 0).",
+        "dd reading devices to stdout in pipelines, such as dd if=/dev/sda bs=512 count=1 | xxd, or backup and imaging scripts.",
+        "Build, test or packaging jobs that pre-allocate or resize files.",
+        "Broad substring matching: 'dd' and '-s' appear in many unrelated arguments."
+      ],
+      "response_steps": [
+        "Confirm intent with the user or owner of the job. If it is benign and recurring, document it and tune the alert by user, exe or path.",
+        "If the activity is malicious, keep a copy of the padded file and its original, record their hashes, and isolate the host from the network.",
+        "Kill processes started from the padded file. Remove any persistence you find only after collecting evidence.",
+        "Reset credentials for the auid involved and look for the same file hashes and paths on other hosts."
+      ],
+      "severity_rationale": "High fits because padding is done on purpose to evade hash detection. Benign uses of these commands are common, though, so the alert needs quick context checks."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "truncate -s grows a binary dropped in /tmp, logged as an auditd EXECVE record.",
+        "event": {
+          "type": "EXECVE",
+          "host": "web-03",
+          "argc": 4,
+          "a0": "truncate",
+          "a1": "-s",
+          "a2": "+5000",
+          "a3": "/tmp/updater",
+          "message": "type=EXECVE msg=audit(1729865012.331:48211): argc=4 a0=\"truncate\" a1=\"-s\" a2=\"+5000\" a3=\"/tmp/updater\""
+        }
+      },
+      {
+        "description": "dd reads /dev/zero to stdout with no of= (output appended by the shell with >>), as in the Atomic Red Team test.",
+        "event": {
+          "type": "EXECVE",
+          "host": "web-03",
+          "argc": 4,
+          "a0": "dd",
+          "a1": "if=/dev/zero",
+          "a2": "bs=1",
+          "a3": "count=1",
+          "message": "type=EXECVE msg=audit(1729865044.912:48230): argc=4 a0=\"dd\" a1=\"if=/dev/zero\" a2=\"bs=1\" a3=\"count=1\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin uses dd with an explicit of= to create a disk image. The of= filter excludes it.",
+        "event": {
+          "type": "EXECVE",
+          "host": "bastion-01",
+          "argc": 5,
+          "a0": "dd",
+          "a1": "if=/dev/zero",
+          "a2": "of=/srv/images/vm01.img",
+          "a3": "bs=1M",
+          "a4": "count=100",
+          "message": "type=EXECVE msg=audit(1729866100.004:51002): argc=5 a0=\"dd\" a1=\"if=/dev/zero\" a2=\"of=/srv/images/vm01.img\" a3=\"bs=1M\" a4=\"count=100\""
+        }
+      },
+      {
+        "description": "Same truncate command, but logged as a SYSCALL record rather than EXECVE, so the type selection does not match.",
+        "event": {
+          "type": "SYSCALL",
+          "host": "web-03",
+          "exe": "/usr/bin/truncate",
+          "comm": "truncate",
+          "message": "type=SYSCALL msg=audit(1729865012.331:48211): arch=c000003e syscall=59 success=yes exit=0 ppid=2210 pid=2245 auid=1001 uid=1001 comm=\"truncate\" exe=\"/usr/bin/truncate\" key=\"exec\" args=\"truncate -s +5000 /tmp/updater\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

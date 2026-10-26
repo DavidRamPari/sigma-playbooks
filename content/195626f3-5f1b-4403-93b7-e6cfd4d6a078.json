@@ -1,0 +1,114 @@
+{
+  "rule": {
+    "id": "195626f3-5f1b-4403-93b7-e6cfd4d6a078",
+    "title": "Suspicious SSL Connection",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_susp_ssl_keyword.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_susp_ssl_keyword.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1573"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell abrió un canal TLS propio con SslStream, definió un callback de validación de certificados y se autenticó como cliente. Es un patrón típico de reverse shells cifradas.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo ScriptBlockText contiene a la vez System.Net.Security.SslStream, Net.Security.RemoteCertificateValidationCallback y .AuthenticateAsClient. Esa combinación indica una conexión TLS manual que suele aceptar cualquier certificado.",
+      "why_it_matters": "Los atacantes cifran su tráfico de comando y control con algoritmos conocidos como TLS para ocultarlo (ATT&CK T1573, Encrypted Channel). Si la validación del certificado se omite, PowerShell puede conectarse a un listener OpenSSL del atacante y recibir comandos sin que se inspeccione el contenido.",
+      "triage_steps": [
+        "Lee el ScriptBlockText completo; reconstruye los bloques multiparte mediante ScriptBlockId, MessageNumber y MessageTotal.",
+        "Revisa si el callback siempre devuelve $true (por ejemplo {$true}), lo que significa que se omite la validación del certificado.",
+        "Extrae el host y el puerto de destino de TcpClient o de AuthenticateAsClient y revisa su reputación y si alguna vez se usaron en la organización.",
+        "Identifica el usuario, el Computer y el Path del script; confirma si viene de una ruta administrativa conocida o de %TEMP%, Downloads o un script en memoria.",
+        "Correlaciona la creación de procesos (4688 o Sysmon 1) para ver el proceso padre de powershell.exe y si se usaron -enc, -w hidden o IEX.",
+        "Busca conexiones de red de powershell.exe (Sysmon 3 o firewall) hacia ese destino en el mismo host, dentro de +/- 15 minutos.",
+        "Revisa si el script lee el stream y ejecuta comandos (Invoke-Expression, bucles de lectura y escritura), lo que confirmaría una shell interactiva.",
+        "Busca alertas previas para el mismo host, usuario o IP de destino."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que prueban endpoints TLS o servicios internos con certificados autofirmados.",
+        "Herramientas de monitoreo o inventario de certificados que obtienen el certificado remoto con SslStream.",
+        "Pruebas de laboratorio o de red team autorizadas, como Atomic Red Team T1573."
+      ],
+      "response_steps": [
+        "Confirma con el dueño del host o del script si la actividad es legítima y está documentada; si lo es, crea una exclusión específica por Path o por hash del script.",
+        "Si no está autorizada, aísla el endpoint y bloquea el host y el puerto de destino en el perímetro.",
+        "Termina el proceso powershell.exe sospechoso después de capturar memoria y artefactos (script, historial de PSReadLine, tareas programadas).",
+        "Busca mecanismos de persistencia y el mismo destino en otros hosts; restablece las credenciales del usuario si hubo ejecución de comandos.",
+        "Restaura el equipo desde una línea base confiable y mantén Script Block Logging habilitado."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque estas clases .NET también aparecen en scripts administrativos, aunque la alerta merece escalarse si la validación se omite y el destino es externo o desconocido."
+    },
+    "en": {
+      "summary": "A PowerShell script built its own TLS channel with SslStream, set a certificate validation callback and authenticated as a client. This is a common pattern in encrypted reverse shells.",
+      "what_it_detects": "Event 4104 (Script Block Logging) records whose ScriptBlockText contains all of System.Net.Security.SslStream, Net.Security.RemoteCertificateValidationCallback and .AuthenticateAsClient. Together these mean a hand-built TLS connection that often accepts any certificate.",
+      "why_it_matters": "Attackers wrap command-and-control traffic in a known encryption scheme such as TLS to hide it (ATT&CK T1573, Encrypted Channel). If certificate checks are skipped, PowerShell can connect to an attacker's OpenSSL listener and take commands without the content being inspected.",
+      "triage_steps": [
+        "Read the full ScriptBlockText; rebuild multi-part blocks using ScriptBlockId, MessageNumber and MessageTotal.",
+        "Check whether the callback always returns $true (for example {$true}), which means certificate validation is bypassed.",
+        "Pull the destination host and port from TcpClient or AuthenticateAsClient; check their reputation and whether the organization has used them before.",
+        "Identify the user, Computer and script Path; confirm whether it comes from a known admin location or from %TEMP%, Downloads or memory.",
+        "Correlate process creation (4688 or Sysmon 1) to find the powershell.exe parent and any -enc, -w hidden or IEX use.",
+        "Look for powershell.exe network connections (Sysmon 3 or firewall) to that destination on the same host within +/- 15 minutes.",
+        "Check whether the script reads the stream and executes commands (Invoke-Expression, read and write loops), which would confirm an interactive shell.",
+        "Search for earlier alerts on the same host, user or destination IP."
+      ],
+      "false_positives": [
+        "Legitimate admin scripts that test TLS endpoints or internal services with self-signed certificates.",
+        "Monitoring or certificate-inventory tools that fetch remote certificates with SslStream.",
+        "Authorized lab or red team tests, such as Atomic Red Team T1573."
+      ],
+      "response_steps": [
+        "Confirm with the host or script owner that the activity is legitimate and documented; if it is, add a narrow exclusion by script Path or hash.",
+        "If it is unauthorized, isolate the endpoint and block the destination host and port at the perimeter.",
+        "Kill the suspicious powershell.exe only after capturing memory and artifacts (the script, PSReadLine history, scheduled tasks).",
+        "Hunt for persistence and for the same destination on other hosts; reset the user's credentials if commands were executed.",
+        "Rebuild the host from a trusted baseline and keep Script Block Logging enabled."
+      ],
+      "severity_rationale": "Low fits because admin scripts also use these .NET classes, but escalate if validation is bypassed and the destination is external or unknown."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell script block that opens a TLS stream to an external host and accepts any certificate, as in the Atomic Red Team OpenSSL C2 test.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockId": "3f2a9c1e-7b44-4d2a-9e51-0c8d6a1b2f77",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$client = New-Object System.Net.Sockets.TcpClient('203.0.113.10', 443); $stream = $client.GetStream(); $sslStream = New-Object System.Net.Security.SslStream($stream, $false, ({$true} -as [Net.Security.RemoteCertificateValidationCallback])); $sslStream.AuthenticateAsClient('cdn.example.org', $null, 'Tls12', $false)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script that checks a server certificate with SslStream and AuthenticateAsClient but uses default validation, with no RemoteCertificateValidationCallback.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-MON-01.andes.example.com",
+          "UserID": "ANDES\\svc_monitor",
+          "ScriptBlockId": "9a1d4e6b-2c3f-4b8a-a7e2-5f6c0d9e1a22",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Check-TlsExpiry.ps1",
+          "ScriptBlockText": "$tcp = New-Object System.Net.Sockets.TcpClient('intranet.example.com', 443); $ssl = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false); $ssl.AuthenticateAsClient('intranet.example.com'); $cert = $ssl.RemoteCertificate; Write-Output $cert.GetExpirationDateString(); $ssl.Dispose(); $tcp.Close()"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

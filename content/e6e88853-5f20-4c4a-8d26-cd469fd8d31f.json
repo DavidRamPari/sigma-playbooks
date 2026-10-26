@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "e6e88853-5f20-4c4a-8d26-cd469fd8d31f",
+    "title": "Ntdsutil Abuse",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/application/esent/win_esent_ntdsutil_abuse.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/esent/win_esent_ntdsutil_abuse.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El motor de base de datos ESENT registró que creó, adjuntó, separó o reubicó una base de datos llamada ntds.dit. Esto puede indicar que alguien copió la base de Active Directory con ntdsutil (por ejemplo, IFM) para extraer hashes de credenciales.",
+      "what_it_detects": "Eventos del log Application con Provider_Name ESENT y EventID 216 (cambio de ubicación de la base de datos), 325 (base creada), 326 (base adjuntada) o 327 (base separada) cuyo campo Data contiene 'ntds.dit'. Estos eventos aparecen cuando ntdsutil 'ifm' o una herramienta similar genera o monta una copia de la base.",
+      "why_it_matters": "ntds.dit guarda los hashes de contraseña de todas las cuentas del dominio, incluida krbtgt. Una copia junto con la hive SYSTEM permite el cracking offline, pass-the-hash y Golden Tickets (MITRE ATT&CK T1003.003, NTDS credential dumping).",
+      "triage_steps": [
+        "Lea el campo Data: identifique el proceso que lo registra (NTDSUTIL, lsass u otro) y la ruta. C:\\Windows\\NTDS\\ntds.dit es normal; rutas en Temp, ProgramData, perfiles o recursos compartidos son sospechosas.",
+        "Confirme si el host es un controlador de dominio. Una ntds.dit en una estación de trabajo o en un servidor miembro es muy sospechosa.",
+        "En el mismo host, en un rango de +/- 15 minutos, busque creación de procesos (4688/Sysmon 1) de ntdsutil.exe con 'ifm', 'create full' o 'snapshot', y revise su ParentImage y el usuario.",
+        "Busque actividad de shadow copies cerca del evento: vssadmin, diskshadow, wmic shadowcopy o eventos del servicio VSS.",
+        "Identifique la cuenta que lanzó el proceso y su sesión (4624/4672): origen, tipo de logon y si coincide con un administrador de AD autorizado.",
+        "Revise si se crearon archivos ntds.dit o la hive SYSTEM, si se comprimieron o si se copiaron por SMB, RDP o HTTP fuera del host.",
+        "Busque alertas anteriores para el mismo host, el mismo usuario y la misma IP de origen, como movimiento lateral o uso de herramientas de dumping."
+      ],
+      "false_positives": [
+        "Respaldos legítimos de AD o del estado del sistema que usan VSS (Windows Server Backup o agentes de backup de terceros).",
+        "Creación de medios IFM por administradores para promover nuevos DC o RODC.",
+        "Montaje de snapshots de AD con ntdsutil/dsamain para recuperar objetos o auditar.",
+        "Pruebas de recuperación del bosque o mantenimiento offline de la base, como desfragmentación con ntdsutil."
+      ],
+      "response_steps": [
+        "Verifique con el equipo de AD si existe un ticket de cambio o un respaldo programado que explique el evento.",
+        "Si no está autorizado, aísle el host afectado, deshabilite la cuenta usada y preserve la copia de ntds.dit y los logs como evidencia antes de borrar nada.",
+        "Trate como comprometidas todas las credenciales del dominio: restablezca krbtgt dos veces, de forma escalonada, y también las cuentas privilegiadas y de servicio.",
+        "Busque uso posterior de los hashes en todo el dominio, como pass-the-hash, tickets anómalos o nuevos administradores, y elimine la persistencia encontrada."
+      ],
+      "severity_rationale": "Es medium porque los respaldos y la creación de IFM legítimos generan los mismos eventos, pero una copia no autorizada de ntds.dit implica el compromiso total del dominio y debe escalarse de inmediato."
+    },
+    "en": {
+      "summary": "The ESENT database engine logged that it created, attached, detached or relocated a database named ntds.dit. This may mean someone copied the Active Directory database with ntdsutil (for example IFM) to extract credential hashes.",
+      "what_it_detects": "Application log events with Provider_Name ESENT and EventID 216 (database location change), 325 (database created), 326 (database attached) or 327 (database detached) whose Data field contains 'ntds.dit'. These events appear when ntdsutil 'ifm' or a similar tool creates or mounts a copy of the database.",
+      "why_it_matters": "ntds.dit holds the password hashes of every domain account, including krbtgt. A copy plus the SYSTEM hive allows offline cracking, pass-the-hash and Golden Tickets (MITRE ATT&CK T1003.003, NTDS credential dumping).",
+      "triage_steps": [
+        "Read the Data field: note the logging process (NTDSUTIL, lsass, other) and the path. C:\\Windows\\NTDS\\ntds.dit is normal; paths in Temp, ProgramData, user profiles or shares are suspicious.",
+        "Confirm whether the host is a domain controller. An ntds.dit on a workstation or member server is highly suspicious.",
+        "On the same host, +/- 15 minutes, look for process creation (4688/Sysmon 1) of ntdsutil.exe with 'ifm', 'create full' or 'snapshot', and check its ParentImage and user.",
+        "Look for shadow copy activity close to the event: vssadmin, diskshadow, wmic shadowcopy or VSS service events.",
+        "Identify the account and logon session (4624/4672): its source, its logon type and whether it belongs to an authorized AD administrator.",
+        "Check whether ntds.dit or SYSTEM hive files were created, archived, or copied off the host over SMB, RDP or HTTP.",
+        "Check for earlier alerts on the same host, user and source IP, such as lateral movement or dumping tools."
+      ],
+      "false_positives": [
+        "Legitimate AD or system state backups that use VSS (Windows Server Backup or third-party backup agents).",
+        "Administrators creating IFM media to promote new DCs or RODCs.",
+        "Mounting AD snapshots with ntdsutil/dsamain for object recovery or auditing.",
+        "Forest recovery tests or offline database maintenance such as ntdsutil defragmentation."
+      ],
+      "response_steps": [
+        "Check with the AD team for a change ticket or scheduled backup that explains the event.",
+        "If it is unauthorized, isolate the host, disable the account involved, and preserve the ntds.dit copy and logs as evidence before deleting anything.",
+        "Treat all domain credentials as compromised: reset krbtgt twice, staggered, and reset privileged and service accounts.",
+        "Hunt domain-wide for later use of the hashes, such as pass-the-hash, anomalous tickets or new admins, and remove any persistence found."
+      ],
+      "severity_rationale": "It is medium because legitimate backups and IFM creation produce the same events, but an unauthorized ntds.dit copy means full domain compromise and must be escalated immediately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ntdsutil IFM creates a copy of ntds.dit in a temp folder on a DC (ESENT 325)",
+        "event": {
+          "Provider_Name": "ESENT",
+          "EventID": 325,
+          "Channel": "Application",
+          "Computer": "DC-01.andes.example.com",
+          "TimeCreated": "2024-03-12T02:14:37Z",
+          "Data": "NTDSUTIL (4120,D,0) The database engine created a new database (2, C:\\Windows\\Temp\\ifm\\Active Directory\\ntds.dit). (Time=0 seconds)"
+        }
+      },
+      {
+        "description": "ESENT detaches the copied ntds.dit after IFM completes (EventID 327)",
+        "event": {
+          "Provider_Name": "ESENT",
+          "EventID": 327,
+          "Channel": "Application",
+          "Computer": "DC-01.andes.example.com",
+          "TimeCreated": "2024-03-12T02:15:02Z",
+          "Data": "NTDSUTIL (4120,D,0) The database engine detached a database (2, C:\\Windows\\Temp\\ifm\\Active Directory\\ntds.dit). (Time=1 seconds)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ESENT attaches the Windows Search database, not ntds.dit",
+        "event": {
+          "Provider_Name": "ESENT",
+          "EventID": 326,
+          "Channel": "Application",
+          "Computer": "WS-0142.andes.example.com",
+          "TimeCreated": "2024-03-12T08:01:10Z",
+          "Data": "SearchIndexer (3312,D,0) Windows: The database engine attached a database (1, C:\\ProgramData\\Microsoft\\Search\\Data\\Applications\\Windows\\Windows.edb). (Time=0 seconds)"
+        }
+      },
+      {
+        "description": "Normal ESENT engine start event (EventID 102) for the live ntds.dit at boot; EventID is not in the rule list",
+        "event": {
+          "Provider_Name": "ESENT",
+          "EventID": 102,
+          "Channel": "Application",
+          "Computer": "DC-01.andes.example.com",
+          "TimeCreated": "2024-03-11T06:00:05Z",
+          "Data": "lsass (712,D,0) NTDS: The database engine (10.00.17763.0000) started a new instance (0) for C:\\Windows\\NTDS\\ntds.dit."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

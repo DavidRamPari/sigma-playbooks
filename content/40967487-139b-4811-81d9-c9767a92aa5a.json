@@ -1,0 +1,169 @@
+{
+  "rule": {
+    "id": "40967487-139b-4811-81d9-c9767a92aa5a",
+    "title": "Deployment Deleted From Kubernetes Cluster",
+    "level": "low",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_deployment_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_deployment_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1498"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El audit log de Kubernetes registró una solicitud de eliminación (verb delete) sobre un recurso deployments. Puede ser mantenimiento normal o un intento de interrumpir cargas de trabajo en producción.",
+      "what_it_detects": "Eventos de auditoría del API server con verb igual a delete y objectRef.resource igual a deployments, es decir, la eliminación de un Deployment, por ejemplo con kubectl delete deployment o a través de la API.",
+      "why_it_matters": "Al eliminar un Deployment se borran sus ReplicaSets y pods, y el servicio queda caído. La regla lo clasifica como Impact (ATT&CK T1498) y toma como referencia la técnica Data destruction de la Threat Matrix for Kubernetes de Microsoft.",
+      "triage_steps": [
+        "Identifique objectRef.namespace, objectRef.name, user.username, user.groups, sourceIPs y userAgent. Confirme si el namespace es de producción o crítico.",
+        "Revise responseStatus.code: con 200 o 202 la eliminación se ejecutó; con 403 fue denegada, pero indica un intento.",
+        "Considere solo una vez las etapas duplicadas del mismo auditID, como RequestReceived y ResponseComplete.",
+        "Verifique si la identidad es humana, una service account o un pipeline de CI/CD o GitOps, y si existe un ticket o cambio aprobado.",
+        "Busque eventos del mismo usuario o IP en +/- 15 minutos: otros delete, deletecollection, cambios de RBAC, secrets leídos, exec en pods.",
+        "Busque autenticaciones anómalas: IP de origen nueva, userAgent inusual o uso de tokens de service account fuera del clúster.",
+        "Consulte alertas anteriores de la misma identidad, del mismo namespace y del mismo clúster."
+      ],
+      "false_positives": [
+        "Retiro planificado de aplicaciones o limpieza de entornos de prueba.",
+        "Herramientas GitOps o CI/CD, como Argo CD, Flux o Helm, que eliminan recursos durante un sync o un uninstall.",
+        "Operadores o controladores que recrean Deployments como parte de su ciclo normal."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del namespace o del pipeline si la eliminación estaba autorizada.",
+        "Si no lo estaba, revoque o rote las credenciales o tokens usados y restrinja temporalmente los permisos RBAC de esa identidad.",
+        "Restaure el Deployment desde el repositorio GitOps, un manifiesto versionado o un respaldo, por ejemplo con Velero, y valide que el servicio funcione.",
+        "Revise el resto de la actividad de la identidad para encontrar persistencia o más impacto y documente el incidente."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque eliminar Deployments es una operación administrativa frecuente. Conviene escalar si el namespace es crítico, la identidad es inesperada o hay actividad sospechosa relacionada."
+    },
+    "en": {
+      "summary": "The Kubernetes audit log recorded a delete request against a deployments resource. This can be normal maintenance or an attempt to disrupt production workloads.",
+      "what_it_detects": "API server audit events where verb is delete and objectRef.resource is deployments, meaning a Deployment was removed, for example with kubectl delete deployment or through a direct API call.",
+      "why_it_matters": "Deleting a Deployment also removes its ReplicaSets and pods, which takes the service down. The rule tags this as Impact (ATT&CK T1498) and cites Data destruction from the Microsoft Threat Matrix for Kubernetes.",
+      "triage_steps": [
+        "Note objectRef.namespace, objectRef.name, user.username, user.groups, sourceIPs and userAgent. Check whether the namespace is production or critical.",
+        "Check responseStatus.code: 200 or 202 means the deletion went through, while 403 means it was denied but still shows an attempt.",
+        "Count duplicate stages that share one auditID, such as RequestReceived and ResponseComplete, only once.",
+        "Find out whether the identity is a human, a service account or a CI/CD or GitOps pipeline, and look for a matching ticket or approved change.",
+        "Pivot on the same user or source IP within +/- 15 minutes: other deletes, deletecollection, RBAC changes, secret reads, pod exec.",
+        "Look for unusual authentication: a new source IP, an odd userAgent, or a service account token used from outside the cluster.",
+        "Review earlier alerts for the same identity, namespace and cluster."
+      ],
+      "false_positives": [
+        "Planned decommissioning of applications or cleanup of test environments.",
+        "GitOps or CI/CD tools, such as Argo CD, Flux or Helm, that prune resources during a sync or an uninstall.",
+        "Operators or controllers that recreate Deployments as part of their normal reconciliation."
+      ],
+      "response_steps": [
+        "Confirm with the namespace or pipeline owner whether the deletion was authorized.",
+        "If it was not, revoke or rotate the credentials or tokens used and temporarily restrict that identity's RBAC permissions.",
+        "Restore the Deployment from the GitOps repo, a versioned manifest or a backup, for example Velero, and check that the service works.",
+        "Review the identity's other activity for persistence or further impact, and document the incident."
+      ],
+      "severity_rationale": "Low fits because deleting Deployments is a common administrative action. Escalate when the namespace is critical, the identity is unexpected or related suspicious activity shows up."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user deletes the payments-api Deployment in production with kubectl and the request completes.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "auditID": "7c1e2a4b-0f3d-4e8a-9b21-5d6f7a8b9c01",
+          "stage": "ResponseComplete",
+          "requestURI": "/apis/apps/v1/namespaces/prod/deployments/payments-api",
+          "verb": "delete",
+          "user.username": "jperez@example.com",
+          "user.groups": "system:authenticated",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "prod",
+          "objectRef.name": "payments-api",
+          "objectRef.apiGroup": "apps",
+          "objectRef.apiVersion": "v1",
+          "responseStatus.code": 200,
+          "requestReceivedTimestamp": "2024-10-25T14:03:12.104512Z",
+          "stageTimestamp": "2024-10-25T14:03:12.188730Z"
+        }
+      },
+      {
+        "description": "A service account token used from outside the cluster tries to delete a Deployment and gets denied by RBAC.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "auditID": "a93f0d12-6b7e-4c55-8e1a-2f4b6c8d0e22",
+          "stage": "ResponseComplete",
+          "requestURI": "/apis/apps/v1/namespaces/default/deployments/web-frontend",
+          "verb": "delete",
+          "user.username": "system:serviceaccount:default:monitoring-agent",
+          "user.groups": "system:serviceaccounts",
+          "sourceIPs": "198.51.100.23",
+          "userAgent": "python-requests/2.31.0",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "default",
+          "objectRef.name": "web-frontend",
+          "objectRef.apiGroup": "apps",
+          "objectRef.apiVersion": "v1",
+          "responseStatus.code": 403,
+          "requestReceivedTimestamp": "2024-10-25T14:10:41.552001Z",
+          "stageTimestamp": "2024-10-25T14:10:41.553870Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A pod (not a deployment) is deleted, so objectRef.resource does not match.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "auditID": "e2b4c6d8-1a3f-4b5c-9d7e-0f1a2b3c4d55",
+          "stage": "ResponseComplete",
+          "requestURI": "/api/v1/namespaces/prod/pods/payments-api-6d9f7c8b5-x2kqz",
+          "verb": "delete",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "prod",
+          "objectRef.name": "payments-api-6d9f7c8b5-x2kqz",
+          "responseStatus.code": 200
+        }
+      },
+      {
+        "description": "A Deployment is scaled with a patch, so the verb is not delete.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "auditID": "f5a6b7c8-2d3e-4f60-8a9b-1c2d3e4f5a66",
+          "stage": "ResponseComplete",
+          "requestURI": "/apis/apps/v1/namespaces/prod/deployments/payments-api/scale",
+          "verb": "patch",
+          "user.username": "system:serviceaccount:argocd:argocd-application-controller",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "argocd-application-controller/v2.10.4",
+          "objectRef.resource": "deployments",
+          "objectRef.subresource": "scale",
+          "objectRef.namespace": "prod",
+          "objectRef.name": "payments-api",
+          "responseStatus.code": 200
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

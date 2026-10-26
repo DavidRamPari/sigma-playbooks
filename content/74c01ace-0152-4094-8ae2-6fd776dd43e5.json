@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "74c01ace-0152-4094-8ae2-6fd776dd43e5",
+    "title": "File or Folder Permissions Change",
+    "level": "low",
+    "status": "test",
+    "author": "Jakob Weinzettl, oscd.community",
+    "path": "linux/auditd/execve/lnx_auditd_file_or_folder_permissions.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_file_or_folder_permissions.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró la ejecución de chmod o chown en un host Linux. Por sí sola es una actividad administrativa común, pero puede formar parte de una cadena de ataque, por ejemplo para hacer ejecutable un payload o abrir el acceso a archivos sensibles.",
+      "what_it_detects": "Registros EXECVE de auditd cuyo primer argumento (a0) contiene 'chmod' o 'chown', es decir, cualquier ejecución de esos binarios, con ruta completa o sin ella.",
+      "why_it_matters": "Los atacantes cambian permisos o propietarios para ejecutar herramientas descargadas, poner el bit SUID en binarios, leer credenciales o evadir controles de acceso (ATT&CK T1222.002, modificación de permisos de archivos y directorios en Linux).",
+      "triage_steps": [
+        "Revise los argumentos a1, a2 y siguientes: busque modos riesgosos como 777, +x, u+s, 4755, o un cambio de propietario a root o a un usuario inesperado.",
+        "Identifique las rutas objetivo. Priorice /tmp, /dev/shm, /var/tmp, la raíz web, /etc/shadow, /etc/sudoers, ~/.ssh y los binarios del sistema.",
+        "Correlacione el registro SYSCALL del mismo ID de evento de audit para obtener auid, uid, exe, ppid y tty, y así saber quién lo ejecutó realmente.",
+        "Identifique el proceso padre (ppid): una shell interactiva por SSH es distinta de un servidor web, un cron o un script desconocido.",
+        "En el mismo host, revise +/- 15 minutos: descargas con curl o wget, chmod +x seguido de la ejecución del archivo, y conexiones salientes nuevas.",
+        "Verifique si el usuario suele administrar ese host y si existe un ticket de cambio o un despliegue automatizado que lo explique.",
+        "Busque alertas previas del mismo host o usuario, sobre todo de escalamiento de privilegios o de persistencia."
+      ],
+      "false_positives": [
+        "Administradores o usuarios que ajustan permisos como parte de su trabajo diario.",
+        "Gestores de paquetes, instaladores y scripts post-install que ejecutan chmod o chown.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) y pipelines de despliegue.",
+        "Imágenes de contenedores o tareas cron que corrigen la propiedad de directorios de datos o logs."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad con el dueño del host o el usuario y con los registros de cambios antes de actuar.",
+        "Si resulta malicioso, aísle el endpoint y preserve evidencia: hashes de los archivos afectados, logs de auditd y la lista de procesos.",
+        "Documente el estado actual y luego restaure los permisos y propietarios originales; elimine el bit SUID agregado indebidamente.",
+        "Analice y elimine los payloads involucrados y busque persistencia (cron, systemd, authorized_keys).",
+        "Rote las credenciales de la cuenta implicada y de los archivos sensibles expuestos, y aplique un monitoreo reforzado."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque chmod y chown se usan a diario con fines legítimos; la alerta cobra valor sobre todo cuando se correlaciona con otros eventos sospechosos."
+    },
+    "en": {
+      "summary": "Auditd recorded chmod or chown running on a Linux host. On its own this is routine admin activity, but it can be one step in an attack, such as making a payload executable or opening access to sensitive files.",
+      "what_it_detects": "Auditd EXECVE records whose first argument (a0) contains 'chmod' or 'chown', meaning any run of those binaries, with or without a full path.",
+      "why_it_matters": "Attackers change permissions or owners to run downloaded tools, set SUID bits, read credentials or get around access controls (ATT&CK T1222.002, Linux file and directory permissions modification).",
+      "triage_steps": [
+        "Review a1, a2 and the later arguments for risky modes such as 777, +x, u+s or 4755, or ownership changed to root or an unexpected user.",
+        "Identify the target paths. Prioritize /tmp, /dev/shm, /var/tmp, the web root, /etc/shadow, /etc/sudoers, ~/.ssh and system binaries.",
+        "Correlate the SYSCALL record with the same audit event ID to get auid, uid, exe, ppid and tty, which show who really ran it.",
+        "Identify the parent process (ppid): an interactive SSH shell means something different from a web server, cron job or unknown script.",
+        "On the same host, check +/- 15 minutes for curl or wget downloads, chmod +x followed by running the file, and new outbound connections.",
+        "Check whether the user normally administers this host and whether a change ticket or automated deployment explains the activity.",
+        "Look for earlier alerts for the same host or user, especially privilege escalation or persistence."
+      ],
+      "false_positives": [
+        "Administrators or users adjusting permissions as part of their daily work.",
+        "Package managers, installers and post-install scripts that run chmod or chown.",
+        "Configuration management tools (Ansible, Puppet, Chef) and deployment pipelines.",
+        "Container images or cron jobs that fix ownership of data or log directories."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the host owner or user and the change records before acting.",
+        "If it is malicious, isolate the endpoint and preserve evidence: hashes of affected files, auditd logs and the process list.",
+        "Record the current state, then restore the original permissions and owners and remove any SUID bits that were wrongly added.",
+        "Analyze and remove any payloads involved, and hunt for persistence (cron, systemd, authorized_keys).",
+        "Rotate credentials for the account involved and for any exposed sensitive files, then increase monitoring."
+      ],
+      "severity_rationale": "Low fits because chmod and chown are used legitimately every day; the alert mainly matters when it lines up with other suspicious events."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "chmod sets the execute bit on a file dropped in /tmp",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "chmod",
+          "a1": "+x",
+          "a2": "/tmp/.cache/updater",
+          "host": "web-03",
+          "msg": "audit(1729865012.331:48211)"
+        }
+      },
+      {
+        "description": "chown with full path changes ownership of a binary to root",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "/usr/bin/chown",
+          "a1": "root:root",
+          "a2": "/home/jperez/tool",
+          "host": "bastion-01",
+          "msg": "audit(1729865190.104:48302)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "chgrp changes group ownership and does not contain chmod or chown in a0",
+        "event": {
+          "type": "EXECVE",
+          "argc": 3,
+          "a0": "chgrp",
+          "a1": "developers",
+          "a2": "/srv/app/shared",
+          "host": "bastion-01",
+          "msg": "audit(1729865300.552:48350)"
+        }
+      },
+      {
+        "description": "SYSCALL record for chmod; the record type is not EXECVE",
+        "event": {
+          "type": "SYSCALL",
+          "syscall": "fchmodat",
+          "comm": "chmod",
+          "exe": "/usr/bin/chmod",
+          "auid": "1001",
+          "host": "web-03",
+          "msg": "audit(1729865012.331:48211)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

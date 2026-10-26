@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "6e61ee20-ce00-4f8d-8aee-bedd8216f7e3",
+    "title": "AWS GuardDuty Important Change",
+    "level": "high",
+    "status": "test",
+    "author": "faloker",
+    "path": "cloud/aws/cloudtrail/aws_guardduty_disruption.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_guardduty_disruption.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS creó un trusted IP list (IPSet) en GuardDuty. GuardDuty no genera findings para el tráfico de las IP de esa lista, así que un atacante puede usarla para ocultar su propia infraestructura.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource guardduty.amazonaws.com y eventName CreateIPSet, es decir, la creación de una nueva lista de IP de confianza en un detector de GuardDuty, en cualquier región.",
+      "why_it_matters": "Es una forma de debilitar las defensas (T1685): si se agregan IP del atacante a la lista de confianza, GuardDuty deja de alertar sobre ellas. El módulo guardduty__whitelist_ip de Pacu automatiza justamente este cambio.",
+      "triage_steps": [
+        "Identifique al actor en userIdentity.arn, el tipo de identidad (IAMUser, AssumedRole), sourceIPAddress, userAgent y awsRegion. Confirme si es un administrador o pipeline de seguridad conocido.",
+        "Revise requestParameters: name, format, activate y location. Descargue el objeto S3 indicado en location y revise qué IP o rangos incluye.",
+        "Compare esas IP con su inventario: ¿son escáneres internos, NAT corporativos o IP externas desconocidas? Cualquier IP pública ajena es una señal grave.",
+        "Busque un ticket de cambio o una ejecución de IaC (Terraform, CloudFormation) que justifique la lista. Un cambio manual desde consola o CLI sin ticket es sospechoso.",
+        "Pivotee por la misma identidad ±15 minutos: otras llamadas a GuardDuty (UpdateIPSet, CreateFilter, UpdateDetector, DeleteDetector), StopLogging de CloudTrail o cambios en IAM.",
+        "Busque la actividad de las IP de la lista en CloudTrail, VPC Flow Logs y findings previos de GuardDuty, para saber qué podrían estar ocultando.",
+        "Revise alertas anteriores sobre la misma identidad, la misma access key y la misma sourceIPAddress."
+      ],
+      "false_positives": [
+        "Cambio legítimo para ignorar escáneres de vulnerabilidades internos o herramientas de pentesting autorizadas.",
+        "Despliegue de IaC o automatización de seguridad que crea las IPSets en cuentas nuevas o en otras regiones.",
+        "Configuración inicial de GuardDuty hecha por el equipo de seguridad o en la cuenta administradora de AWS Organizations."
+      ],
+      "response_steps": [
+        "Verifique con el dueño de la identidad y con el equipo de seguridad en la nube si el cambio estaba autorizado, y conserve el evento y el objeto S3 como evidencia.",
+        "Si no estaba autorizado, desactive la IPSet (UpdateIPSet con activate=false) o elimínela después de documentarla, y revise los findings que pudieron haberse suprimido.",
+        "Contenga la identidad: desactive o rote las access keys, revoque las sesiones del rol y revise los cambios en IAM hechos por ese actor.",
+        "Busque hacia atrás actividad de las IP agregadas y de la identidad, y restaure cualquier otro control de detección que se haya modificado.",
+        "Limite guardduty:CreateIPSet y UpdateIPSet a roles de seguridad específicos mediante políticas IAM o SCP."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque esta acción silencia directamente la detección de amenazas para ciertas IP y es poco frecuente fuera de los cambios planificados."
+    },
+    "en": {
+      "summary": "An AWS identity created a GuardDuty trusted IP list (IPSet). GuardDuty does not generate findings for traffic from IPs on that list, so an attacker can use it to hide their infrastructure.",
+      "what_it_detects": "CloudTrail events with eventSource guardduty.amazonaws.com and eventName CreateIPSet, meaning a new trusted IP list was created on a GuardDuty detector in any region.",
+      "why_it_matters": "This is a way to impair defenses (T1685): once attacker IPs are on the trusted list, GuardDuty stops alerting on them. The Pacu module guardduty__whitelist_ip automates exactly this change.",
+      "triage_steps": [
+        "Identify the actor from userIdentity.arn, the identity type (IAMUser, AssumedRole), sourceIPAddress, userAgent and awsRegion. Confirm whether it is a known security admin or pipeline.",
+        "Review requestParameters: name, format, activate and location. Download the S3 object referenced in location and check which IPs or ranges it lists.",
+        "Compare those IPs with your inventory: internal scanners, corporate NAT, or unknown external addresses? Any foreign public IP is a serious red flag.",
+        "Look for a change ticket or IaC run (Terraform, CloudFormation) that justifies the list. A manual console or CLI change with no ticket is suspicious.",
+        "Pivot on the same identity +/- 15 minutes: other GuardDuty calls (UpdateIPSet, CreateFilter, UpdateDetector, DeleteDetector), CloudTrail StopLogging, or IAM changes.",
+        "Search CloudTrail, VPC Flow Logs and past GuardDuty findings for activity from the listed IPs, to see what they might be hiding.",
+        "Check earlier alerts for the same identity, the same access key and the same sourceIPAddress."
+      ],
+      "false_positives": [
+        "Legitimate change to ignore internal vulnerability scanners or authorized pentest tools.",
+        "IaC or security automation that creates IPSets in new accounts or other regions.",
+        "Initial GuardDuty setup by the security team or in the AWS Organizations administrator account."
+      ],
+      "response_steps": [
+        "Confirm with the identity owner and the cloud security team whether the change was authorized, and keep the event and S3 object as evidence.",
+        "If it was not authorized, deactivate the IPSet (UpdateIPSet with activate=false) or delete it after documenting it, then review findings that may have been suppressed.",
+        "Contain the identity: disable or rotate access keys, revoke role sessions, and review IAM changes made by that actor.",
+        "Hunt backwards for activity from the added IPs and the identity, and restore any other detection controls that were modified.",
+        "Restrict guardduty:CreateIPSet and UpdateIPSet to specific security roles with IAM policies or SCPs."
+      ],
+      "severity_rationale": "High fits because this action directly silences threat detection for chosen IPs and is rare outside planned changes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user creates and activates a GuardDuty trusted IP list from the CLI, pointing to an S3 object",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T02:17:43Z",
+          "eventSource": "guardduty.amazonaws.com",
+          "eventName": "CreateIPSet",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.30 Python/3.11.8 Linux/6.1.0 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-backup",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE7QX3",
+          "requestParameters.detectorId": "12abc34d567e8fa901bc2d34e56789f0",
+          "requestParameters.name": "trusted-ops",
+          "requestParameters.format": "TXT",
+          "requestParameters.location": "https://s3.amazonaws.com/example-bucket-ops/ips.txt",
+          "requestParameters.activate": true,
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of GuardDuty IP sets by a security auditor role, not a creation",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T09:02:11Z",
+          "eventSource": "guardduty.amazonaws.com",
+          "eventName": "ListIPSets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/SecurityAudit/mrodriguez",
+          "requestParameters.detectorId": "12abc34d567e8fa901bc2d34e56789f0",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "CreateIPSet call to AWS WAF (wafv2), same event name but a different service",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-05-14T10:30:05Z",
+          "eventSource": "wafv2.amazonaws.com",
+          "eventName": "CreateIPSet",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.33",
+          "userAgent": "Terraform/1.7.5",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/terraform-deployer/ci-run-8812",
+          "requestParameters.name": "blocked-scanners",
+          "requestParameters.scope": "REGIONAL",
+          "requestParameters.iPAddressVersion": "IPV4",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

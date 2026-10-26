@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "6419afd1-3742-47a5-a7e6-b50386cd15f8",
+    "title": "Chmod Targeting Sensitive Directories",
+    "level": "medium",
+    "status": "test",
+    "author": "Christopher Peacock @SecurePeacock, SCYTHE @scythe_io",
+    "path": "linux/process_creation/proc_creation_lnx_chmod_targeting_sensitive_directories.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_chmod_targeting_sensitive_directories.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó chmod sobre archivos en /tmp/, /etc/, /opt/ o /.Library/ en un host Linux. Puede indicar que se preparó un payload para ejecución, se buscó persistencia o se debilitaron permisos de archivos del sistema.",
+      "what_it_detects": "Eventos de creación de procesos donde Image termina en /chmod y CommandLine contiene /tmp/, /.Library/, /etc/ u /opt/. Excluye casos conocidos de update-shells, scripts postinst de dpkg, apt-key, mkinitramfs, Landscape y AppArmor de Ubuntu.",
+      "why_it_matters": "Corresponde a ATT&CK T1222.002 (modificación de permisos de archivos y directorios en Linux). Un atacante puede volver ejecutable un binario descargado en /tmp, aplicar setuid o abrir permisos de archivos en /etc para escalar privilegios, persistir o alterar el sistema.",
+      "triage_steps": [
+        "Revise CommandLine: modo aplicado (+x, 777, 4755/u+s) y ruta exacta. Los modos setuid o permisos sobre /etc/passwd, /etc/shadow o /etc/sudoers son prioritarios.",
+        "Identifique ParentImage y ParentCommandLine: ¿es un gestor de paquetes, script de configuración o herramienta de automatización, o una shell interactiva, curl/wget o un proceso web?",
+        "Determine el usuario que ejecutó chmod y si suele administrar ese host; revise su sesión (SSH, sudo) y la IP de origen.",
+        "Examine el archivo afectado: hash, propietario, fecha de creación y contenido. Busque archivos ocultos o binarios recién descargados en /tmp.",
+        "Pivote en el mismo host +/- 15 minutos: descargas, ejecución del archivo modificado, conexiones de red salientes, cambios en cron o systemd.",
+        "Busque alertas previas para el mismo host, usuario o hash, y el mismo CommandLine en otros equipos."
+      ],
+      "false_positives": [
+        "Scripts de instalación o actualización de software que ajustan permisos en /opt o /etc y no están cubiertos por los filtros.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) o administradores que aplican permisos legítimos.",
+        "Pipelines de CI/CD o compilaciones que generan y marcan como ejecutables archivos temporales en /tmp."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host o el usuario si el cambio de permisos fue planificado; documente la justificación.",
+        "Si es sospechoso, aísle el host según el procedimiento y preserve el archivo afectado y su hash para análisis.",
+        "Restaure los permisos originales tras confirmar el estado correcto, y elimine payloads y mecanismos de persistencia identificados.",
+        "Revise credenciales del usuario implicado, rote las comprometidas y agregue filtros específicos para actividades legítimas recurrentes."
+      ],
+      "severity_rationale": "Nivel medio porque chmod sobre estas rutas es común en administración legítima, pero también es un paso habitual para ejecutar payloads o escalar privilegios."
+    },
+    "en": {
+      "summary": "chmod was run against files under /tmp/, /etc/, /opt/ or /.Library/ on a Linux host. This may mean a payload was made executable, persistence was set up, or system file permissions were weakened.",
+      "what_it_detects": "Process creation events where Image ends with /chmod and CommandLine contains /tmp/, /.Library/, /etc/ or /opt/. Known benign cases from update-shells, dpkg postinst scripts, apt-key, mkinitramfs, Landscape and Ubuntu AppArmor are excluded.",
+      "why_it_matters": "Maps to ATT&CK T1222.002 (Linux file and directory permissions modification). Attackers may make a dropped binary in /tmp executable, set setuid bits, or loosen permissions on /etc files to escalate privileges, persist or disrupt the system.",
+      "triage_steps": [
+        "Read CommandLine: the mode applied (+x, 777, 4755/u+s) and the exact path. Setuid modes or changes to /etc/passwd, /etc/shadow or /etc/sudoers are top priority.",
+        "Check ParentImage and ParentCommandLine: package manager, config script or automation tool, versus an interactive shell, curl/wget or a web server process.",
+        "Identify the user who ran chmod and whether they normally administer this host; review their session (SSH, sudo) and source IP.",
+        "Inspect the target file: hash, owner, creation time and content. Look for hidden files or freshly downloaded binaries in /tmp.",
+        "Pivot on the same host +/- 15 minutes: downloads, execution of the modified file, outbound connections, cron or systemd changes.",
+        "Search for earlier alerts on the same host, user or hash, and the same CommandLine on other hosts."
+      ],
+      "false_positives": [
+        "Software install or update scripts adjusting permissions in /opt or /etc that the filters do not cover.",
+        "Configuration management tools (Ansible, Puppet, Chef) or administrators applying legitimate permissions.",
+        "CI/CD pipelines or builds that create and mark temporary files in /tmp as executable."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or user whether the permission change was planned; record the justification.",
+        "If suspicious, isolate the host per procedure and preserve the target file and its hash for analysis.",
+        "Restore original permissions once the correct state is confirmed, and remove identified payloads and persistence mechanisms.",
+        "Review the involved user's credentials, rotate any compromised ones, and add narrow filters for recurring legitimate activity."
+      ],
+      "severity_rationale": "Medium because chmod on these paths is common in legitimate administration, yet it is also a routine step for running payloads or escalating privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive shell makes a hidden downloaded file in /tmp executable",
+        "event": {
+          "Image": "/usr/bin/chmod",
+          "CommandLine": "chmod +x /tmp/.cache/updater",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Computer": "web-01"
+        }
+      },
+      {
+        "description": "setuid bit applied to a binary under /opt via sudo",
+        "event": {
+          "Image": "/bin/chmod",
+          "CommandLine": "chmod 4755 /opt/monitor/bin/helper",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo chmod 4755 /opt/monitor/bin/helper",
+          "User": "root",
+          "ProcessId": 51002,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "apt-key creating its temporary GPG home, excluded by filter_main_apt_key",
+        "event": {
+          "Image": "/usr/bin/chmod",
+          "CommandLine": "chmod 700 /tmp/apt-key-gpghome.Xy12AbCd",
+          "ParentImage": "/usr/bin/apt-key",
+          "ParentCommandLine": "/bin/sh /usr/bin/apt-key --quiet --readonly verify",
+          "User": "root",
+          "ProcessId": 3021,
+          "Computer": "app-02"
+        }
+      },
+      {
+        "description": "dpkg postinst script setting permissions in /etc, excluded by filter_main_postinst",
+        "event": {
+          "Image": "/usr/bin/chmod",
+          "CommandLine": "chmod 644 /etc/default/exampled",
+          "ParentImage": "/usr/bin/dash",
+          "ParentCommandLine": "/bin/sh /var/lib/dpkg/info/exampled.postinst configure 2.4.1",
+          "User": "root",
+          "ProcessId": 7710,
+          "Computer": "app-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

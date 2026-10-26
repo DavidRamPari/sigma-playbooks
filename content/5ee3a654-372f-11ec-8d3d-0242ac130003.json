@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "5ee3a654-372f-11ec-8d3d-0242ac130003",
+    "title": "ADCS Certificate Template Configuration Vulnerability",
+    "level": "low",
+    "status": "test",
+    "author": "Orlinum , BlueDefenZer",
+    "path": "windows/builtin/security/win_security_adcs_certificate_template_configuration_vulnerability.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_adcs_certificate_template_configuration_vulnerability.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una CA de Active Directory Certificate Services cargó (4898) o actualizó (4899) una plantilla de certificado con CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT, que permite al solicitante definir el sujeto o SAN del certificado.",
+      "what_it_detects": "Eventos 4898 cuyo TemplateContent, o eventos 4899 cuyo NewTemplateContent, contienen el flag CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT en msPKI-Certificate-Name-Flag.",
+      "why_it_matters": "Si la plantilla también permite autenticación de cliente y la inscripción a usuarios con pocos privilegios, cualquiera de ellos puede pedir un certificado a nombre de un administrador y autenticarse como él (ESC1 en Certified Pre-Owned). Es escalada de privilegios y robo de credenciales.",
+      "triage_steps": [
+        "Identifique la plantilla (TemplateInternalName, TemplateDSObjectFQDN) y la CA que generó el evento; confirme si es una plantilla nueva, modificada o ya conocida.",
+        "En eventos 4899, compare OldTemplateContent con NewTemplateContent para ver si el flag acaba de agregarse y qué otros atributos cambiaron.",
+        "Revise los EKU de la plantilla: Client Authentication, Smart Card Logon, PKINIT o Any Purpose elevan mucho el riesgo.",
+        "Revise los permisos de inscripción (Enroll/AutoEnroll) y si se exige aprobación del administrador de la CA o firmas autorizadas; busque eventos 4900 de cambios de seguridad.",
+        "Busque eventos 5136 en los DC sobre el objeto de la plantilla dentro de +/- 15 minutos para identificar qué cuenta la modificó y valide el cambio con el equipo de PKI.",
+        "Busque eventos 4886/4887 de esa plantilla donde el SAN o el sujeto no coincidan con el solicitante, sobre todo cuentas privilegiadas.",
+        "Correlacione con eventos 4768 de autenticación Kerberos por certificado de las cuentas emitidas y con alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Administradores de PKI que crean o ajustan plantillas legítimas con un cambio documentado.",
+        "Plantillas para certificados SSL de proxy o servidores web donde el solicitante debe indicar el nombre del servidor.",
+        "Plantillas de inscripción de tarjetas inteligentes o agentes de inscripción que requieren sujeto suministrado.",
+        "Recarga rutinaria de plantillas al reiniciar el servicio de la CA (4898) para plantillas ya aprobadas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de PKI si el cambio está autorizado y documentado; si es así, documente la excepción en el SIEM.",
+        "Si no está autorizado, quite la plantilla de la CA o elimine el flag, restrinja la inscripción y exija aprobación del administrador.",
+        "Revoque los certificados emitidos con esa plantilla cuyo SAN suplante a otras cuentas, y restablezca las credenciales de las cuentas afectadas.",
+        "Investigue la cuenta que hizo el cambio, revise su actividad reciente y audite periódicamente las plantillas con herramientas de evaluación de AD CS."
+      ],
+      "severity_rationale": "Nivel bajo porque el flag tiene usos legítimos y por sí solo no es explotable; el riesgo depende de los EKU, los permisos y la aprobación de la plantilla."
+    },
+    "en": {
+      "summary": "An AD CS certification authority loaded (4898) or updated (4899) a certificate template with CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT, letting the requester choose the certificate subject or SAN.",
+      "what_it_detects": "Event 4898 with TemplateContent, or event 4899 with NewTemplateContent, containing the CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT flag of msPKI-Certificate-Name-Flag.",
+      "why_it_matters": "If the template also allows client authentication and low-privileged enrollment, any such user can request a certificate as a domain admin and authenticate as them (ESC1 in Certified Pre-Owned). This means privilege escalation and credential theft.",
+      "triage_steps": [
+        "Identify the template (TemplateInternalName, TemplateDSObjectFQDN) and the issuing CA; decide whether it is new, modified or already known.",
+        "For 4899, compare OldTemplateContent with NewTemplateContent to see whether the flag was just added and what else changed.",
+        "Check the template EKUs: Client Authentication, Smart Card Logon, PKINIT or Any Purpose sharply raise the risk.",
+        "Check enrollment rights (Enroll/AutoEnroll), whether CA manager approval or authorized signatures are required, and any 4900 security-change events.",
+        "Search DC events 5136 on the template object within +/- 15 minutes to find who changed it, and validate the change with the PKI team.",
+        "Look for 4886/4887 requests on that template where the SAN or subject differs from the requester, especially privileged accounts.",
+        "Correlate with 4768 certificate-based Kerberos logons for the issued identities and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "PKI administrators creating or tuning legitimate templates under a documented change.",
+        "Templates for proxy SSL or web server certificates where the requester must supply the server name.",
+        "Smart card enrollment or enrollment agent templates that require a supplied subject.",
+        "Routine template reload on CA service restart (4898) for already approved templates."
+      ],
+      "response_steps": [
+        "Confirm with the PKI owner whether the change is authorized and documented; if so, record a tuning exception.",
+        "If unauthorized, unpublish the template or remove the flag, restrict enrollment and require CA manager approval.",
+        "Revoke certificates from that template whose SAN impersonates other accounts, and reset credentials of affected accounts.",
+        "Investigate the account that made the change, review its recent activity and audit templates regularly with AD CS assessment tools."
+      ],
+      "severity_rationale": "Low because the flag has legitimate uses and is not exploitable alone; real risk depends on the template's EKUs, permissions and approval settings."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CA loads a template whose content includes CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT (event 4898).",
+        "event": {
+          "EventID": 4898,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateInternalName": "VPNUserAuth",
+          "TemplateVersion": "100.3",
+          "TemplateSchemaVersion": "2",
+          "TemplateOID": "1.3.6.1.4.1.311.21.8.1234567.7654321.1.2.3.4.100",
+          "TemplateDSObjectFQDN": "CN=VPNUserAuth,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=andes,DC=example,DC=com",
+          "TemplateContent": "msPKI-Certificate-Name-Flag = 0x1 (1) CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT -- 1; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.2 Client Authentication; msPKI-Enrollment-Flag = 0x0 (0)"
+        }
+      },
+      {
+        "description": "Template updated so the new content adds CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT (event 4899).",
+        "event": {
+          "EventID": 4899,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateInternalName": "UserLegacy",
+          "TemplateVersion": "100.5",
+          "TemplateSchemaVersion": "2",
+          "TemplateDSObjectFQDN": "CN=UserLegacy,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=andes,DC=example,DC=com",
+          "OldTemplateContent": "msPKI-Certificate-Name-Flag = 0x82000000 CT_FLAG_SUBJECT_ALT_REQUIRE_UPN -- 2000000 CT_FLAG_SUBJECT_REQUIRE_DIRECTORY_PATH -- 80000000",
+          "NewTemplateContent": "msPKI-Certificate-Name-Flag = 0x1 (1) CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT -- 1; pKIExtendedKeyUsage = 1.3.6.1.5.5.7.3.2 Client Authentication"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Template update that removes the flag: it only appears in OldTemplateContent, not in NewTemplateContent.",
+        "event": {
+          "EventID": 4899,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateInternalName": "WebServerInternal",
+          "TemplateVersion": "100.7",
+          "TemplateSchemaVersion": "2",
+          "OldTemplateContent": "msPKI-Certificate-Name-Flag = 0x1 (1) CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT -- 1",
+          "NewTemplateContent": "msPKI-Certificate-Name-Flag = 0x82000000 CT_FLAG_SUBJECT_ALT_REQUIRE_UPN -- 2000000 CT_FLAG_SUBJECT_REQUIRE_DIRECTORY_PATH -- 80000000"
+        }
+      },
+      {
+        "description": "CA loads a standard user template that builds the subject from Active Directory (no enrollee-supplied subject).",
+        "event": {
+          "EventID": 4898,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "CA-01.andes.example.com",
+          "TemplateInternalName": "User",
+          "TemplateVersion": "3.1",
+          "TemplateSchemaVersion": "1",
+          "TemplateContent": "msPKI-Certificate-Name-Flag = 0xa6000000 CT_FLAG_SUBJECT_ALT_REQUIRE_UPN -- 2000000 CT_FLAG_SUBJECT_ALT_REQUIRE_EMAIL -- 4000000 CT_FLAG_SUBJECT_REQUIRE_EMAIL -- 20000000 CT_FLAG_SUBJECT_REQUIRE_DIRECTORY_PATH -- 80000000"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

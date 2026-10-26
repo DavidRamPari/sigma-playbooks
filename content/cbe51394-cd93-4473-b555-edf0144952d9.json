@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "cbe51394-cd93-4473-b555-edf0144952d9",
+    "title": "DNS Server Error Failed Loading the ServerLevelPluginDLL",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/builtin/dns_server/win_dns_server_susp_server_level_plugin_dll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/dns_server/win_dns_server_susp_server_level_plugin_dll.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El servicio DNS de Windows registró un evento relacionado con la carga de un DLL de plugin a nivel de servidor (ServerLevelPluginDll) definido en el registro. Puede indicar un intento de ejecutar código como SYSTEM a través del servicio DNS, normalmente en un controlador de dominio.",
+      "what_it_detects": "Eventos 150, 770 o 771 del log DNS Server (proveedor Microsoft-Windows-DNS-Server-Service), que se generan cuando el servicio DNS intenta cargar el DLL indicado en HKLM\\SYSTEM\\CurrentControlSet\\Services\\DNS\\Parameters\\ServerLevelPluginDll. El evento 150 indica un fallo al cargar o inicializar ese DLL.",
+      "why_it_matters": "Un miembro de DnsAdmins puede configurar un DLL arbitrario (por ejemplo con dnscmd /config /serverlevelplugindll) que el servicio DNS carga como SYSTEM al reiniciarse. En un controlador de dominio esto equivale a comprometer el dominio. Corresponde a secuestro de carga de DLL (T1574.001) para escalar privilegios y lograr persistencia.",
+      "triage_steps": [
+        "Revise el EventID y el mensaje: anote la ruta del DLL y el código de error. Una ruta UNC o un directorio temporal es muy sospechoso.",
+        "Consulte el valor ServerLevelPluginDll en el registro del servidor DNS y compárelo con la configuración aprobada; normalmente no existe.",
+        "Busque en el mismo host, +/- 15 minutos, la creación de procesos dnscmd.exe con CommandLine que contenga serverlevelplugindll y el usuario que lo ejecutó.",
+        "Busque eventos de modificación del registro (Sysmon 13 o 4657) sobre DNS\\Parameters y reinicios del servicio DNS (7036, 7040).",
+        "Verifique si el usuario implicado pertenece a DnsAdmins y si hubo cambios recientes en ese grupo (eventos 4728, 4732, 4756).",
+        "Si el DLL existe, obtenga su hash, firma y fecha de creación; revise conexiones SMB salientes del servidor hacia la ruta indicada.",
+        "Revise procesos hijos de dns.exe y conexiones de red inusuales tras el reinicio del servicio, y alertas previas del mismo usuario u host."
+      ],
+      "false_positives": [
+        "Instalación o actualización documentada de un plugin DNS legítimo (por ejemplo, soluciones de filtrado o seguridad DNS) que registra un DLL de servidor.",
+        "Restos de un plugin desinstalado cuyo valor de registro quedó apuntando a un DLL inexistente, generando el evento 150 en cada arranque.",
+        "Pruebas autorizadas de red team o pentest sobre controladores de dominio."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de infraestructura si existe un cambio aprobado para ese plugin; si no, trate el caso como incidente de alta prioridad.",
+        "Preserve evidencia: exporte el log DNS Server, la clave de registro y una copia del DLL con su hash antes de modificar nada.",
+        "Contenga: elimine el valor ServerLevelPluginDll tras validarlo, reinicie el servicio DNS en ventana controlada y aísle el host si hubo ejecución.",
+        "Restablezca credenciales de la cuenta usada, revise y depure la membresía de DnsAdmins y busque persistencias adicionales en el dominio.",
+        "Recupere y fortalezca: monitoree cambios en DNS\\Parameters y el uso de dnscmd, y restrinja DnsAdmins a cuentas administrativas necesarias."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque estos eventos son poco comunes en servidores DNS normales y señalan una técnica conocida para ejecutar código como SYSTEM en controladores de dominio."
+    },
+    "en": {
+      "summary": "The Windows DNS service logged an event about loading a server-level plugin DLL (ServerLevelPluginDll) set in the registry. This can mean someone is trying to run code as SYSTEM through the DNS service, usually on a domain controller.",
+      "what_it_detects": "DNS Server log events 150, 770 or 771 (provider Microsoft-Windows-DNS-Server-Service). The service writes them when it tries to load the DLL named in HKLM\\SYSTEM\\CurrentControlSet\\Services\\DNS\\Parameters\\ServerLevelPluginDll. Event 150 means that DLL failed to load or initialize.",
+      "why_it_matters": "A DnsAdmins member can register any DLL, for example with dnscmd /config /serverlevelplugindll. The DNS service then loads it as SYSTEM when it restarts. On a domain controller that gives control of the domain. This is DLL hijacking (T1574.001), used for privilege escalation and persistence.",
+      "triage_steps": [
+        "Read the EventID and message. Record the DLL path and error code. A UNC path or a temp directory is highly suspicious.",
+        "Check the ServerLevelPluginDll registry value on the DNS server against the approved configuration. Normally the value does not exist.",
+        "On the same host, +/- 15 minutes, search for dnscmd.exe process creation with serverlevelplugindll in CommandLine, and note which user ran it.",
+        "Look for registry changes to DNS\\Parameters (Sysmon 13 or 4657) and for DNS service restarts (7036, 7040).",
+        "Check whether that user is in DnsAdmins and whether the group's membership changed recently (4728, 4732, 4756).",
+        "If the DLL exists, collect its hash, signature and creation time. Check for outbound SMB from the server to the referenced path.",
+        "After the service restart, look for child processes of dns.exe, unusual network connections and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "A documented install or update of a legitimate DNS plugin, such as a DNS filtering or security product, that registers a server-level DLL.",
+        "A leftover registry value from an uninstalled plugin that points to a missing DLL and triggers event 150 at every service start.",
+        "Authorized red team or penetration testing against domain controllers."
+      ],
+      "response_steps": [
+        "Ask the infrastructure team whether an approved change covers this plugin. If none exists, handle it as a high-priority incident.",
+        "Preserve evidence before changing anything: export the DNS Server log and the registry key, and copy the DLL and record its hash.",
+        "Contain: once validated, remove the ServerLevelPluginDll value, restart DNS in a controlled window, and isolate the host if code ran.",
+        "Reset credentials for the account involved, clean up DnsAdmins membership and hunt for other persistence in the domain.",
+        "Recover and harden: monitor DNS\\Parameters changes and dnscmd use, and limit DnsAdmins to the admin accounts that need it."
+      ],
+      "severity_rationale": "High fits because these events are rare on normal DNS servers and point to a known way of running code as SYSTEM on domain controllers."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Event 150: the DNS service on a domain controller failed to load a plugin DLL referenced from a remote UNC path.",
+        "event": {
+          "EventID": 150,
+          "Provider_Name": "Microsoft-Windows-DNS-Server-Service",
+          "Channel": "DNS Server",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Error",
+          "Message": "The DNS server could not load or initialize the plug-in DLL \\\\198.51.100.23\\share\\plugin.dll. The event data is the error code."
+        }
+      },
+      {
+        "description": "Event 770 logged by the DNS service while it handled the ServerLevelPluginDll configured in the registry.",
+        "event": {
+          "EventID": 770,
+          "Provider_Name": "Microsoft-Windows-DNS-Server-Service",
+          "Channel": "DNS Server",
+          "Computer": "DC-02.andes.example.com",
+          "Level": "Information",
+          "Message": "DNS Server plugin DLL C:\\Windows\\Temp\\dnsplug.dll event."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine event 2 on the same DNS server: the service started normally, with no plugin DLL activity.",
+        "event": {
+          "EventID": 2,
+          "Provider_Name": "Microsoft-Windows-DNS-Server-Service",
+          "Channel": "DNS Server",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Information",
+          "Message": "The DNS server has started."
+        }
+      },
+      {
+        "description": "Event 4013 on the DNS server: it is waiting for the initial Active Directory synchronization. This is common at boot and has nothing to do with plugins.",
+        "event": {
+          "EventID": 4013,
+          "Provider_Name": "Microsoft-Windows-DNS-Server-Service",
+          "Channel": "DNS Server",
+          "Computer": "DC-02.andes.example.com",
+          "Level": "Warning",
+          "Message": "The DNS server is waiting for Active Directory Domain Services (AD DS) to signal that the initial synchronization of the directory has been completed."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

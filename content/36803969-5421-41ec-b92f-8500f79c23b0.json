@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "36803969-5421-41ec-b92f-8500f79c23b0",
+    "title": "Potential Persistence Via GlobalFlags",
+    "level": "high",
+    "status": "test",
+    "author": "Karneades, Jonhnathan Ribeiro, Florian Roth",
+    "path": "windows/registry/registry_set/registry_set_persistence_globalflags.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_globalflags.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.012"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor GlobalFlag de Image File Execution Options (IFEO) o los valores ReportingMode/MonitorProcess de SilentProcessExit. Esta combinación permite ejecutar un programa cada vez que otro proceso termina, o generar volcados de memoria de ese proceso.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject contiene \\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\...\\GlobalFlag, o \\SilentProcessExit\\...\\ReportingMode o \\MonitorProcess.",
+      "why_it_matters": "Es la técnica T1546.012 (IFEO Injection): con GlobalFlag 0x200 y MonitorProcess, Windows lanza un binario del atacante cada vez que termina el proceso objetivo, y Autoruns no lo muestra. Con ReportingMode también se puede volcar la memoria de LSASS para robar credenciales.",
+      "triage_steps": [
+        "Revise TargetObject para identificar el ejecutable objetivo (la subclave bajo IFEO o SilentProcessExit) y Details para ver el valor escrito, por ejemplo 0x200 o la ruta de MonitorProcess.",
+        "Identifique el Image y el usuario que hicieron el cambio. Desconfíe si es reg.exe, powershell.exe o un binario en una ruta de usuario o temporal.",
+        "Busque en el mismo host cambios en las claves hermanas de ±15 minutos: GlobalFlag, ReportingMode, MonitorProcess, LocalDumpFolder y DumpType.",
+        "Si el objetivo es lsass.exe o ReportingMode=2, busque archivos .dmp en LocalDumpFolder y ejecuciones de WerFault.exe.",
+        "Si MonitorProcess apunta a un binario, obtenga su hash, su firma y su ruta, y verifique si ya se ejecutó como proceso hijo de WerFault.exe.",
+        "Revise el proceso padre y la línea de comandos del Image que escribió la clave, y busque alertas previas para el mismo host o usuario."
+      ],
+      "false_positives": [
+        "Desarrolladores o equipos de soporte que usan gflags.exe o las Debugging Tools for Windows para depurar una aplicación.",
+        "Herramientas de diagnóstico o monitoreo de fallos que configuran SilentProcessExit de forma documentada y aprobada."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el equipo de desarrollo si el cambio estaba autorizado.",
+        "Si no lo estaba, aísle el endpoint y conserve como evidencia las claves, el binario de MonitorProcess y los volcados.",
+        "Después de exportarlos, elimine los valores GlobalFlag y SilentProcessExit maliciosos y ponga en cuarentena el binario.",
+        "Si se volcó la memoria de LSASS, restablezca las credenciales de las cuentas que iniciaron sesión en el host y busque movimiento lateral."
+      ],
+      "severity_rationale": "Es alta porque estas claves rara vez se modifican de forma legítima y dan persistencia oculta o permiten volcar credenciales."
+    },
+    "en": {
+      "summary": "A process wrote the Image File Execution Options (IFEO) GlobalFlag value or the SilentProcessExit ReportingMode/MonitorProcess values. Together these can launch a program every time another process exits, or dump that process's memory.",
+      "what_it_detects": "registry_set events where TargetObject contains \\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\...\\GlobalFlag, or \\SilentProcessExit\\...\\ReportingMode or \\MonitorProcess.",
+      "why_it_matters": "This is T1546.012 (IFEO Injection). With GlobalFlag 0x200 and MonitorProcess set, Windows runs an attacker binary whenever the target process exits, and Autoruns does not show it. ReportingMode can also be used to dump LSASS memory for credential theft.",
+      "triage_steps": [
+        "Read TargetObject to find the targeted executable (the subkey under IFEO or SilentProcessExit). Read Details for the value written, such as 0x200 or a MonitorProcess path.",
+        "Identify the Image and user that made the change. Treat reg.exe, powershell.exe or binaries in user or temp paths as suspicious.",
+        "Look for changes to sibling keys on the same host within ±15 minutes: GlobalFlag, ReportingMode, MonitorProcess, LocalDumpFolder and DumpType.",
+        "If the target is lsass.exe or ReportingMode=2, look for .dmp files in LocalDumpFolder and for WerFault.exe executions.",
+        "If MonitorProcess points to a binary, collect its hash, signature and path. Check whether it has already run as a child of WerFault.exe.",
+        "Review the parent process and command line of the writing Image, and look for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Developers or support staff using gflags.exe or Debugging Tools for Windows to debug an application.",
+        "Approved crash-diagnostic or monitoring tools that configure SilentProcessExit in a documented way."
+      ],
+      "response_steps": [
+        "Ask the host owner or development team to confirm whether the change was authorized.",
+        "If it was not, isolate the endpoint and preserve the keys, the MonitorProcess binary and any dumps as evidence.",
+        "After exporting them, remove the malicious GlobalFlag and SilentProcessExit values and quarantine the binary.",
+        "If LSASS memory was dumped, reset credentials for accounts that logged on to the host and hunt for lateral movement."
+      ],
+      "severity_rationale": "High is right because these keys are rarely changed legitimately, and changing them gives hidden persistence or lets an attacker dump credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets GlobalFlag 0x200 (FLG_MONITOR_SILENT_PROCESS_EXIT) on notepad.exe under IFEO",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\notepad.exe\\GlobalFlag",
+          "Details": "DWORD (0x00000200)"
+        }
+      },
+      {
+        "description": "PowerShell sets the SilentProcessExit MonitorProcess for notepad.exe to a binary in a public folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SilentProcessExit\\notepad.exe\\MonitorProcess",
+          "Details": "C:\\Users\\Public\\updater.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "System-wide GlobalFlag under Session Manager, which is not under Windows NT\\CurrentVersion\\Image File Execution Options",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Session Manager\\GlobalFlag",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "Exploit-protection MitigationOptions written under IFEO, which is not a GlobalFlag value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\msedge.exe\\MitigationOptions",
+          "Details": "Binary Data"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

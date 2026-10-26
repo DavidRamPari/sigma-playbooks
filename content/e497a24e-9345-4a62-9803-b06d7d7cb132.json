@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "e497a24e-9345-4a62-9803-b06d7d7cb132",
+    "title": "ASLR Disabled Via Sysctl or Direct Syscall - Linux",
+    "level": "high",
+    "status": "experimental",
+    "author": "Milad Cheraghi",
+    "path": "linux/auditd/lnx_auditd_disable_aslr_protection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/lnx_auditd_disable_aslr_protection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055.009",
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en un host Linux desactivó ASLR, ya sea llamando a la syscall personality con ADDR_NO_RANDOMIZE (a0=40000) o ejecutando 'sysctl -w kernel.randomize_va_space=0'.",
+      "what_it_detects": "Registros SYSCALL de auditd con SYSCALL personality y a0 igual a 40000 (ADDR_NO_RANDOMIZE, afecta a ese proceso y a los programas que lanza), o registros EXECVE con a0=sysctl, a1=-w, a2=kernel.randomize_va_space=0 (afecta a todo el sistema). La regla no se activa con una escritura directa en /proc/sys/kernel/randomize_va_space ni con sysctl sin -w.",
+      "why_it_matters": "ASLR ubica la memoria en direcciones aleatorias. Sin ASLR, los exploits de corrupción de memoria funcionan con mucha más fiabilidad, lo que ayuda a escalar privilegios y a inyectar código mediante /proc/<pid>/mem (T1055.009). Apagar esta protección es debilitamiento de defensas (T1685).",
+      "triage_steps": [
+        "Identifique qué selección coincidió. Con sysctl, el cambio afecta a todo el sistema. Con personality, solo al proceso y a los programas que inicia.",
+        "Una los registros por el serial del evento (msg=audit(tiempo:serial)) para obtener exe, comm, pid, ppid, auid, uid y success del registro SYSCALL.",
+        "Identifique al usuario real con auid y ses, y valide si esa persona o cuenta de servicio suele depurar o ajustar el kernel en este host.",
+        "Revise el árbol de procesos: el padre y los hijos ejecutados después de personality(). Marque binarios en /tmp, /dev/shm o directorios home.",
+        "En el host, ejecute 'cat /proc/sys/kernel/randomize_va_space' y revise /etc/sysctl.conf y /etc/sysctl.d/ en busca de un valor 0 persistente.",
+        "Revise el mismo host en +/- 15 minutos: compiladores, gdb o ptrace, fallas de binarios setuid, archivos SUID nuevos, escrituras en /proc/*/mem.",
+        "Busque alertas previas del mismo host, usuario o sesión, sobre todo de escalamiento de privilegios o de manipulación de auditd."
+      ],
+      "false_positives": [
+        "Desarrolladores que depuran con gdb, que por defecto desactiva ASLR en el programa que depura.",
+        "Uso de 'setarch -R' o wrappers similares para pruebas reproducibles, fuzzing o benchmarks.",
+        "Administradores o QA que fijan randomize_va_space=0 por un tiempo para diagnóstico o pruebas de rendimiento."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable si el cambio estaba planificado. Documente la excepción si fue aprobado.",
+        "Si no estaba autorizado, restaure ASLR con 'sysctl -w kernel.randomize_va_space=2' y elimine cualquier configuración persistente en los archivos de sysctl.",
+        "Aísle el host si encuentra herramientas de explotación, binarios desconocidos o señales de escalamiento. Antes, recolecte memoria y binarios.",
+        "Termine los procesos maliciosos, elimine los archivos dejados y rote las credenciales de las cuentas afectadas después de recolectar la evidencia.",
+        "Verifique que las reglas de auditd sigan activas y configure una alerta si randomize_va_space tiene un valor distinto de 2."
+      ],
+      "severity_rationale": "El nivel high corresponde porque la regla detecta que se apagó una protección, algo que suele ocurrir justo antes de una explotación. El uso legítimo se limita a depuración y pruebas, y se puede verificar rápido."
+    },
+    "en": {
+      "summary": "A process on a Linux host disabled ASLR, either by calling the personality syscall with ADDR_NO_RANDOMIZE (a0=40000) or by running 'sysctl -w kernel.randomize_va_space=0'.",
+      "what_it_detects": "auditd SYSCALL records where SYSCALL is personality and a0 is 40000 (ADDR_NO_RANDOMIZE, which affects that process and the programs it launches), or EXECVE records with a0=sysctl, a1=-w, a2=kernel.randomize_va_space=0 (system-wide). Writing straight to /proc/sys/kernel/randomize_va_space, or running sysctl without -w, does not trigger this rule.",
+      "why_it_matters": "ASLR places memory at random addresses. With it off, memory corruption exploits work far more reliably, which helps with privilege escalation and with injecting code through /proc/<pid>/mem (T1055.009). Turning off this protection is defense impairment (T1685).",
+      "triage_steps": [
+        "Find which selection matched. For sysctl, the change is system-wide. For personality, it affects only that process and the programs it starts.",
+        "Join on the audit event serial (msg=audit(time:serial)) to get the SYSCALL record's exe, comm, pid, ppid, auid, uid and success.",
+        "Find the real user from auid and ses, then check whether that person or service account is expected to debug or tune kernels on this host.",
+        "Walk the process tree: parent of the process, and children run after personality(). Flag binaries in /tmp, /dev/shm or home directories.",
+        "On the host, run 'cat /proc/sys/kernel/randomize_va_space' and check /etc/sysctl.conf and /etc/sysctl.d/ for a lasting value of 0.",
+        "Review the same host within +/- 15 minutes: compilers, gdb or ptrace use, setuid binaries crashing, new SUID files, writes to /proc/*/mem.",
+        "Look for earlier alerts on the same host, user or session, especially privilege escalation or auditd tampering."
+      ],
+      "false_positives": [
+        "Developers debugging with gdb, which turns off ASLR for the program it debugs by default.",
+        "'setarch -R' or similar wrappers used for reproducible tests, fuzzing or benchmarks.",
+        "Admins or QA temporarily setting randomize_va_space=0 for troubleshooting or performance testing."
+      ],
+      "response_steps": [
+        "Confirm with the user or owner whether the change was planned. Document any approved exception.",
+        "If it was not authorized, restore ASLR with 'sysctl -w kernel.randomize_va_space=2' and remove any lasting setting from the sysctl files.",
+        "Isolate the host if you find exploit tooling, unknown binaries or signs of privilege escalation. Collect memory and the binaries first.",
+        "Kill malicious processes, remove the dropped files, and rotate credentials for affected accounts after collecting evidence.",
+        "Check that auditd rules are still in place, and alert if randomize_va_space is ever anything other than 2."
+      ],
+      "severity_rationale": "High fits because this rule catches a protection being switched off, which often comes right before exploitation. Legitimate use is limited to debugging and testing, which can be checked quickly."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unknown binary in /tmp calls personality(ADDR_NO_RANDOMIZE) as a low-privilege user.",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "personality",
+          "a0": "40000",
+          "arch": "c000003e",
+          "success": "yes",
+          "exit": "0",
+          "pid": "48211",
+          "ppid": "48190",
+          "auid": "1003",
+          "uid": "1003",
+          "comm": "runner",
+          "exe": "/tmp/.x/runner",
+          "ses": "12",
+          "host": "web-03"
+        }
+      },
+      {
+        "description": "An operator runs sysctl -w to disable ASLR system-wide.",
+        "event": {
+          "type": "EXECVE",
+          "argc": "3",
+          "a0": "sysctl",
+          "a1": "-w",
+          "a2": "kernel.randomize_va_space=0",
+          "host": "bastion-01",
+          "msg": "audit(1761401592.114:9921)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An administrator re-enables full ASLR with sysctl, setting the value to 2 instead of 0.",
+        "event": {
+          "type": "EXECVE",
+          "argc": "3",
+          "a0": "sysctl",
+          "a1": "-w",
+          "a2": "kernel.randomize_va_space=2",
+          "host": "bastion-01",
+          "msg": "audit(1761402011.530:9988)"
+        }
+      },
+      {
+        "description": "A process queries its current personality (a0=ffffffff) without setting ADDR_NO_RANDOMIZE.",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "personality",
+          "a0": "ffffffff",
+          "arch": "c000003e",
+          "success": "yes",
+          "exit": "0",
+          "pid": "5120",
+          "ppid": "1",
+          "auid": "4294967295",
+          "uid": "0",
+          "comm": "java",
+          "exe": "/usr/lib/jvm/java-17/bin/java",
+          "host": "app-07"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

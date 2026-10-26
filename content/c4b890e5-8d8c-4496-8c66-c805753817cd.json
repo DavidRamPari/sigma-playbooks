@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "c4b890e5-8d8c-4496-8c66-c805753817cd",
+    "title": "Potential Process Hollowing Activity",
+    "level": "medium",
+    "status": "test",
+    "author": "Christopher Peacock '@securepeacock', SCYTHE '@scythe_io', Sittikorn S",
+    "path": "windows/process_tampering/proc_tampering_susp_process_hollowing.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/process_tampering/proc_tampering_susp_process_hollowing.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055.012"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Sysmon informó que la imagen en memoria de un proceso ya no coincide con su imagen en disco (Type 'Image is replaced'). Esto puede indicar process hollowing fuera de las rutas de software instalado que se excluyen.",
+      "what_it_detects": "Eventos de Sysmon ProcessTampering (Event ID 25) con Type 'Image is replaced'. Se excluyen las imágenes ubicadas en Program Files, Program Files (x86), WMIADAP.exe, Opera instalado por usuario y MicrosoftEdge.exe de WindowsApps.",
+      "why_it_matters": "En el process hollowing (T1055.012), un atacante crea un proceso legítimo en estado suspendido, vacía su memoria y la reemplaza con código malicioso. Así el código se ejecuta con la identidad y los privilegios de un binario confiable y evade controles basados en nombre o ruta.",
+      "triage_steps": [
+        "Revise los campos Image, User, ProcessId y ProcessGuid. Una imagen de sistema como dllhost.exe o svchost.exe, o un binario en Temp o AppData, aumenta la sospecha.",
+        "Use ProcessGuid para buscar el evento Sysmon 1 de creación del proceso y revise CommandLine, ParentImage, ParentCommandLine y los hashes.",
+        "Evalúe la relación padre-hijo: un documento de Office, un script o un binario en una ruta de usuario que lanza un proceso del sistema es una señal fuerte.",
+        "Pivote en el mismo host +/- 15 minutos para revisar conexiones de red (Event 3), archivos creados (Event 11), cargas de DLL e inyección (Events 8 y 10) asociados al ProcessGuid.",
+        "Compruebe la firma y la reputación del hash del binario en disco y del proceso padre. Si el EDR lo permite, tome un volcado de memoria del proceso.",
+        "Busque alertas previas del mismo usuario y host, y el mismo Image con Type 'Image is replaced' en otros endpoints."
+      ],
+      "false_positives": [
+        "Software legítimo instalado fuera de Program Files, como aplicaciones por usuario en AppData, que reescribe su imagen al actualizarse o al usar packers.",
+        "Herramientas de protección, DRM o anti-trampas que modifican la memoria de sus propios procesos.",
+        "Agentes de seguridad, sandboxes o depuradores en equipos de desarrollo o análisis."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo y con la evidencia de proceso padre, hash y red si la actividad es legítima. Si lo es, documente una exclusión acotada por ruta y hash.",
+        "Si es malicioso, aísle el endpoint desde el EDR y conserve el volcado de memoria y la línea de tiempo antes de terminar el proceso.",
+        "Identifique el vector inicial y la persistencia, bloquee hashes e indicadores de red, y busque los mismos indicadores en el resto del parque.",
+        "Restablezca las credenciales del usuario afectado, reimagine el equipo si hubo compromiso confirmado y monitoree su reincidencia."
+      ],
+      "severity_rationale": "Medium es adecuado porque reemplazar la imagen de un proceso es una técnica fuerte de evasión, pero algunas aplicaciones legítimas fuera de las rutas excluidas también la provocan."
+    },
+    "en": {
+      "summary": "Sysmon reported that a process's in-memory image no longer matches its on-disk image (Type 'Image is replaced'). Outside the excluded installed-software paths, this may indicate process hollowing.",
+      "what_it_detects": "Sysmon ProcessTampering events (Event ID 25) with Type 'Image is replaced'. Images under Program Files, Program Files (x86), WMIADAP.exe, user-installed Opera and WindowsApps MicrosoftEdge.exe are excluded.",
+      "why_it_matters": "In process hollowing (T1055.012), an attacker starts a legitimate process suspended, unmaps its memory and replaces it with malicious code. The code then runs under a trusted binary's identity and privileges, evading name- or path-based controls.",
+      "triage_steps": [
+        "Review Image, User, ProcessId and ProcessGuid. A system image such as dllhost.exe or svchost.exe, or a binary in Temp or AppData, raises suspicion.",
+        "Use ProcessGuid to find the Sysmon Event 1 process creation; review CommandLine, ParentImage, ParentCommandLine and hashes.",
+        "Assess the parent-child chain: an Office document, script or user-path binary spawning a system process is a strong signal.",
+        "Pivot on the same host +/- 15 minutes for network connections (Event 3), file creation (Event 11), and remote thread or process access (Events 8, 10) tied to the ProcessGuid.",
+        "Check signature and hash reputation of the on-disk binary and the parent. If the EDR allows, capture a process memory dump.",
+        "Look for earlier alerts for the same user and host, and the same Image with 'Image is replaced' on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate software installed outside Program Files, such as per-user apps in AppData, that rewrites its image during updates or uses packers.",
+        "Protection, DRM or anti-cheat software modifying its own process memory.",
+        "Security agents, sandboxes or debuggers on developer or analysis machines."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the host owner and the parent, hash and network evidence. If benign, document a narrow exclusion by path and hash.",
+        "If malicious, isolate the endpoint via EDR and preserve the memory dump and timeline before killing the process.",
+        "Identify the initial vector and persistence, block hashes and network indicators, and hunt for them across the fleet.",
+        "Reset the affected user's credentials, reimage the host if compromise is confirmed, and monitor for recurrence."
+      ],
+      "severity_rationale": "Medium fits because image replacement is a strong evasion technique, yet some legitimate applications outside the excluded paths also trigger it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SysWOW64 dllhost.exe hollowed after being spawned suspended by a binary in the user's Temp folder",
+        "event": {
+          "EventID": 25,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-03-14 15:22:07.481",
+          "ProcessGuid": "{6f1e2a3b-1c2d-65f3-a401-000000002b00}",
+          "ProcessId": 6840,
+          "Image": "C:\\Windows\\SysWOW64\\dllhost.exe",
+          "Type": "Image is replaced",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Unsigned binary in AppData\\Local\\Temp whose memory image was replaced",
+        "event": {
+          "EventID": 25,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2024-03-14 16:05:44.112",
+          "ProcessGuid": "{6f1e2a3b-2a4c-65f3-b902-000000002c00}",
+          "ProcessId": 9124,
+          "Image": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\update_helper.exe",
+          "Type": "Image is replaced",
+          "User": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Installed application under Program Files is excluded by filter_main_generic",
+        "event": {
+          "EventID": 25,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-03-14 09:12:30.004",
+          "ProcessGuid": "{6f1e2a3b-0b11-65f3-1203-000000002a00}",
+          "ProcessId": 4412,
+          "Image": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "Type": "Image is replaced",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "User-installed Opera browser is excluded by filter_optional_opera",
+        "event": {
+          "EventID": 25,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0311.andes.example.com",
+          "UtcTime": "2024-03-14 11:47:52.318",
+          "ProcessGuid": "{6f1e2a3b-0c22-65f3-3304-000000002d00}",
+          "ProcessId": 7716,
+          "Image": "C:\\Users\\lgomez\\AppData\\Local\\Programs\\Opera\\opera.exe",
+          "Type": "Image is replaced",
+          "User": "ANDES\\lgomez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

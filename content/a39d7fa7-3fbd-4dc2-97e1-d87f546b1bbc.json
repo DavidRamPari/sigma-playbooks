@@ -1,0 +1,162 @@
+{
+  "rule": {
+    "id": "a39d7fa7-3fbd-4dc2-97e1-d87f546b1bbc",
+    "title": "Program Executions in Suspicious Folders",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "linux/auditd/syscall/lnx_auditd_susp_exe_folders.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_susp_exe_folders.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1584",
+      "T1587"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un evento SYSCALL cuyo ejecutable (exe) corre desde una carpeta que debería contener datos y no programas: /tmp, raíces web o directorios de datos de bases de datos, FTP o DNS. Suele indicar un payload descargado, herramientas de una web shell o un servicio comprometido.",
+      "what_it_detects": "Registros SYSCALL de auditd en los que la ruta exe empieza por /tmp/, raíces documentales comunes de servidores web (/var/www/, /home/*/public_html/, /srv/www/, /usr/share/nginx/html/ y otras) o directorios de datos de MySQL, PostgreSQL, vsftpd y BIND.",
+      "why_it_matters": "Quien explota una aplicación web o un servicio suele dejar y ejecutar binarios en carpetas con permiso de escritura de ese servicio, como mineros, escáneres, proxies o backdoors. Las etiquetas de la regla lo asocian al desarrollo de recursos: crear herramientas (T1587) y tomar control de infraestructura (T1584) para operaciones posteriores.",
+      "triage_steps": [
+        "Revise exe, comm, syscall y success. Confirme que fue un execve exitoso y anote la ruta y el nombre del archivo, sobre todo si es oculto o aleatorio.",
+        "Identifique al usuario con uid/euid y auid. Una cuenta de servicio como www-data, apache, mysql o postgres que ejecuta un binario desde su propia carpeta es muy sospechosa.",
+        "Pivote por ppid para reconstruir el árbol de procesos. Un padre como el servidor web, PHP-FPM, la base de datos o FTP sugiere explotación; una shell de administrador sugiere mantenimiento.",
+        "Correlacione los registros EXECVE, CWD y PATH con el mismo ID de evento de auditoría para obtener la línea de comandos completa y sus argumentos.",
+        "Inspeccione el archivo en disco: hash, propietario, fechas, tipo y strings. Compare el hash con inteligencia de amenazas.",
+        "Revise el mismo host en ±15 minutos: descargas (curl, wget), chmod +x, conexiones salientes, nuevos cron o usuarios nuevos.",
+        "Busque en los logs web y del servicio peticiones cercanas a la creación del archivo, y revise alertas previas de Centinela para este host."
+      ],
+      "false_positives": [
+        "Actividad administrativa, como instaladores, scripts de compilación o herramientas de proveedores que extraen y ejecutan utilidades en /tmp.",
+        "Aplicaciones web poco convencionales que incluyen o compilan ejecutables dentro de la raíz web, como binarios CGI.",
+        "Binarios legítimos de Apache en /usr/local/apache2/ o /usr/local/httpd/, que coinciden con los prefijos de la regla."
+      ],
+      "response_steps": [
+        "Verifique con el responsable si la ejecución era esperada, y documente hash, ruta, usuario y proceso padre.",
+        "Si es maliciosa, aísle el host o bloquee su tráfico saliente, y detenga el proceso después de capturar memoria o una copia del binario.",
+        "Identifique el vector de entrada, como una aplicación web vulnerable o una credencial débil de base de datos o FTP, y aplique el parche o rote las credenciales.",
+        "Elimine los archivos dejados y cualquier persistencia (cron, unidades systemd, llaves SSH) solo después de preservar la evidencia.",
+        "Evalúe montar /tmp con noexec, y agregue exclusiones ajustadas para rutas administrativas verificadas."
+      ],
+      "severity_rationale": "Medium es adecuado porque ejecutar desde estas carpetas es una señal fuerte de compromiso, pero también ocurre en tareas administrativas y en algunas aplicaciones, así que requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "auditd recorded a SYSCALL event whose executable (exe) runs from a folder that should hold data, not programs: /tmp, web roots, or database, FTP or DNS data directories. This often means a dropped payload, web shell tooling or a compromised service.",
+      "what_it_detects": "auditd SYSCALL records where the exe path starts with /tmp/, common web server document roots (/var/www/, /home/*/public_html/, /srv/www/, /usr/share/nginx/html/ and others) or data directories of MySQL, PostgreSQL, vsftpd and BIND.",
+      "why_it_matters": "Attackers who exploit a web app or service often drop and run binaries in writable folders owned by that service, such as miners, scanners, proxies or backdoors. The rule's tags map this to resource development: building tools (T1587) and taking over infrastructure (T1584) for later operations.",
+      "triage_steps": [
+        "Read exe, comm, syscall and success. Confirm it was a successful execve and note the full path and file name, especially hidden or random names.",
+        "Identify the user: check uid/euid and auid. A service account such as www-data, apache, mysql or postgres running a binary from its own folder is highly suspicious.",
+        "Pivot on ppid to rebuild the process tree. A web server, PHP-FPM, database or FTP daemon parent suggests exploitation; an interactive admin shell suggests maintenance.",
+        "Correlate EXECVE, CWD and PATH records with the same audit event ID to get the full command line and arguments.",
+        "Inspect the file on disk: hash, owner, timestamps, file type and strings. Check the hash against threat intelligence.",
+        "Review the same host ±15 minutes for downloads (curl, wget), chmod +x, outbound connections, new cron jobs or new users.",
+        "Check web and service logs for requests around the creation time of the file, and earlier Centinela alerts for this host."
+      ],
+      "false_positives": [
+        "Admin activity, such as installers, build scripts or vendor tools that extract and run helpers from /tmp.",
+        "Unusual web applications that ship or compile executables inside the web root, such as CGI binaries.",
+        "Legitimate Apache binaries under /usr/local/apache2/ or /usr/local/httpd/, which match the rule's prefixes."
+      ],
+      "response_steps": [
+        "Verify with the owner whether the execution was expected, and record the hash, path, user and parent process.",
+        "If it is malicious, isolate the host or block its outbound traffic, then stop the process after capturing memory or a copy of the binary.",
+        "Find the entry vector, such as a vulnerable web app or a weak database or FTP credential, and patch it or rotate credentials.",
+        "Remove the dropped files and any persistence (cron, systemd units, SSH keys) only after collecting evidence.",
+        "Consider mounting /tmp with noexec, and add tuned exclusions for verified admin paths."
+      ],
+      "severity_rationale": "Medium fits because execution from these folders is a strong signal of compromise but also comes from routine admin and some application behavior, so it needs context before escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "The web server user runs a hidden binary dropped in /tmp after a web app was exploited.",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "59",
+          "success": "yes",
+          "exit": "0",
+          "ppid": "2187",
+          "pid": "30412",
+          "auid": "4294967295",
+          "uid": "33",
+          "euid": "33",
+          "comm": "kworkerd",
+          "exe": "/tmp/.cache/kworkerd",
+          "key": "exec",
+          "host": "web-01"
+        }
+      },
+      {
+        "description": "A binary runs from inside a user's public_html directory, which matches the /home/*/public_html/ wildcard prefix.",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "59",
+          "success": "yes",
+          "exit": "0",
+          "ppid": "1544",
+          "pid": "28803",
+          "auid": "1003",
+          "uid": "1003",
+          "euid": "1003",
+          "comm": "scan",
+          "exe": "/home/jperez/public_html/uploads/scan",
+          "key": "exec",
+          "host": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Execution from /var/tmp. It is a near-miss because /var/tmp/ is not one of the rule's prefixes.",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "59",
+          "success": "yes",
+          "exit": "0",
+          "ppid": "1201",
+          "pid": "40122",
+          "auid": "1001",
+          "uid": "1001",
+          "euid": "1001",
+          "comm": "installer",
+          "exe": "/var/tmp/installer",
+          "key": "exec",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "The legitimate nginx binary in /usr/sbin serves the web root. It does not match because exe is not inside /usr/share/nginx/html/.",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "59",
+          "success": "yes",
+          "exit": "0",
+          "ppid": "1",
+          "pid": "912",
+          "auid": "4294967295",
+          "uid": "0",
+          "euid": "0",
+          "comm": "nginx",
+          "exe": "/usr/sbin/nginx",
+          "cwd": "/usr/share/nginx/html",
+          "key": "exec",
+          "host": "web-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "rule": {
+    "id": "3bf1d859-3a7e-44cb-8809-a99e066d3478",
+    "title": "PowerShell Set-Acl On Windows Folder - PsScript",
+    "level": "high",
+    "status": "test",
+    "author": "frack113, Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_set_acl_susp_location.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_set_acl_susp_location.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado en Script Block Logging (4104) usó Set-Acl con -AclObject para cambiar los permisos de una ruta bajo C:\\Windows, otorgando FullControl o una regla Allow.",
+      "what_it_detects": "Eventos 4104 cuyo ScriptBlockText contiene 'Set-Acl ' y '-AclObject ', un -Path que apunta a C:\\Windows o $env:windir y las palabras 'FullControl' o 'Allow'.",
+      "why_it_matters": "Cambiar ACL de binarios del sistema (T1222, modificación de permisos de archivos y carpetas) permite reemplazar o secuestrar archivos protegidos, como termsrv.dll (T1505.005) o utilman.exe, para lograr persistencia o evadir defensas.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo: identifique la ruta exacta en -Path, la identidad que recibe permisos (Everyone, Users, una cuenta concreta) y el derecho otorgado.",
+        "Reconstruya el script completo uniendo los eventos 4104 con el mismo ScriptBlockId y revise el campo Path para ver qué archivo .ps1 se ejecutó.",
+        "Identifique el usuario y el proceso host de PowerShell (evento 4103/4688 o Sysmon 1) y su ParentImage en el mismo host +/- 15 minutos.",
+        "Busque acciones posteriores sobre el mismo archivo: takeown, icacls, copia, renombrado o reemplazo (Sysmon 11/23, 4663) y cambios en servicios o claves de registro relacionadas.",
+        "Compare el hash del archivo objetivo con la versión legítima de Microsoft y verifique su firma digital.",
+        "Revise alertas previas del mismo host y usuario, en especial ejecuciones de Atomic Red Team, RDP Wrapper o herramientas de accesibilidad."
+      ],
+      "false_positives": [
+        "Scripts de administración o despliegue que corrigen permisos en carpetas de Windows (por ejemplo, C:\\Windows\\Temp o rutas de un agente) y que están documentados.",
+        "Pruebas autorizadas de red team o de Atomic Red Team (T1505.005) en equipos de laboratorio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o el dueño del cambio si la modificación estaba autorizada y documentada.",
+        "Si no está autorizada, aísle el endpoint y preserve los eventos 4104, la ACL actual (Get-Acl) y una copia del archivo afectado.",
+        "Restaure la ACL original (por ejemplo, propietario TrustedInstaller) y reemplace los binarios alterados con versiones verificadas mediante sfc /scannow o una imagen confiable.",
+        "Restablezca las credenciales de la cuenta usada y busque el mismo patrón en otros hosts para detectar movimiento lateral."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque otorgar permisos amplios sobre archivos de C:\\Windows es poco común en operación normal y suele preceder a la manipulación de binarios del sistema."
+    },
+    "en": {
+      "summary": "A PowerShell script captured by Script Block Logging (4104) used Set-Acl with -AclObject to change permissions on a path under C:\\Windows, granting FullControl or an Allow rule.",
+      "what_it_detects": "4104 events whose ScriptBlockText contains 'Set-Acl ' and '-AclObject ', a -Path pointing to C:\\Windows or $env:windir, and the words 'FullControl' or 'Allow'.",
+      "why_it_matters": "Changing ACLs on system binaries (T1222, File and Directory Permissions Modification) lets attackers replace or hijack protected files such as termsrv.dll (T1505.005) or utilman.exe for persistence or defense evasion.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: note the exact -Path, the identity receiving rights (Everyone, Users, a specific account) and the rights granted.",
+        "Rebuild the whole script by joining 4104 events with the same ScriptBlockId; check the Path field for the .ps1 file that ran.",
+        "Identify the user and the PowerShell host process (4103/4688 or Sysmon 1) and its ParentImage on the same host within +/- 15 minutes.",
+        "Look for follow-up actions on the same file: takeown, icacls, copy, rename or replacement (Sysmon 11/23, 4663), plus related service or registry changes.",
+        "Compare the target file's hash with the genuine Microsoft version and verify its digital signature.",
+        "Review earlier alerts for the same host and user, especially Atomic Red Team runs, RDP Wrapper or accessibility-tool abuse."
+      ],
+      "false_positives": [
+        "Documented admin or deployment scripts that fix permissions in Windows folders (for example C:\\Windows\\Temp or an agent's directory).",
+        "Authorized red team or Atomic Red Team (T1505.005) tests on lab machines."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change owner whether the modification was authorized and documented.",
+        "If unauthorized, isolate the endpoint and preserve the 4104 events, the current ACL (Get-Acl) and a copy of the affected file.",
+        "Restore the original ACL (for example TrustedInstaller ownership) and replace altered binaries with verified versions via sfc /scannow or a trusted image.",
+        "Reset credentials of the account used and hunt for the same pattern on other hosts to detect lateral movement."
+      ],
+      "severity_rationale": "High fits because granting broad rights on C:\\Windows files is rare in normal operations and usually precedes tampering with system binaries."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic Red Team style script granting Administrators FullControl on termsrv.dll before replacing it",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5f1c2a7e-8b3d-4e21-9a6f-0c4d2e9b1a33",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\fix.ps1",
+          "ScriptBlockText": "$acl = Get-Acl -Path \"C:\\Windows\\System32\\termsrv.dll\"; $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(\"Administrators\",\"FullControl\",\"Allow\"); $acl.SetAccessRule($rule); Set-Acl -Path \"C:\\Windows\\System32\\termsrv.dll\" -AclObject $acl"
+        }
+      },
+      {
+        "description": "Script using $env:windir to give Everyone FullControl on utilman.exe",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-03.andes.example.com",
+          "ScriptBlockId": "a2e4b6c8-1d3f-4a5b-8c7d-9e0f1a2b3c4d",
+          "Path": "",
+          "ScriptBlockText": "$a = Get-Acl $env:windir\\System32\\utilman.exe; $r = New-Object System.Security.AccessControl.FileSystemAccessRule('Everyone','FullControl','Allow'); $a.AddAccessRule($r); Set-Acl -Path $env:windir\\System32\\utilman.exe -AclObject $a"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Set-Acl with FullControl on an application folder outside C:\\Windows",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-01.andes.example.com",
+          "ScriptBlockId": "0b9d8c7e-6f5a-4b3c-2d1e-0f9a8b7c6d5e",
+          "Path": "C:\\Scripts\\deploy.ps1",
+          "ScriptBlockText": "$acl = Get-Acl -Path \"C:\\ProgramData\\ContosoApp\"; $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(\"ANDES\\svc-app\",\"FullControl\",\"Allow\"); $acl.SetAccessRule($rule); Set-Acl -Path \"C:\\ProgramData\\ContosoApp\" -AclObject $acl"
+        }
+      },
+      {
+        "description": "Read-only audit of a Windows file ACL with Get-Acl, no Set-Acl",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "7c6b5a4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d",
+          "Path": "C:\\Scripts\\audit-acl.ps1",
+          "ScriptBlockText": "(Get-Acl -Path \"C:\\Windows\\System32\\termsrv.dll\").Access | Where-Object { $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights -match 'FullControl' } | Export-Csv C:\\Reports\\acl.csv"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

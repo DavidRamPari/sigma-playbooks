@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "8ad1600d-e9dc-4251-b0ee-a65268f29add",
+    "title": "AWS Root Credentials",
+    "level": "medium",
+    "status": "test",
+    "author": "vitaliy0x1",
+    "path": "cloud/aws/cloudtrail/aws_root_account_usage.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_root_account_usage.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "CloudTrail registró una acción realizada con el usuario root de la cuenta AWS. Root tiene acceso irrestricto a la cuenta, por lo que todo uso no planificado debe tratarse como sospechoso.",
+      "what_it_detects": "Eventos de CloudTrail con userIdentity.type igual a Root y un eventType distinto de AwsServiceEvent. Incluye inicios de sesión en consola (AwsConsoleSignIn) y llamadas a la API (AwsApiCall) con credenciales root, y excluye los eventos que generan los propios servicios de AWS.",
+      "why_it_matters": "Las políticas de IAM no pueden restringir las credenciales root. Un atacante que las obtenga controla la cuenta por completo y puede crear persistencia, desactivar el registro o eliminar recursos. Corresponde a ATT&CK T1078.004, Valid Accounts: Cloud Accounts.",
+      "triage_steps": [
+        "Revise eventName, eventSource, eventType y awsRegion para saber qué hizo root: ConsoleLogin, una consulta de solo lectura o un cambio en IAM, facturación o registro.",
+        "Compare sourceIPAddress y userAgent con las IP de salida corporativas y los navegadores esperados. Marque IP de proveedores de hosting, geolocalización inusual o user agents de CLI/SDK.",
+        "En un ConsoleLogin, revise additionalEventData.MFAUsed y responseElements.ConsoleLogin. Un acceso root sin MFA, o tras intentos fallidos, implica mayor riesgo.",
+        "Pivotee por recipientAccountId y sourceIPAddress en +/- 15 minutos y liste todos los eventos root de esa ventana, incluidos CreateUser, CreateAccessKey, AttachUserPolicy, StopLogging y DeleteTrail.",
+        "Busque uso de access keys de root: accessKeyId en userIdentity con un user agent programático. Según las buenas prácticas de AWS, root no debería tener access keys.",
+        "Confirme con el dueño de la cuenta o con un ticket de cambio si había programada una tarea que requiera root.",
+        "Busque alertas root anteriores y hallazgos de GuardDuty para la misma cuenta."
+      ],
+      "false_positives": [
+        "Tareas documentadas que requieren root: cambiar la configuración de la cuenta o el plan de soporte, cerrar la cuenta, restaurar permisos de IAM y algunas configuraciones de facturación.",
+        "Configuración inicial de la cuenta o procedimientos break-glass realizados por administradores autorizados.",
+        "Recuperación de MFA o restablecimiento de la contraseña root por parte del dueño de la cuenta."
+      ],
+      "response_steps": [
+        "Verifique con el custodio de las credenciales root si la actividad estaba autorizada y documente la evidencia.",
+        "Si no estaba autorizada, cambie la contraseña root, reemplace o vuelva a registrar el MFA y elimine las access keys de root.",
+        "Revise y revierta los cambios de la sesión: nuevos usuarios, keys, roles y políticas de IAM, y cambios en el registro o en GuardDuty.",
+        "Confirme que CloudTrail sigue activo en todas las regiones y preserve los logs para la investigación.",
+        "Escale a respuesta a incidentes y contacte a AWS Support si sospecha que la cuenta fue comprometida."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el uso de root es poco frecuente y de alto impacto, pero algunas tareas administrativas legítimas lo requieren, así que cada alerta necesita contexto antes de escalarla."
+    },
+    "en": {
+      "summary": "CloudTrail recorded an action performed with the AWS account root user. Root has unrestricted access to the account, so any use that is not planned should be treated as suspicious.",
+      "what_it_detects": "CloudTrail events where userIdentity.type is Root and eventType is not AwsServiceEvent. This covers console sign-ins (AwsConsoleSignIn) and API calls (AwsApiCall) made with root credentials, but leaves out events that AWS services generate on their own.",
+      "why_it_matters": "Root credentials cannot be restricted by IAM policies. An attacker who has them controls the account completely and can create persistence, disable logging or delete resources. This maps to ATT&CK T1078.004, Valid Accounts: Cloud Accounts.",
+      "triage_steps": [
+        "Review eventName, eventSource, eventType and awsRegion to see what root did: a ConsoleLogin, a read-only call or a change to IAM, billing or logging.",
+        "Check sourceIPAddress and userAgent against known corporate egress IPs and expected browsers. Flag cloud-hosting IPs, unusual geolocation or CLI/SDK user agents.",
+        "For ConsoleLogin, check additionalEventData.MFAUsed and responseElements.ConsoleLogin. Root access without MFA, or after failed attempts, is higher risk.",
+        "Pivot on recipientAccountId and sourceIPAddress for +/- 15 minutes, and list all root events in that window, including CreateUser, CreateAccessKey, AttachUserPolicy, StopLogging and DeleteTrail.",
+        "Look for root access key usage, shown by accessKeyId in userIdentity with a programmatic user agent. AWS best practice is to have no root access keys.",
+        "Confirm with the account owner or change ticket whether a task that requires root was scheduled.",
+        "Search for earlier root alerts and GuardDuty findings for the same account."
+      ],
+      "false_positives": [
+        "Documented tasks that require root: changing account settings or support plan, closing the account, restoring IAM permissions, some billing setups.",
+        "Initial account setup or break-glass procedures done by authorized administrators.",
+        "Recovering MFA or resetting the root password by the account owner."
+      ],
+      "response_steps": [
+        "Verify with the root credential custodian whether the activity was authorized, and record the evidence.",
+        "If it was unauthorized, change the root password, replace or re-register MFA, and delete any root access keys.",
+        "Review and revert changes made in the session: new IAM users, keys, roles, policies, and logging or GuardDuty changes.",
+        "Check that CloudTrail is still enabled in all regions, and preserve the logs for investigation.",
+        "Escalate to incident response and contact AWS Support if you suspect the account was compromised."
+      ],
+      "severity_rationale": "Medium fits because root use is rare and high-impact, but some legitimate administrative tasks require it, so each alert needs context before you escalate."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Root console sign-in from an external IP (eventType AwsConsoleSignIn)",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-10-25T14:03:12Z",
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "ConsoleLogin",
+          "eventType": "AwsConsoleSignIn",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+          "userIdentity.type": "Root",
+          "userIdentity.arn": "arn:aws:iam::111122223333:root",
+          "userIdentity.accountId": "111122223333",
+          "responseElements.ConsoleLogin": "Success",
+          "additionalEventData.MFAUsed": "No",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Root API call that creates an IAM access key through the CLI",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-10-25T14:07:40Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateAccessKey",
+          "eventType": "AwsApiCall",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "Root",
+          "userIdentity.arn": "arn:aws:iam::111122223333:root",
+          "userIdentity.accountId": "111122223333",
+          "userIdentity.accessKeyId": "AKIAEXAMPLEROOT0001",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Root-attributed event generated by an AWS service (eventType AwsServiceEvent), which the rule excludes",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-10-25T02:00:00Z",
+          "eventSource": "health.amazonaws.com",
+          "eventName": "AWSHealthEvent",
+          "eventType": "AwsServiceEvent",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "health.amazonaws.com",
+          "userIdentity.type": "Root",
+          "userIdentity.accountId": "111122223333",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Same CreateAccessKey call made by a regular IAM user, not root",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-10-25T14:10:05Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateAccessKey",
+          "eventType": "AwsApiCall",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/5.15",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.userName": "jperez",
+          "userIdentity.accountId": "111122223333",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "b22a5b36-2431-493a-8be1-0bae56c28ef3",
+    "title": "Hidden User Creation",
+    "level": "medium",
+    "status": "test",
+    "author": "Daniil Yugoslavskiy, oscd.community",
+    "path": "macos/process_creation/proc_creation_macos_create_hidden_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_create_hidden_account.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1564.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó dscl con una operación create que define un UniqueID numérico o el atributo IsHidden, lo que puede crear o modificar una cuenta local oculta en macOS.",
+      "what_it_detects": "Procesos cuyo Image termina en /dscl y cuyo CommandLine contiene 'create' junto con UniqueID y un dígito, o junto con IsHidden y un valor true, yes o 1. Nota: la expresión regular no está anclada, así que cualquier UniqueID con dígitos coincide, incluso 501 o superior.",
+      "why_it_matters": "Los atacantes crean cuentas ocultas (ATT&CK T1564.002, Hide Artifacts: Hidden Users) para mantener persistencia sin que aparezcan en la ventana de inicio de sesión ni en Preferencias del Sistema. Una cuenta oculta con privilegios de administrador permite volver al equipo después de la limpieza.",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique la cuenta (/Users/<nombre>), el valor real de UniqueID (menor a 500 es lo relevante) o IsHidden 1/true/yes.",
+        "Identifique el ParentImage y el usuario que ejecutó dscl: ¿script de MDM, Terminal interactiva, sudo o un proceso inesperado como curl, osascript o python?",
+        "Busque en el mismo host, +/- 15 minutos, otros dscl: -passwd, -append /Groups/admin GroupMembership, NFSHomeDirectory, así como sysadminctl o createhomedir.",
+        "Verifique el estado actual con 'dscl . -read /Users/<nombre>' y 'dscl . -list /Users UniqueID'; confirme si la cuenta es miembro del grupo admin.",
+        "Revise cambios en /Library/Preferences/com.apple.loginwindow (HiddenUsersList) y nuevos LaunchDaemons o LaunchAgents en la misma ventana.",
+        "Consulte alertas previas del mismo host y usuario, e inicios de sesión SSH o de pantalla compartida con la nueva cuenta.",
+        "Confirme con el equipo de TI o el ticket de cambio si la creación de la cuenta estaba planificada."
+      ],
+      "false_positives": [
+        "Actividades legítimas de administración: cuentas de servicio o de soporte creadas por TI con UID bajo o IsHidden.",
+        "Scripts de MDM o de aprovisionamiento (Jamf, scripts de imagen) que crean una cuenta de administrador oculta.",
+        "Instaladores de software que crean usuarios de servicio con UID menor a 500.",
+        "Cualquier dscl create con UniqueID de 501 o más, debido a la regex no anclada; valide el valor real."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del equipo y TI si la cuenta es autorizada antes de actuar.",
+        "Si no está autorizada, deshabilite la cuenta o cambie su contraseña y retírela del grupo admin; aísle el endpoint si hay más indicios de compromiso.",
+        "Conserve evidencia (registros unificados, historial de shell, plists) y luego elimine la cuenta y los mecanismos de persistencia relacionados.",
+        "Identifique el vector inicial, rote las credenciales expuestas y busque la misma cuenta o comandos en otros equipos macOS."
+      ],
+      "severity_rationale": "Medium es adecuado porque una cuenta oculta es una técnica clara de persistencia, pero la administración legítima y la regex amplia generan falsos positivos que requieren validación."
+    },
+    "en": {
+      "summary": "dscl ran a create operation that sets a numeric UniqueID or the IsHidden attribute, which may create or modify a hidden local account on macOS.",
+      "what_it_detects": "Processes whose Image ends with /dscl and whose CommandLine contains 'create' plus UniqueID and a digit, or plus IsHidden with true, yes or 1. Note: the regex is unanchored, so any UniqueID containing digits matches, including 501 and above.",
+      "why_it_matters": "Attackers create hidden accounts (ATT&CK T1564.002, Hide Artifacts: Hidden Users) to keep persistence without the account showing in the login window or System Settings. A hidden admin account lets them return after cleanup.",
+      "triage_steps": [
+        "Read the full CommandLine: note the account (/Users/<name>), the actual UniqueID value (below 500 is what matters) or IsHidden 1/true/yes.",
+        "Identify ParentImage and the user running dscl: MDM script, interactive Terminal, sudo, or something unexpected such as curl, osascript or python?",
+        "On the same host, +/- 15 minutes, look for other dscl calls: -passwd, -append /Groups/admin GroupMembership, NFSHomeDirectory, plus sysadminctl or createhomedir.",
+        "Check current state with 'dscl . -read /Users/<name>' and 'dscl . -list /Users UniqueID'; confirm whether the account is in the admin group.",
+        "Review changes to /Library/Preferences/com.apple.loginwindow (HiddenUsersList) and new LaunchDaemons or LaunchAgents in the same window.",
+        "Check earlier alerts for the same host and user, and SSH or screen sharing logins by the new account.",
+        "Confirm with IT or a change ticket whether the account creation was planned."
+      ],
+      "false_positives": [
+        "Legitimate administration: service or support accounts created by IT with a low UID or IsHidden.",
+        "MDM or provisioning scripts (Jamf, imaging scripts) that create a hidden admin account.",
+        "Software installers that create service users with UID below 500.",
+        "Any dscl create with UniqueID 501 or higher, due to the unanchored regex; validate the real value."
+      ],
+      "response_steps": [
+        "Verify with the device owner and IT whether the account is authorized before acting.",
+        "If unauthorized, disable the account or reset its password and remove it from admin; isolate the endpoint if other compromise indicators exist.",
+        "Preserve evidence (unified logs, shell history, plists), then delete the account and related persistence.",
+        "Find the initial vector, rotate exposed credentials and hunt for the same account or commands on other macOS hosts."
+      ],
+      "severity_rationale": "Medium fits because a hidden account is a clear persistence technique, but legitimate administration and the broad regex produce false positives that need validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dscl creates a user record with a UniqueID below 500",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -create /Users/svc_helper UniqueID 401",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "dscl sets the IsHidden attribute to 1 on a user",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -create /Users/svc_helper IsHidden 1",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "Computer": "MBP-0142"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "dscl create that only sets the login shell, with no UniqueID or IsHidden",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -create /Users/jperez UserShell /bin/zsh",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "Computer": "MBP-0142"
+        }
+      },
+      {
+        "description": "dscl read of a user's UniqueID, no create operation",
+        "event": {
+          "Image": "/usr/bin/dscl",
+          "CommandLine": "dscl . -read /Users/jperez UniqueID",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "66b6be3d-55d0-4f47-9855-d69df21740ea",
+    "title": "Local User Creation",
+    "level": "low",
+    "status": "test",
+    "author": "Patrick Bareiss",
+    "path": "windows/builtin/security/win_security_user_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_user_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1136.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó una cuenta de usuario local (EventID 4720) en un servidor Windows. En un entorno de Active Directory esto es poco habitual y puede indicar persistencia de un atacante.",
+      "what_it_detects": "Eventos 4720 del log Security («Se creó una cuenta de usuario») en servidores miembro. La regla no filtra por usuario ni por host. Por eso debe aplicarse solo a servidores y no a controladores de dominio.",
+      "why_it_matters": "Un atacante con privilegios puede crear una cuenta local para volver a entrar aunque cambien las credenciales del dominio (ATT&CK T1136.001, Create Account: Local Account). Estas cuentas suelen pasar desapercibidas porque no aparecen en AD.",
+      "triage_steps": [
+        "Confirme que el host (Computer) es un servidor miembro y no un controlador de dominio. Si es un DC, cierre la alerta como falso positivo de alcance.",
+        "Identifique quién creó la cuenta (SubjectUserName, SubjectDomainName, SubjectLogonId) y qué cuenta se creó (TargetUserName, TargetSid).",
+        "Valide con el dueño del servidor o con el sistema de cambios si la creación estaba autorizada o la hizo una herramienta PAM.",
+        "Busque en el mismo host, en un rango de +/- 15 minutos, eventos 4732 (alta en grupos locales como Administrators), 4722 (cuenta habilitada) y 4724 (restablecimiento de contraseña).",
+        "Revise la creación de procesos (4688/Sysmon 1) de ese momento: net.exe user /add, PowerShell New-LocalUser o un proceso padre poco común.",
+        "Rastree el SubjectLogonId hasta su 4624 para saber el tipo de inicio de sesión y la IP de origen, y busque alertas previas de ese usuario o esa IP.",
+        "Compruebe si la cuenta nueva ya inició sesión (4624/4625 con TargetUserName igual) en este servidor u otros."
+      ],
+      "false_positives": [
+        "Eventos de controladores de dominio enviados por error a esta regla, donde las altas de usuarios del dominio también generan el 4720.",
+        "Cuentas locales gestionadas por herramientas de gestión de cuentas privilegiadas (PAM) o por soluciones como LAPS.",
+        "Instaladores de software o agentes que crean cuentas de servicio locales.",
+        "Administradores que crean cuentas locales durante el aprovisionamiento o el mantenimiento planificado del servidor."
+      ],
+      "response_steps": [
+        "Si la creación no está autorizada, deshabilite la cuenta local (no la elimine) para conservar la evidencia y documente su SID.",
+        "Contenga al creador: restablezca las credenciales de SubjectUserName y revoque sus sesiones activas si están comprometidas.",
+        "Aísle el servidor si hay indicios de más actividad maliciosa, como herramientas, servicios o tareas programadas nuevas.",
+        "Busque la misma cuenta o el mismo patrón en otros servidores y elimine las cuentas no autorizadas tras validarlo.",
+        "Agregue a una lista de exclusión las cuentas PAM o de servicio legítimas para reducir el ruido."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque la creación de cuentas locales tiene causas administrativas frecuentes, aunque merece revisión porque es un mecanismo de persistencia sencillo."
+    },
+    "en": {
+      "summary": "A local user account was created (EventID 4720) on a Windows server. In an Active Directory environment this is unusual and may mean an attacker is setting up persistence.",
+      "what_it_detects": "Security log event 4720 (\"A user account was created\") on member servers. The rule does not filter by user or host, so it should only run against server logs and never against domain controllers.",
+      "why_it_matters": "An attacker with admin rights can create a local account to get back in even after domain credentials are reset (ATT&CK T1136.001, Create Account: Local Account). These accounts are easy to miss because they never show up in AD.",
+      "triage_steps": [
+        "Confirm the host (Computer) is a member server, not a domain controller. If it is a DC, close the alert as an out-of-scope false positive.",
+        "Identify the creator (SubjectUserName, SubjectDomainName, SubjectLogonId) and the new account (TargetUserName, TargetSid).",
+        "Check with the server owner or the change records whether the creation was authorized or done by a PAM tool.",
+        "On the same host within +/- 15 minutes, look for 4732 (added to local groups such as Administrators), 4722 (account enabled) and 4724 (password reset).",
+        "Review process creation (4688/Sysmon 1) around that time: net.exe user /add, PowerShell New-LocalUser, or an unusual parent process.",
+        "Trace SubjectLogonId back to its 4624 to get the logon type and source IP, then look for earlier alerts on that user or IP.",
+        "Check whether the new account has logged on (4624/4625 with that TargetUserName) on this server or others."
+      ],
+      "false_positives": [
+        "Domain controller logs routed to this rule by mistake, since domain user creation also produces 4720 there.",
+        "Local accounts managed by privileged account management (PAM) tools or solutions such as LAPS.",
+        "Software installers or agents that create local service accounts.",
+        "Administrators creating local accounts during server provisioning or planned maintenance."
+      ],
+      "response_steps": [
+        "If the creation was unauthorized, disable the local account (do not delete it) so the evidence is kept, and record its SID.",
+        "Contain the creator: reset the SubjectUserName credentials and revoke its active sessions if it is compromised.",
+        "Isolate the server if you find other malicious activity, such as new tools, services or scheduled tasks.",
+        "Hunt for the same account or pattern on other servers, and remove unauthorized accounts once confirmed.",
+        "Allowlist legitimate PAM or service accounts to cut down on noise."
+      ],
+      "severity_rationale": "Low fits because local account creation often has routine administrative causes, but it still needs a look because it is a simple persistence method."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unexpected local account 'svc_backup2' created on a member server by a domain user via an interactive session.",
+        "event": {
+          "EventID": 4720,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "TargetUserName": "svc_backup2",
+          "TargetDomainName": "SRV-APP-07",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1005",
+          "SamAccountName": "svc_backup2",
+          "UserAccountControl": "%%2080"
+        }
+      },
+      {
+        "description": "Local account 'helpdesk' created on a file server by the local Administrator.",
+        "event": {
+          "EventID": 4720,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "SubjectUserName": "Administrator",
+          "SubjectDomainName": "SRV-FS-02",
+          "SubjectLogonId": "0x5B11C0",
+          "TargetUserName": "helpdesk",
+          "TargetDomainName": "SRV-FS-02",
+          "TargetSid": "S-1-5-21-4444444444-5555555555-6666666666-1010",
+          "SamAccountName": "helpdesk"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A user account was enabled (4722), not created, so the EventID does not match.",
+        "event": {
+          "EventID": 4722,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "svc_backup2",
+          "TargetDomainName": "SRV-APP-07"
+        }
+      },
+      {
+        "description": "Existing user added to the local Administrators group (4732); related activity but not account creation.",
+        "event": {
+          "EventID": 4732,
+          "Channel": "Security",
+          "Provider_Name": "Microsoft-Windows-Security-Auditing",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "SubjectUserName": "Administrator",
+          "SubjectDomainName": "SRV-FS-02",
+          "TargetUserName": "Administrators",
+          "TargetDomainName": "Builtin",
+          "MemberSid": "S-1-5-21-4444444444-5555555555-6666666666-1010"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

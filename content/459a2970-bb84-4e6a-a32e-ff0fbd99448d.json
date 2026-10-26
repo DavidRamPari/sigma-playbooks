@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "459a2970-bb84-4e6a-a32e-ff0fbd99448d",
+    "title": "Azure Key Vault Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_keyvault_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_keyvault_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552",
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó, desplegó, eliminó o se le cambiaron las políticas de acceso a un Azure Key Vault según el Activity Log. Puede tratarse de administración legítima o de un intento de obtener acceso a secretos, llaves y certificados o de destruirlos.",
+      "what_it_detects": "Eventos del Azure Activity Log cuyo operationName es MICROSOFT.KEYVAULT/VAULTS/WRITE, VAULTS/DELETE, VAULTS/DEPLOY/ACTION o VAULTS/ACCESSPOLICIES/WRITE. Son operaciones del plano de control sobre el vault, no lecturas de secretos.",
+      "why_it_matters": "Si un atacante cambia una política de acceso, puede darse permisos para leer secretos y credenciales (T1552, Unsecured Credentials). Eliminar el vault o cambiar su configuración, por ejemplo la red o la protección contra purga, puede interrumpir servicios o destruir material criptográfico (impacto).",
+      "triage_steps": [
+        "Revise operationName, status y resourceId para saber qué vault se afectó, qué operación se hizo y si terminó en Succeeded.",
+        "Identifique el caller (UPN, service principal o managed identity) y confirme con el dueño del vault si había un cambio aprobado.",
+        "Revise callerIpAddress y el user agent en las claims: compare con las IP corporativas, los rangos de pipelines de CI/CD y la actividad histórica de esa identidad.",
+        "En los ACCESSPOLICIES/WRITE, revise en properties qué objectId recibió permisos y si incluyen Get o List sobre secretos, llaves o certificados.",
+        "Filtre el Activity Log por el mismo caller en +/- 15 minutos: busque asignaciones de roles, otros vaults, cambios de firewall de red o creación de credenciales para aplicaciones.",
+        "Revise los registros de diagnóstico del vault (AuditEvent) para ver SecretGet, KeyGet o SecretList posteriores al cambio, sobre todo los que vengan de la identidad que recibió el acceso.",
+        "Busque en Entra ID inicios de sesión riesgosos y alertas anteriores de la misma identidad o IP."
+      ],
+      "false_positives": [
+        "Administradores de sistemas o de la nube que hacen cambios aprobados en vaults o en sus políticas de acceso.",
+        "Despliegues de infraestructura como código (Terraform, Bicep, ARM) desde pipelines que usan service principals conocidos.",
+        "Desmantelamiento planificado de entornos de prueba o de desarrollo que incluye borrar vaults.",
+        "Plataformas o herramientas de gestión de la nube que ajustan la configuración de los vaults automáticamente."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del recurso y con el registro de cambios si la operación estaba autorizada antes de actuar.",
+        "Si no estaba autorizada, quite el acceso agregado a la política o revierta la configuración, y deshabilite o restrinja la identidad comprometida.",
+        "Si se eliminó el vault, recupérelo desde el estado de soft delete y confirme que la protección contra purga esté habilitada.",
+        "Rote los secretos, llaves y certificados que pudieron haberse leído y revoque las sesiones y credenciales del caller.",
+        "Documente el incidente y, si es un patrón legítimo recurrente, agregue una excepción limitada al caller o pipeline específico."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estos cambios suelen ser administrativos, pero un cambio de política de acceso o un borrado no autorizado expone o destruye credenciales críticas."
+    },
+    "en": {
+      "summary": "The Azure Activity Log shows that a Key Vault was modified, deployed or deleted, or that its access policies changed. This may be routine administration or an attempt to gain access to, or destroy, secrets, keys and certificates.",
+      "what_it_detects": "Azure Activity Log events with operationName MICROSOFT.KEYVAULT/VAULTS/WRITE, VAULTS/DELETE, VAULTS/DEPLOY/ACTION or VAULTS/ACCESSPOLICIES/WRITE. These are control-plane changes to the vault itself, not reads of secrets.",
+      "why_it_matters": "An attacker who changes an access policy can give themselves rights to read stored secrets and credentials (T1552, Unsecured Credentials). Deleting a vault or changing its configuration, such as network rules or purge protection, can break services or destroy key material (impact).",
+      "triage_steps": [
+        "Check operationName, status and resourceId to see which vault was affected, which operation ran and whether it ended in Succeeded.",
+        "Identify the caller (UPN, service principal or managed identity) and ask the vault owner whether an approved change explains it.",
+        "Check callerIpAddress and the user agent in the claims. Compare them with corporate egress IPs, CI/CD runner ranges and the identity's past activity.",
+        "For ACCESSPOLICIES/WRITE, look in properties for the objectId that got permissions and whether they include secret, key or certificate Get or List.",
+        "Filter the Activity Log on the same caller within +/- 15 minutes. Look for role assignments, other vaults, network firewall changes or new app credentials.",
+        "Check the vault's diagnostic AuditEvent logs for SecretGet, KeyGet or SecretList after the change, especially from the principal that was granted access.",
+        "Check Entra ID for risky sign-ins and earlier alerts for the same identity or IP."
+      ],
+      "false_positives": [
+        "System or cloud administrators making approved changes to vaults or their access policies.",
+        "Infrastructure-as-code deployments (Terraform, Bicep, ARM) from pipelines that use known service principals.",
+        "Planned teardown of test or development environments that deletes vaults.",
+        "Cloud governance or management tools that adjust vault configuration automatically."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the resource owner and the change records whether the operation was authorized.",
+        "If it was not, remove the added access policy entry or revert the configuration, and disable or restrict the compromised identity.",
+        "If the vault was deleted, recover it from soft-delete and make sure purge protection is enabled.",
+        "Rotate any secrets, keys and certificates that may have been read, and revoke the caller's sessions and credentials.",
+        "Document the findings. If this is a recurring legitimate pattern, add a narrow exception for that caller or pipeline."
+      ],
+      "severity_rationale": "Medium fits because these changes are often administrative, but an unauthorized access policy change or deletion directly exposes or destroys critical credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user from an external IP grants itself an access policy on a production vault",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/ACCESSPOLICIES/WRITE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-payments",
+          "correlationId": "6f1c2a9e-1111-4c2b-9a77-000000000001",
+          "eventTimestamp": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "Key Vault deleted by a service principal",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/DELETE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "a1b2c3d4-0000-4000-8000-000000000abc",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-shared/providers/Microsoft.KeyVault/vaults/kv-shared-secrets",
+          "correlationId": "6f1c2a9e-2222-4c2b-9a77-000000000002",
+          "eventTimestamp": "2024-10-25T14:10:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read of vault properties, which is not in the monitored operations",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/READ",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-payments",
+          "eventTimestamp": "2024-10-25T13:58:01Z"
+        }
+      },
+      {
+        "description": "A secret written inside the vault, a different operation from vault modification",
+        "event": {
+          "operationName": "MICROSOFT.KEYVAULT/VAULTS/SECRETS/WRITE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "deploy-pipeline@example.com",
+          "callerIpAddress": "192.0.2.25",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.KeyVault/vaults/kv-prod-payments/secrets/db-conn",
+          "eventTimestamp": "2024-10-25T13:59:30Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

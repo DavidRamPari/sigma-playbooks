@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "9e099d99-44c2-42b6-a6d8-54c3545cab29",
+    "title": "HackTool - Mimikatz Kirbi File Creation",
+    "level": "critical",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), David ANDRE",
+    "path": "windows/file/file_event/file_event_win_hktl_mimikatz_files.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_hktl_mimikatz_files.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en un endpoint Windows un archivo con extensión .kirbi (ticket Kerberos exportado) o el archivo mimilsa.log (registro por defecto de MemSSP de Mimikatz). Casi siempre indica robo de credenciales en curso.",
+      "what_it_detects": "Eventos file_event cuyo TargetFilename termina en '.kirbi', el formato con el que Mimikatz y herramientas similares exportan tickets Kerberos, o en 'mimilsa.log', el archivo donde el SSP inyectado en memoria (misc::memssp) guarda las contraseñas en texto claro.",
+      "why_it_matters": "Los tickets exportados permiten Pass-the-Ticket, Golden/Silver Ticket o Kerberoasting offline (T1558, robo o falsificación de tickets Kerberos). mimilsa.log indica que LSASS fue manipulado para capturar todas las contraseñas de los inicios de sesión siguientes.",
+      "triage_steps": [
+        "Revise TargetFilename, la ruta completa y el host. Anote el Image y el usuario que crearon el archivo.",
+        "Obtenga el hash y la línea de comandos del proceso creador; busque argumentos como kerberos::list /export, sekurlsa::tickets o misc::memssp.",
+        "Revise el árbol de procesos: ParentImage, procesos hijos y conexiones de red del mismo host en una ventana de +/- 15 minutos.",
+        "Si es mimilsa.log, normalmente en C:\\Windows\\System32, confirme si hubo acceso o inyección en LSASS y si el host es un controlador de dominio.",
+        "Si son archivos .kirbi, identifique las cuentas y servicios de los tickets (el nombre suele incluirlos) y busque su uso posterior desde otros hosts.",
+        "Busque en el dominio actividad Kerberos anómala del mismo usuario: solicitudes TGS masivas (4769 con RC4) o inicios de sesión 4624 inusuales.",
+        "Revise alertas previas del mismo host y usuario, y confirme con el equipo de seguridad si hay un pentest o ejercicio red team autorizado."
+      ],
+      "false_positives": [
+        "La regla indica falsos positivos improbables.",
+        "Pruebas de penetración o ejercicios red team autorizados que exportan tickets con Mimikatz, Rubeus u otras herramientas similares.",
+        "Investigadores o analistas que reproducen técnicas en laboratorios no aislados de la telemetría de producción."
+      ],
+      "response_steps": [
+        "Valide con el responsable si existe un ejercicio autorizado; si no existe, escale de inmediato como incidente de credenciales.",
+        "Aísle el endpoint de la red y conserve los archivos .kirbi o mimilsa.log, más una imagen de memoria, antes de borrar nada.",
+        "Restablezca las contraseñas de las cuentas expuestas. Si hay indicios de Golden Ticket, restablezca krbtgt dos veces de forma controlada.",
+        "Si hubo memssp, reinicie el host tras capturar evidencia y verifique que no queden SSP registrados en HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa.",
+        "Busque en toda la flota el mismo hash y los mismos nombres de archivo, y vigile el uso de los tickets robados."
+      ],
+      "severity_rationale": "Es crítica porque estos archivos casi solo los genera una herramienta de robo de credenciales y su presencia implica compromiso de identidades del dominio."
+    },
+    "en": {
+      "summary": "A Windows endpoint created a .kirbi file (an exported Kerberos ticket) or mimilsa.log (the default log of Mimikatz MemSSP). This almost always means credential theft is in progress.",
+      "what_it_detects": "file_event records whose TargetFilename ends with '.kirbi', the format Mimikatz and similar tools use to export Kerberos tickets, or 'mimilsa.log', where the in-memory SSP (misc::memssp) writes cleartext passwords.",
+      "why_it_matters": "Exported tickets enable Pass-the-Ticket, Golden/Silver Ticket attacks or offline Kerberoasting (T1558, stealing or forging Kerberos tickets). mimilsa.log means LSASS was tampered with to capture the password of every later logon.",
+      "triage_steps": [
+        "Review TargetFilename, the full path and the host. Note the Image and user that created the file.",
+        "Get the creating process's hash and command line; look for kerberos::list /export, sekurlsa::tickets or misc::memssp.",
+        "Review the process tree: ParentImage, child processes and network connections on the same host within +/- 15 minutes.",
+        "For mimilsa.log, usually in C:\\Windows\\System32, confirm LSASS access or injection and check whether the host is a domain controller.",
+        "For .kirbi files, identify the accounts and services in the tickets (often in the file name) and hunt for their later use from other hosts.",
+        "Check domain logs for unusual Kerberos activity by the same user: bulk TGS requests (4769 with RC4) or odd 4624 logons.",
+        "Review earlier alerts for the same host and user, and check with security whether an authorized pentest or red team exercise is running."
+      ],
+      "false_positives": [
+        "The rule rates false positives as unlikely.",
+        "Authorized penetration tests or red team exercises that export tickets with Mimikatz, Rubeus or similar tools.",
+        "Researchers reproducing techniques in labs that are not isolated from production telemetry."
+      ],
+      "response_steps": [
+        "Check with the owner whether an exercise is authorized; if none is, escalate right away as a credential incident.",
+        "Isolate the endpoint and keep the .kirbi or mimilsa.log files and a memory image before deleting anything.",
+        "Reset the exposed accounts. If a Golden Ticket is suspected, reset krbtgt twice in a controlled way.",
+        "If memssp was used, reboot the host after collecting evidence and confirm no rogue SSPs remain under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa.",
+        "Sweep the fleet for the same hash and file names, and watch for use of the stolen tickets."
+      ],
+      "severity_rationale": "Critical, because these files are almost only produced by credential-theft tooling and their presence means domain identities are compromised."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Mimikatz kerberos::list /export writes a ticket as a .kirbi file in the user's temp folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\m64.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\0-40e10000-jperez@krbtgt~ANDES.EXAMPLE.COM-ANDES.EXAMPLE.COM.kirbi",
+          "User": "ANDES\\jperez",
+          "CreationUtcTime": "2024-10-25 14:03:12.418"
+        }
+      },
+      {
+        "description": "MemSSP injected into LSASS writes captured credentials to mimilsa.log on a domain controller",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "ProcessId": 712,
+          "TargetFilename": "C:\\Windows\\System32\\mimilsa.log",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "CreationUtcTime": "2024-10-25 14:10:47.002"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "LSASS writes a legitimate debug log whose name does not end with mimilsa.log",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "ProcessId": 712,
+          "TargetFilename": "C:\\Windows\\debug\\lsp.log",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "CreationUtcTime": "2024-10-25 09:00:01.120"
+        }
+      },
+      {
+        "description": "A document whose name merely contains 'kirbi' but has a different extension",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "ProcessId": 4388,
+          "TargetFilename": "C:\\Users\\jperez\\Documents\\kirbi_format_notes.docx",
+          "User": "ANDES\\jperez",
+          "CreationUtcTime": "2024-10-25 11:22:05.640"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

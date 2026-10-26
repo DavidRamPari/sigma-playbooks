@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "846c7a87-8e14-4569-9d49-ecfd4276a01c",
+    "title": "DSInternals Suspicious PowerShell Cmdlets - ScriptBlock",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_dsinternals_cmdlets.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_dsinternals_cmdlets.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en un script block de PowerShell (evento 4104) un cmdlet del módulo DSInternals, que permite extraer hashes, claves de respaldo DPAPI o manipular ntds.dit. Puede ser una auditoría legítima o robo de credenciales del dominio.",
+      "what_it_detects": "Eventos de Script Block Logging cuyo ScriptBlockText contiene cualquiera de los cmdlets de DSInternals, por ejemplo Get-ADReplAccount, Get-ADDBAccount, Get-BootKey, Get-ADReplBackupKey, Set-SamAccountPasswordHash o Add-ADDBSidHistory.",
+      "why_it_matters": "DSInternals puede replicar secretos como DCSync, leer ntds.dit sin conexión, obtener la clave DPAPI del dominio o inyectar SID History. Es ejecución vía PowerShell (T1059.001) que suele llevar al compromiso total del dominio.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo e identifique el cmdlet: lectura (Get-ADRepl*, Get-ADDB*, Get-BootKey, *BackupKey) frente a escritura (Set-*, Add-ADDBSidHistory, Remove-ADDBObject).",
+        "Identifique el host y el usuario que ejecutó el script; confirme si pertenece al equipo de identidad o auditoría y si existe un ticket o cambio aprobado.",
+        "Revise el campo Path y los ScriptBlockId relacionados para reconstruir el script completo y ver cómo se cargó el módulo (Import-Module, ruta, descarga).",
+        "Busque en el mismo host, +/- 15 minutos, procesos padre de powershell.exe, copias de ntds.dit o SYSTEM (vssadmin, ntdsutil, esentutl) y archivos de salida.",
+        "Si se usó Get-ADReplAccount, verifique en los DC eventos 4662 de replicación (DS-Replication-Get-Changes) originados desde una IP que no es controlador de dominio.",
+        "Revise alertas previas del mismo usuario y host, inicios de sesión anómalos y conexiones salientes que indiquen exfiltración de hashes."
+      ],
+      "false_positives": [
+        "Auditorías de calidad de contraseñas con Test-PasswordQuality ejecutadas por el equipo de seguridad o identidad.",
+        "Recuperación de DC desde respaldos IFM o tareas de migración realizadas por administradores de Active Directory.",
+        "Pruebas de penetración o ejercicios de red team autorizados y documentados."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del usuario o del host si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint, deshabilite la cuenta implicada y preserve los logs y archivos de salida como evidencia.",
+        "Si hubo extracción de secretos, restablezca dos veces la contraseña de krbtgt, rote cuentas privilegiadas y de servicio, y evalúe rotar la clave DPAPI del dominio.",
+        "Revise cambios de escritura (SID History, hashes, NGC keys) en AD y reviértalos; elimine el módulo DSInternals no autorizado."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque estos cmdlets dan acceso directo a secretos del dominio, y su uso legítimo es poco frecuente y se limita a personal identificable."
+    },
+    "en": {
+      "summary": "A PowerShell script block (event 4104) contained a DSInternals cmdlet, which can extract hashes, DPAPI backup keys or manipulate ntds.dit. It may be a legitimate audit or domain credential theft.",
+      "what_it_detects": "Script Block Logging events whose ScriptBlockText contains any DSInternals cmdlet, such as Get-ADReplAccount, Get-ADDBAccount, Get-BootKey, Get-ADReplBackupKey, Set-SamAccountPasswordHash or Add-ADDBSidHistory.",
+      "why_it_matters": "DSInternals can replicate secrets DCSync-style, read ntds.dit offline, retrieve the domain DPAPI backup key or inject SID History. This is PowerShell execution (T1059.001) that often leads to full domain compromise.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and identify the cmdlet: read operations (Get-ADRepl*, Get-ADDB*, Get-BootKey, *BackupKey) versus write operations (Set-*, Add-ADDBSidHistory, Remove-ADDBObject).",
+        "Identify the host and user that ran the script; confirm whether they belong to identity or audit teams and whether an approved ticket exists.",
+        "Use the Path field and related ScriptBlockId events to rebuild the full script and see how the module was loaded (Import-Module, path, download).",
+        "On the same host within +/- 15 minutes, check powershell.exe parents, copies of ntds.dit or SYSTEM (vssadmin, ntdsutil, esentutl) and output files.",
+        "If Get-ADReplAccount was used, check domain controllers for 4662 replication events (DS-Replication-Get-Changes) from a non-DC source IP.",
+        "Review earlier alerts for the same user and host, unusual logons and outbound connections suggesting hash exfiltration."
+      ],
+      "false_positives": [
+        "Password quality audits with Test-PasswordQuality run by security or identity teams.",
+        "DC recovery from IFM backups or migration work by Active Directory administrators.",
+        "Authorized, documented penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the user's or host owner whether the activity was authorized before acting.",
+        "If unauthorized, isolate the endpoint, disable the involved account and preserve logs and output files as evidence.",
+        "If secrets were extracted, reset krbtgt twice, rotate privileged and service accounts, and consider rotating the domain DPAPI backup key.",
+        "Review and revert write changes in AD (SID History, hashes, NGC keys); remove the unauthorized DSInternals module."
+      ],
+      "severity_rationale": "High fits because these cmdlets give direct access to domain secrets, and legitimate use is rare and limited to identifiable staff."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DCSync-style replication of all accounts with Get-ADReplAccount from a workstation",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5f1c2a9e-3b7d-4c11-9a2e-0d8f6b4e7a21",
+          "Path": "",
+          "ScriptBlockText": "Import-Module DSInternals; Get-ADReplAccount -All -Server DC01 -NamingContext 'DC=andes,DC=example,DC=com' | Out-File C:\\Users\\Public\\out.txt"
+        }
+      },
+      {
+        "description": "Offline ntds.dit dump using Get-BootKey and Get-ADDBAccount",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-03.andes.example.com",
+          "ScriptBlockId": "a2d4e6f8-1b3c-4d5e-8f70-112233445566",
+          "Path": "C:\\Temp\\dump.ps1",
+          "ScriptBlockText": "$key = Get-BootKey -SystemHivePath 'C:\\Temp\\SYSTEM'; Get-ADDBAccount -All -DatabasePath 'C:\\Temp\\ntds.dit' -BootKey $key"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine AD administration with the RSAT ActiveDirectory module, no DSInternals cmdlets",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "c9e8d7f6-5a4b-4c3d-9e2f-1a0b9c8d7e6f",
+          "Path": "",
+          "ScriptBlockText": "Get-ADUser -Filter 'Enabled -eq $true' -Properties LastLogonDate | Select-Object SamAccountName, LastLogonDate"
+        }
+      },
+      {
+        "description": "Querying the domain password policy with the built-in Get-ADDefaultDomainPasswordPolicy cmdlet",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-01.andes.example.com",
+          "ScriptBlockId": "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9",
+          "Path": "",
+          "ScriptBlockText": "Get-ADDefaultDomainPasswordPolicy -Identity andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

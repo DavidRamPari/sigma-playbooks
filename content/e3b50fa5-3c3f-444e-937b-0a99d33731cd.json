@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "e3b50fa5-3c3f-444e-937b-0a99d33731cd",
+    "title": "Outlook Macro Execution Without Warning Setting Enabled",
+    "level": "high",
+    "status": "test",
+    "author": "@ScoubiMtl",
+    "path": "windows/registry/registry_set/registry_set_office_outlook_enable_macro_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_office_outlook_enable_macro_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1008",
+      "T1137",
+      "T1546"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso puso en 1 el valor de registro Security\\Level de Outlook. Con eso, las macros VBA de Outlook se ejecutan sin aviso. Los atacantes lo usan para que un VbaProject.OTM malicioso se ejecute en silencio y les dé persistencia.",
+      "what_it_detects": "Eventos registry_set donde TargetObject termina en \\Outlook\\Security\\Level y Details contiene 0x00000001 (habilitar todas las macros), en HKCU, HKU o la rama de políticas de Office.",
+      "why_it_matters": "Si las macros se ejecutan sin aviso, un atacante puede dejar código VBA en Outlook (T1137, inicio de aplicaciones Office) que corre al abrir Outlook o al activarse una regla de correo. El correo puede servir entonces como disparador o canal C2 de respaldo (T1008).",
+      "triage_steps": [
+        "Revise TargetObject: identifique el SID del usuario o la ruta HKCU y la versión de Office (15.0, 16.0). Si la clave está bajo Software\\Policies, el cambio viene de una GPO.",
+        "Identifique Image y el proceso padre que escribió el valor. reg.exe, powershell.exe, cmd.exe, wscript.exe o un proceso de Office es sospechoso; gpsvc o un agente MDM puede ser legítimo.",
+        "Revise el CommandLine del proceso que escribió el valor y de sus padres en el mismo host, +/- 15 minutos.",
+        "Busque si se creó o modificó %APPDATA%\\Microsoft\\Outlook\\VbaProject.OTM de ese usuario y si existe el valor LoadMacroProviderOnBoot en la clave de Outlook.",
+        "Verifique si OUTLOOK.EXE lanzó procesos hijos o abrió conexiones de red inusuales después del cambio.",
+        "Pregunte a TI o al equipo de puestos de trabajo si alguna GPO, perfil de Intune o script configura este valor a propósito.",
+        "Busque el mismo cambio en otros hosts y alertas previas de este usuario o host."
+      ],
+      "false_positives": [
+        "Una GPO o configuración de Intune de los administradores que permite todas las macros de Outlook para un complemento heredado del negocio.",
+        "Pruebas de automatización VBA en Outlook que hacen administradores o desarrolladores en equipos de laboratorio o desarrollo."
+      ],
+      "response_steps": [
+        "Si ningún cambio aprobado lo explica, aísle el endpoint y guarde una copia de VbaProject.OTM y de la clave de registro para analizarlos.",
+        "Vuelva a poner Security\\Level en un valor seguro (por ejemplo 3 o 4). Elimine el proyecto VBA después de confirmar que es malicioso.",
+        "Revise las reglas, formularios y páginas de inicio de Outlook por si hay más persistencia vía correo, y restablezca las credenciales del usuario.",
+        "Bloquee y busque en toda la flota el mismo proceso y sus hashes. Imponga la configuración de macros mediante políticas."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque los cambios legítimos a este valor son raros y el cambio habilita directamente la persistencia silenciosa mediante macros en Outlook."
+    },
+    "en": {
+      "summary": "A process set an Outlook Security\\Level registry value to 1, which lets Outlook VBA macros run with no prompt. Attackers use this to make a malicious VbaProject.OTM run silently for persistence.",
+      "what_it_detects": "Registry set events where TargetObject ends with \\Outlook\\Security\\Level and Details contains 0x00000001 (Enable all macros), under HKCU, HKU or the Office policy hive.",
+      "why_it_matters": "With unprompted macros, an attacker can plant VBA in Outlook (T1137 Office Application Startup) that runs when Outlook starts or when a mail rule fires. Mail can then act as a trigger or fallback C2 channel (T1008).",
+      "triage_steps": [
+        "Read TargetObject: find the user SID or HKCU path, the Office version (15.0, 16.0) and whether the key is under Software\\Policies, which points to Group Policy.",
+        "Identify Image and the parent process that wrote the value. reg.exe, powershell.exe, cmd.exe, wscript.exe or an Office process is suspicious; gpsvc or an MDM agent may be legitimate.",
+        "Check the CommandLine of the writing process and its parents on the same host within +/- 15 minutes.",
+        "Look for creation or changes to %APPDATA%\\Microsoft\\Outlook\\VbaProject.OTM for that user, and for the LoadMacroProviderOnBoot value under the Outlook key.",
+        "Check if OUTLOOK.EXE spawned unusual child processes or made unusual network connections after the change.",
+        "Ask IT or desktop engineering if a GPO, Intune profile or script sets this value on purpose.",
+        "Search for the same change on other hosts and for earlier alerts on this user or host."
+      ],
+      "false_positives": [
+        "A Group Policy or Intune setting from administrators that allows all Outlook macros for a legacy business add-in.",
+        "Admin or developer testing of Outlook VBA automation on a lab or developer machine."
+      ],
+      "response_steps": [
+        "If no approved change explains it, isolate the endpoint and keep a copy of VbaProject.OTM and the registry key for analysis.",
+        "Reset Security\\Level to a safe value (for example 3 or 4) and remove the malicious VBA project after you confirm it is malicious.",
+        "Check Outlook rules, forms and home page settings for more mail-based persistence, and reset the user's credentials.",
+        "Block or hunt for the same writing process and hashes across the fleet. Enforce the macro setting through policy."
+      ],
+      "severity_rationale": "High fits: legitimate changes to this value are rare, and it directly enables silent macro-based persistence in Outlook."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets Outlook 16.0 Security\\Level to 1 (enable all macros) in the user's hive",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-3623811015-3361044348-30300820-1013\\Software\\Microsoft\\Office\\16.0\\Outlook\\Security\\Level",
+          "Details": "DWORD (0x00000001)",
+          "ProcessId": 6120
+        }
+      },
+      {
+        "description": "PowerShell writes the value under HKCU for Office 15.0",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKCU\\Software\\Microsoft\\Office\\15.0\\Outlook\\Security\\Level",
+          "Details": "DWORD (0x00000001)",
+          "ProcessId": 4388
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Outlook Security\\Level set to 4 (disable all macros without notification), a hardening value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-3623811015-3361044348-30300820-1013\\Software\\Microsoft\\Office\\16.0\\Outlook\\Security\\Level",
+          "Details": "DWORD (0x00000004)",
+          "ProcessId": 6120
+        }
+      },
+      {
+        "description": "A different Outlook security value set to 1, so TargetObject does not end with \\Outlook\\Security\\Level",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE",
+          "TargetObject": "HKU\\S-1-5-21-3623811015-3361044348-30300820-1013\\Software\\Microsoft\\Office\\16.0\\Outlook\\Security\\MarkInternalAsUnsafe",
+          "Details": "DWORD (0x00000001)",
+          "ProcessId": 7724
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

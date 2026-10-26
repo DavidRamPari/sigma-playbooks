@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "bed978f8-7f3a-432b-82c5-9286a9b3031a",
+    "title": "Shell Invocation via Env Command - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_env_shell_invocation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_env_shell_invocation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario env con una ruta de shell (/bin/bash, /bin/sh, /bin/dash, /bin/zsh o /bin/fish) en la línea de comandos. Puede ser un intento de escapar de un shell restringido, escalar privilegios o ejecutar comandos arbitrarios.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /env y CommandLine contiene la ruta de un shell, por ejemplo 'env /bin/sh' o 'sudo env /bin/bash', técnica documentada en GTFOBins.",
+      "why_it_matters": "env puede lanzar cualquier programa con un entorno controlado. Si se permite vía sudo, SUID o en un shell restringido, abre un shell completo y con privilegios. Corresponde a ATT&CK T1059.004 (Unix Shell).",
+      "triage_steps": [
+        "Revise CommandLine completa: opciones como -i, -u o -p, y si el shell recibe -c con comandos adicionales.",
+        "Identifique el usuario y el usuario efectivo; confirme si env corrió como root mediante sudo, SUID o un servicio.",
+        "Examine ParentImage y la cadena de procesos: sudo, sshd, un servidor web, cron o un pipeline de CI indican contextos muy distintos.",
+        "Si el padre es sudo, busque la línea 'sudo: ... COMMAND=/usr/bin/env ...' en auth.log y revise las reglas de sudoers que permiten env.",
+        "Liste los procesos hijos del shell en el mismo host dentro de +/- 15 minutos: reconocimiento, descargas, cambios de cuentas o persistencia.",
+        "Verifique si el usuario tiene un shell restringido (rbash, lshell) o permisos limitados que justificarían un escape.",
+        "Busque alertas previas para el mismo host, usuario y la IP de origen de la sesión SSH."
+      ],
+      "false_positives": [
+        "Operaciones de GitHub Enterprise como ghe-backup que invocan shells mediante env.",
+        "Scripts de administración, entrypoints de contenedores o jobs de CI que usan 'env -i /bin/sh -c ...' para limpiar el entorno.",
+        "Herramientas de gestión de configuración que lanzan shells con variables específicas."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o del usuario si la ejecución era esperada; documente la evidencia.",
+        "Si no es legítima, termine la sesión y el shell, y aísle el host si hubo actividad con privilegios.",
+        "Elimine o restrinja reglas de sudoers o bits SUID que permitan ejecutar env; rote credenciales del usuario afectado.",
+        "Busque persistencia (cron, claves SSH, servicios) y restaure desde una configuración conocida; agregue exclusiones solo para casos legítimos verificados."
+      ],
+      "severity_rationale": "Es alta porque invocar un shell mediante env rara vez ocurre en uso interactivo normal y suele indicar un escape de restricciones o escalamiento de privilegios."
+    },
+    "en": {
+      "summary": "The env binary was executed with a shell path (/bin/bash, /bin/sh, /bin/dash, /bin/zsh or /bin/fish) in its command line. This may be an attempt to break out of a restricted shell, escalate privileges or run arbitrary commands.",
+      "what_it_detects": "Linux process creation events where Image ends with /env and CommandLine contains a shell path, such as 'env /bin/sh' or 'sudo env /bin/bash', a technique documented in GTFOBins.",
+      "why_it_matters": "env can launch any program with a controlled environment. When allowed through sudo, SUID or inside a restricted shell, it yields a full, possibly privileged shell. Maps to ATT&CK T1059.004 (Unix Shell).",
+      "triage_steps": [
+        "Read the full CommandLine: options like -i, -u or -p, and whether the shell gets -c with further commands.",
+        "Identify the user and effective user; confirm whether env ran as root via sudo, SUID or a service.",
+        "Examine ParentImage and the process chain: sudo, sshd, a web server, cron or a CI runner mean very different things.",
+        "If the parent is sudo, find the 'sudo: ... COMMAND=/usr/bin/env ...' line in auth.log and review sudoers rules allowing env.",
+        "List the shell's child processes on the same host within +/- 15 minutes: recon, downloads, account changes or persistence.",
+        "Check whether the user has a restricted shell (rbash, lshell) or limited rights that would explain a breakout.",
+        "Look for earlier alerts for the same host, user and SSH source IP."
+      ],
+      "false_positives": [
+        "GitHub Enterprise operations such as ghe-backup that invoke shells through env.",
+        "Admin scripts, container entrypoints or CI jobs using 'env -i /bin/sh -c ...' to start with a clean environment.",
+        "Configuration management tools launching shells with specific variables."
+      ],
+      "response_steps": [
+        "Confirm with the system or user owner whether the execution was expected; record the evidence.",
+        "If not legitimate, kill the session and shell, and isolate the host if privileged activity occurred.",
+        "Remove or restrict sudoers rules or SUID bits that allow env; rotate the affected user's credentials.",
+        "Hunt for persistence (cron, SSH keys, services) and restore from a known-good configuration; tune exclusions only for verified legitimate cases."
+      ],
+      "severity_rationale": "High fits because spawning a shell through env is rare in normal interactive use and commonly signals a restriction breakout or privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User runs env via sudo to spawn a root Bourne shell (GTFOBins pattern).",
+        "event": {
+          "Image": "/usr/bin/env",
+          "CommandLine": "/usr/bin/env /bin/sh",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo env /bin/sh",
+          "User": "root",
+          "LogonId": "1001",
+          "ProcessId": 48213,
+          "ParentProcessId": 48210,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "env with a clean environment launches bash in privileged mode from an SSH session.",
+        "event": {
+          "Image": "/bin/env",
+          "CommandLine": "env -i /bin/bash -p",
+          "ParentImage": "/usr/bin/rbash",
+          "ParentCommandLine": "-rbash",
+          "User": "mlopez",
+          "ProcessId": 5120,
+          "ParentProcessId": 5098,
+          "CurrentDirectory": "/home/mlopez",
+          "Computer": "app-srv-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Shebang-style env invocation of Python; no shell path in the command line.",
+        "event": {
+          "Image": "/usr/bin/env",
+          "CommandLine": "/usr/bin/env python3 /opt/tools/report.py --daily",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "svc_report",
+          "ProcessId": 7731,
+          "ParentProcessId": 7720,
+          "Computer": "app-srv-03"
+        }
+      },
+      {
+        "description": "Bash running the env command to print variables; Image does not end with /env.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "/bin/bash -c env",
+          "ParentImage": "/usr/sbin/sshd",
+          "User": "jperez",
+          "ProcessId": 9902,
+          "ParentProcessId": 9890,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

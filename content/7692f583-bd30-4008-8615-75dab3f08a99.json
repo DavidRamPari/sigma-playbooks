@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "7692f583-bd30-4008-8615-75dab3f08a99",
+    "title": "Enable BPF Kprobes Tracing",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_bpf_kprob_tracing_enabled.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_bpf_kprob_tracing_enabled.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en Linux ejecutó un comando que habilita un kprobe llamado myprobe o myretprobe escribiendo '1' en su archivo enable bajo /sys/kernel/debug/tracing/events/kprobes/. Esto activa el tracing de funciones del kernel. Un atacante puede usarlo para espiar o manipular la actividad del sistema.",
+      "what_it_detects": "Eventos process_creation cuyo CommandLine contiene 'echo 1 >' y la ruta '/sys/kernel/debug/tracing/events/kprobes/', y que además terminan en '/myprobe/enable' o '/myretprobe/enable'. Estos son los nombres de ejemplo que aparecen en la documentación del kernel y en guías públicas de BPF ofensivo.",
+      "why_it_matters": "Los kprobes y el tracing basado en BPF permiten instrumentar funciones del kernel con privilegios de root. Con ellos se pueden capturar argumentos de syscalls, como contraseñas o datos leídos por procesos, y observar la actividad sin dejar artefactos comunes en disco. La regla lo asocia con ejecución y evasión (stealth).",
+      "triage_steps": [
+        "Revise el CommandLine, el Image y el usuario del evento. Escribir en debugfs requiere root, así que confirme quién obtuvo esos privilegios y cómo (sudo, su, SSH directo).",
+        "Analice el ParentImage y la cadena de procesos padres. Determine si el comando vino de una shell interactiva, de un script, de cron o de un proceso inesperado, como un servidor web.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, escrituras previas en /sys/kernel/debug/tracing/kprobe_events que definan la sonda y revise qué función del kernel o qué syscall instrumenta.",
+        "Verifique la actividad relacionada: ejecuciones de bpftrace, bpftool o perf, montajes de debugfs y lecturas de trace_pipe en el mismo host.",
+        "Revise las sondas activas en el host: cat /sys/kernel/debug/tracing/kprobe_events y el estado de tracing_on, y compárelas con la configuración aprobada.",
+        "Consulte alertas anteriores del mismo host y usuario, inicios de sesión recientes y las IP de origen de las sesiones SSH en ese periodo."
+      ],
+      "false_positives": [
+        "Ingenieros de kernel o SRE que hacen depuración o análisis de rendimiento siguiendo la documentación oficial, que usa los nombres myprobe y myretprobe.",
+        "Laboratorios, cursos o pruebas de agentes de observabilidad en hosts de desarrollo.",
+        "Ejercicios autorizados de red team o validación de detecciones."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del usuario si la actividad estaba autorizada y documente la justificación.",
+        "Si no está autorizada, aísle el endpoint y preserve evidencia antes de cualquier cambio: kprobe_events, la salida de trace_pipe, los procesos activos y el historial de la shell.",
+        "Deshabilite y elimine las sondas no autorizadas (echo 0 > .../enable y quite la entrada en kprobe_events) después de recopilar la evidencia.",
+        "Revise cómo se obtuvo root, rote las credenciales que pudieron quedar expuestas y busque persistencia. Restrinja el acceso a debugfs y a BPF (kernel.unprivileged_bpf_disabled, lockdown)."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la acción requiere root y permite espionaje a nivel de kernel, pero también tiene usos legítimos de depuración que hay que descartar."
+    },
+    "en": {
+      "summary": "A Linux process enabled a kprobe named myprobe or myretprobe by writing '1' to its enable file under /sys/kernel/debug/tracing/events/kprobes/. This turns on kernel function tracing, which an attacker can use to spy on or tamper with system activity.",
+      "what_it_detects": "process_creation events whose CommandLine contains 'echo 1 >' and '/sys/kernel/debug/tracing/events/kprobes/', plus '/myprobe/enable' or '/myretprobe/enable'. Those are the example probe names used in the kernel documentation and in public offensive BPF write-ups.",
+      "why_it_matters": "Kprobes and BPF-based tracing let root instrument kernel functions. With them you can capture syscall arguments, such as passwords or data read by processes, and watch activity while leaving few artifacts on disk. The rule tags this as execution and stealth.",
+      "triage_steps": [
+        "Review the CommandLine, Image and user. Writing to debugfs requires root, so confirm who held root and how they got it (sudo, su, direct SSH).",
+        "Inspect the ParentImage and the process ancestry. Determine whether the command came from an interactive shell, a script, cron or an unexpected parent such as a web server.",
+        "On the same host within +/- 15 minutes, look for earlier writes to /sys/kernel/debug/tracing/kprobe_events that define the probe, and note which kernel function or syscall it hooks.",
+        "Check for related activity on the host: bpftrace, bpftool or perf executions, debugfs mounts and reads of trace_pipe.",
+        "List the active probes (cat /sys/kernel/debug/tracing/kprobe_events) and the tracing_on state, then compare them with the approved configuration.",
+        "Review earlier alerts for the same host and user, recent logins and the source IPs of SSH sessions in that window."
+      ],
+      "false_positives": [
+        "Kernel engineers or SREs debugging or profiling by following the official documentation, which uses the names myprobe and myretprobe.",
+        "Labs, training courses or observability agent testing on development hosts.",
+        "Authorized red team or detection validation exercises."
+      ],
+      "response_steps": [
+        "Confirm with the host or user owner whether the activity was authorized, and record the justification.",
+        "If it was not authorized, isolate the endpoint and preserve evidence first: kprobe_events, trace_pipe output, running processes and shell history.",
+        "Once evidence is collected, disable and remove the rogue probes (echo 0 > .../enable, then delete the kprobe_events entry).",
+        "Investigate how root was obtained, rotate credentials that may have been exposed and hunt for persistence. Restrict debugfs and BPF access (unprivileged_bpf_disabled, lockdown)."
+      ],
+      "severity_rationale": "Medium fits because the action needs root and enables kernel-level spying, but legitimate debugging uses still have to be ruled out."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Root shell enables the myprobe kprobe through debugfs",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c \"echo 1 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable\"",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 48213,
+          "ParentProcessId": 48210,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Script enables the myretprobe return probe",
+        "event": {
+          "Image": "/bin/sh",
+          "CommandLine": "sh -c echo 1 > /sys/kernel/debug/tracing/events/kprobes/myretprobe/enable",
+          "ParentImage": "/tmp/.cache/setup.sh",
+          "User": "root",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 51102,
+          "ParentProcessId": 51099,
+          "Computer": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator disables the probe by writing 0, so 'echo 1 >' is absent",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c \"echo 0 > /sys/kernel/debug/tracing/events/kprobes/myprobe/enable\"",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 48390,
+          "ParentProcessId": 48388,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Enables all kprobe events globally, without the myprobe or myretprobe path",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c \"echo 1 > /sys/kernel/debug/tracing/events/kprobes/enable\"",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 49001,
+          "ParentProcessId": 48999,
+          "Computer": "dev-kernel-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

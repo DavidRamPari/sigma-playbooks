@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "0322d9f2-289a-47c2-b5e1-b63c90901a3e",
+    "title": "Google Cloud Kubernetes RoleBinding",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_kubernetes_rolebinding.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_kubernetes_rolebinding.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó (patch/update) o eliminó un RoleBinding o ClusterRoleBinding en un clúster de GKE. Esto cambia quién tiene permisos en Kubernetes y puede indicar escalamiento de privilegios o persistencia.",
+      "what_it_detects": "Eventos de GCP Audit Logs (GKE) cuyo gcp.audit.method_name corresponde a create, patch, update o delete sobre rolebindings o clusterrolebindings de la API io.k8s.authorization.rbac en cualquier versión (v1, v1beta1).",
+      "why_it_matters": "Los bindings RBAC asignan roles a usuarios, grupos o service accounts. Un atacante puede enlazar una identidad propia a cluster-admin o a un rol que lea Secrets y así obtener credenciales (táctica de acceso a credenciales). Eliminar bindings también puede servir para interrumpir el servicio o borrar rastros.",
+      "triage_steps": [
+        "Revise gcp.audit.method_name y el recurso afectado (resource_name): ¿ClusterRoleBinding o RoleBinding? ¿En qué namespace? ¿Fue create, patch, update o delete?",
+        "Identifique el principal (principal_email): ¿es un administrador conocido, una service account de CI/CD o una identidad inusual o recién creada?",
+        "Examine el request: qué roleRef se otorga (cluster-admin, edit o roles con acceso a secrets) y qué subjects se agregan, sobre todo service accounts o usuarios externos.",
+        "Valide la IP de origen y el user agent: kubectl desde una IP desconocida es más sospechoso que Terraform, Helm o Config Sync desde rangos corporativos.",
+        "Busque en +/- 15 minutos otros eventos del mismo principal: creación de service accounts, tokens, pods privilegiados o lectura de secrets.",
+        "Revise alertas previas de la misma identidad o IP y confirme con el equipo dueño si había un cambio o ticket aprobado."
+      ],
+      "false_positives": [
+        "Administradores del clúster que gestionan permisos de forma manual con kubectl.",
+        "Pipelines de CI/CD, Terraform, Helm u operadores que crean bindings al desplegar aplicaciones.",
+        "Componentes administrados de GKE o herramientas GitOps (Config Sync, Argo CD) que reconcilian RBAC.",
+        "Limpieza planificada de bindings al dar de baja namespaces o aplicaciones."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del clúster si el cambio fue autorizado; documente el ticket si existe.",
+        "Si no es legítimo, revierta el binding tras respaldar su manifiesto (kubectl get -o yaml) y revoque tokens o claves del principal implicado.",
+        "Suspenda o restrinja la identidad comprometida en IAM y en RBAC, y rote los secrets que el rol otorgado podía leer.",
+        "Busque persistencia adicional: otros bindings, service accounts, webhooks o workloads creados por el mismo principal.",
+        "Si es un comportamiento esperado y recurrente, documente una exclusión acotada por principal y recurso."
+      ],
+      "severity_rationale": "Medium es adecuado porque los cambios RBAC son frecuentes en operación normal, pero un binding malicioso puede otorgar control total del clúster y acceso a credenciales."
+    },
+    "en": {
+      "summary": "A RoleBinding or ClusterRoleBinding was created, patched, updated or deleted in a GKE cluster. This changes who holds Kubernetes permissions and may indicate privilege escalation or persistence.",
+      "what_it_detects": "GCP Audit Log (GKE) events whose gcp.audit.method_name is create, patch, update or delete on rolebindings or clusterrolebindings in the io.k8s.authorization.rbac API, any version (v1, v1beta1).",
+      "why_it_matters": "RBAC bindings grant roles to users, groups or service accounts. An attacker can bind an identity to cluster-admin or to a role that reads Secrets, gaining credentials (credential access). Deleting bindings can disrupt service or cover tracks.",
+      "triage_steps": [
+        "Check gcp.audit.method_name and the affected resource (resource_name): ClusterRoleBinding or RoleBinding, which namespace, and whether it was create, patch, update or delete.",
+        "Identify the principal (principal_email): known admin, CI/CD service account, or an unusual or newly created identity?",
+        "Inspect the request: which roleRef is granted (cluster-admin, edit, roles reading secrets) and which subjects were added, especially service accounts or external users.",
+        "Validate source IP and user agent: kubectl from an unknown IP is more suspicious than Terraform, Helm or Config Sync from corporate ranges.",
+        "Search +/- 15 minutes for other activity by the same principal: new service accounts, tokens, privileged pods or secret reads.",
+        "Review earlier alerts for the same identity or IP and confirm with the owning team whether an approved change or ticket exists."
+      ],
+      "false_positives": [
+        "Cluster administrators managing permissions manually with kubectl.",
+        "CI/CD pipelines, Terraform, Helm or operators creating bindings during deployments.",
+        "GKE managed components or GitOps tools (Config Sync, Argo CD) reconciling RBAC.",
+        "Planned cleanup of bindings when decommissioning namespaces or applications."
+      ],
+      "response_steps": [
+        "Confirm with the cluster owner whether the change was authorized; record the ticket if one exists.",
+        "If unauthorized, back up the binding manifest (kubectl get -o yaml), revert it, and revoke the principal's tokens or keys.",
+        "Suspend or restrict the compromised identity in IAM and RBAC, and rotate secrets the granted role could read.",
+        "Hunt for further persistence: other bindings, service accounts, webhooks or workloads created by the same principal.",
+        "If the behavior is expected and recurring, add a narrow exclusion scoped by principal and resource."
+      ],
+      "severity_rationale": "Medium fits because RBAC changes are common in normal operations, yet a malicious binding can grant full cluster control and access to credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown user creates a ClusterRoleBinding to cluster-admin via kubectl",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.authorization.rbac.v1.clusterrolebindings.create",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "rbac.authorization.k8s.io/v1/clusterrolebindings/backdoor-admin",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "kubectl/v1.27.3 (linux/amd64) kubernetes/25b4e43",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Service account deletes a namespaced RoleBinding using the v1beta1 API",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.authorization.rbac.v1beta1.rolebindings.delete",
+          "gcp.audit.principal_email": "deployer@andes-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "rbac.authorization.k8s.io/v1beta1/namespaces/payments/rolebindings/audit-viewer",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "198.51.100.20",
+          "user_agent.original": "kubectl/v1.26.1 (darwin/arm64) kubernetes/8f94681",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of RoleBindings, not a create/patch/update/delete",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.authorization.rbac.v1.rolebindings.list",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "rbac.authorization.k8s.io/v1/namespaces/payments/rolebindings",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "kubectl/v1.27.3 (linux/amd64) kubernetes/25b4e43",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Creation of a ClusterRole (not a binding) is outside the rule's scope",
+        "event": {
+          "gcp.audit.method_name": "io.k8s.authorization.rbac.v1.clusterroles.create",
+          "gcp.audit.principal_email": "deployer@andes-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "rbac.authorization.k8s.io/v1/clusterroles/metrics-reader",
+          "gcp.audit.service_name": "k8s.io",
+          "source.ip": "192.0.2.15",
+          "user_agent.original": "Helm/3.12.0",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "22236d75-d5a0-4287-bf06-c93b1770860f",
+    "title": "Triple Cross eBPF Rootkit Install Commands",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_triple_cross_rootkit_install.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_triple_cross_rootkit_install.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1014"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó con sudo un comando tc que agrega una qdisc o un filter en la interfaz enp0s3. Coincide con los comandos de instalación por defecto del script deployer.sh del rootkit eBPF Triple Cross.",
+      "what_it_detects": "Procesos cuyo Image termina en /sudo y cuyo CommandLine contiene ' tc ', ' enp0s3 ' y además ' qdisc ' o ' filter ', como 'sudo tc qdisc add dev enp0s3 clsact' o 'sudo tc filter add dev enp0s3 egress bpf ...'.",
+      "why_it_matters": "Triple Cross es un rootkit eBPF público que se carga en el kernel para ocultar actividad, ofrecer un backdoor y secuestrar la ejecución. Corresponde a T1014 (Rootkit): una vez cargado, las herramientas del propio host pueden dejar de ser confiables.",
+      "triage_steps": [
+        "Revise el CommandLine completo: busque 'clsact', 'bpf', 'direct-action', 'obj tc.o' o 'classifier/egress', que indican la carga de un programa eBPF.",
+        "Identifique al usuario que invocó sudo y revise los registros de autenticación y de sudo (COMMAND=) del host para esa sesión.",
+        "Examine ParentImage y el árbol de procesos: un shell que ejecuta deployer.sh u otro script desde un directorio de usuario o /tmp es muy sospechoso.",
+        "Pivote en el mismo host +/- 15 minutos: compilaciones (make, clang), descargas (git, curl, wget) y ejecución de binarios nuevos desde el mismo directorio.",
+        "Desde una sesión confiable, liste los programas eBPF y filtros tc cargados (bpftool prog list, tc filter show dev enp0s3 egress) y compárelos con la línea base.",
+        "Busque entradas inesperadas en /etc/cron.d y /etc/sudoers.d creadas cerca de la hora de la alerta.",
+        "Consulte alertas previas del mismo usuario, host o IP de origen de la sesión SSH."
+      ],
+      "false_positives": [
+        "La regla indica que los falsos positivos son poco probables.",
+        "Administradores o laboratorios que configuran control de tráfico (por ejemplo, netem) con sudo tc en VMs de VirtualBox, donde enp0s3 es la interfaz por defecto.",
+        "Ejercicios de red team o investigación autorizados que despliegan Triple Cross en entornos de prueba."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema si el cambio de tc fue autorizado y documentado.",
+        "Si no lo fue, aísle el host de la red y capture memoria y evidencia (programas eBPF, filtros tc, cron, sudoers) antes de modificar nada.",
+        "Revoque o rote las credenciales del usuario que ejecutó sudo y revise otros hosts donde se usaron.",
+        "Como el kernel puede estar comprometido, reconstruya el host desde una imagen confiable en lugar de limpiarlo en caliente.",
+        "Agregue los indicadores encontrados (directorios, hashes, IPs) a la búsqueda en el resto del entorno."
+      ],
+      "severity_rationale": "El nivel high se justifica porque el patrón coincide con la instalación por defecto de un rootkit a nivel de kernel y rara vez ocurre en la operación normal."
+    },
+    "en": {
+      "summary": "A tc command adding a qdisc or filter on interface enp0s3 was run through sudo. This matches the default install commands of the Triple Cross eBPF rootkit's deployer.sh script.",
+      "what_it_detects": "Processes whose Image ends with /sudo and whose CommandLine contains ' tc ', ' enp0s3 ' and either ' qdisc ' or ' filter ', such as 'sudo tc qdisc add dev enp0s3 clsact' or 'sudo tc filter add dev enp0s3 egress bpf ...'.",
+      "why_it_matters": "Triple Cross is a public eBPF rootkit that loads into the kernel to hide activity, provide a backdoor and hijack execution. This maps to T1014 (Rootkit); once loaded, on-host tools may no longer be trustworthy.",
+      "triage_steps": [
+        "Read the full CommandLine: look for 'clsact', 'bpf', 'direct-action', 'obj tc.o' or 'classifier/egress', which indicate an eBPF program being attached.",
+        "Identify the user who invoked sudo and review auth and sudo COMMAND= logs on the host for that session.",
+        "Check ParentImage and the process tree: a shell running deployer.sh or another script from a home directory or /tmp is highly suspicious.",
+        "Pivot on the same host +/- 15 minutes: builds (make, clang), downloads (git, curl, wget) and new binaries run from the same directory.",
+        "From a trusted session, list loaded eBPF programs and tc filters (bpftool prog list, tc filter show dev enp0s3 egress) and compare with baseline.",
+        "Look for unexpected files in /etc/cron.d and /etc/sudoers.d created near the alert time.",
+        "Check earlier alerts for the same user, host or SSH source IP."
+      ],
+      "false_positives": [
+        "The rule states false positives are unlikely.",
+        "Admins or labs configuring traffic control (for example netem) with sudo tc on VirtualBox VMs, where enp0s3 is the default interface name.",
+        "Authorized red team or research exercises deploying Triple Cross in test environments."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the tc change was authorized and documented.",
+        "If not, isolate the host and capture memory and evidence (eBPF programs, tc filters, cron, sudoers) before changing anything.",
+        "Revoke or rotate credentials of the user who ran sudo and review other hosts where they were used.",
+        "Because the kernel may be compromised, rebuild the host from a trusted image rather than cleaning it live.",
+        "Hunt for discovered indicators (directories, hashes, IPs) across the environment."
+      ],
+      "severity_rationale": "High fits because the pattern matches the default install of a kernel-level rootkit and rarely appears in normal operations."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "deployer.sh creating the clsact qdisc on enp0s3 via sudo",
+        "event": {
+          "Computer": "bastion-01",
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo tc qdisc add dev enp0s3 clsact",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash ./deployer.sh",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez/TripleCross/apps",
+          "ProcessId": 48211
+        }
+      },
+      {
+        "description": "deployer.sh attaching the eBPF egress classifier with tc filter",
+        "event": {
+          "Computer": "bastion-01",
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo tc filter add dev enp0s3 egress bpf direct-action obj tc.o sec classifier/egress",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "bash ./deployer.sh",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez/TripleCross/apps",
+          "ProcessId": 48219
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin inspecting qdisc on a different interface; enp0s3 not present",
+        "event": {
+          "Computer": "web-07",
+          "Image": "/usr/bin/sudo",
+          "CommandLine": "sudo tc qdisc show dev eth0",
+          "ParentImage": "/usr/bin/bash",
+          "User": "mrodriguez",
+          "CurrentDirectory": "/home/mrodriguez",
+          "ProcessId": 30122
+        }
+      },
+      {
+        "description": "tc run directly as root without sudo; Image is not sudo",
+        "event": {
+          "Computer": "lab-vm-03",
+          "Image": "/usr/sbin/tc",
+          "CommandLine": "tc qdisc add dev enp0s3 root netem delay 100ms",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 5120
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

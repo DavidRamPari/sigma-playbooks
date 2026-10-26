@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "5f87308a-0a5b-4623-ae15-d8fa1809bc60",
+    "title": "Suspicious Files in Default GPO Folder",
+    "level": "medium",
+    "status": "test",
+    "author": "elhoim",
+    "path": "windows/file/file_event/file_event_win_susp_default_gpo_dir_write.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_susp_default_gpo_dir_write.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un archivo EXE o DLL dentro de la carpeta de la Default Domain Policy en SYSVOL. Esa carpeta replica a todos los controladores de dominio y todos los equipos del dominio pueden leerla, así que suele usarse para distribuir malware o disfrazarlo como contenido legítimo.",
+      "what_it_detects": "Eventos file_event donde TargetFilename contiene '\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\' (GUID de la Default Domain Policy) y termina en '.exe' o '.dll'.",
+      "why_it_matters": "La carpeta de una GPO normalmente solo contiene archivos .ini, .inf, .pol y scripts. Un binario ahí puede indicar staging o distribución de ransomware a todo el dominio, o un archivo disfrazado en una ruta de confianza (T1036.005, Masquerading: imitar un nombre o ubicación legítimos).",
+      "triage_steps": [
+        "Revise TargetFilename, Image, User y el host. Identifique el nombre del binario y si imita un ejecutable de Windows o de software conocido.",
+        "Si Image es dfsrs.exe, el evento es replicación. Busque en los otros DC la primera creación del mismo archivo hecha por otro proceso.",
+        "Si Image es System, la escritura llegó por SMB. Correlacione con los eventos 5145/5140 del DC (+/- 15 minutos) para obtener la IP de origen y la cuenta.",
+        "Obtenga el hash del archivo, revise su firma y su reputación, y busque el mismo hash en todos los endpoints.",
+        "Revise si alguna GPO se modificó (evento 5136, cambios en ScheduledTasks.xml, Scripts o Registry.pol) para ejecutar el binario.",
+        "Busque en los endpoints procesos con ese Image o con una ruta \\\\<dominio>\\SYSVOL en su CommandLine.",
+        "Revise alertas anteriores para el usuario y el host de origen: uso de credenciales privilegiadas, movimiento lateral, herramientas de administración remota."
+      ],
+      "false_positives": [
+        "Administradores que dejan instaladores o herramientas en la carpeta de la GPO para distribuirlos, una mala práctica pero común.",
+        "Extensiones de GPO de terceros o agentes de gestión que copian binarios auxiliares en SYSVOL.",
+        "Eventos duplicados de DFSR en cada DC después de una única copia legítima."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de Active Directory si la copia fue un cambio autorizado. Documente el ticket o al responsable.",
+        "Si no fue autorizada, ponga el archivo en cuarentena después de guardar una copia y su hash. Revierta los cambios no autorizados a la GPO.",
+        "Aísle el host de origen y deshabilite o restablezca la cuenta usada. Considere que puede haber compromiso de credenciales de Domain Admin.",
+        "Busque la ejecución del binario en todo el dominio y erradíquelo. Luego verifique que SYSVOL esté limpio y que la replicación esté sana."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque en esta carpeta casi nunca hay binarios legítimos y el impacto potencial abarca todo el dominio, aunque existen malas prácticas administrativas benignas."
+    },
+    "en": {
+      "summary": "An EXE or DLL was created in the Default Domain Policy folder in SYSVOL. That folder replicates to every domain controller and every domain computer can read it, so attackers use it to distribute malware or disguise it as legitimate content.",
+      "what_it_detects": "file_event records where TargetFilename contains '\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\' (the Default Domain Policy GUID) and ends with '.exe' or '.dll'.",
+      "why_it_matters": "A GPO folder normally holds only .ini, .inf, .pol and script files. A binary there can mean ransomware staging or domain-wide distribution, or a file disguised in a trusted path (T1036.005, Masquerading: imitating a legitimate name or location).",
+      "triage_steps": [
+        "Review TargetFilename, Image, User and the host. Note the binary name and whether it imitates a Windows or well-known software executable.",
+        "If Image is dfsrs.exe, the event is replication. Find the first creation of the same file by a different process on the other DCs.",
+        "If Image is System, the write came over SMB. Correlate it with DC events 5145/5140 (+/- 15 minutes) to get the source IP and account.",
+        "Get the file hash, check its signature and reputation, and search for the same hash on all endpoints.",
+        "Check whether any GPO was modified (event 5136, changes to ScheduledTasks.xml, Scripts or Registry.pol) so that it runs the binary.",
+        "Search endpoints for processes with that Image or with a \\\\<domain>\\SYSVOL path in their CommandLine.",
+        "Review earlier alerts for the source user and host: privileged credential use, lateral movement, remote admin tools."
+      ],
+      "false_positives": [
+        "Administrators who put installers or tools in the GPO folder to distribute them. This is bad practice but common.",
+        "Third-party GPO extensions or management agents that copy helper binaries into SYSVOL.",
+        "Duplicate DFSR events on each DC after a single legitimate copy."
+      ],
+      "response_steps": [
+        "Ask the Active Directory team whether the copy was an authorized change. Record the ticket or the person responsible.",
+        "If it was not authorized, save a copy of the file and its hash, then quarantine it. Revert any unauthorized GPO changes.",
+        "Isolate the source host and disable the account used or reset its credentials. Treat Domain Admin credentials as possibly compromised.",
+        "Hunt for execution of the binary across the domain and remove it. Then confirm that SYSVOL is clean and replication is healthy."
+      ],
+      "severity_rationale": "Medium fits because legitimate binaries almost never belong in this folder and the potential impact is domain-wide, though some benign admin practices do trigger it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An executable named like a Windows binary is written over SMB into the Default Domain Policy folder on a DC",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "Image": "System",
+          "TargetFilename": "C:\\Windows\\SYSVOL\\domain\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\Machine\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 4
+        }
+      },
+      {
+        "description": "A DLL is copied into the Default Domain Policy USER folder by cmd.exe",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-02.andes.example.com",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "TargetFilename": "C:\\Windows\\SYSVOL\\sysvol\\andes.example.com\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\USER\\update.DLL",
+          "User": "ANDES\\adm-jperez",
+          "ProcessId": 5124
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A normal GPO edit writes GptTmpl.inf into the Default Domain Policy folder (not an EXE or DLL)",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\dfsrs.exe",
+          "TargetFilename": "C:\\Windows\\SYSVOL\\domain\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\MACHINE\\Microsoft\\Windows NT\\SecEdit\\GptTmpl.inf",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2210
+        }
+      },
+      {
+        "description": "An executable is written to a different, non-default GPO folder (different GUID)",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\explorer.exe",
+          "TargetFilename": "C:\\Windows\\SYSVOL\\domain\\Policies\\{6AC1786C-016F-11D2-945F-00C04FB984F9}\\Machine\\tool.exe",
+          "User": "ANDES\\adm-jperez",
+          "ProcessId": 3340
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

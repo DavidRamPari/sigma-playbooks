@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "cbb67ecc-fb70-4467-9350-c910bdf7c628",
+    "title": "Added Credentials to Existing Application",
+    "level": "high",
+    "status": "test",
+    "author": "Mark Morowczynski '@markmorow', Bailey Bercik '@baileybercik'",
+    "path": "cloud/azure/audit_logs/azure_app_credential_added.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/audit_logs/azure_app_credential_added.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1098.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se agregó una credencial nueva (secreto de cliente o certificado) a una aplicación o service principal existente en Microsoft Entra ID. Si el cambio no fue autorizado, alguien podría autenticarse como esa aplicación y usar sus permisos.",
+      "what_it_detects": "Eventos de Entra ID Audit Logs cuyo properties.message es exactamente 'Update application - Certificates and secrets management' o 'Update Service principal/Update Application'. Estos mensajes indican cambios en las credenciales de una aplicación o de su service principal.",
+      "why_it_matters": "Agregar credenciales a una aplicación existente es una técnica de persistencia y escalamiento de privilegios (ATT&CK T1098.001, Additional Cloud Credentials). El atacante hereda los permisos de la aplicación, como el acceso a Microsoft Graph, y ese acceso no depende de la cuenta que comprometió al principio.",
+      "triage_steps": [
+        "Identifique al iniciador (initiatedBy: usuario o aplicación), la aplicación afectada (targetResources: AppId, ObjectId) y la hora del evento.",
+        "Revise modifiedProperties para saber el tipo de credencial (secreto o certificado), el KeyId, la descripción y la vigencia. Las vigencias muy largas son sospechosas.",
+        "Confirme si el iniciador es owner de la aplicación o administrador habitual de ella, y busque un ticket de cambio asociado.",
+        "Revise los sign-ins del iniciador en +/- 15 minutos: IP de origen, ubicación, user agent, MFA, riesgo e inicios de sesión fallidos previos.",
+        "Busque en los Audit Logs otros cambios del mismo iniciador o de la misma aplicación: owners agregados, consentimientos, nuevos permisos o asignaciones de roles.",
+        "Revise los sign-ins del service principal posteriores al cambio, en particular los que usan la nueva credencial o vienen de IP desconocidas.",
+        "Evalúe los permisos de la aplicación (app roles de Graph, roles de directorio) para medir el impacto.",
+        "Revise si hubo alertas anteriores para el mismo usuario, la misma aplicación o la misma IP."
+      ],
+      "false_positives": [
+        "Rotación planificada de secretos o certificados dentro del horario y el flujo de trabajo normales.",
+        "Pipelines de CI/CD o herramientas de automatización que renuevan credenciales de aplicaciones de forma periódica.",
+        "Desarrolladores que son owners y configuran sus propias aplicaciones en entornos de prueba."
+      ],
+      "response_steps": [
+        "Valide el cambio con el owner de la aplicación y con el iniciador por un canal distinto al correo.",
+        "Si no está autorizado, elimine solo la credencial agregada (verifique el KeyId) y conserve los logs como evidencia.",
+        "Revoque las sesiones del iniciador comprometido, restablezca su contraseña y revise sus métodos de MFA.",
+        "Revise lo que hizo el service principal con la credencial, rote las demás credenciales de la aplicación y quite los owners o permisos que no correspondan.",
+        "Limite quién puede administrar credenciales de aplicaciones y aplique políticas de vigencia máxima de credenciales."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque una credencial maliciosa en una aplicación da acceso persistente con los privilegios de esa aplicación, a menudo amplios, y puede pasar inadvertida."
+    },
+    "en": {
+      "summary": "A new credential (client secret or certificate) was added to an existing Microsoft Entra ID application or service principal. If the change was not authorized, someone could authenticate as that application and use its permissions.",
+      "what_it_detects": "Entra ID audit log events whose properties.message is exactly 'Update application - Certificates and secrets management' or 'Update Service principal/Update Application'. These messages indicate a change to the credentials of an application or its service principal.",
+      "why_it_matters": "Adding credentials to an existing application is a persistence and privilege-escalation technique (ATT&CK T1098.001, Additional Cloud Credentials). The attacker inherits the app's permissions, such as Microsoft Graph access, and keeps that access even if the account first compromised is cleaned up.",
+      "triage_steps": [
+        "Identify the initiator (initiatedBy: a user or an app), the target application (targetResources: AppId, ObjectId) and the event time.",
+        "Check modifiedProperties for the credential type (secret or certificate), KeyId, description and validity. Very long validity periods are suspicious.",
+        "Confirm whether the initiator owns or normally manages the app, and look for a matching change ticket.",
+        "Review the initiator's sign-ins within +/- 15 minutes: source IP, location, user agent, MFA, risk level and earlier failed sign-ins.",
+        "Search the audit logs for other changes by the same initiator or to the same app: owners added, consent grants, new permissions or role assignments.",
+        "Review the service principal's sign-ins after the change, especially any that use the new credential or come from unfamiliar IPs.",
+        "Assess the app's permissions (Graph app roles, directory roles) to gauge the impact.",
+        "Check for earlier alerts on the same user, app or source IP."
+      ],
+      "false_positives": [
+        "Planned secret or certificate rotation during normal working hours and workflows.",
+        "CI/CD pipelines or automation tools that renew app credentials on a schedule.",
+        "Developers who own their apps and configure them in test tenants or environments."
+      ],
+      "response_steps": [
+        "Verify the change with the app owner and the initiator over a channel other than email.",
+        "If it was not authorized, remove only the added credential (check the KeyId) and keep the logs as evidence.",
+        "Revoke the compromised initiator's sessions, reset their password and review their MFA methods.",
+        "Review what the service principal did with the credential, rotate the app's other credentials and remove owners or permissions that don't belong.",
+        "Limit who can manage app credentials and enforce maximum credential lifetime policies."
+      ],
+      "severity_rationale": "High fits because a rogue app credential gives persistent access with the app's privileges, which are often broad, and it can go unnoticed."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user adds a client secret to an existing app from an unfamiliar IP.",
+        "event": {
+          "category": "ApplicationManagement",
+          "operationName": "Update application - Certificates and secrets management",
+          "properties.message": "Update application - Certificates and secrets management",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "jperez@example.com",
+          "properties.initiatedBy.user.ipAddress": "203.0.113.45",
+          "properties.targetResources.displayName": "Payroll-Sync-App",
+          "properties.targetResources.type": "Application",
+          "time": "2024-10-25T02:14:07Z"
+        }
+      },
+      {
+        "description": "An update to a service principal or application that changes its credentials.",
+        "event": {
+          "category": "ApplicationManagement",
+          "operationName": "Update Service principal/Update Application",
+          "properties.message": "Update Service principal/Update Application",
+          "properties.result": "success",
+          "properties.initiatedBy.app.displayName": "Deploy-Automation",
+          "properties.targetResources.displayName": "Reporting-API",
+          "properties.targetResources.type": "ServicePrincipal",
+          "time": "2024-10-25T14:03:12Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A general application update, such as a redirect URI change, whose message does not exactly match either rule value.",
+        "event": {
+          "category": "ApplicationManagement",
+          "operationName": "Update application",
+          "properties.message": "Update application",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "mgomez@example.com",
+          "properties.initiatedBy.user.ipAddress": "198.51.100.20",
+          "properties.targetResources.displayName": "Intranet-Portal",
+          "time": "2024-10-25T15:22:40Z"
+        }
+      },
+      {
+        "description": "An owner is added to an application. This is a related audit event, but no credential changes.",
+        "event": {
+          "category": "ApplicationManagement",
+          "operationName": "Add owner to application",
+          "properties.message": "Add owner to application",
+          "properties.result": "success",
+          "properties.initiatedBy.user.userPrincipalName": "admin.it@example.com",
+          "properties.targetResources.displayName": "Payroll-Sync-App",
+          "time": "2024-10-25T16:05:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

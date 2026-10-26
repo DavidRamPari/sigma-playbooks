@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "4aafb0fa-bff5-4b9d-b99e-8093e659c65f",
+    "title": "Writing Local Admin Share",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/file/file_event/file_event_win_writing_local_admin_share.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_writing_local_admin_share.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un archivo en el recurso administrativo ADMIN$ a través de la dirección de loopback (\\\\127.0.0.x\\ADMIN$\\). Este patrón es típico de frameworks de post-explotación que redirigen la salida de comandos a ADMIN$ para leerla por SMB.",
+      "what_it_detects": "Eventos de creación de archivo (file_event) cuyo TargetFilename contiene tanto '\\\\127.0.0' como '\\ADMIN$\\', es decir, escrituras en C:\\Windows mediante la ruta UNC local del recurso administrativo.",
+      "why_it_matters": "Herramientas como wmiexec o smbexec de Impacket ejecutan comandos remotos y guardan la salida en \\\\127.0.0.1\\ADMIN$\\ para recuperarla por SMB. Indica movimiento lateral con recursos administrativos (T1021.002); la regla además está etiquetada con T1546.002.",
+      "triage_steps": [
+        "Revise TargetFilename: nombres como __<timestamp>, output.txt o archivos temporales sin extensión sugieren salida de comandos de Impacket o de un ejercicio Atomic Red Team.",
+        "Identifique Image y su proceso padre; cmd.exe lanzado por WmiPrvSE.exe o services.exe es muy sospechoso. Revise la CommandLine completa con redirección '>' hacia ADMIN$.",
+        "Verifique el usuario de la sesión: cuentas administrativas, de servicio o locales usadas de forma inusual en ese host.",
+        "Busque logons de red (4624 tipo 3) y accesos a recursos compartidos (5140/5145 a ADMIN$) en el mismo host dentro de +/- 15 minutos e identifique la IP de origen.",
+        "Pivote a la IP o host de origen: busque alertas previas, ejecuciones de WMI, creación de servicios (7045) o uso de las mismas credenciales en otros equipos.",
+        "Revise si el archivo sigue en C:\\Windows y su contenido (por ejemplo salida de whoami, ipconfig o net), sin ejecutarlo.",
+        "Confirme con el equipo de TI o el red team si hay pruebas o tareas de administración programadas."
+      ],
+      "false_positives": [
+        "Ejercicios de Atomic Red Team, pentests o red team autorizados que reproducen la prueba T1021.002.",
+        "Scripts de administración o herramientas de despliegue heredadas que escriben en ADMIN$ por la ruta loopback (poco común; documente y excluya por Image y usuario)."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el dueño del sistema y descarte pruebas autorizadas antes de actuar.",
+        "Si no está autorizada, aísle el host desde el EDR y preserve los archivos escritos en ADMIN$ y los logs relevantes.",
+        "Restablezca las credenciales usadas y revise su uso en otros hosts; bloquee la IP de origen interna si está comprometida.",
+        "Investigue y contenga el host de origen del movimiento lateral; elimine servicios, tareas o binarios dejados por el atacante tras documentarlos.",
+        "Restrinja el acceso a ADMIN$ y el uso remoto de WMI/SMB a cuentas y equipos de administración autorizados."
+      ],
+      "severity_rationale": "Medium es adecuado: el patrón es raro en uso legítimo y señala movimiento lateral, pero requiere correlación con logons y procesos para confirmar compromiso."
+    },
+    "en": {
+      "summary": "A process wrote a file to the ADMIN$ administrative share through the loopback address (\\\\127.0.0.x\\ADMIN$\\). Post-exploitation frameworks use this pattern to redirect command output to ADMIN$ and read it back over SMB.",
+      "what_it_detects": "File creation events (file_event) whose TargetFilename contains both '\\\\127.0.0' and '\\ADMIN$\\', meaning writes into C:\\Windows via the local UNC path of the admin share.",
+      "why_it_matters": "Tools such as Impacket wmiexec or smbexec run remote commands and save output to \\\\127.0.0.1\\ADMIN$\\ for retrieval over SMB. This points to lateral movement via admin shares (T1021.002); the rule is also tagged T1546.002.",
+      "triage_steps": [
+        "Inspect TargetFilename: names like __<timestamp>, output.txt or extensionless temp files suggest Impacket command output or an Atomic Red Team test.",
+        "Identify Image and its parent; cmd.exe spawned by WmiPrvSE.exe or services.exe is highly suspicious. Review the full CommandLine for '>' redirection to ADMIN$.",
+        "Check the user: admin, service or local accounts used unusually on this host.",
+        "Look for network logons (4624 type 3) and share access (5140/5145 to ADMIN$) on the same host within +/- 15 minutes; identify the source IP.",
+        "Pivot on the source IP or host: prior alerts, WMI execution, service creation (7045) or the same credentials used elsewhere.",
+        "Check whether the file remains in C:\\Windows and review its content (e.g., whoami, ipconfig, net output) without executing anything.",
+        "Confirm with IT or the red team whether testing or scheduled admin tasks were planned."
+      ],
+      "false_positives": [
+        "Authorized Atomic Red Team, penetration test or red team exercises reproducing the T1021.002 test.",
+        "Legacy admin scripts or deployment tools writing to ADMIN$ via the loopback path (uncommon; document and exclude by Image and user)."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and rule out authorized testing before acting.",
+        "If unauthorized, isolate the host via EDR and preserve files written to ADMIN$ and relevant logs.",
+        "Reset the credentials involved and review their use on other hosts; block the internal source if compromised.",
+        "Investigate and contain the lateral movement source host; remove attacker services, tasks or binaries after documenting them.",
+        "Restrict ADMIN$ access and remote WMI/SMB to authorized admin accounts and jump hosts."
+      ],
+      "severity_rationale": "Medium fits: the pattern is rare in legitimate use and signals lateral movement, but confirmation needs correlation with logons and process activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "cmd.exe spawned by WmiPrvSE.exe writes command output to the loopback ADMIN$ share (wmiexec-style).",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ProcessId": 4312,
+          "TargetFilename": "\\\\127.0.0.1\\ADMIN$\\__1700000000.4521"
+        }
+      },
+      {
+        "description": "Atomic Red Team T1021.002 test redirecting hostname output to \\\\127.0.0.1\\ADMIN$\\output.txt.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\admin.lab",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "\\\\127.0.0.1\\ADMIN$\\output.txt"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Write to the loopback C$ share, not ADMIN$.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ProcessId": 5004,
+          "TargetFilename": "\\\\127.0.0.1\\C$\\Temp\\report.txt"
+        }
+      },
+      {
+        "description": "Write to ADMIN$ on a remote file server, not via the loopback address.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\svc_deploy",
+          "Image": "C:\\Program Files\\Deploy\\agent.exe",
+          "ProcessId": 2288,
+          "TargetFilename": "\\\\198.51.100.20\\ADMIN$\\Temp\\setup.log"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "4e87b8e2-2ee9-4b2a-a715-4727d297ece0",
+    "title": "Potential SAM Database Dump",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_sam_dump.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_sam_dump.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un archivo cuyo nombre o ruta coincide con exportaciones conocidas de la base SAM local, por ejemplo con reg.exe save, HiveNightmare (CVE-2021-36934) o ShadowSteal. Puede indicar un robo de hashes de credenciales locales.",
+      "what_it_detects": "Eventos file_event donde TargetFilename termina en rutas típicas de un volcado de SAM (\\Users\\Public\\sam, \\Temp\\sam, \\ProgramData\\sam, sam.hive, sam.sav, _ShadowSteal.zip) o contiene patrones como \\hive_sam_, \\sam.save, \\sam.export o \\sam.backup.",
+      "why_it_matters": "La SAM guarda los hashes NTLM de las cuentas locales. Con la SAM y la hive SYSTEM, un atacante puede extraer hashes, crackearlos o usarlos en pass-the-hash para moverse lateralmente (ATT&CK T1003.002, Security Account Manager).",
+      "triage_steps": [
+        "Revise TargetFilename, Image y User: ¿qué proceso escribió el archivo (reg.exe, powershell.exe, un binario desconocido) y con qué cuenta?",
+        "Obtenga el CommandLine y el ParentImage del proceso creador desde la telemetría de procesos; busque 'reg save HKLM\\SAM' o el uso de rutas de shadow copies (HarddiskVolumeShadowCopy).",
+        "Busque en el mismo host, +/- 15 minutos, archivos SYSTEM o SECURITY exportados en el mismo directorio, que indican un volcado completo.",
+        "Verifique si el archivo sigue en disco, calcule su hash y revise si fue comprimido o copiado a recursos compartidos, USB o la nube.",
+        "Revise conexiones de red salientes del host después de la creación del archivo para detectar exfiltración.",
+        "Consulte alertas previas del mismo host y usuario: ejecución de herramientas de hacking, escalamiento de privilegios o accesos remotos inusuales.",
+        "Confirme con el responsable del equipo si había una tarea administrativa o forense autorizada."
+      ],
+      "false_positives": [
+        "Casos raros de actividad administrativa, como respaldos manuales de hives del registro con reg.exe save.",
+        "Herramientas forenses o de respuesta a incidentes que recolectan hives del registro con nombres similares.",
+        "Pruebas de penetración o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Si no hay justificación, aísle el endpoint de la red y preserve el archivo volcado y la evidencia volátil antes de borrar nada.",
+        "Restablezca las contraseñas de las cuentas locales del host, en especial la del administrador local, y revise si se reutilizan en otros equipos (LAPS).",
+        "Busque inicios de sesión con esas cuentas desde otros hosts para detectar pass-the-hash y amplíe el alcance según lo encontrado.",
+        "Elimine las herramientas y los archivos volcados una vez documentados, y corrija las ACL de las hives o elimine shadow copies vulnerables si aplica CVE-2021-36934."
+      ],
+      "severity_rationale": "Nivel alto porque estos nombres de archivo rara vez aparecen en uso legítimo y suelen indicar un robo de credenciales ya en curso."
+    },
+    "en": {
+      "summary": "A file was created whose name or path matches known exports of the local SAM database, such as reg.exe save, HiveNightmare (CVE-2021-36934) or ShadowSteal output. This may mean local credential hashes are being stolen.",
+      "what_it_detects": "file_event records where TargetFilename ends with typical SAM dump paths (\\Users\\Public\\sam, \\Temp\\sam, \\ProgramData\\sam, sam.hive, sam.sav, _ShadowSteal.zip) or contains patterns like \\hive_sam_, \\sam.save, \\sam.export or \\sam.backup.",
+      "why_it_matters": "The SAM holds NTLM hashes of local accounts. With the SAM and SYSTEM hives an attacker can extract hashes, crack them or use pass-the-hash for lateral movement (ATT&CK T1003.002, Security Account Manager).",
+      "triage_steps": [
+        "Review TargetFilename, Image and User: which process wrote the file (reg.exe, powershell.exe, an unknown binary) and under which account?",
+        "Get the creating process CommandLine and ParentImage from process telemetry; look for 'reg save HKLM\\SAM' or shadow copy paths (HarddiskVolumeShadowCopy).",
+        "Search the same host +/- 15 minutes for SYSTEM or SECURITY hive exports in the same folder, which indicate a full dump.",
+        "Check whether the file still exists, hash it, and look for compression or copying to shares, USB or cloud storage.",
+        "Review outbound network connections from the host after file creation for signs of exfiltration.",
+        "Check earlier alerts for the same host and user: hacking tools, privilege escalation or unusual remote logons.",
+        "Confirm with the asset owner whether an authorized admin or forensic task was running."
+      ],
+      "false_positives": [
+        "Rare administrative activity, such as manual registry hive backups with reg.exe save.",
+        "Forensic or incident response collectors that save registry hives with similar names.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "If unjustified, isolate the endpoint and preserve the dump file and volatile evidence before deleting anything.",
+        "Reset local account passwords on the host, especially local administrator, and check for reuse across machines (LAPS).",
+        "Hunt for logons with those accounts from other hosts to detect pass-the-hash and widen scope accordingly.",
+        "After documenting, remove tools and dump files; fix hive ACLs and remove vulnerable shadow copies if CVE-2021-36934 applies."
+      ],
+      "severity_rationale": "High because these file names rarely appear in legitimate use and usually indicate credential theft already in progress."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe saves the SAM hive to C:\\Users\\Public\\sam (endswith '\\Users\\Public\\sam')",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 5124,
+          "TargetFilename": "C:\\Users\\Public\\sam",
+          "CreationUtcTime": "2024-03-14 10:22:41.118"
+        }
+      },
+      {
+        "description": "HiveNightmare-style tool writes a hive_sam_ file to the user's Downloads folder (contains '\\hive_sam_')",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\hn.exe",
+          "ProcessId": 7720,
+          "TargetFilename": "C:\\Users\\jperez\\Downloads\\hive_sam_2024-03-14",
+          "CreationUtcTime": "2024-03-14 10:25:03.507"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows writes the live SAM hive in System32\\config; no listed suffix or substring matches",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1040,
+          "TargetFilename": "C:\\Windows\\System32\\config\\SAM",
+          "CreationUtcTime": "2024-03-14 09:00:12.004"
+        }
+      },
+      {
+        "description": "Application cache file inside a folder named 'sam' under AppData\\Local; path does not end with '\\AppData\\Local\\sam'",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\SampleApp\\sampleapp.exe",
+          "ProcessId": 6312,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\sam\\cache.dat",
+          "CreationUtcTime": "2024-03-14 11:41:55.230"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

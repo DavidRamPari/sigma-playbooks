@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "6e78b74f-c762-4800-82ad-f66787f10c8a",
+    "title": "Potential Rcdll.DLL Sideloading",
+    "level": "high",
+    "status": "test",
+    "author": "X__Junior (Nextron Systems)",
+    "path": "windows/image_load/image_load_side_load_rcdll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_side_load_rcdll.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cargó un archivo llamado rcdll.dll desde una ruta fuera de las carpetas habituales de Visual Studio o Windows Kits en Program Files (x86). Esto puede indicar DLL sideloading con un binario rc.exe legítimo.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon ID 7) donde ImageLoaded termina en \\rcdll.dll y no empieza por C:\\Program Files (x86)\\Microsoft Visual Studio\\ ni C:\\Program Files (x86)\\Windows Kits\\.",
+      "why_it_matters": "rcdll.dll es la DLL del Resource Compiler (rc.exe) del Windows SDK. Un atacante puede copiar un rc.exe firmado junto a una rcdll.dll maliciosa para ejecutar código bajo un proceso confiable (T1574.001, DLL search order hijacking), lo que le sirve para persistencia, evasión y escalamiento de privilegios.",
+      "triage_steps": [
+        "Revise Image e ImageLoaded: ¿el proceso que carga la DLL es rc.exe u otro binario renombrado, y está en una carpeta escribible por el usuario (Users, ProgramData, Temp, Public)?",
+        "Verifique la firma y el hash de ImageLoaded e Image (campos Signed, Signature, Hashes); compárelos con los archivos originales del Windows SDK y consulte la reputación del hash.",
+        "Determine si el host es una estación de desarrollo o un agente de compilación con Visual Studio instalado en C:\\Program Files o con SDK en rutas personalizadas.",
+        "Identifique el proceso padre y la línea de comandos de Image; rc.exe ejecutado sin argumentos de compilación o lanzado por servicios, tareas programadas o scripts es sospechoso.",
+        "Busque en el mismo host, +/- 15 minutos, la creación de los archivos (Sysmon ID 11), conexiones de red salientes del proceso y procesos hijos.",
+        "Revise mecanismos de persistencia que apunten a esa carpeta: servicios, claves Run, tareas programadas.",
+        "Busque el mismo hash o la misma ruta en otros endpoints y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Visual Studio 2022 (64 bits) instalado en C:\\Program Files\\Microsoft Visual Studio\\, que el filtro no excluye.",
+        "Agentes de compilación o pipelines CI que usan el Windows SDK desde paquetes NuGet, contenedores o rutas personalizadas.",
+        "Herramientas de desarrollo portables que incluyen rc.exe y rcdll.dll en su propio directorio."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el equipo de desarrollo si la ruta corresponde a un toolchain legítimo; documente y ajuste el filtro si es así.",
+        "Si la DLL no está firmada por Microsoft o la ruta es anómala, aísle el endpoint y conserve copias de rc.exe, rcdll.dll y la memoria del proceso.",
+        "Elimine los archivos maliciosos y los mecanismos de persistencia asociados después de recolectar evidencia.",
+        "Bloquee el hash e indicadores de red identificados, busque en toda la organización y restablezca credenciales expuestas en el host."
+      ],
+      "severity_rationale": "Nivel high porque fuera de las rutas del SDK casi no hay motivos legítimos para cargar rcdll.dll, y el sideloading da ejecución de código bajo un binario firmado."
+    },
+    "en": {
+      "summary": "A process loaded a file named rcdll.dll from outside the usual Visual Studio or Windows Kits folders under Program Files (x86). This may be DLL sideloading using a legitimate rc.exe binary.",
+      "what_it_detects": "Image load events (Sysmon ID 7) where ImageLoaded ends with \\rcdll.dll and does not start with C:\\Program Files (x86)\\Microsoft Visual Studio\\ or C:\\Program Files (x86)\\Windows Kits\\.",
+      "why_it_matters": "rcdll.dll is the Resource Compiler (rc.exe) library from the Windows SDK. Attackers can drop a signed rc.exe next to a malicious rcdll.dll to run code inside a trusted process (T1574.001, DLL search order hijacking), gaining persistence, stealth and possibly privilege escalation.",
+      "triage_steps": [
+        "Review Image and ImageLoaded: is the loader rc.exe or a renamed binary, and is it in a user-writable folder (Users, ProgramData, Temp, Public)?",
+        "Check signature and hash of ImageLoaded and Image (Signed, Signature, Hashes); compare with genuine Windows SDK files and look up hash reputation.",
+        "Determine whether the host is a developer workstation or build agent with Visual Studio under C:\\Program Files or an SDK in a custom path.",
+        "Identify the parent process and command line of Image; rc.exe run without build arguments or launched by services, scheduled tasks or scripts is suspicious.",
+        "On the same host within +/- 15 minutes, look for file creation of these files (Sysmon ID 11), outbound connections and child processes.",
+        "Check persistence pointing to that folder: services, Run keys, scheduled tasks.",
+        "Search for the same hash or path on other endpoints and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Visual Studio 2022 (64-bit) installed under C:\\Program Files\\Microsoft Visual Studio\\, which the filter does not exclude.",
+        "Build agents or CI pipelines using the Windows SDK from NuGet packages, containers or custom paths.",
+        "Portable developer toolchains that ship rc.exe and rcdll.dll in their own directory."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or development team whether the path is a legitimate toolchain; document it and tune the filter if so.",
+        "If the DLL is not Microsoft-signed or the path is anomalous, isolate the endpoint and preserve rc.exe, rcdll.dll and process memory.",
+        "Remove malicious files and related persistence after collecting evidence.",
+        "Block the hash and network indicators, hunt across the fleet and reset credentials exposed on the host."
+      ],
+      "severity_rationale": "High because there is little legitimate reason to load rcdll.dll outside SDK paths, and sideloading yields code execution under a signed binary."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rc.exe copied to a public user folder loads a co-located rcdll.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\Public\\Music\\rc.exe",
+          "ImageLoaded": "C:\\Users\\Public\\Music\\rcdll.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      },
+      {
+        "description": "Renamed loader in ProgramData loads rcdll.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\ProgramData\\WinUpdate\\update.exe",
+          "ImageLoaded": "C:\\ProgramData\\WinUpdate\\rcdll.dll",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000002"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate rc.exe from Windows Kits loads rcdll.dll from the SDK path (excluded by filter)",
+        "event": {
+          "EventID": 7,
+          "Computer": "BUILD-07.andes.example.com",
+          "User": "ANDES\\svc_build",
+          "Image": "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.22621.0\\x64\\rc.exe",
+          "ImageLoaded": "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.22621.0\\x64\\rcdll.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Corporation",
+          "SignatureStatus": "Valid"
+        }
+      },
+      {
+        "description": "Different DLL whose name only partly resembles rcdll.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Tools\\editor.exe",
+          "ImageLoaded": "C:\\Users\\jperez\\AppData\\Local\\Tools\\rcdll64.dll",
+          "Signed": "true",
+          "SignatureStatus": "Valid"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

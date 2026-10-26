@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "fd0f5778-d3cb-4c9a-9695-66759d04702a",
+    "title": "Invoke-Obfuscation Obfuscated IEX Invocation - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Daniel Bohannon (@Mandiant/@FireEye), oscd.community",
+    "path": "windows/builtin/security/win_security_invoke_obfuscation_obfuscated_iex_services_security.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_invoke_obfuscation_obfuscated_iex_services_security.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (EID 4697) cuyo ServiceFileName contiene una invocación de IEX ofuscada con los patrones que genera Invoke-Obfuscation. Esto suele indicar ejecución maliciosa de PowerShell mediante un servicio.",
+      "what_it_detects": "Eventos 4697 del log Security donde ServiceFileName coincide con expresiones regulares que construyen 'IEX' a partir de caracteres de $PSHome, $ShellId, $env:Public, $env:ComSpec, '*mdr*' o $VerbosePreference, como lo hace Out-ObfuscatedStringCommand de Invoke-Obfuscation.",
+      "why_it_matters": "Invoke-Obfuscation oculta comandos de PowerShell para evadir la detección (ATT&CK T1027, archivos o información ofuscados). Instalar un servicio requiere privilegios administrativos y se usa para ejecutar como SYSTEM, moverse lateralmente o persistir.",
+      "triage_steps": [
+        "Revise ServiceFileName completo, ServiceName, ServiceStartType y ServiceAccount; identifique el fragmento que reconstruye IEX y el payload que ejecuta.",
+        "Desofusque el comando en un entorno aislado, sin ejecutarlo, para obtener URLs, IP o scripts descargados.",
+        "Identifique SubjectUserName y SubjectDomainName: ¿es una cuenta administrativa esperada en ese host?",
+        "Busque inicios de sesión 4624 (tipo 3) hacia el host en +/- 15 minutos para detectar instalación remota tipo PsExec y su IP de origen.",
+        "Correlacione con el EID 7045 del log System y con procesos services.exe → cmd.exe/powershell.exe en EDR o Sysmon.",
+        "Busque el mismo ServiceFileName o ServiceName en otros hosts y alertas previas de la misma cuenta."
+      ],
+      "false_positives": [
+        "La regla indica falsos positivos desconocidos; la ofuscación de IEX en un servicio casi nunca es legítima.",
+        "Ejercicios autorizados de red team o pruebas de detección que usan Invoke-Obfuscation; confirme con el equipo responsable."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el dueño del host y el equipo de red team antes de actuar.",
+        "Si es maliciosa, aísle el endpoint y deshabilite o restablezca la cuenta que instaló el servicio.",
+        "Detenga y elimine el servicio tras preservar evidencia (registro de servicios, logs, memoria).",
+        "Bloquee los indicadores desofuscados (dominios, IP, hashes) y busque los mismos en toda la flota.",
+        "Revise movimiento lateral desde la IP de origen y restablezca credenciales expuestas."
+      ],
+      "severity_rationale": "Nivel alto porque combina ofuscación deliberada de PowerShell con instalación de servicios privilegiados, una combinación con muy pocos usos legítimos."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EID 4697) whose ServiceFileName contains an obfuscated IEX invocation matching Invoke-Obfuscation patterns. This usually means malicious PowerShell executed through a service.",
+      "what_it_detects": "Security log 4697 events where ServiceFileName matches regexes that rebuild 'IEX' from characters of $PSHome, $ShellId, $env:Public, $env:ComSpec, '*mdr*' or $VerbosePreference, as Invoke-Obfuscation's Out-ObfuscatedStringCommand does.",
+      "why_it_matters": "Invoke-Obfuscation hides PowerShell commands to evade detection (ATT&CK T1027, Obfuscated Files or Information). Service installation needs admin rights and is used to run as SYSTEM, move laterally or persist.",
+      "triage_steps": [
+        "Review full ServiceFileName, ServiceName, ServiceStartType and ServiceAccount; locate the IEX-building fragment and the payload it runs.",
+        "Deobfuscate the command in an isolated environment, without executing it, to extract URLs, IPs or downloaded scripts.",
+        "Identify SubjectUserName and SubjectDomainName: is this an expected admin account on this host?",
+        "Search 4624 logons (type 3) to the host within +/- 15 minutes to spot PsExec-style remote installs and their source IP.",
+        "Correlate with System EID 7045 and services.exe → cmd.exe/powershell.exe process chains in EDR or Sysmon.",
+        "Hunt for the same ServiceFileName or ServiceName on other hosts and earlier alerts for the same account."
+      ],
+      "false_positives": [
+        "The rule lists unknown false positives; obfuscated IEX in a service is almost never legitimate.",
+        "Authorized red team exercises or detection tests using Invoke-Obfuscation; confirm with the responsible team."
+      ],
+      "response_steps": [
+        "Confirm with the host owner and red team before acting.",
+        "If malicious, isolate the endpoint and disable or reset the account that installed the service.",
+        "Stop and remove the service after preserving evidence (service registry key, logs, memory).",
+        "Block deobfuscated indicators (domains, IPs, hashes) and hunt for them fleet-wide.",
+        "Review lateral movement from the source IP and reset exposed credentials."
+      ],
+      "severity_rationale": "High because it combines deliberate PowerShell obfuscation with privileged service installation, a pairing with very few legitimate uses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed remotely with IEX rebuilt from $PSHome characters",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "WinUpdSvc7",
+          "ServiceFileName": "%COMSPEC% /c powershell.exe -nop -w hidden -c \"&( $PSHome[4]+$PSHome[30]+'x') ('Write-Host test')\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service whose command rebuilds IEX by indexing $env:ComSpec",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FS01.andes.example.com",
+          "SubjectUserName": "svc_deploy",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "xKqTr",
+          "ServiceFileName": "cmd.exe /c powershell -c \"& ( $env:ComSpec[4,15,25]-Join'') ('Get-Date')\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service running a PowerShell script that references $PSHome without indexing",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-APP02.andes.example.com",
+          "SubjectUserName": "admin_ops",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "BackupAgent",
+          "ServiceFileName": "\"$PSHome\\powershell.exe\" -NoProfile -File C:\\Scripts\\backup.ps1 -Verbose",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Obfuscated command logged as a process creation event, not a service install (wrong EventID)",
+        "event": {
+          "EventID": 4688,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "NewProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "CommandLine": "powershell -c \"&( $PSHome[4]+$PSHome[30]+'x') ('Write-Host test')\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

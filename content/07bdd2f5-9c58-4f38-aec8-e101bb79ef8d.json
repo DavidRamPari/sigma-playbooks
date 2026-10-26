@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "07bdd2f5-9c58-4f38-aec8-e101bb79ef8d",
+    "title": "Terminal Server Client Connection History Cleared - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/registry/registry_delete/registry_delete_mstsc_history_cleared.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_delete/registry_delete_mstsc_history_cleared.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070",
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminó del registro el historial de conexiones de Escritorio remoto (MSTSC) de un usuario. Puede ser limpieza legítima, pero también es una técnica común para ocultar movimiento lateral por RDP.",
+      "what_it_detects": "Eventos registry_delete (por ejemplo, Sysmon EventID 12) donde EventType es DeleteValue y TargetObject contiene '\\Microsoft\\Terminal Server Client\\Default\\MRU', o EventType es DeleteKey y TargetObject contiene '\\Microsoft\\Terminal Server Client\\Servers\\'.",
+      "why_it_matters": "Las claves MRU y Servers guardan los equipos a los que el usuario se conectó por RDP y sus nombres de usuario. Borrarlas destruye evidencia de movimiento lateral (T1070, eliminación de indicadores) mediante modificación del registro (T1112). Uno de los informes referenciados documenta operadores de ransomware haciéndolo.",
+      "triage_steps": [
+        "Identifique en el evento Image, User, Computer y el SID dentro de TargetObject; confirme a qué perfil pertenece el historial borrado.",
+        "Revise el proceso que hizo el borrado: reg.exe, powershell.exe, cmd.exe o scripts .bat son más sospechosos que mstsc.exe o una herramienta de limpieza conocida.",
+        "Obtenga el CommandLine y el ParentImage del proceso (creación de procesos) para ver si forma parte de un script de limpieza más amplio.",
+        "Busque en el mismo host, +/- 15 minutos, borrado de Default.rdp, limpieza de logs de eventos, eliminación de shadow copies o desactivación de defensas.",
+        "Revise inicios de sesión RDP salientes (Event 4648, logs de TerminalServices-RDPClient) desde el host y entrantes en los servidores que figuraban en el historial.",
+        "Consulte alertas previas para el mismo usuario y host, y verifique con el usuario o su responsable si la limpieza fue intencional."
+      ],
+      "false_positives": [
+        "Administradores o usuarios que borran el historial siguiendo la guía oficial de Microsoft.",
+        "Herramientas de privacidad o limpieza (por ejemplo, CCleaner) que eliminan el historial de RDP.",
+        "Scripts de mantenimiento o restablecimiento de perfiles en equipos compartidos o de salto."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad con el usuario y el equipo de TI; si es una herramienta aprobada, documente la excepción por Image y host.",
+        "Si no hay justificación, aísle el endpoint y restablezca las credenciales de la cuenta involucrada.",
+        "Reconstruya el historial RDP desde otras fuentes (logs de seguridad, EDR, firewall) e investigue los servidores de destino.",
+        "Erradique los scripts o herramientas maliciosas encontradas y monitoree nuevas conexiones RDP de la cuenta."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque borrar el historial de RDP rara vez es rutinario y suele acompañar al movimiento lateral y a la limpieza de rastros."
+    },
+    "en": {
+      "summary": "A user's Remote Desktop (MSTSC) connection history was deleted from the registry. This can be legitimate cleanup, but it is also a common way to hide RDP lateral movement.",
+      "what_it_detects": "registry_delete events (for example Sysmon EventID 12) where EventType is DeleteValue and TargetObject contains '\\Microsoft\\Terminal Server Client\\Default\\MRU', or EventType is DeleteKey and TargetObject contains '\\Microsoft\\Terminal Server Client\\Servers\\'.",
+      "why_it_matters": "The MRU and Servers keys record the hosts a user connected to over RDP and the usernames used. Deleting them destroys evidence of lateral movement (T1070, indicator removal) through registry modification (T1112). One referenced report describes ransomware operators doing this.",
+      "triage_steps": [
+        "Note Image, User, Computer and the SID inside TargetObject; confirm whose profile's history was removed.",
+        "Assess the deleting process: reg.exe, powershell.exe, cmd.exe or .bat scripts are more suspicious than mstsc.exe or a known cleanup tool.",
+        "Pull the process CommandLine and ParentImage from process creation logs to see whether it belongs to a broader cleanup script.",
+        "Search the same host within +/- 15 minutes for Default.rdp deletion, event log clearing, shadow copy deletion or defense tampering.",
+        "Review outbound RDP activity (Event 4648, TerminalServices-RDPClient logs) from the host and inbound logons on servers that were in the history.",
+        "Check earlier alerts for the same user and host, and confirm with the user or their manager whether the cleanup was intended."
+      ],
+      "false_positives": [
+        "Administrators or users clearing history following Microsoft's official guidance.",
+        "Privacy or cleanup tools (for example CCleaner) that wipe RDP history.",
+        "Maintenance or profile reset scripts on shared or jump hosts."
+      ],
+      "response_steps": [
+        "Verify legitimacy with the user and IT; if an approved tool, document an exception scoped by Image and host.",
+        "If unjustified, isolate the endpoint and reset credentials for the involved account.",
+        "Rebuild RDP history from other sources (security logs, EDR, firewall) and investigate the destination servers.",
+        "Remove any malicious scripts or tools found and monitor the account for new RDP connections."
+      ],
+      "severity_rationale": "High fits because wiping RDP history is rarely routine and typically accompanies lateral movement and anti-forensic cleanup."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe deletes an MRU value from the RDP client history",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Terminal Server Client\\Default\\MRU0",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4412,
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 02:13:07.412"
+        }
+      },
+      {
+        "description": "PowerShell deletes a saved server key under Terminal Server Client\\Servers",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteKey",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Terminal Server Client\\Servers\\192.0.2.15",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 5280,
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 02:13:09.088"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Deletion of the UsernameHint value under a Servers subkey (DeleteValue, not MRU), which neither selection covers",
+        "event": {
+          "EventID": 12,
+          "EventType": "DeleteValue",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Terminal Server Client\\Servers\\192.0.2.15\\UsernameHint",
+          "Image": "C:\\Windows\\System32\\mstsc.exe",
+          "ProcessId": 6120,
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 09:41:22.510"
+        }
+      },
+      {
+        "description": "Key creation for a new MRU entry during a normal RDP connection, not a deletion",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Terminal Server Client\\Default\\MRU0",
+          "Image": "C:\\Windows\\System32\\mstsc.exe",
+          "ProcessId": 6120,
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 09:40:58.003"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

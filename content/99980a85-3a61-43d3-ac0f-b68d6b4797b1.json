@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "99980a85-3a61-43d3-ac0f-b68d6b4797b1",
+    "title": "Google Cloud VPN Tunnel Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_vpn_tunnel_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_vpn_tunnel_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un registro de auditoría de Google Cloud indica que se creó (compute.vpnTunnels.insert) o eliminó (compute.vpnTunnels.delete) un túnel de Cloud VPN. Confirme que el cambio fue autorizado y esperado.",
+      "what_it_detects": "Eventos de auditoría de GCP donde gcp.audit.method_name es exactamente compute.vpnTunnels.insert o compute.vpnTunnels.delete. Aunque el título dice 'modificado', la regla solo detecta creación y eliminación de túneles, no otras llamadas de actualización.",
+      "why_it_matters": "Eliminar un túnel puede cortar la conectividad híbrida o entre sitios y afectar servicios, que es la táctica Impact con la que está etiquetada la regla. Crear un túnel inesperado puede abrir un camino de red oculto hacia la VPC, por ejemplo hacia un peer controlado por un atacante.",
+      "triage_steps": [
+        "Revise gcp.audit.method_name y el nombre del recurso para saber qué túnel, proyecto y región se afectaron, y si fue creación o eliminación.",
+        "Identifique el principal (correo o cuenta de servicio), la IP de origen y el user agent. Verifique si normalmente administra redes en este proyecto.",
+        "Busque un ticket de cambio aprobado o una ejecución de Terraform/Deployment Manager que coincida con la hora del evento.",
+        "En creaciones, revise la solicitud: IP del peer, origen del secreto compartido, gateway VPN destino y rutas. Marque IPs de peer fuera de rangos conocidos.",
+        "En eliminaciones, revise el monitoreo por pérdida de conectividad, sesiones BGP caídas o errores de aplicación posteriores.",
+        "Pivote por el mismo principal e IP de origen en +/- 15 minutos: cambios en reglas de firewall, rutas, políticas IAM, routers o claves de cuentas de servicio.",
+        "Busque alertas previas del mismo principal, como inicios de sesión inusuales, credenciales nuevas o actividad desde ubicaciones desconocidas."
+      ],
+      "false_positives": [
+        "Mantenimiento de red planificado o rotación de túneles realizada por un administrador del sistema.",
+        "Pipelines de infraestructura como código (Terraform, Deployment Manager) que recrean túneles durante un apply.",
+        "Migraciones de VPN con socios o sitios on-premises que reemplazan túneles en ventanas de cambio conocidas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del principal o con el equipo de redes si el cambio era intencional y documente el resultado.",
+        "Si no fue autorizado, suspenda o restrinja las credenciales del principal y revoque claves de cuentas de servicio o sesiones recientes.",
+        "Ante una creación maliciosa confirmada, elimine el túnel y sus rutas, y revise el tráfico que pasó por él.",
+        "Ante una eliminación maliciosa, recree el túnel desde la configuración aprobada y verifique la conectividad y el estado BGP.",
+        "Limite los permisos compute.vpnTunnels a roles de red dedicados y agregue exclusiones solo para automatizaciones verificadas."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque estos cambios suelen ser administración legítima, pero uno no autorizado puede interrumpir la conectividad o exponer la VPC."
+    },
+    "en": {
+      "summary": "A Google Cloud audit log shows that a Cloud VPN tunnel was created (compute.vpnTunnels.insert) or deleted (compute.vpnTunnels.delete). Confirm the change was authorized and expected.",
+      "what_it_detects": "GCP audit events where gcp.audit.method_name is exactly compute.vpnTunnels.insert or compute.vpnTunnels.delete. The title says 'modified', but the rule only matches tunnel creation and deletion, not other update calls.",
+      "why_it_matters": "Deleting a tunnel can cut hybrid or site-to-site connectivity and disrupt services, which is the Impact tactic the rule is tagged with. Creating an unexpected tunnel can open a hidden network path into the VPC, for example toward an attacker-controlled peer.",
+      "triage_steps": [
+        "Read gcp.audit.method_name and the resource name to find out which tunnel, project and region were affected, and whether it was created or deleted.",
+        "Identify the principal (principal email or service account), source IP and user agent. Check whether they normally manage networking in this project.",
+        "Check for an approved change ticket or a Terraform/Deployment Manager pipeline run that matches the timestamp.",
+        "For inserts, review the request: peer IP, shared secret source, target VPN gateway and routes. Flag peer IPs outside known partner or on-premises ranges.",
+        "For deletes, check monitoring for lost connectivity, failed BGP sessions or application errors after the event.",
+        "Pivot on the same principal and source IP within +/- 15 minutes: firewall rule, route, IAM policy, router or service account key changes.",
+        "Look for earlier alerts on the same principal, such as unusual logins, new credentials or activity from unfamiliar locations."
+      ],
+      "false_positives": [
+        "Planned network maintenance or tunnel rotation by a system administrator.",
+        "Infrastructure-as-code pipelines (Terraform, Deployment Manager) recreating tunnels during applies.",
+        "Partner or on-premises VPN migrations that replace tunnels in known change windows."
+      ],
+      "response_steps": [
+        "Confirm with the principal's owner or the network team whether the change was intended. Document the result.",
+        "If unauthorized, suspend or restrict the principal's credentials and revoke recent service account keys or sessions.",
+        "For a malicious insert, delete the rogue tunnel and its routes once confirmed, and review traffic that crossed it.",
+        "For a malicious delete, recreate the tunnel from approved configuration and verify connectivity and BGP status.",
+        "Restrict compute.vpnTunnels permissions to dedicated network roles and add exemptions only for verified automation."
+      ],
+      "severity_rationale": "Medium fits because tunnel changes are often legitimate administration, but an unauthorized one can disrupt connectivity or expose the VPC."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unexpected deletion of a production VPN tunnel by a user account from an unfamiliar IP",
+        "event": {
+          "@timestamp": "2024-05-14T02:17:43Z",
+          "gcp.audit.method_name": "compute.vpnTunnels.delete",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.resource_name": "projects/andes-prod-net/regions/us-central1/vpnTunnels/tunnel-onprem-01",
+          "gcp.audit.authentication_info.principal_email": "jperez@example.com",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/470.0.0 command/gcloud.compute.vpn-tunnels.delete",
+          "gcp.audit.status.code": 0
+        }
+      },
+      {
+        "description": "Creation of a new VPN tunnel pointing to an unknown peer IP",
+        "event": {
+          "@timestamp": "2024-05-14T02:21:09Z",
+          "gcp.audit.method_name": "compute.vpnTunnels.insert",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.resource_name": "projects/andes-prod-net/regions/us-central1/vpnTunnels/tunnel-backup-x",
+          "gcp.audit.authentication_info.principal_email": "jperez@example.com",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/470.0.0 command/gcloud.compute.vpn-tunnels.create",
+          "gcp.audit.request.peerIp": "198.51.100.77"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only listing of VPN tunnels by the network team; method name does not match",
+        "event": {
+          "@timestamp": "2024-05-14T09:05:12Z",
+          "gcp.audit.method_name": "compute.vpnTunnels.list",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.resource_name": "projects/andes-prod-net/regions/us-central1/vpnTunnels",
+          "gcp.audit.authentication_info.principal_email": "netops-sa@andes-prod-net.iam.gserviceaccount.com",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "Terraform/1.7.5 terraform-provider-google/5.20.0"
+        }
+      },
+      {
+        "description": "Creation of a VPN gateway, not a tunnel; method name only partly similar",
+        "event": {
+          "@timestamp": "2024-05-14T09:12:30Z",
+          "gcp.audit.method_name": "compute.vpnGateways.insert",
+          "gcp.audit.service_name": "compute.googleapis.com",
+          "gcp.audit.resource_name": "projects/andes-prod-net/regions/us-central1/vpnGateways/ha-gw-01",
+          "gcp.audit.authentication_info.principal_email": "netops-sa@andes-prod-net.iam.gserviceaccount.com",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "Terraform/1.7.5 terraform-provider-google/5.20.0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

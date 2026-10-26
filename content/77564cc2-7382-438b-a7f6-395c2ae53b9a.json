@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "77564cc2-7382-438b-a7f6-395c2ae53b9a",
+    "title": "Remote Thread Created In KeePass.EXE",
+    "level": "high",
+    "status": "test",
+    "author": "Timon Hackenjos",
+    "path": "windows/create_remote_thread/create_remote_thread_win_keepass.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_remote_thread/create_remote_thread_win_keepass.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1555.005"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un hilo remoto dentro de KeePass.exe. Es una técnica típica de inyección de código para extraer contraseñas o material de clave de la base de datos abierta.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon Event ID 8, CreateRemoteThread) cuyo TargetImage termina en \\KeePass.exe, sin importar el proceso de origen (SourceImage).",
+      "why_it_matters": "Herramientas como KeeFarce y KeeThief inyectan código en KeePass para exportar la base de datos en texto claro o recuperar la clave maestra desde memoria. Corresponde a ATT&CK T1555.005 (credenciales en gestores de contraseñas): un solo volcado puede exponer todas las credenciales del usuario.",
+      "triage_steps": [
+        "Identifique SourceImage, SourceProcessId, SourceUser y Computer. Verifique la ruta, la firma y el hash del binario de origen; desconfíe de rutas en Temp, AppData, Downloads o ProgramData.",
+        "Revise StartAddress, StartModule y StartFunction: un StartModule vacío o una dirección fuera de módulos conocidos sugiere shellcode o carga de DLL inyectada.",
+        "Reconstruya el árbol del proceso de origen: ParentImage, CommandLine y su proceso padre. Busque PowerShell, rundll32 o binarios sin firma.",
+        "En el mismo host, +/- 15 minutos, busque carga de DLL no habituales en KeePass.exe (Event ID 7), acceso al proceso (Event ID 10) y creación de archivos CSV, XML o KDBX.",
+        "Busque archivos exportados recientes en el perfil del usuario, por ejemplo CSV en %AppData%, y conexiones de red salientes desde el proceso de origen.",
+        "Compruebe si existen alertas previas para el mismo host o SourceUser, como ejecución de herramientas ofensivas o movimiento lateral.",
+        "Confirme con el usuario o el equipo de endpoint si hay software de seguridad, accesibilidad o DLP que inyecte hilos legítimamente."
+      ],
+      "false_positives": [
+        "Productos de antivirus o EDR que inyectan hilos en procesos para monitorearlos; valide la firma y la ruta del SourceImage.",
+        "Software de accesibilidad, automatización de interfaz o DLP que se engancha en aplicaciones de escritorio.",
+        "Depuradores o herramientas de desarrollo usadas por personal autorizado durante pruebas de KeePass."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad del SourceImage antes de actuar; si es software autorizado, documente la exclusión con el hash y la ruta exactos.",
+        "Si es malicioso, aísle el endpoint, preserve una imagen de memoria y termine el proceso de origen.",
+        "Considere comprometidas todas las credenciales de la base de datos KeePass: rote la clave maestra y las contraseñas almacenadas, priorizando cuentas privilegiadas.",
+        "Elimine el binario y los archivos exportados, busque persistencia y revise otros hosts con el mismo hash.",
+        "Restaure el equipo desde una imagen confiable si no puede garantizar su limpieza y monitoree el uso de las credenciales rotadas."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque inyectar hilos en un gestor de contraseñas rara vez es legítimo y puede exponer de una vez todas las credenciales del usuario."
+    },
+    "en": {
+      "summary": "A process created a remote thread inside KeePass.exe. This is a common code-injection technique used to dump passwords or key material from an open database.",
+      "what_it_detects": "Remote thread creation events (Sysmon Event ID 8, CreateRemoteThread) where TargetImage ends with \\KeePass.exe, regardless of the source process (SourceImage).",
+      "why_it_matters": "Tools such as KeeFarce and KeeThief inject code into KeePass to export the database in cleartext or recover the master key from memory. This is ATT&CK T1555.005 (credentials from password managers); one dump can expose every stored credential.",
+      "triage_steps": [
+        "Identify SourceImage, SourceProcessId, SourceUser and Computer. Check the source binary's path, signature and hash; be suspicious of Temp, AppData, Downloads or ProgramData paths.",
+        "Review StartAddress, StartModule and StartFunction: an empty StartModule or an address outside known modules suggests shellcode or an injected DLL.",
+        "Rebuild the source process tree: ParentImage, CommandLine and grandparent. Look for PowerShell, rundll32 or unsigned binaries.",
+        "On the same host, +/- 15 minutes, look for unusual DLL loads in KeePass.exe (Event ID 7), process access (Event ID 10) and new CSV, XML or KDBX files.",
+        "Look for recently exported files in the user profile, such as CSV files in %AppData%, and outbound network connections from the source process.",
+        "Check earlier alerts for the same host or SourceUser, such as offensive tool execution or lateral movement.",
+        "Confirm with the user or endpoint team whether security, accessibility or DLP software legitimately injects threads."
+      ],
+      "false_positives": [
+        "Antivirus or EDR products that inject threads into processes for monitoring; validate the SourceImage signature and path.",
+        "Accessibility, UI automation or DLP software that hooks into desktop applications.",
+        "Debuggers or developer tools used by authorized staff while testing KeePass."
+      ],
+      "response_steps": [
+        "Verify the SourceImage before acting; if it is authorized software, document an exclusion using the exact hash and path.",
+        "If malicious, isolate the endpoint, capture memory and terminate the source process.",
+        "Treat every credential in the KeePass database as compromised: rotate the master key and stored passwords, starting with privileged accounts.",
+        "Remove the binary and any exported files, hunt for persistence and check other hosts for the same hash.",
+        "Reimage the host if cleanliness cannot be assured, and monitor use of the rotated credentials."
+      ],
+      "severity_rationale": "High fits because injecting threads into a password manager is rarely legitimate and can expose all of a user's credentials at once."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder creates a remote thread in KeePass.exe with no start module (KeeFarce-style DLL injection).",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\updsvc.exe",
+          "SourceUser": "ANDES\\jperez",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Program Files\\KeePass Password Safe 2\\KeePass.exe",
+          "TargetUser": "ANDES\\jperez",
+          "NewThreadId": 7312,
+          "StartAddress": "0x000001F3A2B40000",
+          "StartModule": "",
+          "StartFunction": ""
+        }
+      },
+      {
+        "description": "PowerShell creates a remote thread in KeePass.exe (KeeThief-style shellcode injection), uppercase path still matches case-insensitively.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 9024,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetProcessId": 5530,
+          "TargetImage": "C:\\Users\\mrojas\\Tools\\KeePass\\KEEPASS.EXE",
+          "TargetUser": "ANDES\\mrojas",
+          "NewThreadId": 10244,
+          "StartAddress": "0x0000021C7F0A1000",
+          "StartModule": "",
+          "StartFunction": ""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote thread created in KeePassXC.exe, a different application; TargetImage does not end with \\KeePass.exe.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 3012,
+          "SourceImage": "C:\\Program Files\\ExampleAV\\avagent.exe",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetProcessId": 4410,
+          "TargetImage": "C:\\Program Files\\KeePassXC\\KeePassXC.exe",
+          "TargetUser": "ANDES\\jperez",
+          "NewThreadId": 8120,
+          "StartAddress": "0x00007FFB1C2A3B40",
+          "StartModule": "C:\\Program Files\\ExampleAV\\hook64.dll",
+          "StartFunction": "HookInit"
+        }
+      },
+      {
+        "description": "KeePass.exe is the source, not the target, of a remote thread into explorer.exe; the rule only checks TargetImage.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 5530,
+          "SourceImage": "C:\\Program Files\\KeePass Password Safe 2\\KeePass.exe",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetProcessId": 2216,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetUser": "ANDES\\mrojas",
+          "NewThreadId": 9150,
+          "StartAddress": "0x00007FFB2D110000",
+          "StartModule": "C:\\Windows\\System32\\kernel32.dll",
+          "StartFunction": "LoadLibraryW"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

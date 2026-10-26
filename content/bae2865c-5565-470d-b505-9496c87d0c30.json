@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "bae2865c-5565-470d-b505-9496c87d0c30",
+    "title": "SMB Spoolss Name Piped Usage",
+    "level": "medium",
+    "status": "test",
+    "author": "OTR (Open Threat Research), @neu5ron",
+    "path": "network/zeek/zeek_dce_rpc_smb_spoolss_named_pipe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_dce_rpc_smb_spoolss_named_pipe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró que un cliente SMB abrió el named pipe spoolss en un recurso IPC$ remoto. Puede ser tráfico de impresión normal o un abuso de la interfaz RPC del Print Spooler para forzar al destino a autenticarse contra un host controlado por un atacante.",
+      "what_it_detects": "Registros smb_files de Zeek cuyo path termina en IPC$ y cuyo name es spoolss. Indican que un cliente (id.orig_h) abrió el pipe MS-RPRN del Print Spooler en un servidor (id.resp_h).",
+      "why_it_matters": "Llamadas por spoolss como RpcRemoteFindFirstPrinterChangeNotification (el 'printer bug') obligan a cualquier host con el servicio Spooler a autenticarse vía NTLM o Kerberos contra el atacante. Con eso el atacante hace relay o captura TGT en hosts con delegación sin restricciones y se mueve lateralmente (T1021.002, SMB/Windows Admin Shares).",
+      "triage_steps": [
+        "Identifique id.orig_h e id.resp_h. ¿El destino es un Domain Controller u otro servidor crítico? ¿El origen es un servidor de impresión, un cliente de impresión o un equipo de administración conocido?",
+        "Use el uid para buscar en dce_rpc.log de Zeek las operaciones asociadas. Busque RpcRemoteFindFirstPrinterChangeNotification(Ex) u otras operaciones spoolss poco habituales, no solo llamadas normales de impresión.",
+        "En una ventana de +/- 15 minutos, verifique si id.resp_h abrió una conexión nueva por SMB/445 o HTTP hacia id.orig_h o hacia un tercer host. Eso indicaría autenticación forzada.",
+        "Revise ntlm.log y kerberos.log de Zeek en busca de la cuenta de equipo del destino (por ejemplo DC-01$) autenticándose ante el origen o ante un destino de relay inesperado.",
+        "Compruebe si el host de origen o sus cuentas de servicio tienen delegación sin restricciones. En ese host, busque inicios de sesión de la cuenta de equipo del destino y herramientas de volcado de tickets.",
+        "Busque alertas previas sobre id.orig_h: escaneo, relay NTLM o acceso a credenciales. Revise también si otros hosts muestran el mismo patrón spoolss."
+      ],
+      "false_positives": [
+        "Domain Controllers que también funcionan como servidores de impresión, algo común aunque no recomendado.",
+        "Estaciones de trabajo o servidores que imprimen por SMB en un servidor de impresión legítimo.",
+        "Consolas de administración de impresión, herramientas de migración de impresoras o scripts de administradores.",
+        "Escáneres de vulnerabilidades que enumeran interfaces RPC, incluida spoolss."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de id.orig_h si el acceso corresponde a impresión o administración esperada. Si es así, documente la justificación.",
+        "Si no es legítimo, aísle el host de origen y conserve su memoria y sus logs para el análisis forense.",
+        "Si la autenticación forzada tuvo éxito, considere comprometida la cuenta de equipo del destino y restablézcala. Si pudo capturarse un TGT de un DC, planifique la rotación de krbtgt.",
+        "Tras confirmar que no hay dependencia de impresión, deshabilite el Print Spooler en los DC y en los servidores que no lo necesitan. Revise las configuraciones de delegación sin restricciones.",
+        "Bloquee o restrinja SMB entre segmentos no confiables y servidores. Exija SMB signing y EPA para reducir el riesgo de relay."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el uso de spoolss suele ser impresión legítima, pero en DC o desde orígenes inusuales puede ser el inicio de una coerción de credenciales que termine en el compromiso del dominio."
+    },
+    "en": {
+      "summary": "Zeek saw an SMB client open the spoolss named pipe on a remote IPC$ share. This can be normal printing traffic, or someone abusing the Print Spooler RPC interface to force the target to authenticate to a host they control.",
+      "what_it_detects": "Zeek smb_files records whose path ends with IPC$ and whose name is spoolss. That means a client (id.orig_h) opened the MS-RPRN Print Spooler pipe on a server (id.resp_h).",
+      "why_it_matters": "Calls over spoolss, such as RpcRemoteFindFirstPrinterChangeNotification (the 'printer bug'), can make any host running the Spooler service authenticate to an attacker over NTLM or Kerberos. Attackers relay that authentication or capture TGTs on hosts with unconstrained delegation, then move laterally (T1021.002, SMB/Windows Admin Shares).",
+      "triage_steps": [
+        "Identify id.orig_h and id.resp_h. Is the destination a Domain Controller or another high-value server? Is the source a known print server, print client or management host?",
+        "Use the uid to find the matching Zeek dce_rpc.log entries. Look for RpcRemoteFindFirstPrinterChangeNotification(Ex) or other unusual spoolss operations, not just normal print calls.",
+        "Within +/- 15 minutes, check whether id.resp_h opened a new SMB/445 or HTTP connection back to id.orig_h or to a third host. That would be coerced authentication.",
+        "Review Zeek ntlm.log and kerberos.log for the destination's machine account (for example DC-01$) authenticating to the source or to an unexpected relay target.",
+        "Check whether the source host or its service accounts have unconstrained delegation. On that host, look for logons by the target machine account and for ticket-dumping tools.",
+        "Look for earlier alerts on id.orig_h: scanning, NTLM relay or credential access. Also check whether other hosts saw the same spoolss pattern."
+      ],
+      "false_positives": [
+        "Domain Controllers that also act as print servers, which is common but not recommended.",
+        "Workstations or servers printing to a legitimate print server over SMB.",
+        "Print management consoles, print migration tools, or administrators using printer management scripts.",
+        "Vulnerability scanners that enumerate RPC interfaces, including spoolss."
+      ],
+      "response_steps": [
+        "Verify with the owner of id.orig_h that the access was expected printing or administration. Record the business reason if it was.",
+        "If it is not legitimate, isolate the source host and keep its memory and logs for forensic review.",
+        "If coerced authentication succeeded, treat the target machine account as compromised. Reset it, and if a DC TGT may have been captured, plan a krbtgt rotation.",
+        "After confirming no printing dependency, disable the Print Spooler on DCs and other servers that do not need it. Review unconstrained delegation settings.",
+        "Block or restrict SMB between untrusted segments and servers, and enforce SMB signing and EPA to reduce relay risk."
+      ],
+      "severity_rationale": "Medium fits because spoolss use is often legitimate printing, but on DCs or from unusual sources it can be the start of credential coercion that leads to domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A workstation opens the spoolss pipe on a Domain Controller's IPC$ share, consistent with printer-bug coercion.",
+        "event": {
+          "ts": "2024-10-25T14:03:12.481Z",
+          "uid": "CHhAvVGS1DHFjwGM9",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 51322,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\DC-01.example.com\\IPC$",
+          "name": "spoolss",
+          "size": 0
+        }
+      },
+      {
+        "description": "Uppercase pipe name and IP-based path on a file server. Matching is case-insensitive, so this still matches.",
+        "event": {
+          "ts": "2024-10-25T14:05:40.102Z",
+          "uid": "C4J4Th3PJpwUYZZ6gc",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 51340,
+          "id.resp_h": "198.51.100.22",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\198.51.100.22\\ipc$",
+          "name": "SPOOLSS",
+          "size": 0
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal service enumeration over the srvsvc pipe on IPC$. The name is not spoolss.",
+        "event": {
+          "ts": "2024-10-25T14:10:03.775Z",
+          "uid": "CtPZjS20MLrsMUOJi2",
+          "id.orig_h": "192.0.2.60",
+          "id.orig_p": 49812,
+          "id.resp_h": "198.51.100.10",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\DC-01.example.com\\IPC$",
+          "name": "srvsvc",
+          "size": 0
+        }
+      },
+      {
+        "description": "Client downloads a printer driver from the print$ share. The path does not end with IPC$ and the name is not spoolss.",
+        "event": {
+          "ts": "2024-10-25T14:12:55.310Z",
+          "uid": "CmES5u32sYpV7JYN",
+          "id.orig_h": "192.0.2.61",
+          "id.orig_p": 50211,
+          "id.resp_h": "198.51.100.30",
+          "id.resp_p": 445,
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\PRN-01.example.com\\print$",
+          "name": "x64\\3\\unidrv.dll",
+          "size": 482304
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

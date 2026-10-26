@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "a3f5c081-e75b-43a0-9f5b-51f26fe5dba2",
+    "title": "Potential Suspicious Winget Package Installation",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/create_stream_hash/create_stream_hash_winget_susp_package_source.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/create_stream_hash/create_stream_hash_winget_susp_package_source.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Winget descargó un instalador en su carpeta temporal y la marca Mark-of-the-Web indica que provino de Internet (ZoneId=3) desde una URL con dirección IP directa en lugar de un dominio. Esto suele indicar un manifiesto o una fuente de paquetes no confiable.",
+      "what_it_detects": "Eventos de creación de flujo alternativo (Sysmon ID 15) donde TargetFilename termina en ':Zone.Identifier' bajo '\\AppData\\Local\\Temp\\WinGet\\' y Contents empieza con '[ZoneTransfer]  ZoneId=3' e incluye una URL que inicia con un dígito ('://1' a '://9'), es decir, una IP.",
+      "why_it_matters": "Un atacante puede abusar de winget, binario firmado por Microsoft, para descargar e instalar payloads desde un manifiesto local o una fuente propia. Así obtiene persistencia y evade controles que confían en winget (tácticas de persistencia y evasión).",
+      "triage_steps": [
+        "Lea Contents y extraiga HostUrl y ReferrerUrl; identifique la IP de origen y revise su reputación y si pertenece a infraestructura interna conocida.",
+        "Revise TargetFilename para obtener el nombre del paquete y del instalador; calcule o recupere el hash del archivo y consúltelo en inteligencia de amenazas.",
+        "Busque la creación del proceso winget.exe en el mismo host (+/- 15 minutos) y revise su CommandLine: '--manifest', 'source add', 'settings --enable LocalManifestFiles'.",
+        "Identifique el ParentImage y el usuario que ejecutó winget; determine si fue interactivo, un script, una tarea programada o un acceso remoto.",
+        "Ejecute o recopile 'winget source list' y busque manifiestos YAML recientes en el perfil del usuario para detectar fuentes no autorizadas.",
+        "Verifique si el instalador se ejecutó: procesos hijos, servicios nuevos, claves Run, tareas programadas y conexiones de red hacia la misma IP.",
+        "Revise alertas previas del mismo host, usuario e IP para identificar actividad relacionada o movimiento lateral."
+      ],
+      "false_positives": [
+        "Repositorios internos de winget o servidores de distribución de software accedidos por IP en lugar de nombre DNS.",
+        "Administradores o desarrolladores que prueban manifiestos propios alojados en un servidor de laboratorio por IP.",
+        "Manifiestos públicos legítimos cuyo InstallerUrl apunta a una IP de un proveedor; verifique el editor y el hash."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo de TI si la instalación y la fuente estaban autorizadas antes de actuar.",
+        "Si no está autorizada, aísle el endpoint, bloquee la IP de origen en el proxy o firewall y preserve el instalador y el manifiesto como evidencia.",
+        "Elimine el paquete instalado, la fuente de winget añadida y los mecanismos de persistencia encontrados; deshabilite LocalManifestFiles por política.",
+        "Restablezca credenciales del usuario si hubo ejecución, busque el hash y la IP en otros hosts y documente la fuente legítima si resultó un falso positivo."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque descargar instaladores vía winget desde una IP directa es poco común en entornos legítimos y permite ejecutar código con un binario de confianza."
+    },
+    "en": {
+      "summary": "Winget downloaded an installer into its temp folder, and the Mark-of-the-Web shows it came from the Internet (ZoneId=3) from a URL using a raw IP address instead of a domain. This often points to an untrusted manifest or package source.",
+      "what_it_detects": "Stream creation events (Sysmon ID 15) where TargetFilename ends with ':Zone.Identifier' under '\\AppData\\Local\\Temp\\WinGet\\' and Contents starts with '[ZoneTransfer]  ZoneId=3' and holds a URL beginning with a digit ('://1' to '://9'), i.e. an IP.",
+      "why_it_matters": "Attackers can abuse winget, a Microsoft-signed binary, to fetch and install payloads from a local manifest or custom source. This gives them persistence and lets them get past controls that trust winget (persistence and stealth tactics).",
+      "triage_steps": [
+        "Read Contents and extract HostUrl and ReferrerUrl; check the source IP's reputation and whether it belongs to known internal infrastructure.",
+        "Use TargetFilename to get the package and installer names; get the file hash and look it up in threat intelligence.",
+        "Find the winget.exe process creation on the same host (+/- 15 minutes) and review CommandLine for '--manifest', 'source add' or 'settings --enable LocalManifestFiles'.",
+        "Identify the ParentImage and user that ran winget: interactive session, script, scheduled task or remote access.",
+        "Collect 'winget source list' output and look for recent YAML manifests in the user profile to spot unauthorized sources.",
+        "Check whether the installer ran: child processes, new services, Run keys, scheduled tasks and network connections to the same IP.",
+        "Review earlier alerts for the same host, user and IP for related activity or lateral movement."
+      ],
+      "false_positives": [
+        "Internal winget repositories or software distribution servers reached by IP instead of DNS name.",
+        "Admins or developers testing custom manifests hosted on a lab server by IP.",
+        "Legitimate public manifests whose InstallerUrl points to a vendor IP; verify the publisher and hash."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT team whether the install and source were authorized before acting.",
+        "If unauthorized, isolate the endpoint, block the source IP at proxy or firewall, and preserve the installer and manifest as evidence.",
+        "Remove the installed package, any added winget source and found persistence; disable LocalManifestFiles via policy.",
+        "Reset user credentials if execution occurred, hunt for the hash and IP on other hosts, and document the source if it was benign."
+      ],
+      "severity_rationale": "High fits because winget installers downloaded from a raw IP are rare in legitimate use and let attackers run code through a trusted binary."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Winget downloads an installer from a raw IP (198.51.100.23) via a local manifest; Zone.Identifier written in WinGet temp folder.",
+        "event": {
+          "EventID": 15,
+          "UtcTime": "2024-05-14 10:22:41.118",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_1.22.11261.0_x64__8wekyb3d8bbwe\\winget.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\WinGet\\Example.Tool.1.0.0\\setup.exe:Zone.Identifier",
+          "Contents": "[ZoneTransfer]  ZoneId=3  HostUrl=http://198.51.100.23/files/setup.exe",
+          "Hash": "SHA256=0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      {
+        "description": "Winget fetches an MSI from 203.0.113.10 on a non-standard port.",
+        "event": {
+          "EventID": 15,
+          "UtcTime": "2024-05-14 11:05:09.502",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "Image": "C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_1.22.11261.0_x64__8wekyb3d8bbwe\\winget.exe",
+          "TargetFilename": "C:\\Users\\mrodriguez\\AppData\\Local\\Temp\\WinGet\\Contoso.Updater.2.3.1\\updater.msi:Zone.Identifier",
+          "Contents": "[ZoneTransfer]  ZoneId=3  HostUrl=http://203.0.113.10:8080/pkg/updater.msi",
+          "Hash": "SHA256=1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate winget install from a domain-based URL (no digit after '://').",
+        "event": {
+          "EventID": 15,
+          "UtcTime": "2024-05-14 09:12:30.004",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_1.22.11261.0_x64__8wekyb3d8bbwe\\winget.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Temp\\WinGet\\Example.Editor.4.1.0\\EditorSetup.exe:Zone.Identifier",
+          "Contents": "[ZoneTransfer]  ZoneId=3  HostUrl=https://downloads.example.com/editor/EditorSetup.exe",
+          "Hash": "SHA256=2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      {
+        "description": "Browser download from a raw IP saved to Downloads, outside the WinGet temp folder.",
+        "event": {
+          "EventID": 15,
+          "UtcTime": "2024-05-14 12:40:55.771",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+          "TargetFilename": "C:\\Users\\jperez\\Downloads\\report.pdf:Zone.Identifier",
+          "Contents": "[ZoneTransfer]  ZoneId=3  HostUrl=http://198.51.100.40/docs/report.pdf",
+          "Hash": "SHA256=3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

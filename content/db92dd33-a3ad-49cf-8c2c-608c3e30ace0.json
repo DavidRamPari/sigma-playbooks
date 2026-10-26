@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "db92dd33-a3ad-49cf-8c2c-608c3e30ace0",
+    "title": "Invoke-Obfuscation Via Use Clip - Powershell",
+    "level": "high",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/powershell/powershell_script/posh_ps_invoke_obfuscation_via_use_clip.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_invoke_obfuscation_via_use_clip.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell (evento 4104) contiene el patrón del launcher USE CLIP de Invoke-Obfuscation: se escribe un comando con echo hacia clip.exe y luego se lee del portapapeles y se ejecuta. Suele indicar ejecución ofuscada deliberadamente.",
+      "what_it_detects": "Un ScriptBlockText que coincide con la expresión regular, sin distinguir mayúsculas: 'echo', luego 'clip', luego '&&' y después 'Clipboard' o 'invoke' (también con backticks intercalados, como I`n`v`o`k`e). Requiere Script Block Logging habilitado.",
+      "why_it_matters": "Pasar el payload por el portapapeles evita que el comando real aparezca en la línea de comandos del proceso hijo, lo que dificulta la detección por argumentos. Corresponde a T1027 (archivos o información ofuscados) y T1059.001 (PowerShell).",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y reconstruya el comando que se pasó por echo hacia clip.exe; ese es el payload real que se ejecutó desde el portapapeles.",
+        "Si el script block está fragmentado, junte todos los eventos 4104 con el mismo ScriptBlockId para recuperar el contenido completo.",
+        "Identifique el host y el usuario, y revise los eventos de creación de procesos (4688 o Sysmon 1) de cmd.exe, clip.exe y powershell.exe en +/- 15 minutos.",
+        "Revise el ParentImage de cmd.exe o powershell.exe: Office, navegadores, wscript o mshta como padre sugieren una entrega maliciosa.",
+        "Busque en el payload descargas (IWR, Net.WebClient), cadenas Base64 o ejecución en memoria, y pivote sobre los dominios o IP de red que aparezcan.",
+        "Busque conexiones de red, archivos nuevos, tareas programadas o claves Run creados por el mismo host poco después del evento.",
+        "Consulte alertas anteriores del mismo host y usuario, y busque el mismo patrón en otros endpoints."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; es poco habitual que haya usos legítimos de este patrón.",
+        "Ejercicios de red team, pruebas de detección o laboratorios que usan Invoke-Obfuscation con autorización.",
+        "Scripts internos poco comunes que copian texto al portapapeles con echo | clip y luego lo leen con la clase Clipboard."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del equipo o con el equipo de red team si la actividad estaba autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint desde el EDR y preserve los eventos 4104, la memoria y los artefactos de ejecución.",
+        "Bloquee los indicadores extraídos del payload (dominios, IP, hashes) y busque esos indicadores en el resto del entorno.",
+        "Elimine los mecanismos de persistencia confirmados, restablezca las credenciales del usuario afectado y restaure el equipo desde una imagen limpia si hubo compromiso."
+      ],
+      "severity_rationale": "Es alta porque el patrón echo-clip-ejecución es una técnica de ofuscación específica, con pocos usos legítimos, y suele estar asociada a la ejecución de código malicioso."
+    },
+    "en": {
+      "summary": "A PowerShell script block (event 4104) contains the Invoke-Obfuscation USE CLIP launcher pattern: a command is echoed into clip.exe, then read back from the clipboard and executed. This usually means execution was deliberately obfuscated.",
+      "what_it_detects": "A ScriptBlockText that matches the case-insensitive regex: 'echo', then 'clip', then '&&', then 'Clipboard' or 'invoke', including backtick-split forms such as I`n`v`o`k`e. Script Block Logging must be enabled.",
+      "why_it_matters": "Routing the payload through the clipboard keeps the real command out of the child process command line, which defeats argument-based detection. This maps to T1027 (obfuscated files or information) and T1059.001 (PowerShell).",
+      "triage_steps": [
+        "Read the full ScriptBlockText and rebuild the command echoed into clip.exe. That is the real payload executed from the clipboard.",
+        "If the script block is split, join all 4104 events with the same ScriptBlockId to get the complete content.",
+        "Identify the host and user, and review process creation (4688 or Sysmon 1) for cmd.exe, clip.exe and powershell.exe within +/- 15 minutes.",
+        "Check the ParentImage of cmd.exe or powershell.exe. Office, a browser, wscript or mshta as the parent suggests malicious delivery.",
+        "Look in the payload for downloads (IWR, Net.WebClient), Base64 blobs or in-memory execution, and pivot on any domains or IPs it contains.",
+        "Look for network connections, new files, scheduled tasks or Run keys created on the host shortly after the event.",
+        "Check earlier alerts for the same host and user, and hunt for the same pattern on other endpoints."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives, and legitimate use of this pattern is rare.",
+        "Authorized red team exercises, detection tests or labs that use Invoke-Obfuscation.",
+        "Unusual internal scripts that pipe text into clip with echo and read it back with the Clipboard class."
+      ],
+      "response_steps": [
+        "Before acting, check with the asset owner or the red team whether the activity was authorized.",
+        "If it was not authorized, isolate the endpoint through EDR and preserve the 4104 events, memory and execution artifacts.",
+        "Block the indicators taken from the payload (domains, IPs, hashes) and hunt for them across the environment.",
+        "Remove confirmed persistence, reset the affected user's credentials, and if the host was compromised, reimage it from a clean baseline."
+      ],
+      "severity_rationale": "The level is high because the echo-to-clip-then-execute pattern is a specific obfuscation technique with little legitimate use, and it usually comes with malicious code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "USE CLIP launcher: a command is echoed into clip.exe, then read from the Clipboard class and run with Invoke-Expression.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f2a9c1e-7b44-4d0a-9e1f-2c5d8a6b1e01",
+          "Path": "",
+          "ScriptBlockText": "cmd.exe /c \"echo Write-Host 'lab-test' | clip.exe && powershell -NoP -C [void][System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms'); [System.Windows.Forms.Clipboard]::GetText() | Invoke-Expression\""
+        }
+      },
+      {
+        "description": "Variant that uses the backtick-obfuscated I`n`v`o`k`e-Expression after the clip and && sequence.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "9b1d4e77-0c2f-4a8e-b3d6-71e0f5a2c9d4",
+          "Path": "",
+          "ScriptBlockText": "ECHO Get-Date | CLIP && powershell -sta -noni (Get-Clipboard) | I`n`v`o`k`e-Expression"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate script that copies a report to the clipboard with Write-Output and clip.exe. It has no echo and no &&.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5c7e2a10-3d9b-4f61-8a2e-0b4c6d8e9f12",
+          "Path": "C:\\Scripts\\Copy-Report.ps1",
+          "ScriptBlockText": "Get-Content C:\\Reports\\daily.txt | Out-String | clip.exe; Write-Output 'Report copied'; Get-Clipboard | Measure-Object -Line"
+        }
+      },
+      {
+        "description": "Build script that uses echo, && and Invoke-Build but never references clip.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "BUILD-01.andes.example.com",
+          "ScriptBlockId": "a1e3c5f7-2b4d-4e6f-8a0c-1d3e5f7a9b2c",
+          "Path": "C:\\Repo\\build.ps1",
+          "ScriptBlockText": "cmd /c \"echo Starting build && dotnet restore\"; Invoke-Build -Task Test"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

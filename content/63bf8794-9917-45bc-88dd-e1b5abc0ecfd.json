@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "63bf8794-9917-45bc-88dd-e1b5abc0ecfd",
+    "title": "Powershell Install a DLL in System Directory",
+    "level": "high",
+    "status": "test",
+    "author": "frack113, Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_copy_item_system_directory.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_copy_item_system_directory.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1556.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell usó Copy-Item (o su alias cpi) para copiar un archivo en C:\\Windows\\System32 o SysWOW64. Esto puede significar que se está instalando una DLL maliciosa para persistencia o robo de credenciales.",
+      "what_it_detects": "Bloques de script de PowerShell (evento 4104, Script Block Logging) cuyo ScriptBlockText coincide con 'Copy-Item|cpi ... -Destination ...\\Windows\\System32|SysWOW64'. La expresión regular distingue mayúsculas de minúsculas.",
+      "why_it_matters": "Copiar una DLL en System32 es un paso típico de T1556.002 (Password Filter DLL): LSASS carga la DLL y esta recibe las contraseñas en texto claro cuando se cambian. También sirve para hijacking de DLL y persistencia con privilegios elevados.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo; si está dividido, reconstrúyalo con ScriptBlockId y MessageNumber/MessageTotal. Identifique el archivo de origen y la ruta de destino exacta.",
+        "Ubique el archivo copiado en System32/SysWOW64: obtenga el hash, la firma digital, la fecha de creación y búsquelo en su inteligencia de amenazas.",
+        "Revise el registro: HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa (Notification Packages, Security Packages, Authentication Packages) y servicios nuevos que apunten a la DLL.",
+        "Identifique el proceso PowerShell (Sysmon 1 / 4688): usuario, ParentImage y línea de comandos. Determine si fue una sesión interactiva, remota (WinRM) o una tarea programada.",
+        "Pivote en el mismo host +/- 15 minutos: creación de archivos (Sysmon 11), descargas, cambios de registro (Sysmon 13) y reinicios.",
+        "Busque el mismo hash o nombre de DLL en otros endpoints y alertas previas para el mismo usuario u host."
+      ],
+      "false_positives": [
+        "Instaladores o scripts de despliegue (SCCM, Intune, GPO) que copian DLL o drivers legítimos a System32.",
+        "Scripts administrativos de soporte que reemplazan bibliotecas de un proveedor conocido.",
+        "Pruebas de Atomic Red Team o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o con el equipo de cambios si la copia estaba autorizada y si el archivo es legítimo y está firmado.",
+        "Si no hay justificación, aísle el endpoint y conserve evidencia: la DLL, el registro de LSA y los logs de PowerShell, antes de borrar nada.",
+        "Elimine la entrada del registro y la DLL maliciosa una vez preservadas; reinicie para que LSASS deje de cargarla.",
+        "Restablezca las contraseñas cambiadas en ese host desde la instalación, sobre todo cuentas privilegiadas o de dominio si es un controlador de dominio.",
+        "Revise la cuenta que ejecutó el script y cómo obtuvo privilegios de administrador."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque escribir en System32 requiere privilegios elevados y puede dar persistencia y acceso a contraseñas en texto claro vía LSASS."
+    },
+    "en": {
+      "summary": "A PowerShell script used Copy-Item (or its alias cpi) to copy a file into C:\\Windows\\System32 or SysWOW64. This may be a malicious DLL being installed for persistence or credential theft.",
+      "what_it_detects": "PowerShell script blocks (event 4104, Script Block Logging) whose ScriptBlockText matches 'Copy-Item|cpi ... -Destination ...\\Windows\\System32|SysWOW64'. The regex is case-sensitive.",
+      "why_it_matters": "Copying a DLL into System32 is a typical step of T1556.002 (Password Filter DLL): LSASS loads the DLL, which then receives plaintext passwords on change. It also enables DLL hijacking and privileged persistence.",
+      "triage_steps": [
+        "Read the full ScriptBlockText; if split, rebuild it using ScriptBlockId and MessageNumber/MessageTotal. Note the source file and exact destination path.",
+        "Locate the copied file in System32/SysWOW64: get its hash, signature and creation time, and check it against threat intelligence.",
+        "Check the registry: HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa (Notification Packages, Security Packages, Authentication Packages) and any new services pointing to the DLL.",
+        "Identify the PowerShell process (Sysmon 1 / 4688): user, ParentImage and command line. Determine whether it was interactive, remote (WinRM) or a scheduled task.",
+        "Pivot on the same host +/- 15 minutes: file creation (Sysmon 11), downloads, registry changes (Sysmon 13) and reboots.",
+        "Search for the same hash or DLL name on other endpoints and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Installers or deployment scripts (SCCM, Intune, GPO) copying legitimate DLLs or drivers into System32.",
+        "Admin support scripts replacing libraries from a known vendor.",
+        "Atomic Red Team tests or authorized red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change management whether the copy was authorized and the file is legitimate and signed.",
+        "If unjustified, isolate the endpoint and preserve evidence (the DLL, LSA registry keys, PowerShell logs) before removing anything.",
+        "Remove the malicious registry entry and DLL after preservation; reboot so LSASS stops loading it.",
+        "Reset passwords changed on that host since installation, especially privileged or domain accounts if it is a domain controller.",
+        "Review the account that ran the script and how it obtained administrator rights."
+      ],
+      "severity_rationale": "High fits because writing to System32 needs elevated rights and can give persistence and plaintext password access through LSASS."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Atomic-style password filter DLL copied from Temp into System32 with Copy-Item",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "5b1f2c3a-8d4e-4f6a-9b7c-1a2b3c4d5e6f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "Copy-Item C:\\Users\\jperez\\AppData\\Local\\Temp\\pwfilter.dll -Destination C:\\Windows\\System32\\pwfilter.dll; Set-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa -Name 'Notification Packages' -Value @('scecli','pwfilter')"
+        }
+      },
+      {
+        "description": "Alias cpi used to drop a DLL into SysWOW64",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ScriptBlockId": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\ProgramData\\upd\\run.ps1",
+          "ScriptBlockText": "cpi -Path C:\\ProgramData\\upd\\version.dll -Destination C:\\Windows\\SysWOW64\\version.dll -Force"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Copy-Item from System32 to a backup folder; destination is not a system directory",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "1a2b3c4d-0000-4f6a-9b7c-aaaaaaaaaaaa",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "ScriptBlockText": "Copy-Item C:\\Windows\\System32\\drivers\\etc\\hosts -Destination C:\\Backup\\hosts.bak"
+        }
+      },
+      {
+        "description": "Deployment script copying a vendor DLL into Program Files",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "2b3c4d5e-1111-4f6a-9b7c-bbbbbbbbbbbb",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Windows\\CCM\\deploy.ps1",
+          "ScriptBlockText": "Copy-Item -Path \\\\fs01.example.com\\pkg\\contoso.dll -Destination 'C:\\Program Files\\Contoso\\Agent\\contoso.dll' -Force"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

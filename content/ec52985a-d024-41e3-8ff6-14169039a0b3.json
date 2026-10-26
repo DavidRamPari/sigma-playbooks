@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "ec52985a-d024-41e3-8ff6-14169039a0b3",
+    "title": "Mount Execution With Hidepid Parameter",
+    "level": "medium",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_mount_hidepid.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_mount_hidepid.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1564"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario mount con la opción -o y hidepid=2 en el host. Normalmente esto remonta /proc para que los usuarios sin privilegios no vean los procesos de otros usuarios.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /mount y CommandLine contiene ' -o ' y 'hidepid=2', por ejemplo 'mount -o remount,rw,hidepid=2 /proc'.",
+      "why_it_matters": "Con hidepid=2, quien no sea root ni del grupo gid= no ve los procesos ajenos en /proc. Un atacante puede usarlo para que otros usuarios y algunas herramientas de monitoreo no vean su actividad, lo que corresponde a ocultar artefactos (ATT&CK T1564).",
+      "triage_steps": [
+        "Revise CommandLine: confirme que el punto de montaje sea /proc y si hay una opción gid= que dé visibilidad a un grupo concreto.",
+        "Identifique al usuario y el ParentImage: distinga una sesión SSH interactiva de un agente de gestión de configuración, cloud-init o un script de hardening.",
+        "Confirme si existe un ticket de cambio o una política de hardening aprobada que establezca hidepid en este host.",
+        "Revise los procesos del mismo host en +/- 15 minutos: busque descargas, binarios en /tmp o /dev/shm, persistencia o conexiones salientes.",
+        "Como root, liste los procesos actuales (ps auxf) y busque procesos de usuarios inesperados que ahora estén ocultos para los demás usuarios.",
+        "Verifique si /etc/fstab o alguna unidad de systemd se modificó para que hidepid sobreviva al reinicio.",
+        "Busque alertas anteriores del mismo usuario, host o IP de origen de la sesión, sobre todo de escalamiento de privilegios o acceso a credenciales."
+      ],
+      "false_positives": [
+        "Administradores que aplican hardening de /proc según guías internas de seguridad.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef) o imágenes base que configuran hidepid durante el aprovisionamiento.",
+        "Servidores multiusuario o de hosting compartido donde se aísla a los usuarios entre sí."
+      ],
+      "response_steps": [
+        "Valide el cambio con el dueño del sistema o con el equipo de plataforma antes de actuar.",
+        "Si no está autorizado, aísle el host de la red y conserve evidencia: lista de procesos como root, /etc/fstab y el historial de shell.",
+        "Restaure la visibilidad con 'mount -o remount,hidepid=0 /proc' después de capturar la evidencia, y elimine cualquier persistencia en fstab.",
+        "Investigue y elimine los procesos o binarios maliciosos que encuentre; rote las credenciales de la cuenta usada.",
+        "Si el uso es legítimo, documente la línea base y ajuste la regla por host o por proceso padre."
+      ],
+      "severity_rationale": "Nivel medio: es una técnica efectiva de ocultamiento, pero también es una medida de hardening legítima y frecuente, así que se necesita contexto para confirmar que es maliciosa."
+    },
+    "en": {
+      "summary": "The mount binary ran with the -o option and hidepid=2 on this host. This usually remounts /proc so unprivileged users cannot see other users' processes.",
+      "what_it_detects": "Linux process creation events where Image ends with /mount and CommandLine contains both ' -o ' and 'hidepid=2', e.g. 'mount -o remount,rw,hidepid=2 /proc'.",
+      "why_it_matters": "With hidepid=2, users other than root or the gid= group cannot see other users' processes in /proc. Attackers can use this to hide their activity from other users and some monitoring tools, which maps to hiding artifacts (ATT&CK T1564).",
+      "triage_steps": [
+        "Read CommandLine: confirm the target is /proc and check for a gid= option that gives one specific group visibility.",
+        "Identify the user and ParentImage: tell an interactive SSH session apart from a configuration management agent, cloud-init or a hardening script.",
+        "Check for a change ticket or an approved hardening baseline that sets hidepid on this host.",
+        "Review process activity on the same host within +/- 15 minutes: downloads, binaries in /tmp or /dev/shm, persistence, outbound connections.",
+        "As root, list current processes (ps auxf) and look for unexpected user processes that are now hidden from other users.",
+        "Check whether /etc/fstab or a systemd mount unit was changed so that hidepid persists across reboots.",
+        "Look for earlier alerts on the same user, host or session source IP, especially privilege escalation or credential access."
+      ],
+      "false_positives": [
+        "Administrators hardening /proc according to internal security guidelines.",
+        "Configuration management tools (Ansible, Puppet, Chef) or base images that set hidepid during provisioning.",
+        "Multi-user or shared hosting servers that isolate users from each other."
+      ],
+      "response_steps": [
+        "Confirm the change with the system owner or platform team before acting.",
+        "If it is unauthorized, isolate the host and preserve evidence: the process list as root, /etc/fstab and shell history.",
+        "After you capture evidence, restore visibility with 'mount -o remount,hidepid=0 /proc' and remove any fstab persistence.",
+        "Investigate and remove any malicious processes or binaries you find, and rotate credentials for the account involved.",
+        "If the use is legitimate, document the baseline and tune the rule by host or parent process."
+      ],
+      "severity_rationale": "Medium fits because this is an effective hiding technique but also a common legitimate hardening step, so you need context to confirm it is malicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user remounts /proc with hidepid=2 from a bash session",
+        "event": {
+          "Image": "/usr/bin/mount",
+          "CommandLine": "mount -o remount,rw,hidepid=2 /proc",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "root",
+          "LogonId": "1003",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Script remounts /proc with hidepid=2 and a gid option via /bin/mount",
+        "event": {
+          "Image": "/bin/mount",
+          "CommandLine": "/bin/mount -o remount,hidepid=2,gid=1337 /proc",
+          "ParentImage": "/usr/bin/sh",
+          "ParentCommandLine": "sh /tmp/.x/setup.sh",
+          "User": "root",
+          "ProcessId": 50122,
+          "Computer": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator reverts /proc to default visibility with hidepid=0",
+        "event": {
+          "Image": "/usr/bin/mount",
+          "CommandLine": "mount -o remount,hidepid=0 /proc",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 48990,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "grep looks for hidepid=2 in fstab; the Image is not mount and the command has no -o option",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep hidepid=2 /etc/fstab",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 49001,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

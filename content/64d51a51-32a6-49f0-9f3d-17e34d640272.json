@@ -1,0 +1,113 @@
+{
+  "rule": {
+    "id": "64d51a51-32a6-49f0-9f3d-17e34d640272",
+    "title": "Ngrok Usage with Remote Desktop Service",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/builtin/terminalservices/win_terminalservices_rdp_ngrok.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/terminalservices/win_terminalservices_rdp_ngrok.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1090"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un inicio de sesión RDP exitoso (EventID 21) cuya dirección de origen contiene '16777216', un valor típico cuando ngrok reenvía el tráfico al puerto RDP local. Es posible que alguien esté entrando al equipo desde Internet a través de un túnel inverso.",
+      "what_it_detects": "Eventos 21 del log Microsoft-Windows-TerminalServices-LocalSessionManager/Operational («Session logon succeeded») cuyo campo Address contiene '16777216', por ejemplo '::%16777216'. Este valor aparece cuando la conexión RDP llega desde un proceso local, como el agente de ngrok, en lugar de una IP de red real.",
+      "why_it_matters": "ngrok publica un servicio local en Internet mediante un túnel saliente, así que evade el firewall perimetral y la NAT. Un atacante puede usarlo para mantener acceso RDP interactivo y persistente al equipo (MITRE ATT&CK T1090, Proxy, táctica de comando y control).",
+      "triage_steps": [
+        "Confirme el valor de Address del evento 21 y anote el User, el SessionID y el host. Verifique que no exista una IP de origen legítima.",
+        "Busque en el mismo host la ejecución de ngrok.exe u otros binarios renombrados con argumentos como 'tcp 3389' en CommandLine (Sysmon 1 o 4688) entre 15 minutos antes y 15 minutos después.",
+        "Revise las conexiones salientes y las consultas DNS del host hacia dominios de ngrok (ngrok.io, ngrok.com, ngrok-free.app) en el proxy, el DNS o el EDR.",
+        "Correlacione el evento con 4624 LogonType 10 del log Security y con el evento 1149 de RemoteConnectionManager para confirmar la cuenta y la hora del acceso.",
+        "Busque archivos de configuración o authtoken de ngrok (ngrok.yml en %USERPROFILE%\\.ngrok2 o AppData\\Local\\ngrok) y servicios o tareas programadas que lo inicien.",
+        "Revise la actividad de la sesión: procesos hijos, herramientas de descubrimiento, volcado de credenciales y movimiento lateral desde ese host.",
+        "Revise si hubo alertas anteriores para el mismo usuario o el mismo host y si la cuenta inició sesión en otros equipos a través de túneles parecidos."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores que usan ngrok de forma autorizada para dar soporte remoto o probar servicios.",
+        "Otro software de túnel o proxy local que reenvía conexiones a 127.0.0.1:3389 y deja una dirección de origen parecida."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo y con TI si el uso de ngrok estaba aprobado. Si no lo estaba, trátelo como un incidente.",
+        "Aísle el host desde el EDR, cierre la sesión RDP sospechosa y detenga el proceso de ngrok después de preservar la evidencia.",
+        "Elimine el binario, la configuración, el authtoken y los mecanismos de persistencia relacionados. Restablezca las credenciales de las cuentas que se usaron.",
+        "Bloquee los dominios de ngrok en el DNS o el proxy según la política, restrinja RDP y busque el mismo indicador en el resto de los equipos."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque indica acceso RDP interactivo desde fuera de la red por un túnel que evade los controles perimetrales, y el uso legítimo es poco común."
+    },
+    "en": {
+      "summary": "A successful RDP session logon (EventID 21) was logged with a source address containing '16777216', a value typical of ngrok forwarding traffic to the local RDP port. Someone may be reaching this host from the Internet through a reverse tunnel.",
+      "what_it_detects": "EventID 21 ('Session logon succeeded') in Microsoft-Windows-TerminalServices-LocalSessionManager/Operational where the Address field contains '16777216', such as '::%16777216'. This value appears when the RDP connection comes from a local process like the ngrok agent instead of a real network IP.",
+      "why_it_matters": "ngrok exposes local services to the Internet through an outbound tunnel, which bypasses perimeter firewalls and NAT. Attackers use it for persistent interactive RDP access to the host (MITRE ATT&CK T1090, Proxy, command and control).",
+      "triage_steps": [
+        "Confirm the Address value in event 21 and record the User, SessionID and host. Check that no legitimate source IP exists.",
+        "On the same host, search 15 minutes before and after for ngrok.exe or renamed binaries with arguments like 'tcp 3389' in CommandLine (Sysmon 1 or 4688).",
+        "Check the host's outbound connections and DNS queries to ngrok domains (ngrok.io, ngrok.com, ngrok-free.app) in proxy, DNS or EDR telemetry.",
+        "Correlate with Security 4624 LogonType 10 and RemoteConnectionManager event 1149 to confirm the account and timing.",
+        "Look for ngrok config or authtoken files (ngrok.yml in %USERPROFILE%\\.ngrok2 or AppData\\Local\\ngrok) and for services or scheduled tasks that launch it.",
+        "Review what happened in the session: child processes, discovery tools, credential dumping and lateral movement from this host.",
+        "Check for earlier alerts on the same user or host, and whether the account logged on to other hosts through similar tunnels."
+      ],
+      "false_positives": [
+        "Administrators or developers using ngrok with approval for remote support or service testing.",
+        "Other local tunneling or proxy software that relays to 127.0.0.1:3389 and leaves a similar source address."
+      ],
+      "response_steps": [
+        "Ask the host owner and IT whether ngrok use was approved. If it was not, treat this as an incident.",
+        "Isolate the host through EDR, end the suspicious RDP session and stop the ngrok process after preserving evidence.",
+        "Remove the binary, config, authtoken and related persistence. Reset credentials for the accounts that were used.",
+        "Block ngrok domains at DNS or proxy according to policy, restrict RDP and hunt for the same indicator on other hosts."
+      ],
+      "severity_rationale": "High fits because the event shows interactive RDP access from outside the network through a tunnel that bypasses perimeter controls, and legitimate use is uncommon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "RDP session logon relayed by a local ngrok agent; the source address is ::%16777216",
+        "event": {
+          "EventID": 21,
+          "Channel": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "SessionID": 3,
+          "Address": "::%16777216"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal RDP session logon from an internal jump host with a real source IP",
+        "event": {
+          "EventID": 21,
+          "Channel": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\admin.soporte",
+          "SessionID": 2,
+          "Address": "192.0.2.45"
+        }
+      },
+      {
+        "description": "Session disconnect event (EventID 24) with the ngrok-style address; the EventID does not match 21",
+        "event": {
+          "EventID": 24,
+          "Channel": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "SessionID": 3,
+          "Address": "::%16777216"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "ec127035-a636-4b9a-8555-0efd4e59f316",
+    "title": "Clipboard Collection with Xclip Tool",
+    "level": "low",
+    "status": "test",
+    "author": "Pawel Mazur, Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research), MSTIC",
+    "path": "linux/process_creation/proc_creation_lnx_clipboard_collection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_clipboard_collection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1115"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó xclip para leer (-o) el contenido del portapapeles (-sel clip) en un host Linux. Puede indicar que alguien está recolectando datos copiados por los usuarios, como contraseñas o tokens.",
+      "what_it_detects": "Procesos cuyo Image contiene 'xclip' y cuyo CommandLine contiene '-sel', 'clip' y '-o' a la vez, es decir, una lectura de la selección CLIPBOARD de X11 hacia la salida estándar.",
+      "why_it_matters": "Corresponde a ATT&CK T1115 (Clipboard Data, táctica Collection). Los usuarios copian credenciales, llaves y comandos sensibles. Un atacante con acceso a la sesión gráfica puede leerlos y exfiltrarlos sin generar mucho ruido.",
+      "triage_steps": [
+        "Revise el CommandLine completo: si la salida se redirige a un archivo, a un pipe hacia curl/nc o se ejecuta en bucle (while, sleep, watch).",
+        "Identifique el usuario que ejecutó el proceso y confirme si es dueño de la sesión X11 (DISPLAY, XAUTHORITY) o si accede a la de otro usuario.",
+        "Analice ParentImage y la cadena de procesos: una terminal interactiva es normal; cron, un servicio web, sshd sin sesión gráfica o un script en /tmp es sospechoso.",
+        "Determine el tipo de host: en servidores xclip es inusual; en estaciones de trabajo de desarrolladores es frecuente.",
+        "Busque en el mismo host +/- 15 minutos conexiones de red salientes, creación de archivos en /tmp o /dev/shm y otras herramientas de recolección (xsel, xdotool, capturas de pantalla).",
+        "Verifique cuándo y cómo se instaló xclip (logs de apt/dnf) y consulte alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Uso legítimo de xclip por usuarios o desarrolladores para pegar texto en la terminal o en scripts.",
+        "Scripts de productividad, gestores de portapapeles, plugins de editores (vim, tmux) o gestores de contraseñas que leen el portapapeles.",
+        "Herramientas de automatización o pruebas de interfaz gráfica en entornos de CI."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del host si la ejecución fue esperada antes de actuar.",
+        "Si no es legítima, aísle el host de la red y termine el proceso y cualquier script o tarea programada que lo invoque.",
+        "Conserve los archivos donde se guardó la salida y revise si contienen credenciales; rote las contraseñas, tokens y llaves expuestas.",
+        "Elimine mecanismos de persistencia (crontab, systemd, .bashrc) y evalúe desinstalar xclip en servidores donde no se necesita."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque xclip se usa con frecuencia de forma legítima, aunque en servidores o con contexto sospechoso merece escalarse."
+    },
+    "en": {
+      "summary": "xclip was run to read (-o) the X11 clipboard (-sel clip) on a Linux host. This may mean someone is collecting data users copied, such as passwords or tokens.",
+      "what_it_detects": "Processes whose Image contains 'xclip' and whose CommandLine contains all of '-sel', 'clip' and '-o', i.e. reading the CLIPBOARD selection to standard output.",
+      "why_it_matters": "Maps to ATT&CK T1115 (Clipboard Data, Collection tactic). Users copy credentials, keys and sensitive commands; an attacker with access to the graphical session can quietly read and exfiltrate them.",
+      "triage_steps": [
+        "Review the full CommandLine: is output redirected to a file, piped to curl/nc, or run in a loop (while, sleep, watch)?",
+        "Identify the user and confirm they own the X11 session (DISPLAY, XAUTHORITY) rather than accessing another user's session.",
+        "Check ParentImage and the process tree: an interactive terminal is normal; cron, a web service, headless sshd or a script in /tmp is suspicious.",
+        "Determine host role: xclip is unusual on servers but common on developer workstations.",
+        "On the same host within +/- 15 minutes, look for outbound connections, files written to /tmp or /dev/shm, and other collection tools (xsel, xdotool, screenshots).",
+        "Check when and how xclip was installed (apt/dnf logs) and review earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Legitimate xclip use by users or developers pasting text into the terminal or scripts.",
+        "Productivity scripts, clipboard managers, editor plugins (vim, tmux) or password managers reading the clipboard.",
+        "GUI automation or testing tools in CI environments."
+      ],
+      "response_steps": [
+        "Confirm with the user or host owner whether the execution was expected before acting.",
+        "If not legitimate, isolate the host and stop the process plus any script or scheduled task invoking it.",
+        "Preserve files holding the captured output, check them for credentials, and rotate any exposed passwords, tokens and keys.",
+        "Remove persistence (crontab, systemd units, .bashrc) and consider uninstalling xclip on servers that do not need it."
+      ],
+      "severity_rationale": "Low fits because xclip is commonly used legitimately, though hits on servers or with suspicious context should be escalated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "xclip reads the clipboard and writes it to a hidden file in /tmp, launched from a cron shell",
+        "event": {
+          "Image": "/usr/bin/xclip",
+          "CommandLine": "xclip -selection clipboard -o",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "/bin/sh -c xclip -selection clipboard -o >> /tmp/.cb.log",
+          "User": "jperez",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/home/jperez",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "Short-form options reading the clipboard from a bash session",
+        "event": {
+          "Image": "/usr/bin/xclip",
+          "CommandLine": "xclip -sel clip -o",
+          "ParentImage": "/usr/bin/bash",
+          "User": "mrojas",
+          "ProcessId": 51077,
+          "CurrentDirectory": "/tmp",
+          "host": "app-srv-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "xclip used to copy a file into the clipboard (input mode, no -o)",
+        "event": {
+          "Image": "/usr/bin/xclip",
+          "CommandLine": "xclip -selection clipboard /home/jperez/notes.txt",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 48990,
+          "host": "WS-0142"
+        }
+      },
+      {
+        "description": "xsel reads the clipboard; Image does not contain xclip",
+        "event": {
+          "Image": "/usr/bin/xsel",
+          "CommandLine": "xsel --clipboard --output",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 49102,
+          "host": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

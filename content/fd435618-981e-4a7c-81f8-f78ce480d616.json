@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "fd435618-981e-4a7c-81f8-f78ce480d616",
+    "title": "Django Framework Exceptions",
+    "level": "medium",
+    "status": "stable",
+    "author": "Thomas Patzke",
+    "path": "application/django/appframework_django_exceptions.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/django/appframework_django_exceptions.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "La aplicación Django registró una excepción de seguridad (SuspiciousOperation, una de sus subclases o PermissionDenied). Puede indicar sondeo o intento de explotación contra la aplicación web, aunque Django normalmente bloquea la solicitud.",
+      "what_it_detects": "Líneas de log de Django que contienen nombres de excepciones de seguridad: SuspiciousOperation y subclases como DisallowedHost, DisallowedRedirect, SuspiciousFileOperation, SuspiciousSession, RequestDataTooBig, TooManyFieldsSent, InvalidSessionKey, además de PermissionDenied.",
+      "why_it_matters": "Estas excepciones aparecen cuando alguien manipula encabezados Host, rutas de archivos, redirecciones, cookies de sesión o el tamaño del cuerpo de la solicitud. Corresponden a T1190, explotación de una aplicación expuesta a Internet para obtener acceso inicial.",
+      "triage_steps": [
+        "Identifique en el campo message la excepción exacta y el logger, por ejemplo django.security.DisallowedHost o django.security.SuspiciousFileOperation, junto con la ruta y el valor sospechoso.",
+        "Obtenga la IP de origen, el Host, la URL y el user agent desde los logs del reverse proxy o servidor web en una ventana de +/- 15 minutos.",
+        "Mida el volumen: muchas excepciones distintas desde la misma IP sugieren escaneo automatizado; una sola excepción aislada suele ser un error o configuración.",
+        "Interprete según la subclase: SuspiciousFileOperation indica path traversal, DisallowedRedirect un open redirect, SuspiciousSession o InvalidSessionKey manipulación de sesión, RequestDataTooBig o TooManyFieldsSent abuso de recursos.",
+        "Para PermissionDenied, identifique el usuario autenticado y revise si intentó acceder a vistas o registros de otros usuarios o del admin.",
+        "Verifique si la misma IP obtuvo respuestas 200 en rutas sensibles después de la excepción, lo cual podría indicar un bypass exitoso.",
+        "Revise alertas previas para la misma IP, usuario y aplicación, y cambios recientes de despliegue o de ALLOWED_HOSTS."
+      ],
+      "false_positives": [
+        "Errores de la aplicación que lanzan PermissionDenied o SuspiciousOperation en flujos normales.",
+        "ALLOWED_HOSTS incompleto tras un cambio de dominio, balanceador o health checks que usan la IP del servidor como Host.",
+        "Cargas legítimas de archivos o formularios grandes que superan DATA_UPLOAD_MAX_MEMORY_SIZE o DATA_UPLOAD_MAX_NUMBER_FIELDS.",
+        "Rotación de SECRET_KEY o del backend de sesiones que invalida cookies existentes."
+      ],
+      "response_steps": [
+        "Confirme si el patrón es malicioso correlacionando IP, rutas y frecuencia con los logs de acceso.",
+        "Si hay escaneo o explotación activa, bloquee la IP o el patrón en el WAF o reverse proxy y notifique al equipo de la aplicación.",
+        "Si existen indicios de éxito, como lectura de archivos o acceso a sesiones ajenas, escale a incidente, preserve logs e invalide sesiones afectadas.",
+        "Corrija configuraciones como ALLOWED_HOSTS o límites de carga y documente excepciones benignas recurrentes para ajustar la regla."
+      ],
+      "severity_rationale": "Medium es adecuado porque la excepción muestra un intento sospechoso que Django normalmente bloqueó, sin evidencia de compromiso por sí sola."
+    },
+    "en": {
+      "summary": "The Django application logged a security exception (SuspiciousOperation, one of its subclasses, or PermissionDenied). This may mean someone is probing or trying to exploit the web app, though Django usually blocks the request.",
+      "what_it_detects": "Django log lines containing security exception names: SuspiciousOperation and subclasses such as DisallowedHost, DisallowedRedirect, SuspiciousFileOperation, SuspiciousSession, RequestDataTooBig, TooManyFieldsSent, InvalidSessionKey, plus PermissionDenied.",
+      "why_it_matters": "These exceptions fire when Host headers, file paths, redirects, session cookies or request sizes are tampered with. They map to T1190, exploiting a public-facing application to gain initial access.",
+      "triage_steps": [
+        "Read the message field for the exact exception and logger, e.g. django.security.DisallowedHost or django.security.SuspiciousFileOperation, plus the path and suspicious value.",
+        "Pull source IP, Host, URL and user agent from reverse proxy or web server logs within +/- 15 minutes.",
+        "Gauge volume: many different exceptions from one IP suggest automated scanning; a single isolated exception is often a bug or misconfiguration.",
+        "Interpret by subclass: SuspiciousFileOperation means path traversal, DisallowedRedirect open redirect, SuspiciousSession/InvalidSessionKey session tampering, RequestDataTooBig/TooManyFieldsSent resource abuse.",
+        "For PermissionDenied, identify the authenticated user and check whether they tried to reach other users' records or admin views.",
+        "Check whether the same IP got 200 responses on sensitive paths after the exception, which could indicate a successful bypass.",
+        "Review earlier alerts for the same IP, user and application, and recent deployments or ALLOWED_HOSTS changes."
+      ],
+      "false_positives": [
+        "Application bugs raising PermissionDenied or SuspiciousOperation in normal flows.",
+        "Incomplete ALLOWED_HOSTS after a domain or load balancer change, or health checks using the server IP as Host.",
+        "Legitimate large uploads or forms exceeding DATA_UPLOAD_MAX_MEMORY_SIZE or DATA_UPLOAD_MAX_NUMBER_FIELDS.",
+        "SECRET_KEY or session backend rotation invalidating existing cookies."
+      ],
+      "response_steps": [
+        "Confirm whether the pattern is malicious by correlating IP, paths and frequency with access logs.",
+        "For active scanning or exploitation, block the IP or pattern at the WAF or reverse proxy and notify the application team.",
+        "If there are signs of success, such as file reads or access to other sessions, escalate to an incident, preserve logs and invalidate affected sessions.",
+        "Fix configuration such as ALLOWED_HOSTS or upload limits, and document recurring benign exceptions to tune the rule."
+      ],
+      "severity_rationale": "Medium fits because the exception shows a suspicious attempt that Django normally blocked, with no evidence of compromise on its own."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "DisallowedHost logged by the django.security logger when a scanner sends a forged Host header.",
+        "event": {
+          "message": "2024-10-25 14:03:12,481 ERROR django.security.DisallowedHost Invalid HTTP_HOST header: 'evil.example.org'. You may need to add 'evil.example.org' to ALLOWED_HOSTS.",
+          "host": "web-app-01",
+          "logger": "django.security.DisallowedHost",
+          "level": "ERROR",
+          "client_ip": "203.0.113.45"
+        }
+      },
+      {
+        "description": "SuspiciousFileOperation raised by a path traversal attempt against a file-serving view.",
+        "event": {
+          "message": "2024-10-25 14:05:40,102 ERROR django.security.SuspiciousFileOperation Detected path traversal attempt in '../../etc/passwd'",
+          "host": "web-app-01",
+          "logger": "django.security.SuspiciousFileOperation",
+          "level": "ERROR",
+          "client_ip": "203.0.113.45"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Ordinary 404 warning from django.request for a probed path; no security exception name appears.",
+        "event": {
+          "message": "2024-10-25 14:06:02,550 WARNING django.request Not Found: /wp-login.php",
+          "host": "web-app-01",
+          "logger": "django.request",
+          "level": "WARNING",
+          "client_ip": "198.51.100.20"
+        }
+      },
+      {
+        "description": "CSRF rejection logged by django.security.csrf; it is security-related but contains none of the listed keywords.",
+        "event": {
+          "message": "2024-10-25 14:07:15,013 WARNING django.security.csrf Forbidden (CSRF cookie not set.): /accounts/login/",
+          "host": "web-app-01",
+          "logger": "django.security.csrf",
+          "level": "WARNING",
+          "client_ip": "192.0.2.77"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

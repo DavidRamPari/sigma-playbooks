@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "34746e8c-5fb8-415a-b135-0abc167e912a",
+    "title": "WinSxS Executable File Creation By Non-System Process",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_susp_winsxs_binary_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_susp_winsxs_binary_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que no se ejecuta desde una ubicación del sistema creó un archivo .exe dentro de C:\\Windows\\WinSxS\\. Puede tratarse de un atacante que oculta un binario en el almacén de componentes de Windows.",
+      "what_it_detects": "Eventos de creación de archivos (Sysmon EventID 11 o equivalente) en los que TargetFilename empieza con C:\\Windows\\WinSxS\\ y termina en .exe, y el Image que lo escribe no empieza con C:\\Windows\\Systems32\\, C:\\Windows\\SysWOW64\\ ni C:\\Windows\\WinSxS\\.",
+      "why_it_matters": "WinSxS es el almacén de componentes de Windows. Contiene miles de binarios legítimos y rara vez se revisa, así que un ejecutable colocado ahí pasa desapercibido. El informe sobre el malware Snake citado por la regla describe este tipo de ocultamiento. La regla lo etiqueta como Execution: el binario dejado ahí puede ejecutarse o persistir haciéndose pasar por un componente del sistema.",
+      "triage_steps": [
+        "Revise Image, ProcessId y User del evento: ¿desde dónde se ejecuta el proceso que escribió el archivo y bajo qué cuenta?",
+        "Revise TargetFilename: ¿la carpeta sigue el formato de WinSxS (arquitectura_nombre_token_versión_idioma_hash) y el nombre imita un binario de Windows?",
+        "Obtenga el hash y la firma digital del .exe creado y compárelos con el binario legítimo del mismo nombre y con su inteligencia de amenazas.",
+        "Reconstruya el árbol de procesos: el ParentImage y la línea de comandos del proceso escritor, y cómo llegó ese proceso al host.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque ejecuciones del nuevo .exe, servicios o tareas programadas creadas, cambios de registro y conexiones de red.",
+        "Confirme si había mantenimiento de Windows en curso (actualizaciones, DISM, instalación de roles). Recuerde que el filtro de la regla dice 'Systems32', así que los procesos de System32 no se excluyen.",
+        "Busque alertas anteriores para el mismo host, el mismo usuario y el mismo hash en otros equipos."
+      ],
+      "false_positives": [
+        "Procesos legítimos de C:\\Windows\\System32\\ que dan servicio a WinSxS y no se excluyen porque el filtro de la regla contiene el error tipográfico 'Systems32'.",
+        "TrustedInstaller.exe (C:\\Windows\\servicing\\) u otros componentes de servicing que escriben durante Windows Update o la instalación de características.",
+        "Herramientas de despliegue o imagen (DISM, SCCM, MDT) ejecutadas desde rutas no estándar durante el mantenimiento planificado."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad del binario con la firma, el hash y la ventana de mantenimiento antes de actuar.",
+        "Si es malicioso, aísle el endpoint de la red y conserve el archivo, el volcado de memoria y los logs relevantes.",
+        "Elimine la persistencia asociada (servicios, tareas, claves de ejecución) y ponga el binario en cuarentena; no borre contenido legítimo de WinSxS.",
+        "Busque el hash y el proceso escritor en toda la flota y restablezca las credenciales de la cuenta involucrada.",
+        "Restaure el sistema desde un estado confiable o ejecute DISM /RestoreHealth y SFC tras la limpieza; documente el caso y ajuste las exclusiones."
+      ],
+      "severity_rationale": "Medium es adecuado: escribir ejecutables en WinSxS desde fuera de las rutas del sistema es anómalo y encaja con técnicas de ocultamiento, pero el servicing legítimo y el filtro imperfecto generan falsos positivos que hay que verificar."
+    },
+    "en": {
+      "summary": "A process not running from a system location created an .exe file inside C:\\Windows\\WinSxS\\. This may be an attacker hiding a binary in the Windows component store.",
+      "what_it_detects": "File creation events (Sysmon EventID 11 or equivalent) where TargetFilename starts with C:\\Windows\\WinSxS\\ and ends with .exe, and the writing Image does not start with C:\\Windows\\Systems32\\, C:\\Windows\\SysWOW64\\ or C:\\Windows\\WinSxS\\.",
+      "why_it_matters": "WinSxS is the Windows component store. It holds thousands of legitimate binaries and is rarely reviewed, so an executable placed there blends in. The Snake malware advisory referenced by the rule describes this kind of hiding. The rule tags it as Execution: a binary dropped there can be run, or used for persistence, while posing as a system component.",
+      "triage_steps": [
+        "Review Image, ProcessId and User: where does the writing process run from, and under which account?",
+        "Review TargetFilename: does the folder follow the WinSxS pattern (arch_name_token_version_lang_hash), and does the file name imitate a Windows binary?",
+        "Get the hash and digital signature of the new .exe. Compare them with the legitimate binary of the same name and with threat intel.",
+        "Rebuild the process tree: the writer's ParentImage and command line, and how that process reached the host.",
+        "On the same host within +/- 15 minutes, look for execution of the new .exe, new services or scheduled tasks, registry changes and network connections.",
+        "Check whether Windows servicing was running (updates, DISM, role installs). The rule's filter says 'Systems32', so System32 processes are not excluded.",
+        "Look for earlier alerts on the same host and user, and for the same hash on other machines."
+      ],
+      "false_positives": [
+        "Legitimate C:\\Windows\\System32\\ processes that service WinSxS. They are not excluded because the rule's filter has the typo 'Systems32'.",
+        "TrustedInstaller.exe (C:\\Windows\\servicing\\) or other servicing components writing files during Windows Update or feature installation.",
+        "Deployment or imaging tools (DISM, SCCM, MDT) run from non-standard paths during planned maintenance."
+      ],
+      "response_steps": [
+        "Before acting, verify the binary using its signature, its hash and the maintenance window.",
+        "If it is malicious, isolate the endpoint. Preserve the file, a memory dump and the relevant logs.",
+        "Remove any related persistence (services, tasks, run keys) and quarantine the binary. Do not delete legitimate WinSxS content.",
+        "Hunt for the hash and the writing process across the fleet, and reset the credentials of the account involved.",
+        "Rebuild the host from a trusted state, or run DISM /RestoreHealth and SFC after cleanup. Document the case and tune the exclusions."
+      ],
+      "severity_rationale": "Medium fits because writing executables to WinSxS from outside system paths is unusual and matches hiding techniques, but legitimate servicing and the imperfect filter cause false positives that need checking."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A binary run from a user's temp folder drops an executable that imitates a Windows binary into a WinSxS component folder.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\setup_x64.exe",
+          "ProcessId": 6612,
+          "TargetFilename": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-msdtc-runtime_31bf3856ad364e35_10.0.19041.1_none_4a1b2c3d4e5f6071\\msdtcsvc.exe",
+          "UtcTime": "2024-03-14 10:22:41.118"
+        }
+      },
+      {
+        "description": "An executable in C:\\Windows\\System32\\ is not excluded because the filter uses the typo 'Systems32', so it still matches.",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-FS-03.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "ProcessId": 4120,
+          "TargetFilename": "C:\\Windows\\WinSxS\\x86_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.2_none_0a1b2c3d4e5f6a7b\\svchelper.exe",
+          "UtcTime": "2024-03-14 11:05:09.502"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "TiWorker.exe running from WinSxS writes a new component binary during Windows Update. The filter on C:\\Windows\\WinSxS\\ excludes it.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.3920_none_7e5e2b0c3a1d9f42\\TiWorker.exe",
+          "ProcessId": 3384,
+          "TargetFilename": "C:\\Windows\\WinSxS\\amd64_microsoft-windows-notepad_31bf3856ad364e35_10.0.19041.3920_none_5c2a1b3d4e6f7081\\notepad.exe",
+          "UtcTime": "2024-03-14 02:14:55.330"
+        }
+      },
+      {
+        "description": "A non-system process writes a .dll, not an .exe, into WinSxS, so the endswith condition does not match.",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "Image": "C:\\Program Files\\ExampleVendor\\Installer\\setup.exe",
+          "ProcessId": 7720,
+          "TargetFilename": "C:\\Windows\\WinSxS\\amd64_microsoft.vc90.crt_1fc8b3b9a1e18e3b_9.0.30729.9625_none_08e4299fa83d7e3c\\msvcr90.dll",
+          "UtcTime": "2024-03-14 09:41:12.007"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

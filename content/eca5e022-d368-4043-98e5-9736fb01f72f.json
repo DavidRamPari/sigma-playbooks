@@ -1,0 +1,166 @@
+{
+  "rule": {
+    "id": "eca5e022-d368-4043-98e5-9736fb01f72f",
+    "title": "Clear or Disable Kernel Ring Buffer Logs via Syslog Syscall",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Milad Cheraghi",
+    "path": "linux/auditd/syscall/lnx_auditd_clean_disable_dmesg_logs_via_syslog.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_clean_disable_dmesg_logs_via_syslog.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso llamó a la syscall syslog para leer y borrar (a0=4), borrar (a0=5) o desactivar la salida a consola (a0=6) del ring buffer del kernel. Puede indicar que alguien intenta ocultar rastros del kernel tras una explotación.",
+      "what_it_detects": "Registros SYSCALL de auditd con SYSCALL=syslog y a0 igual a 4, 5 o 6. Normalmente los genera dmesg -c, -C o -D, o un binario que llama a la syscall directamente. Se necesitan las reglas de auditd con las claves clear_dmesg_logs o disable_dmesg_logs.",
+      "why_it_matters": "El ring buffer guarda mensajes del kernel como fallos de segmentación, oops, carga de módulos y errores de drivers, que suelen delatar exploits locales o rootkits. Borrarlo debilita las defensas (ATT&CK T1685.006, defense impairment) y elimina evidencia forense.",
+      "triage_steps": [
+        "Confirme el valor de a0: 4 lee y borra, 5 solo borra, 6 desactiva la consola. El valor 5 o 6 sin una tarea de mantenimiento conocida merece más atención.",
+        "Revise exe, comm, pid, ppid, uid y auid. Un auid que no coincide con el uid apunta a una escalada con sudo o su.",
+        "Correlacione por el mismo serial de evento los registros EXECVE y PROCTITLE para obtener la línea de comandos completa, por ejemplo dmesg -C.",
+        "Reconstruya el árbol de procesos con ppid: shell interactiva, cron, systemd, servicio web o un binario en /tmp o /dev/shm.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, inserciones de módulos (init_module, finit_module), cambios de privilegios, binarios nuevos y conexiones de red salientes.",
+        "Recupere copias de los mensajes del kernel que puedan quedar en journalctl -k, /var/log/kern.log o en su colector central de logs.",
+        "Revise alertas anteriores del mismo host y del mismo auid, en especial las de escalada de privilegios o borrado de logs."
+      ],
+      "false_positives": [
+        "Administradores que limpian dmesg a propósito antes de reproducir un problema de hardware o de drivers.",
+        "Scripts de depuración o de pruebas del kernel que ejecutan dmesg -c para capturar solo los mensajes nuevos.",
+        "Herramientas de monitoreo o de inventario que leen y borran el buffer con a0=4 en cada ejecución."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del sistema o en el sistema de cambios si la acción estaba autorizada y documente el resultado.",
+        "Si no está justificada, preserve evidencia: logs de auditd, el journal, la lista de procesos y los módulos cargados (lsmod), además de un volcado de memoria si es posible.",
+        "Aísle el endpoint de la red y revoque o rote las credenciales de la cuenta indicada en auid.",
+        "Busque persistencia, rootkits y módulos de kernel no firmados; elimínelos solo después de confirmar que son maliciosos.",
+        "Active kernel.dmesg_restrict=1 y reenvíe los mensajes del kernel a un SIEM central para que borrarlos en el host no elimine la evidencia."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque borrar dmesg es una evasión real, aunque los administradores también lo hacen con frecuencia y la acción por sí sola no prueba un compromiso."
+    },
+    "en": {
+      "summary": "A process called the syslog syscall to read-and-clear (a0=4), clear (a0=5) or turn off console output (a0=6) for the kernel ring buffer. This may mean someone is hiding kernel traces after exploitation.",
+      "what_it_detects": "auditd SYSCALL records with SYSCALL=syslog and a0 set to 4, 5 or 6. These usually come from dmesg -c, -C or -D, or from a binary that calls the syscall directly. The auditd rules with keys clear_dmesg_logs or disable_dmesg_logs must be in place.",
+      "why_it_matters": "The ring buffer holds kernel messages such as segfaults, oopses, module loads and driver errors, which often expose local exploits or rootkits. Clearing it impairs defenses (ATT&CK T1685.006, defense impairment) and destroys forensic evidence.",
+      "triage_steps": [
+        "Check the a0 value: 4 reads and clears, 5 only clears, 6 turns off the console. A value of 5 or 6 with no known maintenance task deserves closer scrutiny.",
+        "Review exe, comm, pid, ppid, uid and auid. An auid that differs from uid points to escalation through sudo or su.",
+        "Join the EXECVE and PROCTITLE records that share the event serial to get the full command line, for example dmesg -C.",
+        "Rebuild the process tree from ppid: interactive shell, cron, systemd, a web service, or a binary in /tmp or /dev/shm.",
+        "On the same host, within +/- 15 minutes, look for module loads (init_module, finit_module), privilege changes, new binaries and outbound connections.",
+        "Recover any surviving copies of kernel messages from journalctl -k, /var/log/kern.log or your central log collector.",
+        "Review earlier alerts for the same host and auid, especially privilege escalation or log tampering."
+      ],
+      "false_positives": [
+        "Administrators who clear dmesg on purpose before reproducing a hardware or driver issue.",
+        "Kernel debugging or test scripts that run dmesg -c so they capture only new messages.",
+        "Monitoring or inventory tools that read and clear the buffer with a0=4 each time they run."
+      ],
+      "response_steps": [
+        "Check with the system owner or the change records whether the action was authorized, and document the answer.",
+        "If it was not authorized, preserve evidence: auditd logs, the journal, the process list and loaded modules (lsmod), plus a memory capture if possible.",
+        "Isolate the endpoint from the network, then revoke or rotate credentials for the account shown in auid.",
+        "Hunt for persistence, rootkits and unsigned kernel modules. Remove them only after you confirm they are malicious.",
+        "Set kernel.dmesg_restrict=1 and forward kernel messages to a central SIEM so that clearing them on the host does not destroy the evidence."
+      ],
+      "severity_rationale": "Medium fits because clearing dmesg is a genuine evasion step, but administrators also do it routinely and the action alone does not prove a compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "dmesg -C run through sudo clears the kernel ring buffer (SYSLOG_ACTION_CLEAR, a0=5).",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "syslog",
+          "arch": "c000003e",
+          "syscall": "103",
+          "a0": "5",
+          "a1": "0",
+          "a2": "0",
+          "success": "yes",
+          "exit": "0",
+          "pid": "48213",
+          "ppid": "48190",
+          "auid": "1003",
+          "uid": "0",
+          "euid": "0",
+          "tty": "pts1",
+          "ses": "7",
+          "comm": "dmesg",
+          "exe": "/usr/bin/dmesg",
+          "key": "clear_dmesg_logs",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "An unknown binary in /tmp disables console logging (SYSLOG_ACTION_CONSOLE_OFF, a0=6).",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "syslog",
+          "arch": "c000003e",
+          "syscall": "103",
+          "a0": "6",
+          "a1": "0",
+          "a2": "0",
+          "success": "yes",
+          "exit": "0",
+          "pid": "51022",
+          "ppid": "1",
+          "auid": "4294967295",
+          "uid": "0",
+          "euid": "0",
+          "tty": "(none)",
+          "comm": "kworkr",
+          "exe": "/tmp/.x/kworkr",
+          "key": "disable_dmesg_logs",
+          "host": "web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A plain dmesg read of the whole buffer (SYSLOG_ACTION_READ_ALL, a0=3) that does not clear anything.",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "syslog",
+          "arch": "c000003e",
+          "syscall": "103",
+          "a0": "3",
+          "a1": "55d0c1a2b000",
+          "a2": "40000",
+          "success": "yes",
+          "exit": "18234",
+          "pid": "39011",
+          "ppid": "38990",
+          "auid": "1003",
+          "uid": "1003",
+          "comm": "dmesg",
+          "exe": "/usr/bin/dmesg",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "The same dmesg -C invocation logged as an EXECVE record, not as a SYSCALL record.",
+        "event": {
+          "type": "EXECVE",
+          "SYSCALL": "syslog",
+          "argc": "2",
+          "a0": "dmesg",
+          "a1": "-C",
+          "pid": "48213",
+          "host": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "07743f65-7ec9-404a-a519-913db7118a8d",
+    "title": "COM Hijack via Sdclt",
+    "level": "high",
+    "status": "test",
+    "author": "Omkar Gudhate",
+    "path": "windows/registry/registry_set/registry_set_comhijack_sdclt.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_comhijack_sdclt.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546",
+      "T1548"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor DelegateExecute en Software\\Classes\\Folder\\shell\\open\\command. En el hive del usuario, esto coincide con la evasión de UAC mediante sdclt.exe, donde un binario con autoelevación ejecuta un comando elegido por el atacante.",
+      "what_it_detects": "Eventos de modificación del registro (Sysmon EventID 13 o equivalente) cuyo TargetObject contiene \\Software\\Classes\\Folder\\shell\\open\\command\\DelegateExecute. La técnica crea este valor en HKCU, normalmente vacío, y guarda el payload en el valor (Default) de la clave.",
+      "why_it_matters": "sdclt.exe se eleva solo. Al abrir una carpeta, Windows consulta primero el manejador de HKCU, que controla el usuario, así que el payload corre con integridad alta sin aviso de UAC. Corresponde a abuso del mecanismo de control de elevación (T1548) y ejecución o persistencia por eventos (T1546).",
+      "triage_steps": [
+        "Revise el hive en TargetObject. Las rutas HKU\\<SID> o HKCU son sospechosas. En HKLM, escrituras de TrustedInstaller o msiexec suelen ser registros legítimos.",
+        "Analice Image y su cadena de procesos padre. reg.exe, powershell.exe, cmd.exe, wscript.exe o un binario desconocido son indicadores fuertes.",
+        "Revise Details. Un valor vacío es típico de la técnica. Luego busque el valor (Default) de la misma clave, que contiene el comando del payload.",
+        "Busque ejecuciones de sdclt.exe en el mismo host dentro de +/- 15 minutos y revise sus procesos hijos y su nivel de integridad.",
+        "Identifique procesos de integridad alta iniciados por sdclt.exe o control.exe, y lo que hayan descargado o ejecutado después.",
+        "Pivotee por usuario: origen del inicio de sesión, alertas previas y otras claves de evasión de UAC, como ms-settings o exefile."
+      ],
+      "false_positives": [
+        "Instalación, actualizaciones de Windows o reparaciones que vuelven a registrar el manejador Folder predeterminado en HKLM.",
+        "Exploradores de archivos de terceros o instaladores de extensiones del shell que cambian cómo se abren las carpetas.",
+        "Ejercicios autorizados de red team o pruebas de evasión de UAC."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme el payload en (Default) y verifique que el proceso escritor y los hijos de sdclt.exe correspondan a actividad maliciosa.",
+        "Si se confirma, aísle el endpoint y detenga el árbol de procesos del payload.",
+        "Exporte la clave HKCU\\Software\\Classes\\Folder\\shell\\open\\command como evidencia y luego elimínela. Borre también los archivos dejados por el atacante.",
+        "Restablezca las credenciales del usuario, busque otras persistencias y revise si la misma clave existe en otros equipos.",
+        "Evalúe configurar UAC en Notificar siempre y retirar los privilegios de administrador local a los usuarios estándar."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque escribir este valor en el hive del usuario casi nunca es legítimo y suele indicar elevación a integridad alta sin aviso."
+    },
+    "en": {
+      "summary": "A process set the DelegateExecute value under Software\\Classes\\Folder\\shell\\open\\command. In a user hive this matches the sdclt.exe UAC bypass, where an auto-elevated binary runs a command chosen by the attacker.",
+      "what_it_detects": "Registry set events (Sysmon EventID 13 or equivalent) where TargetObject contains \\Software\\Classes\\Folder\\shell\\open\\command\\DelegateExecute. The bypass creates this value, usually empty, in HKCU and puts the payload in the key's (Default) value.",
+      "why_it_matters": "sdclt.exe auto-elevates. When it opens a folder, Windows reads the user-controlled HKCU handler first, so the payload runs at high integrity without a UAC prompt. This is Abuse Elevation Control Mechanism (T1548) and event-triggered execution or persistence (T1546).",
+      "triage_steps": [
+        "Check the hive in TargetObject. HKU\\<SID> or HKCU paths are suspicious. HKLM writes by TrustedInstaller or msiexec usually mean legitimate shell registration.",
+        "Review Image and its parent chain. reg.exe, powershell.exe, cmd.exe, wscript.exe or an unknown binary writing this value is a strong indicator.",
+        "Read Details. An empty value is typical of the bypass. Then find the (Default) value set on the same key, which holds the payload command.",
+        "Search for sdclt.exe running on the same host within 15 minutes, and list its child processes and their integrity level.",
+        "Look for any high-integrity process started by sdclt.exe or control.exe, and for anything it dropped or ran next.",
+        "Pivot on the user: logon source, earlier alerts and other UAC-bypass registry keys such as ms-settings or exefile handlers."
+      ],
+      "false_positives": [
+        "Windows setup, feature updates or repairs that re-register the default Folder handler in HKLM.",
+        "Third-party file managers or shell-extension installers that change folder open behavior.",
+        "Authorized red team or UAC-bypass testing."
+      ],
+      "response_steps": [
+        "Confirm the payload in (Default), and check that the writing process and any sdclt.exe child match malicious activity before you act.",
+        "If confirmed, isolate the endpoint and stop the payload process tree.",
+        "Export the HKCU\\Software\\Classes\\Folder\\shell\\open\\command key as evidence, then delete it. Remove any dropped files.",
+        "Reset the affected user's credentials, check for further persistence, and search other hosts for the same key.",
+        "Consider setting UAC to Always Notify and removing local admin rights from standard users."
+      ],
+      "severity_rationale": "High fits because a user-hive write to this value has almost no legitimate use and usually means elevation to high integrity without a prompt."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe creates an empty DelegateExecute value in the user's hive for the sdclt UAC bypass",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-14 10:22:05.118",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Software\\Classes\\Folder\\shell\\open\\command\\DelegateExecute",
+          "Details": "(Empty)",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "PowerShell sets DelegateExecute under the HKCU Folder open command key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-14 11:40:51.302",
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKCU\\Software\\Classes\\Folder\\shell\\open\\command\\DelegateExecute",
+          "Details": "(Empty)",
+          "User": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Default value of the same key is set, but DelegateExecute is not written, so the path does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-14 10:22:04.990",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1105\\Software\\Classes\\Folder\\shell\\open\\command\\(Default)",
+          "Details": "C:\\Users\\Public\\update.exe",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Legitimate DelegateExecute write for a different shell verb (explore) during a Windows update",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-12 02:15:33.410",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\Folder\\shell\\explore\\command\\DelegateExecute",
+          "Details": "{11dbb47c-a525-400b-9e80-a54615a090c0}",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

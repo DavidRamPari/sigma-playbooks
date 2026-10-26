@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "25cb259b-bbdc-4b87-98b7-90d7c72f8743",
+    "title": "Azure Kubernetes RoleBinding/ClusterRoleBinding Modified and Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_rolebinding_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_rolebinding_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485",
+      "T1489",
+      "T1496"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó o eliminó un RoleBinding o ClusterRoleBinding en un clúster Kubernetes conectado a Azure Arc. Puede ser administración legítima o un intento de otorgarse privilegios o interrumpir el acceso de otros.",
+      "what_it_detects": "Eventos de Azure Activity Log cuyo operationName corresponde a WRITE o DELETE sobre rolebindings o clusterrolebindings de rbac.authorization.k8s.io en Microsoft.Kubernetes/connectedClusters.",
+      "why_it_matters": "Los bindings definen quién tiene qué permisos en el clúster. Un atacante puede vincular su cuenta a cluster-admin para luego minar criptomonedas (T1496), destruir datos (T1485) o detener servicios (T1489), o eliminar bindings para bloquear a los administradores.",
+      "triage_steps": [
+        "Revise operationName para saber si fue WRITE o DELETE, si es ClusterRoleBinding (todo el clúster) o RoleBinding (namespace), y confirme en status si la operación fue Succeeded.",
+        "Identifique al caller, callerIpAddress y user agent; valide si esa identidad suele administrar este clúster y si la IP es corporativa o conocida.",
+        "Desde resourceId determine el clúster, la suscripción y el nombre del binding; con kubectl revise roleRef y subjects actuales, buscando cluster-admin o cuentas de servicio inesperadas.",
+        "Correlacione por correlationId y busque otras operaciones del mismo caller en +/- 15 minutos: creación de roles, secrets, pods, daemonsets o cambios en el clúster.",
+        "Busque alertas previas del mismo caller o IP, como inicios de sesión riesgosos en Entra ID o asignaciones de roles en Azure RBAC.",
+        "Compare con tickets de cambio y pipelines de GitOps o CI/CD que gestionan RBAC para confirmar si el cambio estaba planificado."
+      ],
+      "false_positives": [
+        "Administradores del clúster que ajustan permisos de forma planificada y documentada.",
+        "Pipelines de CI/CD, Flux o Argo CD que aplican manifiestos RBAC con una identidad de servicio conocida.",
+        "Instalación o actualización de charts de Helm y operadores que crean sus propios bindings."
+      ],
+      "response_steps": [
+        "Confirme con el propietario del clúster o del caller si el cambio fue autorizado antes de actuar.",
+        "Si no fue autorizado, revierta el binding a su estado aprobado, preferentemente desde el repositorio de GitOps, y conserve una copia del objeto modificado como evidencia.",
+        "Deshabilite o rote las credenciales de la identidad comprometida y revoque sus sesiones y tokens en Entra ID.",
+        "Revise los workloads creados después del cambio y elimine los maliciosos solo tras verificarlos; documente y agregue exclusiones para automatizaciones legítimas."
+      ],
+      "severity_rationale": "Nivel medio porque los cambios de RBAC son comunes en la administración, pero un binding malicioso otorga control total del clúster y requiere validación oportuna."
+    },
+    "en": {
+      "summary": "An identity created, modified or deleted a RoleBinding or ClusterRoleBinding on an Azure Arc-connected Kubernetes cluster. This may be routine administration or an attempt to grant privileges or lock others out.",
+      "what_it_detects": "Azure Activity Log events whose operationName is WRITE or DELETE on rbac.authorization.k8s.io rolebindings or clusterrolebindings under Microsoft.Kubernetes/connectedClusters.",
+      "why_it_matters": "Bindings decide who holds which permissions in the cluster. An attacker can bind their account to cluster-admin to run cryptominers (T1496), destroy data (T1485) or stop services (T1489), or delete bindings to lock out administrators.",
+      "triage_steps": [
+        "Check operationName for WRITE versus DELETE and ClusterRoleBinding (cluster-wide) versus RoleBinding (namespace); confirm in status whether the operation Succeeded.",
+        "Identify the caller, callerIpAddress and user agent; verify that this identity normally administers this cluster and that the IP is corporate or known.",
+        "From resourceId, get the cluster, subscription and binding name; use kubectl to review the current roleRef and subjects, looking for cluster-admin or unexpected service accounts.",
+        "Pivot on correlationId and on the same caller within +/- 15 minutes: role, secret, pod or daemonset creation and other cluster changes.",
+        "Look for earlier alerts on the same caller or IP, such as risky Entra ID sign-ins or Azure RBAC role assignments.",
+        "Compare against change tickets and the GitOps or CI/CD pipelines that manage RBAC to confirm the change was planned."
+      ],
+      "false_positives": [
+        "Cluster administrators making planned, documented permission changes.",
+        "CI/CD pipelines, Flux or Argo CD applying RBAC manifests with a known service identity.",
+        "Helm chart or operator installs and upgrades that create their own bindings."
+      ],
+      "response_steps": [
+        "Confirm with the cluster owner or the caller that the change was authorized before acting.",
+        "If unauthorized, restore the binding to its approved state, ideally from the GitOps repository, and keep a copy of the modified object as evidence.",
+        "Disable or rotate the compromised identity's credentials and revoke its sessions and tokens in Entra ID.",
+        "Review workloads created after the change and remove malicious ones only after verification; document and exclude legitimate automation."
+      ],
+      "severity_rationale": "Medium because RBAC changes are common in administration, yet a malicious binding grants full cluster control and needs prompt validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user creates a ClusterRoleBinding on an Arc-connected cluster from an external IP",
+        "event": {
+          "operationName": "Microsoft.Kubernetes/connectedClusters/rbac.authorization.k8s.io/clusterrolebindings/write",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "mlopez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-k8s-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "correlationId": "7c1d2e3f-0000-4a5b-9c8d-111122223333",
+          "time": "2024-05-14T02:17:44Z"
+        }
+      },
+      {
+        "description": "RoleBinding deleted in a namespace of a connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/RBAC.AUTHORIZATION.K8S.IO/ROLEBINDINGS/DELETE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-k8s-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "correlationId": "9a8b7c6d-0000-4e5f-8a9b-444455556666",
+          "time": "2024-05-14T02:21:09Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read of RoleBindings, not a write or delete",
+        "event": {
+          "operationName": "Microsoft.Kubernetes/connectedClusters/rbac.authorization.k8s.io/rolebindings/read",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-k8s-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "time": "2024-05-14T09:02:11Z"
+        }
+      },
+      {
+        "description": "Write to a ClusterRole (not a binding), which this rule does not cover",
+        "event": {
+          "operationName": "Microsoft.Kubernetes/connectedClusters/rbac.authorization.k8s.io/clusterroles/write",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "gitops-sp@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-k8s-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "time": "2024-05-14T10:30:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

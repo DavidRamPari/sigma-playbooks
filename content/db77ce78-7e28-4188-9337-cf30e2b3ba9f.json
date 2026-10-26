@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "db77ce78-7e28-4188-9337-cf30e2b3ba9f",
+    "title": "Potential Wazuh Security Platform DLL Sideloading",
+    "level": "medium",
+    "status": "test",
+    "author": "X__Junior (Nextron Systems)",
+    "path": "windows/image_load/image_load_side_load_wazuh.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_side_load_wazuh.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cargó libwazuhshared.dll o libwinpthread-1.dll desde una ruta fuera de Program Files y fuera de las rutas MinGW64 comunes. Esto puede indicar DLL sideloading con un ejecutable legítimo usado como portador.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon Event ID 7) en los que ImageLoaded termina en \\libwazuhshared.dll o \\libwinpthread-1.dll y la ruta no empieza con C:\\Program Files\\ ni C:\\Program Files (x86)\\. Se excluyen las copias de libwinpthread-1.dll ubicadas en \\mingw64\\bin\\ dentro de AppData\\Local o ProgramData.",
+      "why_it_matters": "En el DLL sideloading (T1574.001), el atacante coloca una DLL maliciosa con un nombre esperado junto a un ejecutable confiable. Así ejecuta código dentro de un proceso firmado, logra persistencia y evade controles basados en reputación.",
+      "triage_steps": [
+        "Revise ImageLoaded e Image: confirme la ruta de la DLL y qué ejecutable la cargó. Desconfíe de Users\\Public, Temp, Downloads, ProgramData o carpetas con nombres engañosos.",
+        "Verifique los campos Signed, Signature y Hashes de la DLL. Compare el hash con el de los binarios oficiales de Wazuh o MinGW y búsquelo en su plataforma de threat intelligence.",
+        "Valide si el proceso Image es un binario legítimo copiado fuera de su ruta original, por ejemplo un ejecutable del agente Wazuh en una carpeta escrita por el usuario.",
+        "Investigue la creación de procesos del mismo ProcessId: ParentImage, CommandLine y usuario. Determine cómo se inició el portador (tarea programada, servicio, clave Run).",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque creación de archivos en esa carpeta, conexiones de red salientes del proceso y otras DLL no firmadas cargadas.",
+        "Consulte alertas anteriores del mismo host y usuario, y busque el mismo hash o la misma ruta en otros endpoints."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas que incluyen libwinpthread-1.dll fuera de Program Files: Visual Studio, JetBrains, Ruby, Anaconda o GitHub Desktop.",
+        "Herramientas de desarrollo compiladas con MinGW que se ejecutan desde carpetas de proyecto, de usuario o portables.",
+        "Instalaciones del agente Wazuh en rutas no estándar, definidas por el área de TI."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o con TI si la aplicación y su ruta son esperadas. Documente las excepciones con rutas y hashes específicos.",
+        "Si la DLL no está firmada o su hash es desconocido, aísle el endpoint y preserve la DLL, el ejecutable portador y la memoria del proceso.",
+        "Elimine el mecanismo de persistencia y los archivos maliciosos solo después de recolectar la evidencia y validar su alcance.",
+        "Busque el mismo hash en toda la flota, rote las credenciales del usuario afectado y restaure el host desde una imagen confiable si hubo compromiso."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque muchas aplicaciones legítimas usan libwinpthread-1.dll y requieren validación, pero una carga confirmada fuera de rutas esperadas indica ejecución sigilosa de código."
+    },
+    "en": {
+      "summary": "A process loaded libwazuhshared.dll or libwinpthread-1.dll from a path outside Program Files and outside common MinGW64 locations. This may be DLL sideloading through a legitimate host executable.",
+      "what_it_detects": "Image load events (Sysmon Event ID 7) where ImageLoaded ends with \\libwazuhshared.dll or \\libwinpthread-1.dll and the path does not start with C:\\Program Files\\ or C:\\Program Files (x86)\\. Copies of libwinpthread-1.dll under \\mingw64\\bin\\ in AppData\\Local or ProgramData are excluded.",
+      "why_it_matters": "In DLL sideloading (T1574.001), an attacker places a malicious DLL with an expected name next to a trusted executable. This runs their code inside a signed process, gives them persistence and helps them get past reputation-based controls.",
+      "triage_steps": [
+        "Review ImageLoaded and Image to confirm the DLL path and the executable that loaded it. Be suspicious of Users\\Public, Temp, Downloads, ProgramData or folders with misleading names.",
+        "Check the DLL's Signed, Signature and Hashes fields. Compare the hash with official Wazuh or MinGW binaries and look it up in threat intelligence.",
+        "Check whether Image is a legitimate binary copied out of its original location, such as a Wazuh agent executable in a user-writable folder.",
+        "Find the process creation event for the same ProcessId and review ParentImage, CommandLine and the user. Work out how the host process started (scheduled task, service, Run key).",
+        "On the same host within +/- 15 minutes, look for file creation in that folder, outbound connections from the process and other unsigned DLL loads.",
+        "Check earlier alerts for the same host and user, and search other endpoints for the same hash or path."
+      ],
+      "false_positives": [
+        "Legitimate applications that ship libwinpthread-1.dll outside Program Files: Visual Studio, JetBrains, Ruby, Anaconda or GitHub Desktop.",
+        "MinGW-built developer tools run from project, user-profile or portable folders.",
+        "Wazuh agent installs in non-standard paths chosen by IT."
+      ],
+      "response_steps": [
+        "Ask the host owner or IT whether the application and its path are expected. Document exceptions using specific paths and hashes.",
+        "If the DLL is unsigned or its hash is unknown, isolate the endpoint and preserve the DLL, the host executable and the process memory.",
+        "Remove the persistence mechanism and malicious files only after you have collected evidence and confirmed the scope.",
+        "Search the fleet for the hash, rotate the affected user's credentials and reimage the host from a trusted image if compromise is confirmed."
+      ],
+      "severity_rationale": "Medium fits because many legitimate applications use libwinpthread-1.dll and each hit needs validation, but a confirmed load from an unexpected path means stealthy code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Copied Wazuh agent binary loads libwazuhshared.dll from a user-writable Public folder",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\Public\\Libraries\\wazuh-agent.exe",
+          "ImageLoaded": "C:\\Users\\Public\\Libraries\\libwazuhshared.dll",
+          "Signed": "false",
+          "Signature": "",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      },
+      {
+        "description": "libwinpthread-1.dll loaded from ProgramData but not from a mingw64\\bin folder, so the optional filter does not apply",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4412,
+          "Image": "C:\\ProgramData\\SysUpdate\\updater.exe",
+          "ImageLoaded": "C:\\ProgramData\\SysUpdate\\libwinpthread-1.dll",
+          "Signed": "false",
+          "Signature": "",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000002"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Wazuh agent loading its DLL from Program Files (x86), excluded by filter_main_generic",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-APP-03.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2208,
+          "Image": "C:\\Program Files (x86)\\ossec-agent\\wazuh-agent.exe",
+          "ImageLoaded": "C:\\Program Files (x86)\\ossec-agent\\libwazuhshared.dll",
+          "Signed": "true",
+          "Signature": "Wazuh, Inc.",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000003"
+        }
+      },
+      {
+        "description": "Git for Windows in AppData\\Local loading MinGW64 libwinpthread-1.dll, excluded by filter_optional_mingw64",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7340,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Programs\\Git\\mingw64\\bin\\git.exe",
+          "ImageLoaded": "C:\\Users\\jperez\\AppData\\Local\\Programs\\Git\\mingw64\\bin\\libwinpthread-1.dll",
+          "Signed": "false",
+          "Signature": "",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000004"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

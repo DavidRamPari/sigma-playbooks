@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "03f4ca17-de95-428d-a75a-4ee78b047256",
+    "title": "HackTool - Impacket File Indicators",
+    "level": "high",
+    "status": "experimental",
+    "author": "The DFIR Report, IrishDeath",
+    "path": "windows/file/file_event/file_event_win_impacket_file_indicators.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_impacket_file_indicators.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un archivo cuyo nombre coincide con el archivo de reanudación de sesión que genera secretsdump de Impacket (sessionresume_ seguido de 8 letras). Indica con alta probabilidad que se ejecutó un volcado de credenciales desde este host.",
+      "what_it_detects": "Eventos de creación de archivo (Sysmon EventID 11 o equivalente) donde TargetFilename termina en \\sessionresume_ seguido de exactamente 8 letras y sin extensión. secretsdump.py crea este archivo para poder reanudar un volcado de hashes NTDS interrumpido.",
+      "why_it_matters": "secretsdump extrae hashes de SAM, secretos LSA y la base NTDS de controladores de dominio. Corresponde a acceso a credenciales (T1003, la regla la etiqueta como T1003.001) y suele preceder al movimiento lateral, pass-the-hash y despliegue de ransomware.",
+      "triage_steps": [
+        "Revise TargetFilename, Image, User y Computer: el archivo aparece en el directorio de trabajo del host donde se ejecutó Impacket, no necesariamente en el controlador de dominio.",
+        "Identifique el proceso en Image (python.exe, un ejecutable compilado con PyInstaller o un binario desconocido) y obtenga su hash, ruta y firma.",
+        "Reconstruya el árbol de procesos: ParentImage, línea de comandos y procesos hijos en el mismo host +/- 15 minutos.",
+        "Busque conexiones SMB/RPC/DRSUAPI salientes desde este host hacia controladores de dominio en la misma ventana de tiempo.",
+        "En los controladores de dominio, revise inicios de sesión de red (4624 tipo 3) y solicitudes de replicación (4662) desde la IP de este host.",
+        "Pivotee por el usuario: otros hosts donde inició sesión y alertas previas de herramientas de Impacket (wmiexec, smbexec, psexec).",
+        "Revise el contenido del archivo si existe: puede contener hashes ya extraídos."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ejercicios autorizados de pentest o red team que usan Impacket; confirme con el ticket o ventana de pruebas aprobada."
+      ],
+      "response_steps": [
+        "Confirme si la actividad corresponde a un ejercicio autorizado; si no, escale como incidente de compromiso de credenciales.",
+        "Aísle el host desde el EDR y preserve memoria, el archivo sessionresume y los binarios de Impacket antes de eliminarlos.",
+        "Asuma credenciales comprometidas: restablezca cuentas privilegiadas y de servicio afectadas y, si se volcó NTDS, planifique el doble restablecimiento de krbtgt.",
+        "Busque el mismo hash e indicadores en toda la flota y bloquee las IP o cuentas usadas.",
+        "Restaure el host desde una imagen confiable y monitoree un posible reuso de hashes."
+      ],
+      "severity_rationale": "Es alta porque el nombre es muy específico de secretsdump y su presencia implica un volcado de credenciales con posible alcance de dominio."
+    },
+    "en": {
+      "summary": "A file was created whose name matches the session resume file written by Impacket's secretsdump (sessionresume_ plus 8 letters). This strongly suggests a credential dump was run from this host.",
+      "what_it_detects": "File creation events (Sysmon EventID 11 or equivalent) where TargetFilename ends in \\sessionresume_ followed by exactly 8 letters and no extension. secretsdump.py writes this file so an interrupted NTDS hash dump can be resumed.",
+      "why_it_matters": "secretsdump extracts SAM hashes, LSA secrets and domain controller NTDS data. This is credential access (T1003; the rule tags T1003.001) and commonly precedes lateral movement, pass-the-hash and ransomware deployment.",
+      "triage_steps": [
+        "Review TargetFilename, Image, User and Computer: the file lands in the working directory of the host running Impacket, not necessarily on the domain controller.",
+        "Identify the process in Image (python.exe, a PyInstaller-built executable or unknown binary) and collect its hash, path and signature.",
+        "Rebuild the process tree: ParentImage, command line and child processes on the same host within +/- 15 minutes.",
+        "Look for outbound SMB/RPC/DRSUAPI connections from this host to domain controllers in the same window.",
+        "On domain controllers, check network logons (4624 type 3) and replication requests (4662) from this host's IP.",
+        "Pivot on the user: other hosts they logged into and earlier alerts for Impacket tools (wmiexec, smbexec, psexec).",
+        "Inspect the file if still present; it may contain already-extracted hashes."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Authorized penetration tests or red team exercises using Impacket; confirm against an approved ticket or test window."
+      ],
+      "response_steps": [
+        "Confirm whether this is authorized testing; if not, escalate as a credential compromise incident.",
+        "Isolate the host via EDR and preserve memory, the sessionresume file and Impacket binaries before removal.",
+        "Assume credentials are compromised: reset affected privileged and service accounts; if NTDS was dumped, plan a double krbtgt reset.",
+        "Hunt the same hash and indicators fleet-wide and block the IPs or accounts used.",
+        "Rebuild the host from a trusted image and monitor for hash reuse."
+      ],
+      "severity_rationale": "High fits because the filename is highly specific to secretsdump and implies a credential dump with possible domain-wide impact."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PyInstaller-built secretsdump writes its resume file in C:\\ProgramData",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-CONF-01.andes.example.com",
+          "UtcTime": "2025-05-19 14:03:12.481",
+          "Image": "C:\\ProgramData\\sd.exe",
+          "ProcessId": 4120,
+          "User": "ANDES\\svc_confluence",
+          "TargetFilename": "C:\\ProgramData\\sessionresume_qWeRtYuI"
+        }
+      },
+      {
+        "description": "Python-based Impacket run from a user profile creates the resume file",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2025-05-19 15:22:40.102",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+          "ProcessId": 7788,
+          "User": "ANDES\\jperez",
+          "TargetFilename": "C:\\Users\\jperez\\Desktop\\tools\\sessionresume_AbCdEfGh"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Similar name with an extension; the regex requires the 8 letters at the end of the path",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2025-05-19 16:01:05.330",
+          "Image": "C:\\Program Files\\ExampleApp\\app.exe",
+          "ProcessId": 3312,
+          "User": "ANDES\\jperez",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\ExampleApp\\sessionresume_abcdefgh.log"
+        }
+      },
+      {
+        "description": "Suffix includes digits and is only partly letters, so it does not match [a-zA-Z]{8}",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-APP-02.andes.example.com",
+          "UtcTime": "2025-05-19 16:10:44.002",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1044,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetFilename": "C:\\Windows\\Temp\\sessionresume_ab12cd34"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

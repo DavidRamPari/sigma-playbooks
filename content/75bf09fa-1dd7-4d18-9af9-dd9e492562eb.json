@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "75bf09fa-1dd7-4d18-9af9-dd9e492562eb",
+    "title": "ADSI-Cache File Creation By Uncommon Tool",
+    "level": "medium",
+    "status": "test",
+    "author": "xknow @xknow_infosec, Tim Shelton",
+    "path": "windows/file/file_event/file_event_win_adsi_cache_creation_by_uncommon_tool.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_adsi_cache_creation_by_uncommon_tool.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1001.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso fuera de la lista de herramientas conocidas creó un archivo de caché de esquema de Active Directory (.sch) en SchCache. Esto indica que el proceso usó ADSI/LDAP, algo poco habitual en binarios no administrativos.",
+      "what_it_detects": "Eventos file_event en los que TargetFilename contiene \\Local\\Microsoft\\Windows\\SchCache\\ y termina en .sch, y el Image no es MMC, svchost, PowerShell de System32, dllhost, WmiPrvSE, SCCM, Outlook ni algún agente de seguridad o Citrix excluido.",
+      "why_it_matters": "Herramientas como LDAPFragger usan atributos de objetos de AD como canal de comando y control sobre LDAP, disfrazando el tráfico como consultas normales del directorio (T1001.003, suplantación de protocolo). El archivo .sch puede ser el único rastro en el endpoint de que un binario desconocido habla LDAP.",
+      "triage_steps": [
+        "Revise Image y su ruta: los binarios en %TEMP%, AppData, ProgramData, Downloads o carpetas públicas son más sospechosos que el software instalado en Program Files.",
+        "Obtenga el hash, la firma y el publicador del Image; consulte la reputación y compruebe si existe en otros endpoints de la organización.",
+        "Revise el proceso padre, la línea de comandos y el usuario del evento de creación del proceso asociado; identifique cómo se ejecutó el binario.",
+        "Pivote en el mismo host +/- 15 minutos: conexiones de red a controladores de dominio por 389/636/3268, otros archivos creados y procesos hijos.",
+        "Busque en los controladores de dominio modificaciones repetidas de atributos (por ejemplo, de usuarios o equipos) hechas por la cuenta del usuario durante el mismo intervalo.",
+        "Revise alertas anteriores del mismo host, usuario y hash, sobre todo de ejecución, persistencia o beacons de Cobalt Strike."
+      ],
+      "false_positives": [
+        "Herramientas administrativas legítimas que usan ADSI/LDAP y no están en la lista de exclusión, como consolas de terceros para gestionar AD o scripts compilados.",
+        "Agentes de inventario, backup, EDR o gestión de identidades que consultan el directorio desde rutas distintas a las excluidas.",
+        "PowerShell de 32 bits (SysWOW64) o ISE, que ejecutan consultas ADSI legítimas de administradores."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o del software si el binario y la actividad LDAP son esperados; documente las exclusiones aprobadas por hash o ruta firmada.",
+        "Si no hay justificación, aísle el endpoint y conserve el binario, la memoria y los registros antes de cualquier limpieza.",
+        "Revise y restaure los atributos de AD modificados por el canal C2; restablezca las credenciales de la cuenta implicada.",
+        "Elimine el binario y su persistencia, bloquee el hash en el EDR y busque el mismo indicador en toda la flota."
+      ],
+      "severity_rationale": "Medium es adecuado porque la creación de .sch por un proceso inusual es un buen indicio de uso anómalo de LDAP, pero muchas herramientas legítimas de AD también la generan."
+    },
+    "en": {
+      "summary": "A process not on the known-tool allowlist created an Active Directory Schema Cache (.sch) file under SchCache. This shows the process used ADSI/LDAP, which is unusual for non-administrative binaries.",
+      "what_it_detects": "file_event records where TargetFilename contains \\Local\\Microsoft\\Windows\\SchCache\\ and ends with .sch, and Image is not MMC, svchost, System32 PowerShell, dllhost, WmiPrvSE, SCCM, Outlook or an excluded security or Citrix agent.",
+      "why_it_matters": "Tools such as LDAPFragger use AD object attributes as a command-and-control channel over LDAP, disguising traffic as normal directory queries (T1001.003, protocol impersonation). The .sch file may be the only endpoint trace that an unknown binary speaks LDAP.",
+      "triage_steps": [
+        "Check Image and its path: binaries in %TEMP%, AppData, ProgramData, Downloads or public folders are more suspicious than software installed in Program Files.",
+        "Get the Image hash, signature and publisher; check reputation and whether the binary exists on other endpoints in the organization.",
+        "Review the parent process, command line and user from the matching process creation event; determine how the binary was launched.",
+        "Pivot on the same host +/- 15 minutes: network connections to domain controllers on 389/636/3268, other files written and child processes.",
+        "On domain controllers, look for repeated attribute modifications (for example on user or computer objects) by the same account in that window.",
+        "Review earlier alerts for the same host, user and hash, especially execution, persistence or Cobalt Strike beacon activity."
+      ],
+      "false_positives": [
+        "Legitimate admin tools using ADSI/LDAP that are not on the exclusion list, such as third-party AD management consoles or compiled scripts.",
+        "Inventory, backup, EDR or identity management agents querying the directory from paths other than the excluded ones.",
+        "32-bit PowerShell (SysWOW64) or ISE running legitimate ADSI queries by administrators."
+      ],
+      "response_steps": [
+        "Confirm with the system or software owner whether the binary and LDAP activity are expected; document approved exclusions by hash or signed path.",
+        "If unjustified, isolate the endpoint and preserve the binary, memory and logs before any cleanup.",
+        "Review and restore AD attributes modified by the C2 channel; reset credentials of the involved account.",
+        "Remove the binary and its persistence, block the hash in EDR and hunt for the same indicator fleet-wide."
+      ],
+      "severity_rationale": "Medium fits because .sch creation by an unusual process is a good sign of anomalous LDAP use, but many legitimate AD tools also produce it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder creates an ADSI schema cache file",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.ad.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupdate.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\Windows\\SchCache\\ad.example.com.sch",
+          "CreationUtcTime": "2024-05-14 13:22:41.512"
+        }
+      },
+      {
+        "description": "Executable in ProgramData writes a .sch file in the NetworkService profile",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-APP-07.ad.example.com",
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "Image": "C:\\ProgramData\\Intel\\igfxhelper.exe",
+          "ProcessId": 4388,
+          "TargetFilename": "C:\\Windows\\ServiceProfiles\\NetworkService\\AppData\\Local\\Microsoft\\Windows\\SchCache\\dc01.ad.example.com.sch",
+          "CreationUtcTime": "2024-05-14 13:40:03.007"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MMC (Active Directory Users and Computers) creates the schema cache; excluded by filter_main_generic",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.ad.example.com",
+          "User": "ANDES\\admin.mlopez",
+          "Image": "C:\\Windows\\System32\\mmc.exe",
+          "ProcessId": 5012,
+          "TargetFilename": "C:\\Users\\admin.mlopez\\AppData\\Local\\Microsoft\\Windows\\SchCache\\ad.example.com.sch",
+          "CreationUtcTime": "2024-05-14 09:10:15.330"
+        }
+      },
+      {
+        "description": "Outlook from Program Files creates the schema cache; excluded by filter_main_office",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.ad.example.com",
+          "User": "ANDES\\cramirez",
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE",
+          "ProcessId": 7732,
+          "TargetFilename": "C:\\Users\\cramirez\\AppData\\Local\\Microsoft\\Windows\\SchCache\\ad.example.com.sch",
+          "CreationUtcTime": "2024-05-14 08:02:51.118"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

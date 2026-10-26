@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "457df417-8b9d-4912-85f3-9dbda39c3645",
+    "title": "Suspicious Nohup Execution",
+    "level": "high",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_nohup_susp_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_nohup_susp_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó nohup con una línea de comandos que hace referencia a /tmp/. Esto suele indicar que se lanza en segundo plano y de forma persistente un binario o script colocado en un directorio temporal de escritura global.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /nohup y CommandLine contiene la cadena /tmp/, por ejemplo 'nohup /tmp/.x/agent &'.",
+      "why_it_matters": "Los atacantes dejan payloads en /tmp y usan nohup para que sigan corriendo después de cerrar la sesión. Es un patrón de ejecución (ATT&CK Execution) visto en malware para Linux como GobRAT, citado en las referencias de la regla.",
+      "triage_steps": [
+        "Revise CommandLine completo: identifique la ruta bajo /tmp/, los argumentos y si redirige la salida a /dev/null o a un archivo.",
+        "Identifique el usuario, ParentImage y la línea de comandos del padre: ¿shell interactiva, cron, servicio web, sesión SSH?",
+        "Obtenga el hash, el tamaño, el propietario y la fecha de modificación del archivo en /tmp/; consulte reputación del hash en fuentes internas.",
+        "Verifique si el proceso hijo sigue activo y revise sus conexiones de red salientes e IP de destino.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, descargas con curl/wget, chmod +x o cambios en crontab y systemd.",
+        "Revise inicios de sesión SSH y comandos sudo del mismo usuario y las alertas anteriores del host.",
+        "Busque la misma ruta o el mismo hash en otros hosts de la flota."
+      ],
+      "false_positives": [
+        "Scripts de despliegue o instaladores que extraen y lanzan binarios temporales desde /tmp con nohup.",
+        "Administradores o desarrolladores que prueban herramientas en /tmp y las dejan corriendo en segundo plano.",
+        "Trabajos de CI/CD o de compilación que usan /tmp como directorio de trabajo."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o el usuario si la ejecución era esperada antes de actuar.",
+        "Si es malicioso, aísle el host de la red y preserve una copia del archivo en /tmp y la memoria del proceso.",
+        "Termine el proceso y elimine la persistencia asociada (cron, systemd, rc.local, authorized_keys) tras documentarla.",
+        "Restablezca las credenciales del usuario comprometido y bloquee las IP o dominios de C2 identificados.",
+        "Busque el mismo indicador en otros hosts y restaure el sistema desde una base confiable si hubo compromiso."
+      ],
+      "severity_rationale": "Nivel alto porque lanzar con nohup binarios desde /tmp es poco común en producción y coincide con técnicas documentadas de malware para Linux."
+    },
+    "en": {
+      "summary": "nohup was executed with a command line referencing /tmp/. This usually means a binary or script dropped in a world-writable temporary directory is being launched in the background to survive logout.",
+      "what_it_detects": "Linux process creation events where Image ends with /nohup and CommandLine contains the string /tmp/, for example 'nohup /tmp/.x/agent &'.",
+      "why_it_matters": "Attackers drop payloads in /tmp and use nohup to keep them running after the session ends. This execution pattern (ATT&CK Execution) appears in Linux malware such as GobRAT, cited in the rule references.",
+      "triage_steps": [
+        "Review the full CommandLine: the path under /tmp/, arguments, and whether output is redirected to /dev/null or a file.",
+        "Identify the user, ParentImage and parent command line: interactive shell, cron, web service, SSH session?",
+        "Collect hash, size, owner and modification time of the /tmp/ file; check hash reputation in internal sources.",
+        "Check whether the child process is still running and review its outbound connections and destination IPs.",
+        "On the same host within +/- 15 minutes, look for curl/wget downloads, chmod +x, or crontab and systemd changes.",
+        "Review SSH logins and sudo commands by the same user and earlier alerts for the host.",
+        "Search for the same path or hash across other hosts in the fleet."
+      ],
+      "false_positives": [
+        "Deployment scripts or installers that extract and launch temporary binaries from /tmp with nohup.",
+        "Administrators or developers testing tools in /tmp and leaving them running in the background.",
+        "CI/CD or build jobs that use /tmp as a working directory."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or user whether the execution was expected before acting.",
+        "If malicious, isolate the host and preserve a copy of the /tmp file and the process memory.",
+        "Kill the process and remove associated persistence (cron, systemd, rc.local, authorized_keys) after documenting it.",
+        "Reset the affected user's credentials and block identified C2 IPs or domains.",
+        "Hunt for the same indicator on other hosts and rebuild from a trusted baseline if compromise is confirmed."
+      ],
+      "severity_rationale": "High, because launching binaries from /tmp via nohup is uncommon in production and matches documented Linux malware tradecraft."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "nohup launches a hidden binary from /tmp in the background",
+        "event": {
+          "Image": "/usr/bin/nohup",
+          "CommandLine": "nohup /tmp/.cache/apached -c 203.0.113.45:443",
+          "ParentImage": "/bin/bash",
+          "User": "www-data",
+          "Computer": "web-02",
+          "ProcessId": 48213
+        }
+      },
+      {
+        "description": "nohup runs a shell script dropped in /tmp with output discarded",
+        "event": {
+          "Image": "/bin/nohup",
+          "CommandLine": "nohup sh /tmp/zone.sh",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "Computer": "bastion-01",
+          "ProcessId": 7731
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate nohup of an application binary outside /tmp",
+        "event": {
+          "Image": "/usr/bin/nohup",
+          "CommandLine": "nohup /opt/app/bin/worker --config /etc/app/worker.conf",
+          "ParentImage": "/bin/bash",
+          "User": "appsvc",
+          "Computer": "app-01",
+          "ProcessId": 30122
+        }
+      },
+      {
+        "description": "Binary run directly from /tmp without nohup",
+        "event": {
+          "Image": "/tmp/build/test-runner",
+          "CommandLine": "/tmp/build/test-runner --suite unit",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "Computer": "ci-runner-03",
+          "ProcessId": 15540
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

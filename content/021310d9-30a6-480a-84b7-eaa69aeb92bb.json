@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "021310d9-30a6-480a-84b7-eaa69aeb92bb",
+    "title": "First Time Seen Remote Named Pipe - Zeek",
+    "level": "high",
+    "status": "test",
+    "author": "Samir Bousseaden, @neu5ron, Tim Shelton",
+    "path": "network/zeek/zeek_smb_converted_win_lm_namedpipe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/network/zeek/zeek_smb_converted_win_lm_namedpipe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró a un cliente SMB que abrió un named pipe a través del recurso IPC$ y cuyo nombre no está en la lista de pipes habituales de Windows. Un pipe nuevo puede indicar ejecución remota o movimiento lateral.",
+      "what_it_detects": "Eventos smb_files de Zeek cuyo path es exactamente \\\\*\\IPC$ y que no contienen ningún nombre de pipe conocido, como samr, lsarpc, srvsvc, svcctl, spoolss, netlogon o winreg.",
+      "why_it_matters": "Acceder a named pipes de forma remota por SMB (ATT&CK T1021.002, SMB/Windows Admin Shares) permite ejecutar comandos a distancia, comunicarse con implantes y moverse entre equipos. Las herramientas de ejecución remota y los frameworks de C2 suelen crear sus propios pipes.",
+      "triage_steps": [
+        "Revise el nombre del pipe en el campo name. Determine si corresponde a una herramienta de ejecución remota conocida (por ejemplo, PSEXESVC), si parece aleatorio o si pertenece a un software conocido.",
+        "Identifique el cliente (id.orig_h) y el servidor (id.resp_h). Confirme si el cliente es una estación de administración, un jump host o un servidor de gestión que normalmente se conecta a ese servidor.",
+        "Pivotee por uid hacia los logs smb_mapping, dce_rpc, ntlm y kerberos de la misma sesión para identificar la cuenta autenticada y las operaciones RPC que realizó.",
+        "Busque otra actividad SMB del mismo id.orig_h en +/- 15 minutos: escrituras en ADMIN$ o C$, ejecutables copiados o conexiones a muchos otros equipos.",
+        "En el endpoint del servidor, ubique el proceso que creó el pipe (eventos 17/18 de Sysmon) y los servicios instalados en ese lapso (evento 7045 de System).",
+        "Consulte alertas anteriores y el historial de Zeek para este pipe y estos equipos, y confirme si es realmente nuevo o si es un pipe legítimo recurrente."
+      ],
+      "false_positives": [
+        "Software legítimo que usa sus propios named pipes por SMB, como agentes de respaldo, monitoreo, antivirus o despliegue.",
+        "Administradores que usan PsExec de Sysinternals u otras herramientas similares para mantenimiento autorizado.",
+        "Pipes nativos de Windows que todavía no están en la lista de exclusiones. Agréguelos una vez que los haya verificado."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con el responsable del sistema o con los registros de cambios si la actividad estaba autorizada.",
+        "Si no estaba autorizada, aísle el cliente y el servidor, y deshabilite o restablezca las credenciales usadas en la sesión.",
+        "Elimine los servicios, binarios o mecanismos de persistencia maliciosos encontrados en el servidor, y determine el alcance revisando los demás equipos a los que llegó el cliente.",
+        "Si el pipe es legítimo, agregue su nombre a filter_keywords y documente el motivo."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque un named pipe remoto desconocido suele indicar ejecución remota o C2 por SMB. Como la regla solo aprende mediante exclusiones manuales, cabe esperar algo de ruido benigno."
+    },
+    "en": {
+      "summary": "Zeek saw an SMB client open a named pipe over the IPC$ share whose name is not on the rule's list of common Windows pipes. A pipe name not seen before can mean remote execution or lateral movement.",
+      "what_it_detects": "Zeek smb_files events where path is exactly \\\\*\\IPC$ and no part of the event contains a known benign pipe name such as samr, lsarpc, srvsvc, svcctl, spoolss, netlogon or winreg.",
+      "why_it_matters": "Remote access to named pipes over SMB (ATT&CK T1021.002, SMB/Windows Admin Shares) lets attackers run commands remotely, talk to implants or move between hosts. Remote execution tools and C2 frameworks often create their own pipes.",
+      "triage_steps": [
+        "Read the pipe name in the name field. Check whether it matches a known remote execution tool (for example PSEXESVC), a random-looking string, or a pipe used by known software.",
+        "Find the client (id.orig_h) and server (id.resp_h). Confirm whether the client is an admin workstation, jump host or management server that would normally connect to this server.",
+        "Pivot on the uid to the smb_mapping, dce_rpc, ntlm and kerberos logs for the same session to find the account that authenticated and the RPC operations it called.",
+        "Look for other SMB activity from the same id.orig_h within +/- 15 minutes: writes to ADMIN$ or C$, executables dropped, or connections to many other hosts.",
+        "On the server endpoint, find the process that created the pipe (Sysmon events 17/18) and any services installed around that time (System event 7045).",
+        "Search earlier alerts and Zeek history for this pipe name and these hosts to see whether it is really new or a recurring legitimate pipe."
+      ],
+      "false_positives": [
+        "Legitimate software that uses its own named pipes over SMB, such as backup, monitoring, antivirus or deployment agents.",
+        "Administrators using Sysinternals PsExec or similar tools for authorized maintenance.",
+        "Built-in Windows pipes that are not on the filter list yet. Add them to the exclusions once you have verified them."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or the change records whether the activity was authorized before you act.",
+        "If it was not authorized, isolate the client and the server, and disable or reset the credentials used in the session.",
+        "Remove any malicious services, binaries or persistence found on the server, and scope other hosts the client reached.",
+        "If the pipe is legitimate, add its name to filter_keywords and document why."
+      ],
+      "severity_rationale": "High fits because an unknown remote named pipe often points to remote execution or C2 over SMB. Because the rule learns only through manual exclusions, some benign noise is expected."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SMB client opens the PSEXESVC named pipe over IPC$, which is typical of PsExec-style remote execution.",
+        "event": {
+          "ts": "2024-05-14T10:22:41.512Z",
+          "uid": "CkT3pQ1aZx9LmN7bR2",
+          "id.orig_h": "192.0.2.45",
+          "id.orig_p": 50122,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "fuid": "FhG8kWq2LxYz4pT1",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\*\\IPC$",
+          "name": "PSEXESVC",
+          "size": 0
+        }
+      },
+      {
+        "description": "SMB client opens a pipe with a random-looking name, not on the exclusion list, over IPC$.",
+        "event": {
+          "ts": "2024-05-14T11:05:09.031Z",
+          "uid": "CzQ8mT4kH1oP6dJ3e",
+          "id.orig_h": "192.0.2.77",
+          "id.orig_p": 51840,
+          "id.resp_h": "198.51.100.31",
+          "id.resp_p": 445,
+          "fuid": "FoP2nX7aKcR5uE9",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\*\\IPC$",
+          "name": "status_4f2a",
+          "size": 0
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal remote access to the srvsvc pipe over IPC$. The keyword filter excludes it.",
+        "event": {
+          "ts": "2024-05-14T09:41:17.204Z",
+          "uid": "CaB4dE6fG8hJ1kL3m",
+          "id.orig_h": "192.0.2.10",
+          "id.orig_p": 49733,
+          "id.resp_h": "198.51.100.20",
+          "id.resp_p": 445,
+          "fuid": "FqW1eR3tY5uI7oP",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\*\\IPC$",
+          "name": "srvsvc",
+          "size": 0
+        }
+      },
+      {
+        "description": "File opened on a regular file share instead of IPC$. The path does not match the selection.",
+        "event": {
+          "ts": "2024-05-14T09:55:02.880Z",
+          "uid": "CxV7bN9mQ2wE4rT6y",
+          "id.orig_h": "192.0.2.15",
+          "id.orig_p": 50011,
+          "id.resp_h": "198.51.100.40",
+          "id.resp_p": 445,
+          "fuid": "FzX3cV5bN7mA9sD",
+          "action": "SMB::FILE_OPEN",
+          "path": "\\\\FS-01\\Finanzas",
+          "name": "reporte_q1.xlsx",
+          "size": 48211
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

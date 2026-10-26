@@ -1,0 +1,110 @@
+{
+  "rule": {
+    "id": "9db37458-4df2-46a5-95ab-307e7f29e675",
+    "title": "Exchange Set OabVirtualDirectory ExternalUrl Property",
+    "level": "high",
+    "status": "test",
+    "author": "Jose Rodriguez @Cyb3rPandaH",
+    "path": "windows/builtin/msexchange/win_exchange_set_oabvirtualdirectory_externalurl.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/msexchange/win_exchange_set_oabvirtualdirectory_externalurl.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1505.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cmdlet de administración de Exchange configuró la propiedad ExternalUrl del directorio virtual de la libreta de direcciones sin conexión (OAB) con código de script que incluye una función Page_Load. Es una técnica conocida para plantar un web shell ASPX en Exchange.",
+      "what_it_detects": "Un evento del log MSExchange Management que contiene las cuatro cadenas a la vez: Set-OabVirtualDirectory, ExternalUrl, Page_Load y script. En la práctica, se escribió código de servidor en ExternalUrl en lugar de una URL.",
+      "why_it_matters": "Un atacante que puede ejecutar cmdlets de Exchange inserta el web shell en ExternalUrl y luego hace que Exchange exporte la configuración a un archivo .aspx publicado. Así obtiene ejecución remota persistente vía IIS (T1505.003, componente de software de servidor: web shell).",
+      "triage_steps": [
+        "Revisar el mensaje completo: valor de ExternalUrl, -Identity del directorio virtual, hora y cuenta o sesión que ejecutó el cmdlet.",
+        "Ejecutar Get-OabVirtualDirectory | fl Identity,ExternalUrl,InternalUrl en el servidor para confirmar si el valor malicioso sigue configurado.",
+        "Buscar en el mismo log, +/- 15 minutos, cmdlets Remove-, New- o Reset-OabVirtualDirectory u otros que puedan escribir la configuración en un archivo.",
+        "Buscar archivos .aspx creados o modificados cerca de la hora de la alerta en las carpetas web FrontEnd, ClientAccess e inetpub de Exchange.",
+        "Revisar logs de IIS: solicitudes a archivos .aspx nuevos o inusuales y POST sospechosos a /ecp u /owa desde las mismas IP de origen.",
+        "Revisar telemetría de procesos: w3wp.exe generando cmd.exe, powershell.exe u otros shells en el mismo host.",
+        "Consultar alertas previas del servidor y la cuenta, y verificar el nivel de parches de Exchange."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos; una ExternalUrl legítima es una URL https y nunca contiene script ni Page_Load.",
+        "Pruebas autorizadas de red team o de validación de detecciones que reproducen la técnica; confirmar con el responsable de la prueba."
+      ],
+      "response_steps": [
+        "Tratar como compromiso probable: aislar el servidor Exchange o restringir el acceso externo sin perder la evidencia.",
+        "Recolectar los .aspx sospechosos, logs de IIS y eventos; después eliminar los web shells y restaurar ExternalUrl al valor aprobado.",
+        "Restablecer credenciales de las cuentas implicadas, revisar roles administrativos y buscar los mismos artefactos en los demás servidores Exchange.",
+        "Aplicar las actualizaciones de seguridad vigentes de Exchange y vigilar posibles reinfecciones antes de volver a operación normal."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque colocar script en ExternalUrl del OAB no tiene uso legítimo e indica con fuerza el despliegue de un web shell en un servidor de correo expuesto."
+    },
+    "en": {
+      "summary": "An Exchange management cmdlet set the Offline Address Book (OAB) virtual directory ExternalUrl to a value containing script code with a Page_Load function. This is a known way to plant an ASPX web shell on Exchange.",
+      "what_it_detects": "A single MSExchange Management log entry that contains all four strings: Set-OabVirtualDirectory, ExternalUrl, Page_Load and script. In practice this means server-side script was put into the ExternalUrl property instead of a URL.",
+      "why_it_matters": "Attackers who can run Exchange cmdlets put web shell code into the OAB ExternalUrl, then make Exchange export the virtual directory configuration to an .aspx file in a web folder. That gives them persistent remote code execution through IIS (T1505.003, Server Software Component: Web Shell).",
+      "triage_steps": [
+        "Read the full message: note the ExternalUrl value, the -Identity of the virtual directory, the timestamp and the account or session that ran the cmdlet.",
+        "Run Get-OabVirtualDirectory | fl Identity,ExternalUrl,InternalUrl on the server to confirm whether the malicious value is still set.",
+        "Search the same log within +/- 15 minutes for Remove-, New- or Reset-OabVirtualDirectory and other virtual directory cmdlets that could write the config to a file.",
+        "Look for .aspx files created or modified near the alert time under the Exchange FrontEnd, ClientAccess and inetpub web folders.",
+        "Check IIS logs for requests to new or unusual .aspx files and for suspicious POSTs to /ecp or /owa from the same source IPs.",
+        "Review process telemetry for w3wp.exe spawning cmd.exe, powershell.exe or other shells on the same host.",
+        "Check earlier alerts for this server and account, and confirm whether Exchange is fully patched."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; a legitimate ExternalUrl is an https URL and never contains script or Page_Load.",
+        "Authorized red-team or detection tests that replay this technique on purpose; confirm with the test owner."
+      ],
+      "response_steps": [
+        "Treat the alert as a likely compromise. Isolate the Exchange server or restrict external access while you keep the evidence.",
+        "Collect the suspicious .aspx files, IIS logs and event logs, then delete the web shells and set ExternalUrl back to the approved URL.",
+        "Reset credentials for the accounts involved and review admin role assignments; hunt for the same artifacts on all other Exchange servers.",
+        "Apply the current Exchange security updates, then watch for re-infection before you bring the server back into normal service."
+      ],
+      "severity_rationale": "High fits because putting script in the OAB ExternalUrl has no legitimate use and points strongly to web shell deployment on a mail server facing the internet."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Set-OabVirtualDirectory with an ExternalUrl containing a server-side script block and a Page_Load function (body defanged).",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Computer": "EXCH-01.andes.example.com",
+          "Provider": "MSExchange CmdletLogs",
+          "message": "Cmdlet succeeded. Cmdlet Set-OabVirtualDirectory, parameters {-Identity=OAB (Default Web Site), -ExternalUrl=http://f/<script language=\"JScript\" runat=\"server\">function Page_Load(){/* placeholder */}</script>}. Caller: ANDES\\svc-mailadm"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate administrator setting the OAB ExternalUrl to a normal https URL; there is no Page_Load or script.",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Computer": "EXCH-01.andes.example.com",
+          "Provider": "MSExchange CmdletLogs",
+          "message": "Cmdlet succeeded. Cmdlet Set-OabVirtualDirectory, parameters {-Identity=EXCH-01\\OAB (Default Web Site), -ExternalUrl=https://mail.example.com/OAB}. Caller: ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Read-only query of the OAB virtual directories; Set-OabVirtualDirectory, Page_Load and script do not appear.",
+        "event": {
+          "Channel": "MSExchange Management",
+          "EventID": 1,
+          "Computer": "EXCH-02.andes.example.com",
+          "Provider": "MSExchange CmdletLogs",
+          "message": "Cmdlet succeeded. Cmdlet Get-OabVirtualDirectory, parameters {-Server=EXCH-02}. Caller: ANDES\\mrodriguez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

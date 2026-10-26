@@ -1,0 +1,141 @@
+{
+  "rule": {
+    "id": "0c718a5e-4284-4fb9-b4d9-b9a50b3a1974",
+    "title": "Invoke-Obfuscation STDIN+ Launcher - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Jonathan Cheong, oscd.community",
+    "path": "windows/builtin/security/win_security_invoke_obfuscation_stdin_services_security.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_invoke_obfuscation_stdin_services_security.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio (EID 4697) cuyo ServiceFileName invoca cmd con /c o /r y canaliza código hacia PowerShell por STDIN usando ${input} o -NoExit. Es el patrón del launcher STDIN+ de Invoke-Obfuscation.",
+      "what_it_detects": "Eventos 4697 del log Security donde ServiceFileName contiene 'cmd' y 'powershell', además de '${input}' o 'noexit', y el modificador ' /c ' o ' /r ' de cmd.",
+      "why_it_matters": "Los atacantes crean servicios para ejecutar PowerShell ofuscado como SYSTEM, a menudo durante movimiento lateral (PsExec, SMBExec). Combina ofuscación (T1027) y ejecución vía PowerShell (T1059.001).",
+      "triage_steps": [
+        "Revise ServiceFileName completo: identifique el comando enviado por echo o set a PowerShell y decodifique cualquier contenido Base64 u ofuscado.",
+        "Anote ServiceName, ServiceAccount, ServiceStartType y SubjectUserName; nombres aleatorios o servicios de inicio por demanda son sospechosos.",
+        "Determine quién instaló el servicio: busque logons 4624 tipo 3 en el host +/- 15 minutos y su IP de origen.",
+        "Correlacione con eventos 7045 (System), 4688 y Sysmon 1 para ver los procesos hijos de services.exe, cmd.exe y powershell.exe.",
+        "Revise los logs de PowerShell (4103/4104) en el mismo host para obtener el script desofuscado.",
+        "Busque el mismo ServiceFileName o ServiceName en otros hosts y alertas previas para la misma cuenta o IP de origen.",
+        "Revise conexiones de red salientes de powershell.exe después de la instalación del servicio."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; es raro que herramientas legítimas usen ${input} o -NoExit en un servicio.",
+        "Ejercicios de red team o pruebas de detección autorizadas con Invoke-Obfuscation.",
+        "Scripts internos de administración mal diseñados que instalan servicios temporales con PowerShell; valide con el responsable."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host o el equipo de TI si la instalación fue autorizada antes de actuar.",
+        "Si no está autorizada, aísle el endpoint de la red y deshabilite la cuenta que instaló el servicio o restablezca sus credenciales.",
+        "Detenga y elimine el servicio malicioso tras preservar evidencia (exportar eventos, clave de registro del servicio, memoria si es posible).",
+        "Busque persistencia adicional y artefactos del payload; bloquee los dominios o IPs contactados.",
+        "Revise otros hosts accedidos desde la misma IP o cuenta y restaure el sistema si hubo compromiso confirmado."
+      ],
+      "severity_rationale": "Nivel high porque la combinación de servicio nuevo, cmd y PowerShell ofuscado vía STDIN casi nunca es legítima e implica ejecución con privilegios de SYSTEM."
+    },
+    "en": {
+      "summary": "A service was installed (EID 4697) whose ServiceFileName runs cmd with /c or /r and pipes code into PowerShell through STDIN using ${input} or -NoExit. This matches the Invoke-Obfuscation STDIN+ launcher pattern.",
+      "what_it_detects": "Security log 4697 events where ServiceFileName contains 'cmd' and 'powershell', plus '${input}' or 'noexit', plus the cmd switch ' /c ' or ' /r '.",
+      "why_it_matters": "Attackers create services to run obfuscated PowerShell as SYSTEM, often during lateral movement (PsExec, SMBExec style). It combines obfuscation (T1027) with PowerShell execution (T1059.001).",
+      "triage_steps": [
+        "Read the full ServiceFileName: identify what is echoed or set into PowerShell and decode any Base64 or obfuscated content.",
+        "Note ServiceName, ServiceAccount, ServiceStartType and SubjectUserName; random names or demand-start services are suspicious.",
+        "Find who installed it: look for 4624 type 3 logons on the host within +/- 15 minutes and their source IP.",
+        "Correlate with 7045 (System), 4688 and Sysmon 1 to see children of services.exe, cmd.exe and powershell.exe.",
+        "Check PowerShell logs (4103/4104) on the same host for the deobfuscated script.",
+        "Search other hosts for the same ServiceFileName or ServiceName, and earlier alerts for the same account or source IP.",
+        "Review outbound network connections from powershell.exe after the service install."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; legitimate tools rarely use ${input} or -NoExit in a service.",
+        "Authorized red team exercises or detection tests using Invoke-Obfuscation.",
+        "Poorly written internal admin scripts that install temporary services running PowerShell; confirm with the owner."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether the install was authorized before acting.",
+        "If unauthorized, isolate the endpoint and disable or reset credentials of the installing account.",
+        "Preserve evidence (events, service registry key, memory if possible), then stop and delete the malicious service.",
+        "Hunt for additional persistence and payload artifacts; block contacted domains or IPs.",
+        "Review other hosts accessed from the same IP or account and rebuild if compromise is confirmed."
+      ],
+      "severity_rationale": "High fits because a new service chaining cmd into obfuscated STDIN PowerShell is almost never legitimate and runs with SYSTEM privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed that echoes a command into PowerShell -NoExit via cmd /c (STDIN+ launcher).",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "xVbqTzLm",
+          "ServiceFileName": "C:\\Windows\\System32\\cmd.exe /c \"echo Write-Host test | powershell -NoExit -\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service using cmd /r with set variable piped into PowerShell evaluating ${input}.",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "UpdSvc71",
+          "ServiceFileName": "cmd /r \"set q=Write-Output hello&& echo %q% | powershell -NoProfile ${input}|iex\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin service runs a PowerShell script via cmd /c without ${input} or -NoExit, so selection2 fails.",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "adm_mrodriguez",
+          "SubjectDomainName": "ANDES",
+          "ServiceName": "InventoryAgent",
+          "ServiceFileName": "C:\\Windows\\System32\\cmd.exe /c powershell.exe -ExecutionPolicy Bypass -File C:\\Tools\\inventory.ps1",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Same STDIN+ command line but logged as process creation 4688, not a 4697 service install.",
+        "event": {
+          "EventID": 4688,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "NewProcessName": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "cmd.exe /c \"echo Write-Host test | powershell -NoExit -\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

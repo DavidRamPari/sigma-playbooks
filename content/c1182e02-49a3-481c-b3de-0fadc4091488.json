@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "c1182e02-49a3-481c-b3de-0fadc4091488",
+    "title": "Rare Subscription-level Operations In Azure",
+    "level": "medium",
+    "status": "test",
+    "author": "sawwinnnaung",
+    "path": "cloud/azure/activity_logs/azure_rare_operations.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_rare_operations.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un registro de actividad de Azure contiene una operación sensible a nivel de suscripción: obtener claves de cuenta (listKeys), crear o modificar un snapshot de disco, o modificar un grupo de seguridad de red (NSG).",
+      "what_it_detects": "Coincidencia por palabra clave con siete nombres de operación de Azure Resource Manager: listKeys sobre DocumentDB, Maps, Media Services, Cognitive Services y Storage, además de Microsoft.Compute/snapshots/write y Microsoft.Network/networkSecurityGroups/write. Aunque la descripción habla de IP nunca vistas, la regla no evalúa rareza; eso le toca al analista.",
+      "why_it_matters": "Las claves de cuenta dan acceso total a datos sin pasar por Entra ID, y un snapshot permite copiar discos con credenciales fuera del entorno (T1003, acceso a credenciales). Modificar un NSG puede abrir acceso de red o canales de exfiltración.",
+      "triage_steps": [
+        "Identifique operationName, caller, callerIpAddress, resourceId, subscriptionId y status en el evento; descarte operaciones fallidas o solo iniciadas sin éxito posterior.",
+        "Compruebe si caller y callerIpAddress realizaron esta misma operación en los últimos 14 a 30 días; una combinación usuario-IP-operación nueva es lo que realmente indica rareza.",
+        "Valide la IP de origen: geolocalización, ASN, si pertenece a rangos corporativos, VPN o servicios de Azure, y si coincide con los inicios de sesión recientes del caller en Entra ID.",
+        "Determine si el caller es un usuario, service principal o identidad administrada, y si su función habitual justifica leer claves, crear snapshots o editar NSG.",
+        "Revise la actividad del mismo caller y la misma suscripción en +/- 15 minutos usando correlationId: asignaciones de roles, exportación de snapshots (beginGetAccess), cambios de reglas o borrado de logs.",
+        "Para NSG, inspeccione la regla resultante: puertos abiertos a Internet (0.0.0.0/0 o *), como RDP o SSH, y su prioridad.",
+        "Busque alertas previas sobre el mismo caller, IP o recurso y consulte si existe un ticket de cambio aprobado."
+      ],
+      "false_positives": [
+        "Cambios válidos realizados por administradores o equipos de plataforma dentro de una ventana de cambio aprobada.",
+        "Pipelines de CI/CD, Terraform o Bicep que leen claves o actualizan NSG en cada despliegue.",
+        "Soluciones de respaldo o recuperación ante desastres que generan snapshots de discos de forma programada.",
+        "Portal de Azure o herramientas como Storage Explorer que llaman a listKeys cuando un usuario autorizado navega por la cuenta."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del recurso o del caller si la operación fue legítima antes de actuar.",
+        "Si no está autorizada, rote las claves de la cuenta afectada (regenerateKey) y revoque las sesiones y credenciales del caller o del service principal.",
+        "Revierta cambios maliciosos en NSG y revoque cualquier SAS o acceso de exportación de snapshots; conserve el snapshot como evidencia antes de eliminarlo.",
+        "Revise el acceso a datos posterior en los logs de diagnóstico del recurso y documente el alcance; ajuste exclusiones para automatizaciones conocidas."
+      ],
+      "severity_rationale": "Severidad media: las operaciones son de alto impacto si las ejecuta un atacante, pero también son frecuentes en la administración legítima y requieren contexto para confirmarse."
+    },
+    "en": {
+      "summary": "An Azure Activity Log record contains a sensitive subscription-level operation: retrieving account keys (listKeys), writing a disk snapshot, or modifying a network security group (NSG).",
+      "what_it_detects": "A keyword match on seven Azure Resource Manager operation names: listKeys on DocumentDB, Maps, Media Services, Cognitive Services and Storage, plus Microsoft.Compute/snapshots/write and Microsoft.Network/networkSecurityGroups/write. Despite the description mentioning unseen IPs, the rule does no rarity check; the analyst must assess that.",
+      "why_it_matters": "Account keys grant full data access bypassing Entra ID, and snapshots let an attacker copy disks holding credentials out of the environment (T1003, credential access). NSG changes can open network access or exfiltration paths.",
+      "triage_steps": [
+        "Extract operationName, caller, callerIpAddress, resourceId, subscriptionId and status; deprioritize failed operations or starts with no later success.",
+        "Check whether this caller and callerIpAddress performed the same operation in the last 14-30 days; a new user-IP-operation combination is the real rarity signal.",
+        "Validate the source IP: geolocation, ASN, corporate, VPN or Azure ranges, and whether it matches the caller's recent Entra ID sign-ins.",
+        "Determine whether the caller is a user, service principal or managed identity, and whether its role justifies reading keys, creating snapshots or editing NSGs.",
+        "Review the same caller and subscription within +/- 15 minutes via correlationId: role assignments, snapshot export (beginGetAccess), rule changes or diagnostic log deletion.",
+        "For NSGs, inspect the resulting rules: ports such as RDP or SSH opened to the Internet (0.0.0.0/0 or *) and their priority.",
+        "Look for earlier alerts on the same caller, IP or resource and check for an approved change ticket."
+      ],
+      "false_positives": [
+        "Valid changes by administrators or platform teams during an approved change window.",
+        "CI/CD pipelines, Terraform or Bicep that read keys or update NSGs on every deployment.",
+        "Backup or disaster recovery tooling that creates disk snapshots on a schedule.",
+        "Azure portal or Storage Explorer calling listKeys when an authorized user browses the account."
+      ],
+      "response_steps": [
+        "Confirm with the resource owner or the caller's owner whether the operation was legitimate before acting.",
+        "If unauthorized, rotate the affected account keys (regenerateKey) and revoke the caller's or service principal's sessions and credentials.",
+        "Revert malicious NSG changes and revoke any snapshot SAS or export access; preserve the snapshot as evidence before deleting it.",
+        "Review subsequent data access in the resource's diagnostic logs, document scope, and tune exclusions for known automation."
+      ],
+      "severity_rationale": "Medium fits because these operations are high impact in attacker hands but also common in legitimate administration, so context is needed to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "User retrieves storage account keys from an external IP",
+        "event": {
+          "message": "{\"time\":\"2024-03-12T02:14:37Z\",\"operationName\":\"Microsoft.Storage/storageAccounts/listKeys/action\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"caller\":\"jperez@example.com\",\"callerIpAddress\":\"203.0.113.45\",\"resourceId\":\"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod/providers/Microsoft.Storage/storageAccounts/stprodexample\"}",
+          "operationName": "Microsoft.Storage/storageAccounts/listKeys/action",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "status": "Succeeded",
+          "subscriptionId": "00000000-0000-0000-0000-000000000001"
+        }
+      },
+      {
+        "description": "Snapshot of a VM OS disk created by a user",
+        "event": {
+          "message": "{\"time\":\"2024-03-12T02:21:05Z\",\"operationName\":\"Microsoft.Compute/snapshots/write\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"caller\":\"jperez@example.com\",\"callerIpAddress\":\"203.0.113.45\",\"resourceId\":\"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod/providers/Microsoft.Compute/snapshots/dc01-osdisk-snap\"}",
+          "operationName": "Microsoft.Compute/snapshots/write",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "status": "Succeeded",
+          "subscriptionId": "00000000-0000-0000-0000-000000000001"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read of storage account properties, not a key listing",
+        "event": {
+          "message": "{\"time\":\"2024-03-12T09:02:11Z\",\"operationName\":\"Microsoft.Storage/storageAccounts/read\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"caller\":\"mlopez@example.com\",\"callerIpAddress\":\"198.51.100.20\",\"resourceId\":\"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod/providers/Microsoft.Storage/storageAccounts/stprodexample\"}",
+          "operationName": "Microsoft.Storage/storageAccounts/read",
+          "caller": "mlopez@example.com",
+          "callerIpAddress": "198.51.100.20",
+          "status": "Succeeded",
+          "subscriptionId": "00000000-0000-0000-0000-000000000001"
+        }
+      },
+      {
+        "description": "Individual NSG security rule write, which does not contain the exact networkSecurityGroups/write string",
+        "event": {
+          "message": "{\"time\":\"2024-03-12T10:30:48Z\",\"operationName\":\"Microsoft.Network/networkSecurityGroups/securityRules/write\",\"category\":\"Administrative\",\"resultType\":\"Success\",\"caller\":\"svc-terraform@example.com\",\"callerIpAddress\":\"198.51.100.7\",\"resourceId\":\"/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-web/securityRules/allow-https\"}",
+          "operationName": "Microsoft.Network/networkSecurityGroups/securityRules/write",
+          "caller": "svc-terraform@example.com",
+          "callerIpAddress": "198.51.100.7",
+          "status": "Succeeded",
+          "subscriptionId": "00000000-0000-0000-0000-000000000001"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

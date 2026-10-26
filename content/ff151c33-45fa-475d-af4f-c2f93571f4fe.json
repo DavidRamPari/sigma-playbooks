@@ -1,0 +1,148 @@
+{
+  "rule": {
+    "id": "ff151c33-45fa-475d-af4f-c2f93571f4fe",
+    "title": "Azure AD Health Monitoring Agent Registry Keys Access",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research), MSTIC",
+    "path": "windows/builtin/security/win_security_aadhealth_mon_agent_regkey_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_aadhealth_mon_agent_regkey_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1012"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que no es un componente de Azure AD Connect Health abrió o accedió a la clave de registro HKLM\\SOFTWARE\\Microsoft\\Microsoft Online\\Reporting\\MonitoringAgent. Esa clave guarda datos de configuración del agente, como el identificador del tenant y la clave del agente.",
+      "what_it_detects": "Eventos de seguridad 4656 (solicitud de handle) o 4663 (acceso a objeto) con ObjectType 'Key' sobre la clave MonitoringAgent, cuando ProcessName no corresponde a ningún binario Microsoft.Identity.Health.* conocido. Requiere una SACL configurada en esa clave.",
+      "why_it_matters": "Si alguien lee la configuración del agente Health en un servidor AD FS, podría suplantar al agente y enviar datos falsos de monitoreo a Azure AD. Corresponde a Query Registry (T1012), una técnica de descubrimiento.",
+      "triage_steps": [
+        "Identifique el host (Computer), ProcessName, ProcessId y la cuenta (SubjectUserName, SubjectDomainName) del evento.",
+        "Revise AccessMask y AccessList: una lectura (ReadKey, Query key value) apunta a reconocimiento; un acceso de escritura es más grave.",
+        "Busque la creación de ese ProcessId (4688 o Sysmon 1) para obtener CommandLine y proceso padre, por ejemplo PowerShell con módulos como AADInternals.",
+        "Correlacione la actividad del mismo host +/- 15 minutos: inicios de sesión 4624, sesiones RDP, uso de reg.exe, scripts y otros accesos a claves de AD FS.",
+        "Confirme si la cuenta es administradora del servidor AD FS y si había un cambio o mantenimiento aprobado en ese horario.",
+        "Revise alertas previas de la misma cuenta y del mismo host, y si hubo exportaciones de certificados o de la configuración de AD FS."
+      ],
+      "false_positives": [
+        "Administradores o personal de soporte que revisan la configuración del agente Health con regedit o PowerShell durante un diagnóstico.",
+        "Instaladores o actualizaciones del agente Health que corren con un nombre de proceso fuera del filtro, como msiexec.exe.",
+        "Herramientas de backup, inventario o seguridad que recorren el registro HKLM."
+      ],
+      "response_steps": [
+        "Valide con el dueño del servidor AD FS si el acceso estaba autorizado; si no lo estaba, escale el caso como posible compromiso del servidor.",
+        "Aísle el host o restrinja el acceso administrativo, y preserve memoria, logs y el binario o script responsable.",
+        "Restablezca las credenciales de la cuenta implicada y revise otras actividades de esa cuenta en el dominio.",
+        "Reinstale o vuelva a registrar el agente Azure AD Connect Health para rotar su clave, y revise los datos recientes de Health en Azure AD."
+      ],
+      "severity_rationale": "El nivel medio se ajusta porque leer la clave no causa daño directo, pero solo en un servidor AD FS sensible ocurre fuera de los procesos del agente."
+    },
+    "en": {
+      "summary": "A process that is not an Azure AD Connect Health component opened or accessed the registry key HKLM\\SOFTWARE\\Microsoft\\Microsoft Online\\Reporting\\MonitoringAgent. That key stores the agent's configuration, such as the tenant ID and the agent key.",
+      "what_it_detects": "Security events 4656 (handle requested) or 4663 (object accessed) with ObjectType 'Key' on the MonitoringAgent key, where ProcessName is not one of the known Microsoft.Identity.Health.* binaries. A SACL must be set on that key.",
+      "why_it_matters": "Reading the Health agent configuration on an AD FS server could let someone impersonate the agent and send fake monitoring data to Azure AD. This maps to Query Registry (T1012), a discovery technique.",
+      "triage_steps": [
+        "Note the host (Computer), ProcessName, ProcessId and the account (SubjectUserName, SubjectDomainName) in the event.",
+        "Check AccessMask and AccessList: read access (ReadKey, Query key value) suggests reconnaissance, while write access is more serious.",
+        "Find the creation event for that ProcessId (4688 or Sysmon 1) to get the CommandLine and parent process, for example PowerShell loading AADInternals.",
+        "Correlate activity on the same host within +/- 15 minutes: 4624 logons, RDP sessions, reg.exe use, scripts and other access to AD FS keys.",
+        "Confirm whether the account administers the AD FS server and whether approved maintenance was happening at that time.",
+        "Look for earlier alerts on the same account and host, and for exports of AD FS certificates or configuration."
+      ],
+      "false_positives": [
+        "Administrators or support staff reviewing Health agent settings with regedit or PowerShell while troubleshooting.",
+        "Health agent installers or updates running under a process name not in the filter, such as msiexec.exe.",
+        "Backup, inventory or security tools that walk the HKLM registry."
+      ],
+      "response_steps": [
+        "Ask the AD FS server owner whether the access was authorized; if it was not, escalate as a possible server compromise.",
+        "Isolate the host or restrict administrative access, and keep memory, logs and the responsible binary or script.",
+        "Reset credentials for the account involved and review its other activity in the domain.",
+        "Reinstall or re-register the Azure AD Connect Health agent to rotate its key, and review recent Health data in Azure AD."
+      ],
+      "severity_rationale": "Medium fits because reading the key does no direct damage, but on a sensitive AD FS server it rarely happens outside the agent's own processes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell run by an administrator reads the MonitoringAgent key (4663).",
+        "event": {
+          "EventID": 4663,
+          "Computer": "ADFS-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Microsoft Online\\Reporting\\MonitoringAgent",
+          "HandleId": "0x1a4",
+          "AccessList": "%%4432",
+          "AccessMask": "0x1",
+          "ProcessId": "0x1f3c",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      },
+      {
+        "description": "reg.exe asks for a handle to the MonitoringAgent key (4656).",
+        "event": {
+          "EventID": 4656,
+          "Computer": "ADFS-01.andes.example.com",
+          "SubjectUserName": "svc-backup",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Microsoft Online\\Reporting\\MonitoringAgent",
+          "HandleId": "0x2b8",
+          "AccessList": "%%1538 %%4432 %%4435",
+          "AccessMask": "0x20019",
+          "ProcessId": "0x23a0",
+          "ProcessName": "C:\\Windows\\System32\\reg.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "The legitimate Health monitoring agent startup process reads its own key, so the filter excludes it.",
+        "event": {
+          "EventID": 4663,
+          "Computer": "ADFS-01.andes.example.com",
+          "SubjectUserName": "ADFS-01$",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Microsoft Online\\Reporting\\MonitoringAgent",
+          "HandleId": "0x3c0",
+          "AccessList": "%%4432",
+          "AccessMask": "0x1",
+          "ProcessId": "0x9e4",
+          "ProcessName": "C:\\Program Files\\Azure Ad Connect Health Adfs Agent\\Monitor\\Microsoft.Identity.Health.Adfs.MonitoringAgent.Startup.exe"
+        }
+      },
+      {
+        "description": "PowerShell reads the parent Reporting key, not the exact MonitoringAgent key.",
+        "event": {
+          "EventID": 4663,
+          "Computer": "ADFS-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "ObjectServer": "Security",
+          "ObjectType": "Key",
+          "ObjectName": "\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Microsoft Online\\Reporting",
+          "HandleId": "0x1a8",
+          "AccessList": "%%4432",
+          "AccessMask": "0x1",
+          "ProcessId": "0x1f3c",
+          "ProcessName": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "d9557b75-267b-4b43-922f-a775e2d1f792",
+    "title": "Azure Point-to-site VPN Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_network_p2s_vpn_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_network_p2s_vpn_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad modificó, eliminó, reinició o desconectó un gateway VPN Point-to-site de Azure, generó un perfil VPN o cambió su configuración de diagnóstico. Puede tratarse de administración normal o de un intento de interrumpir o abusar del acceso remoto.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName corresponde a operaciones de escritura, eliminación, reinicio, generación de perfil VPN, desconexión de sesiones P2S o cambios de diagnostic settings sobre MICROSOFT.NETWORK/P2SVPNGATEWAYS.",
+      "why_it_matters": "Eliminar, reiniciar o desconectar el gateway corta el acceso remoto de los usuarios (Impact). Generar un perfil VPN podría darle a un atacante una vía de entrada a la red, y cambiar los diagnostic settings podría reducir la visibilidad.",
+      "triage_steps": [
+        "Identifique el operationName exacto, el status (Started, Succeeded, Failed) y el resourceId del gateway P2S afectado.",
+        "Revise caller, callerIpAddress y el user agent: ¿es un administrador de red conocido, un service principal de IaC o una identidad inusual?",
+        "Busque un ticket de cambio o una ventana de mantenimiento aprobada que cubra esta operación en esta suscripción.",
+        "Si es GENERATEVPNPROFILE/ACTION, determine quién descargó el perfil y si después aparecen conexiones P2S desde IPs o dispositivos desconocidos.",
+        "Si es DIAGNOSTICSETTINGS/WRITE, compare la configuración anterior con la nueva y confirme si se desactivaron logs o se cambió el destino.",
+        "Correlacione por correlationId y revise la actividad del mismo caller en ±15 minutos: cambios de RBAC, de NSG, de otros gateways o eliminación de recursos.",
+        "Revise los inicios de sesión del caller en Entra ID (ubicación, MFA, riesgo) y las alertas previas sobre la misma identidad o IP."
+      ],
+      "false_positives": [
+        "Administradores de red que reconfiguran, reinician o eliminan el gateway P2S durante mantenimiento planificado.",
+        "Pipelines de Terraform, Bicep o ARM que aplican cambios con un service principal conocido.",
+        "Soporte de TI que genera perfiles VPN para nuevos usuarios o desconecta sesiones bloqueadas."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del recurso o del cambio si la operación fue autorizada antes de actuar.",
+        "Si no fue autorizada, revoque las sesiones de la identidad, restablezca sus credenciales o secretos y revise sus asignaciones de RBAC.",
+        "Restaure la configuración del gateway y los diagnostic settings desde IaC o un respaldo, y rote certificados o la configuración de autenticación P2S si se filtró un perfil.",
+        "Documente el incidente y considere aplicar Azure Policy o resource locks para proteger los gateways VPN críticos."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque estas operaciones suelen ser administrativas, pero pueden interrumpir el acceso remoto o crear una vía de acceso no autorizada."
+    },
+    "en": {
+      "summary": "An identity modified, deleted, reset or disconnected an Azure Point-to-site VPN gateway, generated a VPN profile, or changed its diagnostic settings. This may be routine administration or an attempt to disrupt or abuse remote access.",
+      "what_it_detects": "Azure Activity Log events where operationName is a write, delete, reset, VPN profile generation, P2S session disconnect or diagnostic settings change on MICROSOFT.NETWORK/P2SVPNGATEWAYS.",
+      "why_it_matters": "Deleting, resetting or disconnecting the gateway cuts off users' remote access (Impact). A generated VPN profile could give an attacker a way into the network, and diagnostic settings changes could reduce visibility.",
+      "triage_steps": [
+        "Note the exact operationName, status (Started, Succeeded, Failed) and resourceId of the affected P2S gateway.",
+        "Review caller, callerIpAddress and user agent: is it a known network admin, an IaC service principal or an unusual identity?",
+        "Look for a change ticket or approved maintenance window covering this operation in this subscription.",
+        "For GENERATEVPNPROFILE/ACTION, find out who obtained the profile and whether P2S connections from unknown IPs or devices follow.",
+        "For DIAGNOSTICSETTINGS/WRITE, compare the old and new settings and check whether logs were disabled or sent to a different destination.",
+        "Pivot on correlationId and review the same caller's activity within ±15 minutes: RBAC, NSG or other gateway changes, or resource deletions.",
+        "Check the caller's Entra ID sign-ins (location, MFA, risk) and earlier alerts for the same identity or IP."
+      ],
+      "false_positives": [
+        "Network administrators reconfiguring, resetting or deleting the P2S gateway during planned maintenance.",
+        "Terraform, Bicep or ARM pipelines applying changes through a known service principal.",
+        "IT support generating VPN profiles for new users or disconnecting stuck sessions."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the resource or change owner whether the operation was authorized.",
+        "If unauthorized, revoke the identity's sessions, reset its credentials or secrets and review its RBAC assignments.",
+        "Restore the gateway configuration and diagnostic settings from IaC or a backup. Rotate P2S certificates or authentication settings if a profile may have leaked.",
+        "Document the incident and consider Azure Policy or resource locks to protect critical VPN gateways."
+      ],
+      "severity_rationale": "Medium fits because these operations are usually administrative, but they can disrupt remote access or open an unauthorized way in."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user deletes a P2S VPN gateway",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/P2SVPNGATEWAYS/DELETE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "mrojas@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network/providers/Microsoft.Network/p2sVpnGateways/p2s-gw-prod",
+          "correlationId": "6f1c2a9e-1111-4c3b-9e2a-0a1b2c3d4e5f",
+          "time": "2024-03-12T14:03:12Z"
+        }
+      },
+      {
+        "description": "VPN profile generated for a P2S gateway",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/P2SVPNGATEWAYS/GENERATEVPNPROFILE/ACTION",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "svc-helpdesk@example.com",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network/providers/Microsoft.Network/p2sVpnGateways/p2s-gw-prod",
+          "correlationId": "7a2d3b0f-2222-4d4c-8f3b-1b2c3d4e5f60",
+          "time": "2024-03-12T14:10:45Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only query of the P2S gateway, not in the selection",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/P2SVPNGATEWAYS/READ",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network/providers/Microsoft.Network/p2sVpnGateways/p2s-gw-prod",
+          "time": "2024-03-12T13:55:01Z"
+        }
+      },
+      {
+        "description": "Write on a site-to-site VPN gateway, a different resource type",
+        "event": {
+          "operationName": "MICROSOFT.NETWORK/VPNGATEWAYS/WRITE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "netadmin@example.com",
+          "callerIpAddress": "192.0.2.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-network/providers/Microsoft.Network/vpnGateways/s2s-gw-prod",
+          "time": "2024-03-12T15:20:30Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

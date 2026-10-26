@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "746c86fb-ccda-4816-8997-01386263acc4",
+    "title": "Container Residence Discovery Via Proc Virtual FS",
+    "level": "low",
+    "status": "test",
+    "author": "Seth Hanford",
+    "path": "linux/process_creation/proc_creation_lnx_susp_container_residence_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_susp_container_residence_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1082"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de lectura de texto (cat, grep, awk, head, tail, less, more o nl) consultó archivos de /proc que suelen usarse para saber si el proceso se ejecuta dentro de un contenedor. Puede ser reconocimiento tras un acceso inicial o un uso administrativo normal.",
+      "what_it_detects": "Procesos cuyo Image termina en awk, /cat, grep, /head, /less, /more, /nl o /tail y cuyo CommandLine hace referencia a /proc/2/ (en un host normal, PID 2 es kthreadd) o a una ruta de /proc que termina en /cgroup o /sched.",
+      "why_it_matters": "Saber si está dentro de un contenedor permite al atacante elegir técnicas de escape o de persistencia y adaptar sus siguientes pasos. Corresponde a descubrimiento de información del sistema (ATT&CK T1082).",
+      "triage_steps": [
+        "Revise CommandLine para ver qué archivo se leyó (/proc/1/cgroup, /proc/self/sched, /proc/2/status) y si forma parte de una secuencia de comandos más amplia.",
+        "Identifique ParentImage y ParentCommandLine: un shell interactivo, un web server o un intérprete (python, php, node) como padre es más sospechoso que un agente conocido.",
+        "Confirme el usuario que ejecutó el proceso y si corresponde a un administrador, a una cuenta de servicio o a la cuenta de una aplicación web.",
+        "Pivote en el mismo host +/- 15 minutos: busque whoami, id, uname -a, mount, capsh, lectura de /.dockerenv, acceso al socket de Docker o descargas con curl/wget.",
+        "Determine si el host es un nodo de contenedores o un contenedor y qué imagen o pod ejecutaba el proceso.",
+        "Busque alertas anteriores para el mismo host, contenedor o usuario, en especial de ejecución remota de código o escape de contenedores."
+      ],
+      "false_positives": [
+        "Administradores que comprueban manualmente el entorno de un contenedor o la configuración de cgroups.",
+        "Scripts de entrypoint, agentes de monitoreo o herramientas de orquestación que leen /proc/1/cgroup para detectar si están en un contenedor.",
+        "Herramientas de inventario o diagnóstico (scripts de soporte, recolectores de métricas) que consultan /proc/*/sched."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host o de la aplicación si la actividad era esperada; si es legítima y recurrente, cree un filtro acotado por ParentImage o usuario.",
+        "Si el padre es un proceso de aplicación expuesta o un shell no explicado, aísle el contenedor o el host y preserve la evidencia (listado de procesos, logs, imagen del contenedor).",
+        "Revise si hubo intentos de escape: montajes privilegiados, acceso a docker.sock, uso de nsenter o capacidades elevadas.",
+        "Elimine el acceso no autorizado, rote las credenciales expuestas y redespliegue el contenedor desde una imagen confiable antes de restablecer el servicio."
+      ],
+      "severity_rationale": "Es nivel bajo porque, aunque puede ser reconocimiento, por sí sola la lectura de estos archivos es habitual en tareas administrativas y en herramientas de contenedores."
+    },
+    "en": {
+      "summary": "A text-reading utility (cat, grep, awk, head, tail, less, more or nl) read /proc files commonly used to tell whether a process runs inside a container. This may be post-compromise reconnaissance or normal admin work.",
+      "what_it_detects": "Processes whose Image ends in awk, /cat, grep, /head, /less, /more, /nl or /tail and whose CommandLine references /proc/2/ (PID 2 is kthreadd on a normal host) or a /proc path ending in /cgroup or /sched.",
+      "why_it_matters": "Knowing it is inside a container lets an attacker pick container escape or persistence techniques and adapt next steps. This is System Information Discovery (ATT&CK T1082).",
+      "triage_steps": [
+        "Read CommandLine to see which file was read (/proc/1/cgroup, /proc/self/sched, /proc/2/status) and whether it is part of a larger command chain.",
+        "Identify ParentImage and ParentCommandLine: an interactive shell, web server or interpreter (python, php, node) is more suspicious than a known agent.",
+        "Confirm the executing user: administrator, service account or web application account.",
+        "Pivot on the same host +/- 15 minutes: look for whoami, id, uname -a, mount, capsh, /.dockerenv checks, Docker socket access or curl/wget downloads.",
+        "Determine whether the host is a container node or a container, and which image or pod ran the process.",
+        "Check earlier alerts for the same host, container or user, especially remote code execution or container escape alerts."
+      ],
+      "false_positives": [
+        "Administrators manually checking a container environment or cgroup configuration.",
+        "Entrypoint scripts, monitoring agents or orchestration tools reading /proc/1/cgroup to detect container runtime.",
+        "Inventory or diagnostic tools (support bundles, metrics collectors) reading /proc/*/sched."
+      ],
+      "response_steps": [
+        "Confirm with the host or application owner whether the activity was expected; if legitimate and recurring, add a narrow filter by ParentImage or user.",
+        "If the parent is an exposed application process or an unexplained shell, isolate the container or host and preserve evidence (process list, logs, container image).",
+        "Look for escape attempts: privileged mounts, docker.sock access, nsenter use or elevated capabilities.",
+        "Remove unauthorized access, rotate exposed credentials and redeploy the container from a trusted image before restoring service."
+      ],
+      "severity_rationale": "Low fits because, although it can be reconnaissance, reading these files alone is common in admin work and container tooling."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "cat reads PID 1 cgroup from a shell spawned by a web application",
+        "event": {
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /proc/1/cgroup",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c cat /proc/1/cgroup",
+          "User": "www-data",
+          "ProcessId": 4182,
+          "ParentProcessId": 4179,
+          "CurrentDirectory": "/var/www/html",
+          "Computer": "web-app-07"
+        }
+      },
+      {
+        "description": "grep inspects PID 2 status to check whether it is kthreadd",
+        "event": {
+          "Image": "/usr/bin/grep",
+          "CommandLine": "grep -i name /proc/2/status",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash -i",
+          "User": "jperez",
+          "ProcessId": 7731,
+          "ParentProcessId": 7702,
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "cat reads CPU info from /proc; path does not end in /cgroup or /sched and is not /proc/2/",
+        "event": {
+          "Image": "/usr/bin/cat",
+          "CommandLine": "cat /proc/cpuinfo",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash",
+          "User": "jperez",
+          "ProcessId": 5120,
+          "ParentProcessId": 5101,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "ls lists the cgroup file; ls is not one of the monitored tools",
+        "event": {
+          "Image": "/usr/bin/ls",
+          "CommandLine": "ls -l /proc/1/cgroup",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash",
+          "User": "root",
+          "ProcessId": 6011,
+          "ParentProcessId": 5990,
+          "CurrentDirectory": "/root",
+          "Computer": "k8s-node-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

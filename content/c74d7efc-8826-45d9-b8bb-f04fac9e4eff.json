@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "c74d7efc-8826-45d9-b8bb-f04fac9e4eff",
+    "title": "Run Once Task Configuration in Registry",
+    "level": "medium",
+    "status": "test",
+    "author": "Avneet Singh @v3t0_, oscd.community",
+    "path": "windows/registry/registry_event/registry_event_runonce_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_event/registry_event_runonce_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió o modificó el valor StubPath de un componente de Active Setup en el registro. El comando configurado se ejecutará en el próximo inicio de sesión de cada usuario o mediante runonce.exe /AlternateShellStartup.",
+      "what_it_detects": "Eventos de registro cuyo TargetObject contiene '\\Microsoft\\Active Setup\\Installed Components' y termina en '\\StubPath'. Se excluyen los valores Details de los instaladores legítimos de Google Chrome (chrmstp.exe) y Microsoft Edge (setup.exe) con --configure-user-settings.",
+      "why_it_matters": "Active Setup ejecuta el StubPath una vez por usuario al iniciar sesión, por lo que un atacante puede usarlo para persistencia y para ejecutar código en el contexto de cada usuario. Corresponde a la modificación del registro (T1112).",
+      "triage_steps": [
+        "Revise Details: identifique el binario o comando configurado, su ruta (Users, ProgramData, Temp, Public) y si usa LOLBins como rundll32, mshta, powershell o cmd.",
+        "Revise Image y el usuario del evento: ¿qué proceso escribió el valor? reg.exe, powershell.exe o binarios en rutas de usuario son sospechosos; msiexec o instaladores firmados son más esperables.",
+        "Extraiga el GUID del TargetObject y revise los demás valores de esa clave (ComponentID, Version, IsInstalled) para ver si corresponde a software conocido.",
+        "Obtenga el hash y la firma del archivo referenciado en Details y consulte su reputación en fuentes internas.",
+        "Pivote en el mismo host +/- 15 minutos: proceso padre de Image, descargas, creación de archivos y conexiones de red cercanas.",
+        "Busque ejecuciones de runonce.exe con /AlternateShellStartup y procesos hijos de runonce.exe o explorer.exe que ejecuten el comando del StubPath.",
+        "Consulte alertas previas del mismo host y usuario, y si el mismo GUID o valor aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Instaladores o actualizaciones legítimas que registran componentes de Active Setup (por ejemplo, componentes de Windows, Office o software corporativo).",
+        "Variantes de Chrome o Edge cuyo Details no coincide exactamente con los filtros, como rutas o parámetros distintos.",
+        "Herramientas de despliegue de software o scripts de configuración del equipo de TI."
+      ],
+      "response_steps": [
+        "Verifique con el propietario del equipo o TI si la instalación era esperada antes de actuar.",
+        "Si es malicioso, aísle el endpoint y exporte la clave de Active Setup y el archivo referenciado como evidencia.",
+        "Elimine la clave o el valor StubPath malicioso y el payload asociado, y revise otros mecanismos de persistencia.",
+        "Restablezca credenciales del usuario afectado si hubo ejecución, y busque el mismo indicador en toda la flota."
+      ],
+      "severity_rationale": "Nivel medio: es un mecanismo de persistencia real, pero instaladores legítimos también escriben StubPath, por lo que requiere validación de contexto."
+    },
+    "en": {
+      "summary": "A process created or modified the StubPath value of an Active Setup component in the registry. The configured command will run at each user's next logon or via runonce.exe /AlternateShellStartup.",
+      "what_it_detects": "Registry events where TargetObject contains '\\Microsoft\\Active Setup\\Installed Components' and ends with '\\StubPath'. Details values from legitimate Google Chrome (chrmstp.exe) and Microsoft Edge (setup.exe) installers using --configure-user-settings are excluded.",
+      "why_it_matters": "Active Setup runs StubPath once per user at logon, so attackers can abuse it for persistence and to execute code in every user's context. It maps to Modify Registry (T1112).",
+      "triage_steps": [
+        "Inspect Details: identify the configured binary or command, its path (Users, ProgramData, Temp, Public) and any LOLBins such as rundll32, mshta, powershell or cmd.",
+        "Check Image and the user: which process wrote the value? reg.exe, powershell.exe or binaries in user paths are suspicious; msiexec or signed installers are more expected.",
+        "Extract the GUID from TargetObject and review sibling values (ComponentID, Version, IsInstalled) to see whether it matches known software.",
+        "Get the hash and signature of the file referenced in Details and check its reputation internally.",
+        "Pivot on the same host +/- 15 minutes: parent of Image, downloads, file creation and nearby network connections.",
+        "Look for runonce.exe with /AlternateShellStartup and child processes of runonce.exe or explorer.exe running the StubPath command.",
+        "Check earlier alerts for the same host and user, and whether the same GUID or value appears on other endpoints."
+      ],
+      "false_positives": [
+        "Legitimate installers or updates registering Active Setup components (for example Windows components, Office or corporate software).",
+        "Chrome or Edge variants whose Details do not exactly match the filters, such as different paths or arguments.",
+        "Software deployment tools or IT configuration scripts."
+      ],
+      "response_steps": [
+        "Confirm with the device owner or IT whether the installation was expected before acting.",
+        "If malicious, isolate the endpoint and export the Active Setup key and referenced file as evidence.",
+        "Remove the malicious StubPath value or key and the payload, and review other persistence mechanisms.",
+        "Reset the affected user's credentials if execution occurred, and hunt for the same indicator fleet-wide."
+      ],
+      "severity_rationale": "Medium: it is a real persistence mechanism, but legitimate installers also write StubPath, so context validation is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets an Active Setup StubPath pointing to an executable in C:\\Users\\Public",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components\\{8A3F2C11-5B7E-4D2A-9C01-3E6F7A1B2C3D}\\StubPath",
+          "Details": "C:\\Users\\Public\\update.exe"
+        }
+      },
+      {
+        "description": "PowerShell sets StubPath to a rundll32 command loading a DLL from ProgramData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0217.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Active Setup\\Installed Components\\{D41C77B0-2E9A-4F18-B6C5-0A9E8D7F6E51}\\StubPath",
+          "Details": "rundll32.exe C:\\ProgramData\\cache\\svc.dll,Start"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Google Chrome installer StubPath, excluded by filter_optional_chrome",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Program Files\\Google\\Chrome\\Application\\120.0.6099.110\\Installer\\setup.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components\\{8A69D345-D564-463c-AFF1-A69D9E530F96}\\StubPath",
+          "Details": "\"C:\\Program Files\\Google\\Chrome\\Application\\120.0.6099.110\\Installer\\chrmstp.exe\" --configure-user-settings --verbose-logging --system-level"
+        }
+      },
+      {
+        "description": "Legitimate Microsoft Edge installer StubPath, excluded by filter_optional_edge",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0217.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Program Files (x86)\\Microsoft\\EdgeUpdate\\Install\\setup.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components\\{9459C573-B17A-45AE-9F64-1857B5D58CEE}\\StubPath",
+          "Details": "\"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\120.0.2210.91\\Installer\\setup.exe\" --configure-user-settings --verbose-logging --system-level --msedge --channel=stable"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "487c7524-f892-4054-b263-8a0ace63fc25",
+    "title": "Invoke-Obfuscation Via Stdin - System",
+    "level": "high",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_via_stdin_services.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_invoke_obfuscation_via_stdin_services.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (evento 7045) cuyo ImagePath encadena comandos 'set' con '&&' y hace referencia a environment, invoke o input. Esto coincide con la técnica de ofuscación de PowerShell vía stdin de Invoke-Obfuscation.",
+      "what_it_detects": "Eventos 7045 del Service Control Manager en el log System donde ImagePath contiene 'set' y '&&' más 'environment', 'invoke' o 'input'. Así se ve un cmd.exe que guarda fragmentos de script en variables y luego los pasa por stdin a powershell.",
+      "why_it_matters": "Crear un servicio permite ejecutar código como SYSTEM y suele usarse para movimiento lateral o persistencia. La ofuscación (T1027) busca evadir controles al ejecutar PowerShell (T1059.001).",
+      "triage_steps": [
+        "Revisa el ImagePath completo: identifica las variables definidas con 'set', el texto que se envía a powershell y cualquier URL, IP o comando codificado.",
+        "Revisa ServiceName, StartType y AccountName. Los nombres aleatorios, el inicio a demanda y la cuenta LocalSystem son señales comunes de herramientas de ejecución remota.",
+        "Busca en el mismo host, +/- 15 minutos, inicios de sesión de red (4624 tipo 3) y eventos 7036 o 7009 para identificar el origen y la cuenta usada.",
+        "Busca procesos hijos de services.exe, como cmd.exe y powershell.exe, y revisa sus CommandLine y la actividad de red y archivos que generaron.",
+        "Consulta los logs de PowerShell (4103/4104) del host para recuperar el script desofuscado que se ejecutó.",
+        "Busca el mismo ImagePath o ServiceName en otros hosts y alertas previas de la cuenta o la IP de origen."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos. Algún instalador o script de administración podría encadenar 'set' y '&&' en un servicio, pero es poco común.",
+        "Ejercicios autorizados de red team o pruebas de detección que usan Invoke-Obfuscation."
+      ],
+      "response_steps": [
+        "Confirma con el equipo responsable si el servicio fue autorizado. Si no, trata el caso como incidente.",
+        "Aísla el endpoint, deshabilita el servicio y conserva la evidencia: memoria, registro del servicio y logs.",
+        "Restablece o deshabilita las credenciales usadas para crear el servicio y bloquea la IP de origen.",
+        "Elimina el servicio y los artefactos que dejó solo después de documentarlos, y busca la misma actividad en otros hosts."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque un servicio que ejecuta PowerShell ofuscado vía stdin casi nunca es legítimo y suele indicar ejecución remota como SYSTEM."
+    },
+    "en": {
+      "summary": "A Windows service was installed (event 7045) with an ImagePath that chains 'set' commands with '&&' and references environment, invoke or input. This matches Invoke-Obfuscation's PowerShell-via-stdin technique.",
+      "what_it_detects": "Service Control Manager 7045 events in the System log where ImagePath contains 'set' and '&&' plus 'environment', 'invoke' or 'input'. This is how cmd.exe looks when it stores script fragments in variables and pipes them to powershell through stdin.",
+      "why_it_matters": "Creating a service runs code as SYSTEM and is often used for lateral movement or persistence. The obfuscation (T1027) aims to evade controls while running PowerShell (T1059.001).",
+      "triage_steps": [
+        "Read the full ImagePath: find the variables set with 'set', the text piped to powershell, and any URL, IP or encoded command.",
+        "Check ServiceName, StartType and AccountName. Random names, demand start and LocalSystem are common signs of remote execution tools.",
+        "On the same host, within +/- 15 minutes, look for network logons (4624 type 3) and 7036 or 7009 events to find the source and account.",
+        "Look for child processes of services.exe, such as cmd.exe and powershell.exe, and review their CommandLine and the network and file activity they produced.",
+        "Check the host's PowerShell logs (4103/4104) to recover the deobfuscated script that ran.",
+        "Search other hosts for the same ImagePath or ServiceName, and check earlier alerts for the account or source IP."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. An installer or admin script could chain 'set' and '&&' in a service, but this is rare.",
+        "Authorized red team exercises or detection tests that use Invoke-Obfuscation."
+      ],
+      "response_steps": [
+        "Confirm with the owning team whether the service was authorized. If it was not, treat it as an incident.",
+        "Isolate the endpoint, disable the service, and preserve evidence: memory, the service registry key and logs.",
+        "Reset or disable the credentials used to create the service and block the source IP.",
+        "Remove the service and its artifacts only after documenting them, then hunt for the same activity on other hosts."
+      ],
+      "severity_rationale": "High fits because a service that runs obfuscated PowerShell through stdin is almost never legitimate and usually means remote execution as SYSTEM."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with Invoke-Obfuscation stdin-style ImagePath using set, && and $input piped to powershell",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "xKqTzR",
+          "ImagePath": "cmd.exe /c \"set aBc=Write-Output 'placeholder'&&set dEf=$input&&echo %aBc% | powershell -NoProfile -\"",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service ImagePath that sets variables and references Invoke via the ExecutionContext",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FS01.andes.example.com",
+          "ServiceName": "WinUpdSvc",
+          "ImagePath": "C:\\Windows\\System32\\cmd.exe /c \"set x1=Get-Date&& set x2=$ExecutionContext.InvokeCommand&&echo %x1% | powershell -\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service wrapper using set and && to adjust PATH, with no environment/invoke/input keyword",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "ExampleUpdater",
+          "ImagePath": "cmd.exe /c \"set PATH=C:\\Tools;%PATH%&&C:\\Tools\\updater.exe --service\"",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Normal service installation with a plain executable path",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-APP02.andes.example.com",
+          "ServiceName": "ExampleAgent",
+          "ImagePath": "\"C:\\Program Files\\Example\\agent.exe\" -service",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

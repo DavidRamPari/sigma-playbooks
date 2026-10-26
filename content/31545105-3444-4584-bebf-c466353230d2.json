@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "31545105-3444-4584-bebf-c466353230d2",
+    "title": "Touch Suspicious Service File",
+    "level": "medium",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_touch_susp.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_touch_susp.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario touch con la opción -t sobre un archivo .service, lo que fija una marca de tiempo arbitraria en una unidad de systemd. Puede indicar timestomping para ocultar un servicio malicioso de persistencia.",
+      "what_it_detects": "Procesos cuyo Image termina en /touch y cuyo CommandLine contiene ' -t ' y termina en '.service', es decir, la modificación manual de la fecha de acceso y modificación de un archivo de unidad de systemd.",
+      "why_it_matters": "Los atacantes que crean o alteran servicios de systemd para persistir suelen falsificar sus marcas de tiempo para que parezcan archivos del sistema antiguos y evadir revisiones forenses basadas en fechas (ATT&CK T1070.006, Timestomp).",
+      "triage_steps": [
+        "Revise el CommandLine: identifique la ruta del .service y la fecha indicada en -t; las fechas muy antiguas o iguales a las de archivos del sistema son más sospechosas.",
+        "Identifique el usuario y el ParentImage; un shell interactivo, cron, un script en /tmp o un proceso web como padre requiere atención.",
+        "Inspeccione el archivo .service: valide ExecStart, User y WorkingDirectory, y compare el hash con el paquete legítimo (rpm -V o dpkg --verify).",
+        "Busque en el mismo host, en un rango de +/- 15 minutos, la creación o edición del .service, systemctl daemon-reload, enable o start.",
+        "Revise los procesos hijos y las conexiones de red del binario que ejecuta el servicio, y verifique si apunta a rutas inusuales como /tmp, /dev/shm o directorios ocultos.",
+        "Correlacione la sesión de origen: inicios de sesión SSH, IP de origen, uso de sudo y alertas anteriores para el mismo usuario o host.",
+        "Confirme con el equipo de administración si existe un cambio aprobado o un script de despliegue que justifique la acción."
+      ],
+      "false_positives": [
+        "Administradores que ajustan fechas de archivos de forma deliberada, por ejemplo para restaurar metadatos después de una migración o copia.",
+        "Scripts de empaquetado, imágenes base o herramientas de gestión de configuración que normalizan marcas de tiempo para builds reproducibles."
+      ],
+      "response_steps": [
+        "Si no hay un cambio autorizado, preserve el archivo .service, su binario asociado y los logs de journald antes de modificar nada.",
+        "Aísle el host de la red si el servicio ejecuta código desconocido o establece conexiones externas.",
+        "Tras confirmar la actividad maliciosa, deshabilite y detenga el servicio, elimine la unidad y el binario, y ejecute systemctl daemon-reload.",
+        "Restablezca las credenciales del usuario implicado, revise otras unidades de systemd y tareas cron en busca de persistencia adicional, y monitoree el host."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el timestomping sobre unidades de servicio es un indicador fuerte de evasión, aunque puede tener usos administrativos legítimos poco frecuentes."
+    },
+    "en": {
+      "summary": "The touch binary ran with the -t option against a .service file, setting an arbitrary timestamp on a systemd unit. This may be timestomping to hide a malicious persistence service.",
+      "what_it_detects": "Processes whose Image ends with /touch and whose CommandLine contains ' -t ' and ends with '.service', i.e. manually setting the access and modification time of a systemd unit file.",
+      "why_it_matters": "Attackers who create or alter systemd services for persistence often fake their timestamps so they look like old system files and slip past date-based forensic review (ATT&CK T1070.006, Timestomp).",
+      "triage_steps": [
+        "Read the CommandLine: note the .service path and the -t date; very old dates or dates copied from system files are more suspicious.",
+        "Identify the user and ParentImage; an interactive shell, cron, a script in /tmp or a web server process as parent needs attention.",
+        "Inspect the .service file: check ExecStart, User and WorkingDirectory, and verify it against the package (rpm -V or dpkg --verify).",
+        "On the same host within +/- 15 minutes, look for creation or editing of the .service, systemctl daemon-reload, enable or start.",
+        "Review child processes and network connections of the binary the service runs, and flag paths such as /tmp, /dev/shm or hidden directories.",
+        "Correlate the originating session: SSH logins, source IP, sudo use and earlier alerts for the same user or host.",
+        "Confirm with administrators whether an approved change or deployment script explains the action."
+      ],
+      "false_positives": [
+        "Administrators deliberately adjusting file dates, for example to restore metadata after a migration or copy.",
+        "Packaging scripts, base image builds or configuration management tools normalizing timestamps for reproducible builds."
+      ],
+      "response_steps": [
+        "If no authorized change exists, preserve the .service file, its binary and journald logs before changing anything.",
+        "Isolate the host from the network if the service runs unknown code or makes external connections.",
+        "After confirming malicious activity, stop and disable the service, remove the unit and binary, and run systemctl daemon-reload.",
+        "Reset the involved user's credentials, hunt for other systemd units and cron jobs used for persistence, and keep monitoring the host."
+      ],
+      "severity_rationale": "Medium fits because timestomping service units is a strong evasion indicator, yet rare legitimate administrative uses exist."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "touch -t backdates a newly planted systemd unit from an interactive root shell",
+        "event": {
+          "Image": "/usr/bin/touch",
+          "CommandLine": "touch -t 201901150930 /etc/systemd/system/dbus-helper.service",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Script in /tmp timestomps a user-level service file",
+        "event": {
+          "Image": "/bin/touch",
+          "CommandLine": "/bin/touch -c -t 202001010000.00 /home/jperez/.config/systemd/user/sync-agent.service",
+          "ParentImage": "/tmp/.x/install.sh",
+          "User": "jperez",
+          "ProcessId": 7731,
+          "ParentProcessId": 7702,
+          "CurrentDirectory": "/tmp/.x",
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "touch -t on a systemd timer file; the CommandLine does not end with .service",
+        "event": {
+          "Image": "/usr/bin/touch",
+          "CommandLine": "touch -t 202301110830 /etc/systemd/system/backup.timer",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 5120,
+          "ParentProcessId": 5101,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Plain touch of a service file without the -t option, as done by a deployment script",
+        "event": {
+          "Image": "/usr/bin/touch",
+          "CommandLine": "touch /etc/systemd/system/app-worker.service",
+          "ParentImage": "/usr/bin/ansible-playbook",
+          "User": "deploy",
+          "ProcessId": 9034,
+          "ParentProcessId": 9001,
+          "CurrentDirectory": "/opt/deploy",
+          "Computer": "app-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

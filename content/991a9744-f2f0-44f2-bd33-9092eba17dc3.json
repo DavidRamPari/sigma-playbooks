@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "991a9744-f2f0-44f2-bd33-9092eba17dc3",
+    "title": "Enable Windows Remote Management",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_enable_psremoting.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_enable_psremoting.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó un script block de PowerShell que llama a Enable-PSRemoting, el cmdlet que habilita WinRM y PowerShell Remoting en el host. Esto puede ser administración legítima o un atacante que prepara el equipo para movimiento lateral.",
+      "what_it_detects": "Eventos 4104 de Script Block Logging cuyo ScriptBlockText contiene 'Enable-PSRemoting ' (con espacio final, es decir, seguido de parámetros como -Force o -SkipNetworkProfileCheck). Una invocación sin argumentos al final de la línea no genera la alerta.",
+      "why_it_matters": "Enable-PSRemoting inicia el servicio WinRM, crea listeners y abre reglas de firewall. Con cuentas válidas, un adversario puede ejecutar comandos remotos en el host (T1021.006, Windows Remote Management) y moverse lateralmente.",
+      "triage_steps": [
+        "Revise ScriptBlockText completo: parámetros (-Force, -SkipNetworkProfileCheck) y comandos acompañantes como Set-Item WSMan:\\...\\TrustedHosts '*' o cambios de LocalAccountTokenFilterPolicy.",
+        "Identifique el usuario y el host del evento 4104; confirme si es administrador autorizado y si existe un ticket de cambio o despliegue.",
+        "Reconstruya el script con ScriptBlockId y revise Path: un archivo en una ruta de herramientas de TI es distinto a un script en Temp, Downloads o ejecutado interactivamente.",
+        "Busque el proceso padre de powershell.exe (eventos 4688 o Sysmon 1) en ±15 minutos: Office, wmiprvse.exe, servicios o shells remotas son sospechosos.",
+        "Verifique conexiones entrantes posteriores a los puertos 5985/5986 y procesos wsmprovhost.exe en el host, y su IP de origen.",
+        "Busque alertas previas del mismo usuario o host: logons anómalos, volcado de credenciales o ejecución remota en otros equipos."
+      ],
+      "false_positives": [
+        "Scripts legítimos de administradores o de aprovisionamiento (imágenes, SCCM/Intune, Ansible, DSC) que habilitan WinRM.",
+        "Instalación de software de gestión o monitoreo que requiere PowerShell Remoting.",
+        "Laboratorios o pruebas de Atomic Red Team autorizadas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o el equipo de TI si el cambio estaba autorizado; documente la evidencia.",
+        "Si no está autorizado, aísle el endpoint y deshabilite o restablezca la credencial del usuario involucrado tras validarlo.",
+        "Revierta la configuración: Disable-PSRemoting, detenga WinRM si no se usa, elimine listeners y reglas de firewall añadidas y restaure TrustedHosts.",
+        "Investigue hosts que se conectaron por WinRM al equipo afectado y amplíe la búsqueda de movimiento lateral.",
+        "Restrinja WinRM por GPO a redes y grupos de administración autorizados."
+      ],
+      "severity_rationale": "Medium es adecuado porque habilitar WinRM es una tarea administrativa común, pero también un paso habitual de preparación para movimiento lateral que requiere verificación."
+    },
+    "en": {
+      "summary": "A PowerShell script block called Enable-PSRemoting, the cmdlet that turns on WinRM and PowerShell Remoting on the host. This may be legitimate administration or an attacker preparing the host for lateral movement.",
+      "what_it_detects": "Script Block Logging events (4104) whose ScriptBlockText contains 'Enable-PSRemoting ' with a trailing space, i.e. followed by parameters such as -Force or -SkipNetworkProfileCheck. A bare call at end of line will not fire.",
+      "why_it_matters": "Enable-PSRemoting starts the WinRM service, creates listeners and opens firewall rules. With valid accounts, an adversary can then run commands remotely on the host (T1021.006, Windows Remote Management) and move laterally.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: parameters (-Force, -SkipNetworkProfileCheck) and companion commands like Set-Item WSMan:\\...\\TrustedHosts '*' or LocalAccountTokenFilterPolicy changes.",
+        "Identify the user and host of the 4104 event; confirm the user is an authorized admin and look for a matching change ticket or deployment.",
+        "Rebuild the script using ScriptBlockId and check Path: an IT tooling share differs from a script in Temp, Downloads or typed interactively.",
+        "Find the parent of powershell.exe (4688 or Sysmon 1) within +/- 15 minutes; Office apps, wmiprvse.exe, services or remote shells are suspicious.",
+        "Check for subsequent inbound connections to ports 5985/5986 and wsmprovhost.exe processes on the host, and their source IPs.",
+        "Look for earlier alerts on the same user or host: unusual logons, credential dumping or remote execution elsewhere."
+      ],
+      "false_positives": [
+        "Legitimate admin or provisioning scripts (imaging, SCCM/Intune, Ansible, DSC) that enable WinRM.",
+        "Installation of management or monitoring software that requires PowerShell Remoting.",
+        "Authorized labs or Atomic Red Team tests."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT whether the change was authorized; preserve the evidence.",
+        "If unauthorized, isolate the endpoint and, after validation, disable or reset the involved user's credentials.",
+        "Revert the configuration: Disable-PSRemoting, stop WinRM if unused, remove added listeners and firewall rules, restore TrustedHosts.",
+        "Investigate hosts that connected to the affected machine over WinRM and widen the lateral-movement hunt.",
+        "Restrict WinRM via GPO to authorized admin networks and groups."
+      ],
+      "severity_rationale": "Medium fits because enabling WinRM is a common admin task but also a typical staging step for lateral movement that needs verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive PowerShell enabling remoting with -Force and opening TrustedHosts",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockText": "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '*' -Force",
+          "ScriptBlockId": "3f1c2a7e-9b4d-4e21-8c55-0a1b2c3d4e5f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": ""
+        }
+      },
+      {
+        "description": "Script file in a temp folder calling Enable-PSRemoting with parameters",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "UserID": "ANDES\\svc-backup",
+          "ScriptBlockText": "$ErrorActionPreference='SilentlyContinue'\nEnable-PSRemoting -Force\nRestart-Service WinRM",
+          "ScriptBlockId": "b7a9e0d1-22c4-4f6a-9e10-5d6c7b8a9f01",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Users\\svc-backup\\AppData\\Local\\Temp\\setup.ps1"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator disabling remoting; 'Disable-PSRemoting ' does not contain 'Enable-PSRemoting '",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockText": "Disable-PSRemoting -Force",
+          "ScriptBlockId": "c1d2e3f4-a5b6-4c7d-8e9f-001122334455",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": ""
+        }
+      },
+      {
+        "description": "Reading help for the cmdlet with no trailing space after the name",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "UserID": "ANDES\\mrojas",
+          "ScriptBlockText": "Get-Help Enable-PSRemoting",
+          "ScriptBlockId": "d4e5f6a7-b8c9-4d0e-9f1a-223344556677",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": ""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

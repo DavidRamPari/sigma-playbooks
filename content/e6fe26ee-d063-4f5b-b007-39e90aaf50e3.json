@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "e6fe26ee-d063-4f5b-b007-39e90aaf50e3",
+    "title": "Potential Persistence Via AutodialDLL",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_autodial_dll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_autodial_dll.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor de registro AutodialDLL de WinSock2. Si apunta a una DLL distinta de la predeterminada, cualquier proceso que use Winsock podría cargar código del atacante.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject contiene \\Services\\WinSock2\\Parameters\\AutodialDLL. No hay filtros: se alerta ante cualquier escritura, incluso si se restaura el valor predeterminado (C:\\Windows\\System32\\rasadhlp.dll).",
+      "why_it_matters": "La librería ws2_32 carga la DLL indicada en AutodialDLL, así que reemplazarla da persistencia y ejecución de código dentro de procesos legítimos que usan red. La regla solo está etiquetada con la táctica de persistencia; no indica una técnica ATT&CK concreta.",
+      "triage_steps": [
+        "Revise el campo Details: compare la ruta de la DLL con el valor predeterminado C:\\Windows\\System32\\rasadhlp.dll.",
+        "Identifique Image y el usuario que hizo el cambio; verifique si es un instalador firmado, un proceso del sistema o un binario inusual.",
+        "Obtenga el hash, la firma y la fecha de creación de la DLL configurada; búsquela en inteligencia de amenazas y en otros endpoints.",
+        "Revise el árbol de procesos: ParentImage y CommandLine del proceso que escribió el valor (por ejemplo reg.exe, powershell.exe).",
+        "Correlacione en el mismo host dentro de +/- 15 minutos: creación de archivos DLL, otras modificaciones de persistencia y conexiones de red.",
+        "Busque eventos de carga de imagen (image_load) de esa DLL en procesos que usan red después del cambio.",
+        "Consulte alertas previas del mismo host y usuario, y si el mismo valor aparece en otros equipos."
+      ],
+      "false_positives": [
+        "Restauración del valor predeterminado rasadhlp.dll por actualizaciones de Windows, reparaciones del sistema (sfc/DISM) o despliegue de imágenes.",
+        "Software de VPN o acceso remoto (RAS) legítimo que configura su propia DLL de autodial; valide el proveedor y la firma."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del equipo si el cambio está autorizado y si la DLL es legítima y está firmada.",
+        "Si es malicioso, aísle el endpoint y conserve una copia de la DLL y del registro para análisis forense.",
+        "Restaure AutodialDLL a C:\\Windows\\System32\\rasadhlp.dll y elimine la DLL maliciosa solo después de preservar la evidencia.",
+        "Busque el mismo hash y valor en toda la flota, reinicie los procesos afectados y rote las credenciales si hubo compromiso."
+      ],
+      "severity_rationale": "Nivel high adecuado: este valor rara vez cambia de forma legítima y su modificación permite ejecución persistente de código dentro de muchos procesos."
+    },
+    "en": {
+      "summary": "A process wrote the WinSock2 AutodialDLL registry value. If it points to a DLL other than the default, any process using Winsock may load attacker code.",
+      "what_it_detects": "registry_set events whose TargetObject contains \\Services\\WinSock2\\Parameters\\AutodialDLL. There are no filters: any write alerts, including restoring the default value (C:\\Windows\\System32\\rasadhlp.dll).",
+      "why_it_matters": "The ws2_32 library loads the DLL named in AutodialDLL, so replacing it gives persistence and code execution inside legitimate networked processes. The rule is tagged only with the persistence tactic, not a specific ATT&CK technique.",
+      "triage_steps": [
+        "Check the Details field: compare the DLL path with the default C:\\Windows\\System32\\rasadhlp.dll.",
+        "Identify the Image and user that made the change; is it a signed installer, a system process or an unusual binary?",
+        "Get the hash, signature and creation time of the configured DLL; look it up in threat intelligence and on other endpoints.",
+        "Review the process tree: ParentImage and CommandLine of the writing process (for example reg.exe, powershell.exe).",
+        "Correlate on the same host within +/- 15 minutes: DLL file creation, other persistence changes and network connections.",
+        "Look for image_load events of that DLL in networked processes after the change.",
+        "Check earlier alerts for the same host and user, and whether the same value appears on other machines."
+      ],
+      "false_positives": [
+        "Restoration of the default rasadhlp.dll by Windows updates, system repair (sfc/DISM) or image deployment.",
+        "Legitimate VPN or remote access (RAS) software setting its own autodial DLL; validate vendor and signature."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the change was authorized and whether the DLL is legitimate and signed.",
+        "If malicious, isolate the endpoint and preserve the DLL and registry hive for forensics.",
+        "Reset AutodialDLL to C:\\Windows\\System32\\rasadhlp.dll and remove the malicious DLL only after evidence is preserved.",
+        "Hunt for the same hash and value fleet-wide, restart affected processes and rotate credentials if compromise is confirmed."
+      ],
+      "severity_rationale": "High fits: this value rarely changes legitimately and modifying it enables persistent code execution inside many processes."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets AutodialDLL to a DLL in a user-writable folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\WinSock2\\Parameters\\AutodialDLL",
+          "Details": "C:\\ProgramData\\svcnet\\netcfg.dll"
+        }
+      },
+      {
+        "description": "PowerShell changes AutodialDLL to a DLL in the Temp folder",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKLM\\SYSTEM\\ControlSet001\\Services\\WinSock2\\Parameters\\AutodialDLL",
+          "Details": "C:\\Users\\mlopez\\AppData\\Local\\Temp\\wsupd.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "svchost updates the Winsock protocol catalog under the same Parameters key, not AutodialDLL",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\WinSock2\\Parameters\\Current_Protocol_Catalog",
+          "Details": "Protocol_Catalog9"
+        }
+      },
+      {
+        "description": "Change to a Tcpip parameter, unrelated to WinSock2 AutodialDLL",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Hostname",
+          "Details": "SRV-APP-03"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

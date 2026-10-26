@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "028c7842-4243-41cd-be6f-12f3cf1a26c7",
+    "title": "AD Object WriteDAC Access",
+    "level": "critical",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/builtin/security/win_security_ad_object_writedac_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_ad_object_writedac_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1222.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una entidad abrió el objeto raíz del dominio de Active Directory (domainDNS) con permiso WRITE_DAC, lo que le permitía cambiar sus permisos. Trátelo como un posible intento de otorgar DCSync u otros privilegios sobre todo el dominio.",
+      "what_it_detects": "Evento de seguridad 4662 en un controlador de dominio con ObjectServer igual a DS, AccessMask igual a 0x40000 (WRITE_DAC) y ObjectType igual a la clase domainDNS (19195a5b-6da0-11d0-afd3-00c04fd930c9). Solo se registra si una SACL audita este acceso en el objeto del dominio.",
+      "why_it_matters": "Con WRITE_DAC sobre la raíz del dominio, un atacante puede agregar ACE como Replicating Directory Changes (All). Así cualquier cuenta puede hacer DCSync y extraer todos los hash de credenciales. Corresponde a T1222.001, modificación de permisos para debilitar las defensas.",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId. ¿Es un Domain Admin conocido, una cuenta de AD Connect o de instalación de Exchange, o un usuario, equipo o servicio común?",
+        "Correlacione SubjectLogonId con el evento 4624 del mismo DC para obtener el tipo de inicio de sesión, la IP de origen y la estación.",
+        "Busque el evento 5136 sobre el atributo nTSecurityDescriptor del objeto del dominio en +/- 15 minutos. Compare el SDDL anterior y el nuevo para ver qué ACE y trustees se agregaron.",
+        "Después del cambio, busque eventos 4662 de cuentas que no son DC cuyo campo Properties contenga los GUID de replicación 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 o 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2.",
+        "En el host de origen, revise los procesos ejecutados (Add-DomainObjectAcl de PowerView, dsacls, ntlmrelayx, PowerShell) en +/- 15 minutos.",
+        "Verifique si existen tickets de cambio y revise alertas previas del mismo usuario y la misma IP de origen."
+      ],
+      "false_positives": [
+        "Administradores que usan el asistente Delegation of Control o dsacls sobre la raíz del dominio durante cambios aprobados.",
+        "Ejecución de Exchange setup /PrepareAD o de la preparación de esquema y dominio, que modifica las ACL del dominio.",
+        "Instalación de Microsoft Entra Connect (Azure AD Connect), que otorga derechos de replicación a su cuenta de sincronización.",
+        "Herramientas de gestión de identidades o de hardening de permisos de AD ejecutadas por personal autorizado."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la cuenta y con gestión de cambios si la modificación de la ACL estaba autorizada.",
+        "Si no lo estaba, exporte la ACL actual del objeto del dominio y elimine las ACE ilegítimas, sobre todo los derechos de replicación de trustees que no son DC.",
+        "Deshabilite o restablezca la cuenta que actuó y los trustees que obtuvieron derechos, y aísle el host de origen para análisis forense.",
+        "Si pudo ocurrir un DCSync, considere expuestas todas las credenciales del dominio: restablezca krbtgt dos veces y rote las contraseñas privilegiadas.",
+        "Busque mecanismos de persistencia, como cambios en AdminSDHolder, nuevos miembros de grupos privilegiados y nuevos SPN, y documente el incidente."
+      ],
+      "severity_rationale": "El nivel crítico es adecuado porque un WRITE_DAC no autorizado sobre la raíz del dominio lleva directamente a DCSync y al compromiso total del dominio, y los casos legítimos son raros y planificados."
+    },
+    "en": {
+      "summary": "A principal opened the Active Directory domain root object (domainDNS) with WRITE_DAC rights, so it was able to change that object's permissions. Treat this as a possible attempt to grant DCSync or other domain-wide privileges.",
+      "what_it_detects": "Security event 4662 on a domain controller where ObjectServer is DS, AccessMask is 0x40000 (WRITE_DAC) and ObjectType is the domainDNS class (19195a5b-6da0-11d0-afd3-00c04fd930c9). The event only appears if a SACL audits this access on the domain object.",
+      "why_it_matters": "With WRITE_DAC on the domain root, an attacker can add ACEs such as Replicating Directory Changes (All). Any account then gets DCSync capability and can pull every credential hash. This maps to T1222.001, permission modification used to weaken defenses.",
+      "triage_steps": [
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId. Is this a known Domain Admin, AD Connect or Exchange setup account, or an ordinary user, computer or service account?",
+        "Match SubjectLogonId to event 4624 on the same DC to get the logon type, source IP and workstation.",
+        "Look for event 5136 on the nTSecurityDescriptor attribute of the domain object within +/- 15 minutes. Compare the old and new SDDL to find added ACEs and trustees.",
+        "Search for 4662 events with Properties containing replication GUIDs 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 or 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 from non-DC accounts after the change.",
+        "On the source host, check process activity (PowerView Add-DomainObjectAcl, dsacls, ntlmrelayx, PowerShell) within +/- 15 minutes.",
+        "Check for change tickets and review earlier alerts for the same user and source IP."
+      ],
+      "false_positives": [
+        "Administrators using the Delegation of Control wizard or dsacls on the domain root during approved changes.",
+        "Exchange setup /PrepareAD or schema/domain preparation, which modifies domain ACLs.",
+        "Microsoft Entra Connect (Azure AD Connect) installation granting replication rights to its sync account.",
+        "Identity management or AD permission-hardening tools run by authorized staff."
+      ],
+      "response_steps": [
+        "Confirm with the account owner and change management whether the ACL change was authorized.",
+        "If it was not, export the current domain object ACL and remove any rogue ACEs, especially replication rights for non-DC trustees.",
+        "Disable or reset the acting account and any trustee that gained rights, and isolate the source host for forensics.",
+        "If DCSync may have happened, treat all domain credentials as exposed: reset krbtgt twice and rotate privileged passwords.",
+        "Hunt for persistence such as AdminSDHolder changes, new privileged group members and new SPNs, then document the incident."
+      ],
+      "severity_rationale": "Critical fits because unauthorized WRITE_DAC on the domain root leads directly to DCSync and full domain compromise, and legitimate occurrences are rare and planned."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Workstation user session opens the domain root object (domainDNS class GUID) with WRITE_DAC, as when adding DCSync ACEs",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.corp.example.com",
+          "ObjectServer": "DS",
+          "AccessMask": "0x40000",
+          "ObjectType": "19195a5b-6da0-11d0-afd3-00c04fd930c9",
+          "ObjectName": "%{6e2a1b3c-4d5e-4f60-8a71-92b3c4d5e6f7}",
+          "OperationType": "Object Access",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7a21f",
+          "HandleId": "0x0",
+          "Properties": "%%7688 {19195a5b-6da0-11d0-afd3-00c04fd930c9}"
+        }
+      },
+      {
+        "description": "Same access recorded with the ObjectType shown as the class name domainDNS",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-02.corp.example.com",
+          "ObjectServer": "DS",
+          "AccessMask": "0x40000",
+          "ObjectType": "domainDNS",
+          "ObjectName": "DC=corp,DC=example,DC=com",
+          "OperationType": "Object Access",
+          "SubjectUserName": "svc-backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x51c09a2",
+          "HandleId": "0x0",
+          "Properties": "%%7688"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Control Access (0x100) on the domain object for replication rights: a DCSync attempt, but not WRITE_DAC, so this rule does not match",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.corp.example.com",
+          "ObjectServer": "DS",
+          "AccessMask": "0x100",
+          "ObjectType": "19195a5b-6da0-11d0-afd3-00c04fd930c9",
+          "ObjectName": "%{6e2a1b3c-4d5e-4f60-8a71-92b3c4d5e6f7}",
+          "OperationType": "Object Access",
+          "SubjectUserName": "DC-02$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x8a3f12",
+          "Properties": "%%7688 {1131f6aa-9c07-11d1-f79f-00c04fc2dcd2}"
+        }
+      },
+      {
+        "description": "WRITE_DAC on a user object (user class GUID), not the domain root",
+        "event": {
+          "EventID": 4662,
+          "Channel": "Security",
+          "Computer": "DC-01.corp.example.com",
+          "ObjectServer": "DS",
+          "AccessMask": "0x40000",
+          "ObjectType": "bf967aba-0de6-11d0-a285-00aa003049e2",
+          "ObjectName": "CN=Maria Lopez,OU=Usuarios,DC=corp,DC=example,DC=com",
+          "OperationType": "Object Access",
+          "SubjectUserName": "adm-rgomez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x2b77c10",
+          "Properties": "%%7688"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

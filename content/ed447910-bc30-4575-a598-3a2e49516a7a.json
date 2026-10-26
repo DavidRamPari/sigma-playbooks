@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "ed447910-bc30-4575-a598-3a2e49516a7a",
+    "title": "Linux Setuid Capability Set on a Binary via Setcap Utility",
+    "level": "low",
+    "status": "experimental",
+    "author": "Luc Génaux",
+    "path": "linux/process_creation/proc_creation_lnx_cap_setuid.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_cap_setuid.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548",
+      "T1554"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó setcap con una línea de comandos que contiene 'cap_setuid'. Es probable que se esté otorgando a un binario la capacidad de cambiar su UID a root, lo que puede funcionar como backdoor de escalamiento de privilegios.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en '/setcap' y CommandLine contiene 'cap_setuid', por ejemplo 'setcap cap_setuid+ep /usr/bin/python3'.",
+      "why_it_matters": "Un binario con cap_setuid puede llamar a setuid(0) y obtener root sin sudo ni bit SUID visible. Corresponde a abuso de mecanismos de elevación (T1548) y modificación de binarios para persistencia (T1554).",
+      "triage_steps": [
+        "Revise CommandLine: identifique el binario objetivo y el operador (+ep, =ep agrega; -ep elimina). Una eliminación suele ser remediación, no ataque.",
+        "Evalúe el binario objetivo: intérpretes (python, perl, node), shells, editores o archivos en /tmp, /dev/shm o directorios ocultos son altamente sospechosos.",
+        "Identifique al usuario y ParentImage: setcap requiere privilegios; determine si vino de sudo, un gestor de paquetes, Ansible o una shell interactiva.",
+        "Pivotee en el mismo host +/- 15 minutos: copias de binarios, descargas con curl/wget, cambios en sudoers o creación de usuarios.",
+        "Ejecute 'getcap -r / 2>/dev/null' en el host para listar todas las capacidades asignadas y compare con la línea base.",
+        "Calcule el hash del binario objetivo y compárelo con el del paquete oficial (rpm -V o debsums).",
+        "Busque ejecuciones posteriores del binario por usuarios no privilegiados y alertas previas para el mismo host o usuario."
+      ],
+      "false_positives": [
+        "Administradores que asignan capacidades a herramientas propias con un cambio aprobado.",
+        "Scripts de instalación o paquetes que configuran capacidades durante el despliegue.",
+        "Laboratorios de seguridad, CTF o pruebas de pentest autorizadas.",
+        "Comandos que eliminan cap_setuid (cap_setuid-ep) como parte de una remediación."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si el cambio estaba autorizado y documentado.",
+        "Si no lo estaba, aísle el host y preserve evidencia: binario, hash, historial de shell y logs.",
+        "Retire la capacidad con 'setcap -r <binario>' tras documentarla y reinstale el binario desde el paquete oficial si fue alterado.",
+        "Restablezca credenciales de la cuenta usada y revise otros mecanismos de persistencia en el host.",
+        "Agregue el hallazgo a la línea base de getcap y monitoree nuevas asignaciones."
+      ],
+      "severity_rationale": "El nivel bajo refleja que setcap es una herramienta administrativa legítima, pero debe escalarse si el objetivo es un intérprete, una shell o un archivo en una ruta temporal."
+    },
+    "en": {
+      "summary": "setcap ran with a command line containing 'cap_setuid'. A binary is likely being granted the ability to switch its UID to root, which can act as a privilege escalation backdoor.",
+      "what_it_detects": "Linux process creation events where Image ends with '/setcap' and CommandLine contains 'cap_setuid', for example 'setcap cap_setuid+ep /usr/bin/python3'.",
+      "why_it_matters": "A binary with cap_setuid can call setuid(0) and gain root without sudo or a visible SUID bit. This maps to abuse of elevation control (T1548) and compromising host binaries for persistence (T1554).",
+      "triage_steps": [
+        "Read CommandLine: identify the target binary and operator (+ep or =ep adds; -ep removes). A removal is usually remediation, not an attack.",
+        "Assess the target: interpreters (python, perl, node), shells, editors or files in /tmp, /dev/shm or hidden directories are highly suspicious.",
+        "Identify the user and ParentImage: setcap needs privileges; determine whether it came from sudo, a package manager, Ansible or an interactive shell.",
+        "Pivot on the same host +/- 15 minutes: binary copies, curl/wget downloads, sudoers changes or new user accounts.",
+        "Run 'getcap -r / 2>/dev/null' on the host to list all assigned capabilities and compare against baseline.",
+        "Hash the target binary and compare it to the official package (rpm -V or debsums).",
+        "Look for later executions of the binary by unprivileged users and prior alerts for the same host or user."
+      ],
+      "false_positives": [
+        "Administrators assigning capabilities to in-house tools under an approved change.",
+        "Installer scripts or packages setting capabilities during deployment.",
+        "Security labs, CTFs or authorized penetration tests.",
+        "Commands removing cap_setuid (cap_setuid-ep) as part of remediation."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the change was authorized and documented.",
+        "If not, isolate the host and preserve evidence: binary, hash, shell history and logs.",
+        "Remove the capability with 'setcap -r <binary>' after documenting it, and reinstall the binary from the official package if altered.",
+        "Reset credentials for the account used and check the host for other persistence mechanisms.",
+        "Update the getcap baseline and monitor for new assignments."
+      ],
+      "severity_rationale": "Low reflects that setcap is a legitimate admin tool, but escalate when the target is an interpreter, a shell or a file in a temporary path."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "setcap grants cap_setuid to a copied python interpreter hidden in /tmp",
+        "event": {
+          "Image": "/usr/sbin/setcap",
+          "CommandLine": "setcap cap_setuid+ep /tmp/.cache/python3",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "setcap with combined capability list including cap_setuid on perl",
+        "event": {
+          "Image": "/sbin/setcap",
+          "CommandLine": "/sbin/setcap cap_setuid,cap_setgid=ep /usr/bin/perl5.34",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 9921,
+          "CurrentDirectory": "/root",
+          "Computer": "web-07"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate setcap granting only cap_net_bind_service to a Node.js binary",
+        "event": {
+          "Image": "/usr/sbin/setcap",
+          "CommandLine": "setcap cap_net_bind_service=+ep /usr/bin/node",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 30117,
+          "CurrentDirectory": "/opt/app",
+          "Computer": "app-03"
+        }
+      },
+      {
+        "description": "getcap used to audit capabilities; Image is not setcap",
+        "event": {
+          "Image": "/usr/sbin/getcap",
+          "CommandLine": "getcap -r /usr/bin",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 30420,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

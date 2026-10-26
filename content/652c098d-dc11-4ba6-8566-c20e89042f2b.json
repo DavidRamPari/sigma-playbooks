@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "652c098d-dc11-4ba6-8566-c20e89042f2b",
+    "title": "User Added To Admin Group Via Sysadminctl",
+    "level": "medium",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r)",
+    "path": "macos/process_creation/proc_creation_macos_sysadminctl_add_user_to_admin_group.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_sysadminctl_add_user_to_admin_group.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó sysadminctl en un equipo macOS para crear una cuenta local nueva y agregarla al grupo admin. Puede tratarse de administración legítima o de un atacante que crea una cuenta privilegiada para mantener persistencia.",
+      "what_it_detects": "Creación de procesos en macOS donde Image termina en /sysadminctl y CommandLine incluye tanto ' -addUser ' como ' -admin '. Esa combinación crea un usuario local con privilegios de administrador.",
+      "why_it_matters": "Una cuenta local de administrador creada por un atacante le da acceso persistente y privilegiado que sobrevive a reinicios y a cambios de contraseña de otras cuentas (ATT&CK T1078.003, cuentas válidas locales). Además, puede pasar desapercibida si se parece a una cuenta de servicio.",
+      "triage_steps": [
+        "Revise CommandLine: extraiga el nombre de la cuenta (-addUser), -fullName, -home, -UID y si se usó -adminUser para autorizar la operación.",
+        "Identifique al usuario que ejecutó el proceso y el ParentImage: Terminal, sudo, un agente MDM, un script en /tmp o un proceso inesperado.",
+        "Reconstruya el árbol de procesos: suba desde el padre hasta el origen (sesión SSH, LaunchAgent, aplicación descargada) y revise los procesos hijos.",
+        "Busque actividad en el mismo host en +/- 15 minutos: descargas con curl, cambios en LaunchDaemons, uso de dscl, ocultamiento de usuarios (IsHidden) o habilitación de SSH.",
+        "Verifique si la cuenta existe y es miembro de admin (dscl . -read /Users/<cuenta>, dseditgroup -o checkmember -m <cuenta> admin).",
+        "Confirme con el equipo de TI o el ticket de cambio si la alta estaba planificada, y si el nombre sigue la convención corporativa.",
+        "Busque alertas anteriores para el mismo host, el mismo usuario y el mismo nombre de cuenta en otros endpoints."
+      ],
+      "false_positives": [
+        "Técnicos de soporte o de TI que crean cuentas locales de administrador al preparar o reasignar equipos.",
+        "Scripts de aprovisionamiento o MDM (Jamf, Kandji, Intune) que generan una cuenta de administrador de gestión.",
+        "Pruebas autorizadas de red team o ejecuciones de Atomic Red Team."
+      ],
+      "response_steps": [
+        "Valide con el responsable del equipo y con TI si la cuenta fue autorizada antes de actuar.",
+        "Si no está autorizada, deshabilite la cuenta o quítela del grupo admin y aísle el endpoint mediante el EDR.",
+        "Investigue el vector inicial, elimine los mecanismos de persistencia relacionados y restablezca las credenciales usadas con -adminUser.",
+        "Elimine la cuenta solo después de preservar la evidencia (home, logs unificados, historial de shell).",
+        "Busque la misma cuenta o el mismo patrón de CommandLine en toda la flota y documente el hallazgo."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque crear administradores locales es una técnica clara de persistencia y escalamiento, aunque también es una tarea administrativa común en equipos gestionados."
+    },
+    "en": {
+      "summary": "sysadminctl ran on a macOS host to create a new local account and add it to the admin group. This may be legitimate administration or an attacker creating a privileged account for persistence.",
+      "what_it_detects": "macOS process creation where Image ends with /sysadminctl and CommandLine contains both ' -addUser ' and ' -admin ', which creates a local user with administrator rights.",
+      "why_it_matters": "An attacker-created local admin account grants persistent, privileged access that survives reboots and password resets of other accounts (ATT&CK T1078.003, valid local accounts). It can blend in if named like a service account.",
+      "triage_steps": [
+        "Read CommandLine: extract the new account name (-addUser), -fullName, -home, -UID, and whether -adminUser was used to authorize the change.",
+        "Identify the executing user and ParentImage: Terminal, sudo, an MDM agent, a script in /tmp, or something unexpected.",
+        "Walk the process tree up to its origin (SSH session, LaunchAgent, downloaded app) and review child processes.",
+        "Check the same host +/- 15 minutes for curl downloads, LaunchDaemon changes, dscl use, hidden-user settings (IsHidden) or SSH being enabled.",
+        "Confirm the account exists and is in admin (dscl . -read /Users/<name>, dseditgroup -o checkmember -m <name> admin).",
+        "Confirm with IT or a change ticket whether the account was planned and matches naming conventions.",
+        "Search earlier alerts for the same host, user and account name across other endpoints."
+      ],
+      "false_positives": [
+        "IT or support staff creating local admin accounts while provisioning or reassigning Macs.",
+        "MDM or provisioning scripts (Jamf, Kandji, Intune) creating a management admin account.",
+        "Authorized red team exercises or Atomic Red Team test runs."
+      ],
+      "response_steps": [
+        "Verify with the device owner and IT that the account was authorized before acting.",
+        "If unauthorized, disable the account or remove it from admin and isolate the endpoint via EDR.",
+        "Investigate the initial vector, remove related persistence and reset credentials used with -adminUser.",
+        "Delete the account only after preserving evidence (home folder, unified logs, shell history).",
+        "Hunt for the same account name or CommandLine pattern fleet-wide and document findings."
+      ],
+      "severity_rationale": "Medium fits because creating local admins is a clear persistence and privilege-escalation technique, yet it is also routine administration on managed Macs."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script launched from /tmp creates a hidden-looking admin account with sysadminctl",
+        "event": {
+          "Image": "/usr/sbin/sysadminctl",
+          "CommandLine": "sysadminctl -addUser svc_update -fullName \"Update Service\" -password - -admin -home /var/svc_update",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /tmp/.setup.sh",
+          "User": "root",
+          "ProcessId": 4812,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "sysadminctl run via sudo creating an admin user authorized by an existing admin",
+        "event": {
+          "Image": "/usr/sbin/sysadminctl",
+          "CommandLine": "/usr/sbin/sysadminctl -adminUser jperez -adminPassword - -addUser localadm -fullName \"Local Admin\" -password - -admin -UID 599",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 5120,
+          "Computer": "MBA-0077.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "sysadminctl creates a standard (non-admin) user; the -admin option is absent",
+        "event": {
+          "Image": "/usr/sbin/sysadminctl",
+          "CommandLine": "sysadminctl -addUser mlopez -fullName \"Maria Lopez\" -password - -home /Users/mlopez",
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "User": "root",
+          "ProcessId": 3301,
+          "Computer": "MBP-0210.example.com"
+        }
+      },
+      {
+        "description": "Admin group membership change via dseditgroup, not sysadminctl",
+        "event": {
+          "Image": "/usr/sbin/dseditgroup",
+          "CommandLine": "dseditgroup -o edit -a mlopez -t user admin",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "ProcessId": 3420,
+          "Computer": "MBP-0210.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

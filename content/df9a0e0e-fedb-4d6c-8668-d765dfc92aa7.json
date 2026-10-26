@@ -1,0 +1,121 @@
+{
+  "rule": {
+    "id": "df9a0e0e-fedb-4d6c-8668-d765dfc92aa7",
+    "title": "Suspicious Non PowerShell WSMAN COM Provider",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research)",
+    "path": "windows/powershell/powershell_classic/posh_pc_wsman_com_provider_no_powershell.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_classic/posh_pc_wsman_com_provider_no_powershell.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.003",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El motor de PowerShell cargó el proveedor WSMan dentro de un proceso distinto de powershell.exe. Esto puede indicar una herramienta personalizada que usa la interfaz COM de WS-Management o un runspace embebido para ejecución remota o movimiento lateral.",
+      "what_it_detects": "Eventos del registro clásico Windows PowerShell (normalmente el evento 600 de ciclo de vida de proveedores) cuyo campo Data contiene ProviderName=WSMan y un HostApplication que no es powershell.exe de System32/SysWOW64 ni el agente Hexnode. Se excluyen los eventos sin HostApplication.",
+      "why_it_matters": "Un atacante puede manejar WinRM mediante el objeto COM WSMan o alojar PowerShell en sus propios binarios. Así evade detecciones basadas en powershell.exe y logra ejecución remota de comandos (T1059.001) y movimiento lateral mediante servicios remotos (T1021.003).",
+      "triage_steps": [
+        "Revise HostApplication, HostName, HostId y RunspaceId en el campo Data para identificar el ejecutable anfitrión y su línea de comandos.",
+        "Busque ese ejecutable en los registros de creación de procesos (Sysmon 1 o 4688) del equipo: ruta, hash, firmante, proceso padre y usuario que lo inició.",
+        "Si HostApplication es wsmprovhost.exe, se trata de una sesión remota entrante. Identifique el origen y la cuenta en WinRM Operational y en los eventos 4624 de tipo 3.",
+        "Pivote por el mismo HostId o RunspaceId en los eventos 400, 403, 800 y en los 4104 de script block para ver qué comandos se ejecutaron.",
+        "Busque conexiones TCP 5985/5986 hacia o desde el equipo en +/- 15 minutos y procesos hijos creados por el ejecutable anfitrión.",
+        "Revise alertas previas, inicios de sesión inusuales del mismo usuario y equipo, y la presencia del mismo binario en otros endpoints."
+      ],
+      "false_positives": [
+        "Sesiones entrantes de PowerShell remoting alojadas en wsmprovhost.exe para administración autorizada.",
+        "Agentes de gestión, monitoreo o MDM que embeben runspaces de PowerShell en su propio proceso.",
+        "Herramientas internas de automatización desarrolladas por TI sobre System.Management.Automation."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema o con los registros de cambios si la aplicación anfitriona y la actividad remota están autorizadas.",
+        "Si no lo están, aísle el endpoint y los destinos remotos contactados, y preserve el binario, la memoria y los registros de eventos.",
+        "Deshabilite o restablezca las credenciales usadas en la sesión y busque otros inicios de sesión con esa cuenta.",
+        "Elimine el binario malicioso y su persistencia, y restrinja WinRM a equipos administrativos. Agregue exclusiones acotadas solo para anfitriones legítimos verificados."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque un anfitrión no PowerShell que carga WSMan es inusual y puede indicar movimiento lateral sigiloso, aunque también lo generan el remoting legítimo y los agentes de gestión."
+    },
+    "en": {
+      "summary": "The PowerShell engine loaded the WSMan provider inside a process that is not powershell.exe. This can mean a custom tool is using the WS-Management COM interface or an embedded runspace for remote execution or lateral movement.",
+      "what_it_detects": "Windows PowerShell classic log events (usually provider lifecycle event 600) whose Data contains ProviderName=WSMan and a HostApplication value that is not powershell.exe from System32/SysWOW64 and not the Hexnode agent. Events with no HostApplication at all are excluded.",
+      "why_it_matters": "Attackers can drive WinRM through the WSMan COM object or host PowerShell inside their own binaries. This avoids powershell.exe-based detections and allows remote command execution (T1059.001) and lateral movement over remote services (T1021.003).",
+      "triage_steps": [
+        "Read HostApplication, HostName, HostId and RunspaceId from the Data field to identify the hosting executable and its command line.",
+        "Check process creation logs (Sysmon 1 or 4688) on the host for that executable: path, hash, signer, parent process and launching user.",
+        "If HostApplication is wsmprovhost.exe, this is an inbound remoting session. Find the source host and account in WinRM Operational and 4624 logon type 3 events.",
+        "Pivot on the same HostId or RunspaceId in events 400, 403 and 800, and in script block events 4104, to see what commands ran.",
+        "Look for network connections to or from TCP 5985/5986 on this host within +/- 15 minutes, and for new processes spawned by the hosting executable.",
+        "Check the same user and host for earlier alerts, unusual logons, or the same binary on other endpoints."
+      ],
+      "false_positives": [
+        "Inbound PowerShell remoting sessions hosted by wsmprovhost.exe for authorized administration.",
+        "Management, monitoring or MDM agents that embed PowerShell runspaces in their own process.",
+        "Internal automation tools or scripts built on System.Management.Automation by IT or developers."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or change records whether the hosting application and the remote activity are authorized.",
+        "If unauthorized, isolate the endpoint and any remote target it contacted, and preserve the binary, memory and event logs.",
+        "Disable or reset the credentials used for the session and look for further logons from that account.",
+        "Remove the malicious binary and persistence, and restrict WinRM access to administrative hosts. Add a narrow exclusion for verified legitimate hosts."
+      ],
+      "severity_rationale": "Medium fits because a non-PowerShell host loading WSMan is unusual and can mean stealthy lateral movement, but legitimate remoting and management agents also cause it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Provider event 600 showing WSMan started inside an unknown binary in ProgramData (custom WSMan COM / runspace host).",
+        "event": {
+          "EventID": 600,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "WS-0142.andes.example.com",
+          "Data": "ProviderName=WSMan\n\tNewProviderState=Started\n\n\tSequenceNumber=1\n\n\tHostName=Default Host\n\tHostVersion=5.1.19041.4648\n\tHostId=8a7c3e2b-1f4d-4b6a-9c0e-2d5f7a8b9c10\n\tHostApplication=C:\\ProgramData\\Updater\\svcupd.exe -t 192.0.2.25\n\tEngineVersion=5.1.19041.4648\n\tRunspaceId=3b1e9d0a-6c2f-4e8b-a1d7-5f0c9e2b7a44\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      },
+      {
+        "description": "WSMan provider loaded in a remoting server-side host (wsmprovhost.exe), which is not powershell.exe.",
+        "event": {
+          "EventID": 600,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "Data": "ProviderName=WSMan\n\tNewProviderState=Started\n\n\tSequenceNumber=1\n\n\tHostName=ServerRemoteHost\n\tHostVersion=1.0.0.0\n\tHostId=c4d2a7e1-9b3f-4a60-8e15-7f2b0d6c9a31\n\tHostApplication=C:\\Windows\\system32\\wsmprovhost.exe -Embedding\n\tEngineVersion=5.1.17763.6414\n\tRunspaceId=e7a91c3d-2b40-4f8e-9d6a-1c5b8e0f2d77\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WSMan provider started by a regular interactive powershell.exe session; excluded by filter_main_ps.",
+        "event": {
+          "EventID": 600,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "WS-0142.andes.example.com",
+          "Data": "ProviderName=WSMan\n\tNewProviderState=Started\n\n\tSequenceNumber=1\n\n\tHostName=ConsoleHost\n\tHostVersion=5.1.19041.4648\n\tHostId=1f6e2d9c-4a7b-4c3e-b8d0-9e5a2c7f1b63\n\tHostApplication=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile\n\tEngineVersion=5.1.19041.4648\n\tRunspaceId=a2c4e6f8-1b3d-4f5a-8c7e-9d0b2a4c6e81\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      },
+      {
+        "description": "WSMan provider event with no HostApplication field (HostId followed directly by EngineVersion); excluded by the null-host regex filter.",
+        "event": {
+          "EventID": 600,
+          "Channel": "Windows PowerShell",
+          "Provider_Name": "PowerShell",
+          "Computer": "WS-0207.andes.example.com",
+          "Data": "ProviderName=WSMan\n\tNewProviderState=Started\n\n\tSequenceNumber=1\n\n\tHostName=Default Host\n\tHostVersion=5.1.19041.4648\n\tHostId=5d8b1a3f-7c2e-4e9a-b6d4-0f3c8a1e5b92\n\tEngineVersion=5.1.19041.4648\n\tRunspaceId=9e0f1a2b-3c4d-4e5f-8a6b-7c8d9e0f1a2b\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "8a46f16c-8c4c-82d1-b121-0fdd3ba70a84",
+    "title": "Group Has Been Deleted Via Groupdel",
+    "level": "medium",
+    "status": "test",
+    "author": "Tuan Le (NCSGroup)",
+    "path": "linux/process_creation/proc_creation_lnx_groupdel.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_groupdel.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1531"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ejecutó el binario groupdel en un host Linux y eliminó un grupo local. Puede ser administración rutinaria, o un atacante quitando accesos o limpiando grupos que creó.",
+      "what_it_detects": "Eventos de creación de procesos donde Image termina en '/groupdel' (por ejemplo /usr/sbin/groupdel), sin importar los argumentos ni el proceso padre.",
+      "why_it_matters": "Eliminar grupos puede quitar a usuarios legítimos el acceso a archivos, permisos de sudo o servicios (ATT&CK T1531, Account Access Removal). Un atacante también puede borrar grupos que creó para ocultar persistencia y borrar sus huellas.",
+      "triage_steps": [
+        "Revise CommandLine para saber qué grupo se eliminó y si era privilegiado (sudo, wheel, docker, adm) o estaba ligado a una aplicación o servicio.",
+        "Identifique el User y el ParentImage: shell interactiva con sudo, agente de gestión de configuración, script de paquete o un padre inesperado como un servidor web o cron.",
+        "Compare con los tickets de cambio y los administradores habituales del host; confirme con el responsable si la eliminación estaba planificada.",
+        "Pivotee en el mismo host +/- 15 minutos buscando useradd, userdel, usermod, gpasswd, cambios de contraseña, limpieza del historial o borrado de logs.",
+        "Revise los logs de autenticación de la sesión que lo ejecutó: IP de origen, hora de inicio de sesión y líneas sudo COMMAND= del mismo usuario.",
+        "Busque alertas previas del mismo usuario, host e IP de origen, y verifique si el mismo actor creó el grupo recientemente."
+      ],
+      "false_positives": [
+        "Actividades legítimas de administradores, como depuración de accesos o retiro de aplicaciones.",
+        "Herramientas de gestión de configuración (Ansible, Puppet, Chef, Salt) que aplican el estado de los grupos.",
+        "Scripts de desinstalación de paquetes que eliminan el grupo de un servicio.",
+        "Construcción de imágenes, pipelines de CI o entornos de prueba que crean y borran grupos temporales."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del sistema y los registros de cambios si la eliminación estaba autorizada antes de actuar.",
+        "Si no estaba autorizada, contenga la sesión: bloquee la cuenta responsable, revoque sus permisos de sudo y aísle el host si hay probable compromiso.",
+        "Restaure el grupo desde respaldos o gestión de configuración (/etc/group, /etc/gshadow), con su GID y miembros originales.",
+        "Busque persistencia relacionada: cuentas nuevas, llaves SSH, tareas cron, sudoers modificado y logs alterados; elimine lo confirmado y rote credenciales."
+      ],
+      "severity_rationale": "Medio es adecuado porque groupdel es un comando administrativo común, pero su uso inesperado puede cortar accesos u ocultar actividad maliciosa, por lo que requiere validar el contexto con rapidez."
+    },
+    "en": {
+      "summary": "A process ran the groupdel binary on a Linux host, deleting a local group. This may be routine administration, or an attacker removing access or cleaning up groups they created.",
+      "what_it_detects": "Process creation events where Image ends with '/groupdel' (for example /usr/sbin/groupdel), whatever the arguments or parent process.",
+      "why_it_matters": "Deleting groups can remove legitimate users' access to files, sudo rights or services (ATT&CK T1531, Account Access Removal). Attackers may also delete groups they created to hide persistence and cover their tracks.",
+      "triage_steps": [
+        "Read CommandLine to find which group was deleted, then check whether it was privileged (sudo, wheel, docker, adm) or tied to an application or service.",
+        "Identify the executing User and ParentImage: an interactive shell via sudo, a configuration management agent, a package script, or an unexpected parent such as a web server or cron job.",
+        "Compare against change tickets and the host's normal administrators, and confirm with the owner whether the deletion was planned.",
+        "Pivot on the same host within +/- 15 minutes for useradd, userdel, usermod, gpasswd, passwd changes, history clearing or log deletion.",
+        "Review authentication logs for the session that ran it: source IP, login time, and sudo COMMAND= lines for the same user.",
+        "Search earlier alerts for the same user, host and source IP, and check whether the group was recently created by the same actor."
+      ],
+      "false_positives": [
+        "Legitimate administrator activities such as access cleanup or decommissioning applications.",
+        "Configuration management tools (Ansible, Puppet, Chef, Salt) enforcing group state.",
+        "Package uninstall scripts removing a service group.",
+        "Image builds, CI pipelines or test environments creating and deleting temporary groups."
+      ],
+      "response_steps": [
+        "Verify with the system owner and change records whether the deletion was authorized before taking action.",
+        "If unauthorized, contain the session: lock the responsible account, revoke its sudo rights and isolate the host if compromise is likely.",
+        "Restore the deleted group from backups or configuration management (/etc/group, /etc/gshadow), with the original GID and members.",
+        "Hunt for related persistence: new accounts, SSH keys, cron jobs, modified sudoers and tampered logs; remove confirmed artifacts and rotate credentials."
+      ],
+      "severity_rationale": "Medium fits because groupdel is a common administrative command, but unexpected use can cut off access or hide attacker activity, so it needs prompt context checks."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user deletes the developers group via sudo",
+        "event": {
+          "Image": "/usr/sbin/groupdel",
+          "CommandLine": "groupdel developers",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo groupdel developers",
+          "User": "root",
+          "LogonId": "1003",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "groupdel spawned from a shell under the web server account removing the sudo-capable wheel group",
+        "event": {
+          "Image": "/sbin/groupdel",
+          "CommandLine": "/sbin/groupdel wheel",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c /sbin/groupdel wheel",
+          "User": "root",
+          "CurrentDirectory": "/var/www/html",
+          "ProcessId": 9921,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator creates a group with groupadd; Image does not end with /groupdel",
+        "event": {
+          "Image": "/usr/sbin/groupadd",
+          "CommandLine": "groupadd -g 2050 developers",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48100,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "User reads the groupdel man page; groupdel appears only in CommandLine, not as the executed Image",
+        "event": {
+          "Image": "/usr/bin/man",
+          "CommandLine": "man groupdel",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 48050,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

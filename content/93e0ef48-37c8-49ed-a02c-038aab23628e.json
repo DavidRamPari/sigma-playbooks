@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "93e0ef48-37c8-49ed-a02c-038aab23628e",
+    "title": "Azure Container Registry Created or Deleted",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_container_registry_created_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_container_registry_created_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485",
+      "T1489",
+      "T1496"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó o eliminó un Azure Container Registry (ACR) en la suscripción. Hay que confirmar que la identidad que hizo el cambio y el contexto corresponden a una tarea autorizada.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es MICROSOFT.CONTAINERREGISTRY/REGISTRIES/WRITE (creación o actualización del registro) o MICROSOFT.CONTAINERREGISTRY/REGISTRIES/DELETE (eliminación del registro).",
+      "why_it_matters": "Si se borra un registro, se pierden las imágenes de las que dependen los despliegues y los servicios se detienen (T1485 Data Destruction, T1489 Service Stop). Un registro no autorizado puede alojar imágenes maliciosas o servir para usar recursos de forma indebida (T1496 Resource Hijacking).",
+      "triage_steps": [
+        "Revise operationName para saber si fue WRITE o DELETE y confirme en status o resultType si la operación tuvo éxito o falló.",
+        "Identifique al caller (usuario, service principal o managed identity) y verifique si tiene un rol que justifique administrar registros.",
+        "Revise callerIpAddress y el user agent: ¿son direcciones corporativas, pipelines de CI/CD conocidos, Azure Portal o CLI? Desconfíe de IP o ubicaciones poco habituales.",
+        "Busque en resourceId el nombre del registro y el grupo de recursos, y confirme si es productivo o lo consumen clústeres AKS o App Services.",
+        "Busque un ticket de cambio o un despliegue de IaC (Terraform, Bicep o ARM) asociado al correlationId o a la misma ventana de tiempo.",
+        "Busque otras actividades del mismo caller en +/- 15 minutos: cambios de RBAC, ListCredentials, habilitación del usuario admin o borrado de otros recursos.",
+        "Revise alertas anteriores de la misma identidad o IP, como inicios de sesión riesgosos en Entra ID o accesos desde países nuevos."
+      ],
+      "false_positives": [
+        "Administradores o equipos de plataforma que crean o retiran registros como parte de su trabajo habitual.",
+        "Pipelines de CI/CD o despliegues de IaC que recrean o actualizan registros (WRITE también registra cambios de configuración).",
+        "Entornos efímeros de pruebas que se crean y destruyen de forma automática.",
+        "Un mismo patrón legítimo que se repite puede excluirse por caller o por grupo de recursos, siempre que el cambio esté documentado."
+      ],
+      "response_steps": [
+        "Confirme la operación con el dueño del recurso o con el equipo de plataforma antes de hacer cualquier cambio.",
+        "Si no estaba autorizada, revoque las sesiones y rote las credenciales del caller, y deshabilite temporalmente la cuenta o el service principal.",
+        "Si hubo una eliminación, evalúe si se puede restaurar el registro o volver a publicar las imágenes desde las fuentes de build, y priorice los servicios afectados.",
+        "Si se creó un registro sospechoso, revise su contenido y quién lo consume antes de eliminarlo, y conserve la evidencia.",
+        "Aplique resource locks o Azure Policy a los registros críticos y revise las asignaciones de RBAC."
+      ],
+      "severity_rationale": "La severidad es baja porque crear y eliminar registros suele ser una tarea administrativa legítima, aunque requiere validación si la identidad o el contexto son inusuales."
+    },
+    "en": {
+      "summary": "An Azure Container Registry (ACR) was created, updated or deleted in the subscription. Confirm that the caller and the context match authorized work.",
+      "what_it_detects": "Azure Activity Log events whose operationName is MICROSOFT.CONTAINERREGISTRY/REGISTRIES/WRITE (registry creation or update) or MICROSOFT.CONTAINERREGISTRY/REGISTRIES/DELETE (registry deletion).",
+      "why_it_matters": "Deleting a registry removes the images that deployments rely on and can break services (T1485 Data Destruction, T1489 Service Stop). An unauthorized registry can host malicious images or be used to abuse resources (T1496 Resource Hijacking).",
+      "triage_steps": [
+        "Check whether operationName is WRITE or DELETE, and use status or resultType to see whether the operation succeeded.",
+        "Identify the caller (user, service principal or managed identity) and confirm that its role justifies managing registries.",
+        "Review callerIpAddress and the user agent. Are they corporate ranges, known CI/CD runners, the Azure Portal or the CLI? Treat unusual IPs or locations as suspicious.",
+        "Get the registry name and resource group from resourceId. Find out whether it is production or used by AKS clusters or App Services.",
+        "Look for a change ticket or an IaC deployment (Terraform, Bicep or ARM) linked to the correlationId or to the same time window.",
+        "Pivot on the same caller within +/- 15 minutes: RBAC changes, ListCredentials, enabling the admin user, or deletion of other resources.",
+        "Check earlier alerts for the same identity or IP, such as risky Entra ID sign-ins or access from new countries."
+      ],
+      "false_positives": [
+        "Administrators or platform teams creating or retiring registries as routine work.",
+        "CI/CD pipelines or IaC deployments that recreate or update registries. WRITE also logs configuration changes.",
+        "Short-lived test environments that are created and torn down automatically.",
+        "A known, documented recurring pattern can be excluded by caller or resource group."
+      ],
+      "response_steps": [
+        "Check the operation with the resource owner or the platform team before changing anything.",
+        "If it was not authorized, revoke the caller's sessions, rotate its credentials and temporarily disable the account or service principal.",
+        "If the registry was deleted, decide whether to restore it or republish images from build sources. Restore affected services first.",
+        "If a suspicious registry was created, review its images and who uses them before deleting it. Keep the evidence.",
+        "Add resource locks or Azure Policy to critical registries and review RBAC assignments."
+      ],
+      "severity_rationale": "The level is low because creating and deleting registries is usually legitimate admin work, but an unusual caller or context needs validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user deletes a production container registry from an unfamiliar IP address with the Azure CLI",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERREGISTRY/REGISTRIES/DELETE",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerRegistry/registries/acrprod01",
+          "status": "Succeeded",
+          "correlationId": "11111111-2222-3333-4444-555555555555",
+          "userAgent": "python/3.10 azure-cli/2.50.0"
+        }
+      },
+      {
+        "description": "A service principal creates a new container registry",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERREGISTRY/REGISTRIES/WRITE",
+          "category": "Administrative",
+          "caller": "9f8e7d6c-1234-4abc-9def-0a1b2c3d4e5f",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dev/providers/Microsoft.ContainerRegistry/registries/acrtemp99",
+          "status": "Succeeded",
+          "correlationId": "66666666-7777-8888-9999-000000000000"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A geo-replication is written on an existing registry. It is a sub-resource operation, so it does not match",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERREGISTRY/REGISTRIES/REPLICATIONS/WRITE",
+          "category": "Administrative",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerRegistry/registries/acrprod01/replications/eastus",
+          "status": "Succeeded"
+        }
+      },
+      {
+        "description": "Registry credentials are listed. This is a different operation, not a create or delete",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERREGISTRY/REGISTRIES/LISTCREDENTIALS/ACTION",
+          "category": "Administrative",
+          "caller": "ci-pipeline@example.com",
+          "callerIpAddress": "192.0.2.55",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-prod/providers/Microsoft.ContainerRegistry/registries/acrprod01",
+          "status": "Succeeded"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

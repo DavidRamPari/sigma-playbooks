@@ -1,0 +1,162 @@
+{
+  "rule": {
+    "id": "c5cd1b20-36bb-488d-8c05-486be3d0cb97",
+    "title": "Privileged Container Deployed",
+    "level": "low",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_privileged_pod_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_privileged_pod_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1611"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un pod cuya especificación declara capacidades de Linux (capabilities) según el log de auditoría de Kubernetes. Podría ser un contenedor con privilegios excesivos preparado para escapar al nodo.",
+      "what_it_detects": "Eventos de auditoría de Kubernetes con verb 'create' sobre objectRef.resource 'pods' en los que el campo capabilities tiene cualquier valor. La regla no distingue entre capacidades inofensivas y peligrosas.",
+      "why_it_matters": "Un contenedor privilegiado o con capacidades como SYS_ADMIN, o con hostPID/hostNetwork, puede ver y modificar procesos, red y sistema de archivos del nodo como root. Esto permite escapar al host (ATT&CK T1611, Escape to Host) y escalar privilegios en el clúster.",
+      "triage_steps": [
+        "Identifique user.username, grupos, userAgent y sourceIPs. Determine si es una persona, una cuenta de servicio o un controlador (replicaset-controller, daemonset-controller).",
+        "Revise el valor de capabilities y el requestObject completo: privileged, hostPID, hostNetwork, montajes hostPath, imagen y comando del contenedor.",
+        "Si lo creó un controlador, busque el evento create o patch del Deployment, DaemonSet o Job dueño para encontrar el usuario real.",
+        "Valide objectRef.namespace y la procedencia de la imagen: registro, tag y digest. Un pod suelto en default con una imagen pública es más sospechoso.",
+        "Verifique responseStatus.code: 201 indica que el pod se creó; 403 indica que una política de admisión lo rechazó.",
+        "Pivotee por el mismo usuario y la misma IP de origen en +/- 15 minutos: pods/exec, lectura de secrets, creación de rolebindings o clusterrolebindings.",
+        "Busque alertas anteriores para la misma cuenta de servicio, namespace o nodo.",
+        "En el nodo, revise la actividad del contenedor: nsenter, chroot sobre /host, escritura en crontab, systemd o kubelet."
+      ],
+      "false_positives": [
+        "Plugins CNI y drivers CSI desplegados como DaemonSet en kube-system que requieren NET_ADMIN o SYS_ADMIN.",
+        "Agentes de monitoreo o seguridad que necesitan acceso al host.",
+        "Init containers de service mesh que solicitan NET_ADMIN para configurar iptables.",
+        "Pods de depuración creados por administradores con kubectl debug o herramientas de troubleshooting.",
+        "Builders de CI/CD que construyen imágenes dentro del clúster."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del namespace o de la carga de trabajo si el despliegue estaba autorizado y documentado.",
+        "Si no estaba autorizado, guarde la especificación (kubectl get pod -o yaml) y los logs antes de eliminar el pod; aplique cordon al nodo afectado.",
+        "Revoque o rote las credenciales y tokens del usuario o la cuenta de servicio que lo creó y revise sus permisos RBAC.",
+        "Inspeccione el nodo en busca de persistencia o escape al host; si hay compromiso, reconstrúyalo desde una imagen confiable.",
+        "Aplique Pod Security Admission (baseline o restricted) o una política de admisión que limite capabilities y privileged."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque la regla coincide con cualquier capacidad declarada y muchas cargas legítimas las usan, por lo que conviene correlacionar la alerta con el contexto antes de escalarla."
+    },
+    "en": {
+      "summary": "A Kubernetes audit log shows a pod being created with a spec that declares Linux capabilities. It may be an over-privileged container set up to break out to the node.",
+      "what_it_detects": "Kubernetes audit events with verb 'create' on objectRef.resource 'pods' where the capabilities field holds any value. The rule does not tell benign capabilities apart from dangerous ones.",
+      "why_it_matters": "A privileged container, or one with capabilities such as SYS_ADMIN or with hostPID/hostNetwork set, can see and change the node's processes, network and file system as root. That allows escape to the host (ATT&CK T1611) and privilege escalation in the cluster.",
+      "triage_steps": [
+        "Identify user.username, groups, userAgent and sourceIPs. Decide whether the caller is a person, a service account or a controller (replicaset-controller, daemonset-controller).",
+        "Review the capabilities value and the full requestObject: privileged, hostPID, hostNetwork, hostPath mounts, image and container command.",
+        "If a controller created the pod, find the create or patch event for the owning Deployment, DaemonSet or Job to identify the real user.",
+        "Check objectRef.namespace and where the image came from (registry, tag, digest). A standalone pod in default running a public image is more suspicious.",
+        "Check responseStatus.code: 201 means the pod was created; 403 means an admission policy rejected it.",
+        "Pivot on the same user and source IP within +/- 15 minutes: pods/exec, secrets reads, new rolebindings or clusterrolebindings.",
+        "Look for earlier alerts on the same service account, namespace or node.",
+        "On the node, review what the container did: nsenter, chroot into /host, writes to crontab, systemd or kubelet files."
+      ],
+      "false_positives": [
+        "CNI plugins and CSI drivers deployed as DaemonSets in kube-system that need NET_ADMIN or SYS_ADMIN.",
+        "Monitoring or security agents that need host access.",
+        "Service mesh init containers that request NET_ADMIN to set up iptables.",
+        "Debug pods that administrators create with kubectl debug or troubleshooting tools.",
+        "CI/CD builders that build images inside the cluster."
+      ],
+      "response_steps": [
+        "Ask the namespace or workload owner whether the deployment was authorized and documented.",
+        "If it was not authorized, save the spec (kubectl get pod -o yaml) and the logs before you delete the pod, then cordon the affected node.",
+        "Revoke or rotate the credentials and tokens of the user or service account that created it, and review its RBAC permissions.",
+        "Check the node for persistence or host escape. If it is compromised, rebuild it from a trusted image.",
+        "Enforce Pod Security Admission (baseline or restricted) or an admission policy that limits capabilities and privileged."
+      ],
+      "severity_rationale": "Low fits because the rule matches any declared capability and many legitimate workloads use them, so analysts should check the context before escalating."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user creates a standalone pod in the default namespace that adds the SYS_ADMIN capability; the API server accepts it.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "default",
+          "objectRef.name": "debug-tools",
+          "capabilities": "SYS_ADMIN",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 201,
+          "requestURI": "/api/v1/namespaces/default/pods"
+        }
+      },
+      {
+        "description": "The replicaset controller creates a pod that adds the NET_ADMIN and NET_RAW capabilities.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "api-7d9f8c6b5-x2kqp",
+          "capabilities": "NET_ADMIN,NET_RAW",
+          "user.username": "system:serviceaccount:kube-system:replicaset-controller",
+          "sourceIPs": "198.51.100.10",
+          "userAgent": "kube-controller-manager/v1.29.2",
+          "responseStatus.code": 201,
+          "requestURI": "/api/v1/namespaces/payments/pods"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A Deployment that declares NET_ADMIN is created. The resource is deployments, not pods, so the rule does not match.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "deployments",
+          "objectRef.namespace": "payments",
+          "objectRef.name": "api",
+          "capabilities": "NET_ADMIN",
+          "user.username": "ci-deployer@example.com",
+          "sourceIPs": "198.51.100.22",
+          "userAgent": "helm/v3.14.0",
+          "responseStatus.code": 201,
+          "requestURI": "/apis/apps/v1/namespaces/payments/deployments"
+        }
+      },
+      {
+        "description": "A user deletes a pod that has capabilities. The verb is delete, not create, so the rule does not match.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "delete",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "default",
+          "objectRef.name": "debug-tools",
+          "capabilities": "SYS_ADMIN",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200,
+          "requestURI": "/api/v1/namespaces/default/pods/debug-tools"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

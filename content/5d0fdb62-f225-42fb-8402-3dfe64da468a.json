@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "5d0fdb62-f225-42fb-8402-3dfe64da468a",
+    "title": "User Added To Admin Group Via DseditGroup",
+    "level": "medium",
+    "status": "test",
+    "author": "Sohan G (D4rkCiph3r)",
+    "path": "macos/process_creation/proc_creation_macos_dseditgroup_add_to_admin_group.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_dseditgroup_add_to_admin_group.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó dseditgroup en un endpoint macOS para agregar una cuenta de usuario a un grupo admin, lo que le otorga privilegios de administrador local. Puede ser administración legítima o un atacante que busca persistencia o escalamiento de privilegios.",
+      "what_it_detects": "Creación de procesos en macOS donde Image termina en /dseditgroup y CommandLine contiene ' -o edit ', ' -a ', ' -t user' y 'admin'. Es decir, una operación de edición que agrega un usuario a un grupo cuyo nombre incluye 'admin'.",
+      "why_it_matters": "Agregar una cuenta al grupo admin le da acceso a sudo y control total del equipo. Corresponde a ATT&CK T1078.003 (cuentas locales válidas): el atacante usa o crea una cuenta local con privilegios para mantener acceso y moverse sin malware evidente.",
+      "triage_steps": [
+        "Lea CommandLine y anote la cuenta que sigue a -a, el grupo destino (admin u otro con 'admin' en el nombre) y el nodo de directorio indicado con -n.",
+        "Revise ParentImage y la cadena de procesos: ¿proviene de un agente MDM, de un script de aprovisionamiento, de Terminal con sudo o de un intérprete inesperado como curl, osascript o python?",
+        "Identifique el usuario que ejecutó el comando y confirme si pertenece al equipo de TI o si la sesión es remota (SSH, herramientas de acceso remoto).",
+        "Verifique si la cuenta agregada es nueva: busque en el mismo host, +/- 15 minutos, ejecuciones de sysadminctl, dscl . -create o dscl . -passwd.",
+        "Confirme la membresía actual con 'dseditgroup -o checkmember -m <usuario> admin' y si la cuenta está oculta (IsHidden) o tiene UID inusual.",
+        "Busque en el mismo host y usuario actividad posterior: sudo, nuevos LaunchAgents o LaunchDaemons, conexiones salientes o ajustes de SSH.",
+        "Consulte alertas previas del host, del usuario y de la cuenta agregada, y valide contra un ticket de cambio o solicitud de acceso."
+      ],
+      "false_positives": [
+        "Administradores de TI que otorgan derechos de administrador local de forma manual y documentada.",
+        "Scripts de aprovisionamiento o políticas MDM (por ejemplo Jamf) que configuran cuentas de administración al inscribir equipos.",
+        "Herramientas de elevación temporal de privilegios que agregan y luego retiran al usuario del grupo admin."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo y con TI si el cambio estaba autorizado antes de actuar.",
+        "Si no está autorizado, retire la cuenta del grupo admin con 'dseditgroup -o edit -d <usuario> -t user admin' y deshabilite o bloquee la cuenta.",
+        "Aísle el endpoint desde el EDR si hay indicios de compromiso y rote las credenciales de la cuenta que ejecutó el comando.",
+        "Elimine los mecanismos de persistencia encontrados y revise otros equipos por el mismo comando o cuenta.",
+        "Documente el incidente y restaure la configuración de grupos según la línea base aprobada."
+      ],
+      "severity_rationale": "Nivel medio porque otorgar admin es de alto impacto, pero la misma acción es común en administración legítima y requiere contexto para confirmar abuso."
+    },
+    "en": {
+      "summary": "dseditgroup ran on a macOS endpoint to add a user account to an admin group, granting local administrator rights. This may be legitimate administration or an attacker seeking persistence or privilege escalation.",
+      "what_it_detects": "macOS process creation where Image ends with /dseditgroup and CommandLine contains ' -o edit ', ' -a ', ' -t user' and 'admin': an edit operation adding a user to a group whose name includes 'admin'.",
+      "why_it_matters": "Membership in the admin group grants sudo and full control of the Mac. This maps to ATT&CK T1078.003 (valid local accounts): an attacker creates or reuses a privileged local account to keep access without obvious malware.",
+      "triage_steps": [
+        "Read CommandLine and note the account after -a, the target group (admin or another name containing 'admin') and any directory node given with -n.",
+        "Review ParentImage and the process tree: MDM agent, provisioning script, Terminal via sudo, or an unexpected interpreter such as curl, osascript or python?",
+        "Identify the executing user and confirm whether they are IT staff or the session is remote (SSH, remote access tools).",
+        "Check if the added account is new: search the same host +/- 15 minutes for sysadminctl, dscl . -create or dscl . -passwd.",
+        "Confirm membership with 'dseditgroup -o checkmember -m <user> admin' and check whether the account is hidden (IsHidden) or has an unusual UID.",
+        "Look for follow-on activity on the same host and user: sudo use, new LaunchAgents or LaunchDaemons, outbound connections, SSH changes.",
+        "Review earlier alerts for the host, executing user and added account, and match the action to a change ticket or access request."
+      ],
+      "false_positives": [
+        "IT administrators granting local admin rights manually with documented approval.",
+        "Provisioning scripts or MDM policies (for example Jamf) creating management admin accounts during enrollment.",
+        "Temporary privilege elevation tools that add and later remove the user from the admin group."
+      ],
+      "response_steps": [
+        "Confirm with the device owner and IT whether the change was authorized before acting.",
+        "If unauthorized, remove the account with 'dseditgroup -o edit -d <user> -t user admin' and disable or lock it.",
+        "Isolate the endpoint via EDR if compromise is suspected and rotate credentials of the account that ran the command.",
+        "Remove any persistence found and hunt other hosts for the same command or account.",
+        "Document the incident and restore group membership to the approved baseline."
+      ],
+      "severity_rationale": "Medium because granting admin is high impact, but the same action is common in legitimate administration and needs context to confirm abuse."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown account added to local admin group from a shell spawned by sudo",
+        "event": {
+          "Image": "/usr/sbin/dseditgroup",
+          "CommandLine": "/usr/sbin/dseditgroup -o edit -a svc_update -t user admin",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 4821,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "Account added to admin group on the local directory node via a script",
+        "event": {
+          "Image": "/usr/sbin/dseditgroup",
+          "CommandLine": "dseditgroup -o edit -n /Local/Default -a jperez -t user admin",
+          "ParentImage": "/bin/zsh",
+          "User": "root",
+          "ProcessId": 5102,
+          "Computer": "MBP-0207.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only membership check, no edit operation",
+        "event": {
+          "Image": "/usr/sbin/dseditgroup",
+          "CommandLine": "/usr/sbin/dseditgroup -o checkmember -m jperez admin",
+          "ParentImage": "/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 3310,
+          "Computer": "MBP-0142.example.com"
+        }
+      },
+      {
+        "description": "User removed (-d) from admin group, not added",
+        "event": {
+          "Image": "/usr/sbin/dseditgroup",
+          "CommandLine": "/usr/sbin/dseditgroup -o edit -d svc_update -t user admin",
+          "ParentImage": "/usr/local/jamf/bin/jamf",
+          "User": "root",
+          "ProcessId": 6120,
+          "Computer": "MBP-0142.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

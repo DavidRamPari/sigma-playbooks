@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "94dc4390-6b7c-4784-8ffc-335334404650",
+    "title": "Dump Ntds.dit To Suspicious Location",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/builtin/application/esent/win_esent_ntdsutil_abuse_susp_location.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/application/esent/win_esent_ntdsutil_abuse_susp_location.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "El motor ESENT registró la creación de una base de datos ntds.dit en una ruta inusual (Temp, Public, AppData, Desktop, Downloads, PerfLogs o la raíz de una unidad). Suele indicar una copia de la base de Active Directory con ntdsutil IFM.",
+      "what_it_detects": "Eventos ESENT 325 (nueva base de datos creada) del registro Application cuyo campo Data contiene ntds.dit junto con una ruta sospechosa, típico de 'ntdsutil \"ac i ntds\" \"ifm\" \"create full <ruta>\"'.",
+      "why_it_matters": "ntds.dit contiene los hashes de contraseñas de todas las cuentas del dominio. Con una copia y la hive SYSTEM, un atacante puede extraer credenciales offline (OS Credential Dumping: NTDS, T1003.003) y comprometer todo el dominio, incluida krbtgt.",
+      "triage_steps": [
+        "Lea el campo Data: identifique el proceso y PID (por ejemplo ntdsutil (4120,...)) y la ruta exacta donde se creó ntds.dit; confirme que el Computer es un controlador de dominio.",
+        "Busque en Security 4688 o Sysmon 1 del mismo host, +/- 15 minutos, ntdsutil.exe con 'ifm' o 'create full' en CommandLine; anote ParentImage y el usuario.",
+        "Revise el inicio de sesión de ese usuario (4624/4648): tipo de logon, IP de origen y si la cuenta suele administrar los DC.",
+        "Verifique actividad relacionada: vssadmin, diskshadow, esentutl, copia de la hive SYSTEM o SECURITY, y eventos VSS en la misma ventana.",
+        "Inspeccione la carpeta destino: presencia de 'Active Directory\\ntds.dit' y 'registry\\SYSTEM', fechas, y si fueron comprimidos o eliminados después.",
+        "Busque exfiltración: accesos SMB a esa ruta (5140/5145), conexiones salientes del DC y herramientas de compresión ejecutadas después.",
+        "Consulte alertas previas del mismo host, usuario e IP de origen, y confirme con el equipo de AD si hay una tarea de backup o IFM aprobada."
+      ],
+      "false_positives": [
+        "Creación de medios IFM legítima para promover un nuevo DC (por ejemplo en sucursales) usando temporalmente C:\\Temp o el escritorio del administrador.",
+        "Respaldos o shadow copies del directorio hechos por administradores con rutas no estándar.",
+        "Pruebas de recuperación de AD o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Valide con el responsable de AD y el registro de cambios si la operación fue autorizada; si lo fue, documéntela y pida usar una ruta protegida.",
+        "Si no está autorizada, conserve como evidencia los archivos copiados y su hash, luego elimínelos de forma segura y restrinja la cuenta implicada.",
+        "Deshabilite o restablezca la cuenta usada y revise sus sesiones activas; limite el acceso de red al DC sin interrumpir servicios críticos del dominio.",
+        "Si hubo exfiltración o no puede descartarse, asuma compromiso total: restablezca krbtgt dos veces y las contraseñas de cuentas privilegiadas y de servicio.",
+        "Busque persistencia y movimiento lateral desde el origen del logon y vigile el uso de tickets o hashes robados (Golden Ticket, pass-the-hash)."
+      ],
+      "severity_rationale": "Medium porque existen operaciones IFM y respaldos legítimos, pero una copia no autorizada de ntds.dit implica un posible compromiso de todo el dominio y debe escalarse de inmediato."
+    },
+    "en": {
+      "summary": "The ESENT engine logged the creation of an ntds.dit database in an unusual path (Temp, Public, AppData, Desktop, Downloads, PerfLogs or a drive root). This usually means the Active Directory database was copied with ntdsutil IFM.",
+      "what_it_detects": "ESENT event 325 (new database created) in the Application log whose Data field contains ntds.dit plus a suspicious path, typical of 'ntdsutil \"ac i ntds\" \"ifm\" \"create full <path>\"'.",
+      "why_it_matters": "ntds.dit holds password hashes for every domain account. With a copy and the SYSTEM hive, an attacker can extract credentials offline (OS Credential Dumping: NTDS, T1003.003) and take over the domain, including krbtgt.",
+      "triage_steps": [
+        "Read the Data field: note the process and PID (e.g. ntdsutil (4120,...)) and the exact ntds.dit path; confirm the Computer is a domain controller.",
+        "Search Security 4688 or Sysmon 1 on the same host, +/- 15 minutes, for ntdsutil.exe with 'ifm' or 'create full' in CommandLine; record ParentImage and user.",
+        "Review that user's logon (4624/4648): logon type, source IP and whether the account normally administers DCs.",
+        "Check related activity: vssadmin, diskshadow, esentutl, copies of SYSTEM or SECURITY hives, and VSS events in the same window.",
+        "Inspect the target folder: 'Active Directory\\ntds.dit' and 'registry\\SYSTEM', timestamps, and whether files were later archived or deleted.",
+        "Look for exfiltration: SMB access to the path (5140/5145), outbound connections from the DC, compression tools run afterwards.",
+        "Check earlier alerts for the same host, user and source IP, and ask the AD team whether an approved backup or IFM task exists."
+      ],
+      "false_positives": [
+        "Legitimate IFM media creation for promoting a new DC (e.g. branch offices) temporarily written to C:\\Temp or an admin's desktop.",
+        "Directory backups or shadow copies made by administrators to non-standard paths.",
+        "AD recovery tests or authorized red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the AD owner and change records whether the operation was authorized; if so, document it and request a protected path.",
+        "If unauthorized, preserve the copied files and hashes as evidence, then securely remove them and restrict the involved account.",
+        "Disable or reset the account used and review its sessions; limit network access to the DC without disrupting critical domain services.",
+        "If exfiltration occurred or cannot be ruled out, assume full compromise: reset krbtgt twice plus privileged and service account passwords.",
+        "Hunt for persistence and lateral movement from the logon source and monitor for stolen ticket or hash use (Golden Ticket, pass-the-hash)."
+      ],
+      "severity_rationale": "Medium because legitimate IFM and backups exist, but an unauthorized ntds.dit copy means possible domain-wide compromise and must be escalated immediately."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ntdsutil IFM writes ntds.dit under C:\\Users\\Public on a domain controller",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "ESENT",
+          "EventID": 325,
+          "Level": 4,
+          "Computer": "DC-01.andes.example.com",
+          "TimeCreated": "2024-03-12T02:14:37.512Z",
+          "Data": "ntdsutil (4120,D,0) The database engine created a new database (1, C:\\Users\\Public\\ifm\\Active Directory\\ntds.dit). (Time=0 seconds)"
+        }
+      },
+      {
+        "description": "ntds.dit created directly at the root of the C: drive",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "ESENT",
+          "EventID": 325,
+          "Level": 4,
+          "Computer": "DC-02.andes.example.com",
+          "TimeCreated": "2024-03-14T23:41:05.104Z",
+          "Data": "ntdsutil (6644,D,0) The database engine created a new database (1, C:\\ntds.dit). (Time=0 seconds)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Approved IFM backup written to a dedicated backup volume, no suspicious path",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "ESENT",
+          "EventID": 325,
+          "Level": 4,
+          "Computer": "DC-01.andes.example.com",
+          "TimeCreated": "2024-03-10T01:00:12.330Z",
+          "Data": "ntdsutil (3312,D,0) The database engine created a new database (1, D:\\Backups\\IFM\\Active Directory\\ntds.dit). (Time=0 seconds)"
+        }
+      },
+      {
+        "description": "ESENT 325 for a database in Temp that is not ntds.dit",
+        "event": {
+          "Channel": "Application",
+          "Provider_Name": "ESENT",
+          "EventID": 325,
+          "Level": 4,
+          "Computer": "WS-0142.andes.example.com",
+          "TimeCreated": "2024-03-11T09:22:48.901Z",
+          "Data": "svchost (2280,R,98) The database engine created a new database (1, C:\\Windows\\Temp\\cache\\qmgr.db). (Time=0 seconds)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

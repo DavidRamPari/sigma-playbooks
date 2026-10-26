@@ -1,0 +1,118 @@
+{
+  "rule": {
+    "id": "6597be7b-ac61-4ac8-bef4-d3ec88174853",
+    "title": "UAC Bypass Abusing Winsat Path Parsing - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_uac_bypass_winsat.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_uac_bypass_winsat.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1548.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en el Amcache que winsat.exe se ejecutó desde la carpeta Temp de un usuario (\\AppData\\Local\\Temp\\system32\\winsat.exe). Esto coincide con la técnica de UAC bypass número 52 de UACMe, que abusa del análisis de rutas de winsat.exe.",
+      "what_it_detects": "Detecta escrituras de registro en las que TargetObject contiene '\\Root\\InventoryApplicationFile\\winsat.exe|' y termina en '\\LowerCaseLongPath', y Details apunta a c:\\users\\<usuario>\\appdata\\local\\temp\\system32\\winsat.exe. Es decir, el inventario de aplicaciones registró un winsat.exe ubicado en Temp en vez de C:\\Windows\\System32.",
+      "why_it_matters": "winsat.exe es un binario de Windows con elevación automática. Si se copia a una ruta falsa de system32 dentro de Temp, se puede cargar código del atacante con privilegios elevados sin mostrar el aviso de UAC (ATT&CK T1548.002, Bypass User Account Control). Esto lleva a escalada de privilegios local.",
+      "triage_steps": [
+        "Revise Details y TargetObject: confirme la ruta en Temp, el nombre de usuario en c:\\users\\ y el hash que aparece después de 'winsat.exe|'.",
+        "Busque en el host la creación de procesos de winsat.exe desde esa ruta, dentro de +/- 15 minutos, y anote el ParentImage y el CommandLine.",
+        "Revise los procesos hijos de ese winsat.exe y si algún proceso corre con integridad alta bajo el mismo usuario.",
+        "Liste los archivos creados en %TEMP%\\system32 (DLL, EXE) y obtenga sus hashes para consultarlos en inteligencia de amenazas.",
+        "Identifique el proceso que copió winsat.exe a Temp y que preparó la carpeta. Revise los eventos de creación de archivos y del proceso padre.",
+        "Busque alertas previas del mismo usuario o host: ejecución de herramientas como UACMe, scripts ofuscados o accesos remotos.",
+        "Confirme si el usuario es administrador local, ya que el bypass solo aplica a cuentas del grupo Administradores con UAC."
+      ],
+      "false_positives": [
+        "La regla no indica falsos positivos conocidos. Ejecutar winsat.exe desde Temp\\system32 no es un uso legítimo habitual.",
+        "Laboratorios de pruebas de red team o validación de detecciones que ejecutan UACMe de forma autorizada."
+      ],
+      "response_steps": [
+        "Verifique con el usuario y con el equipo responsable si hubo pruebas autorizadas antes de escalar.",
+        "Si no están autorizadas, aísle el endpoint de la red con la herramienta EDR y conserve la evidencia (Amcache, %TEMP%, memoria).",
+        "Termine los procesos elevados maliciosos y elimine los archivos de %TEMP%\\system32 después de recolectarlos y calcular sus hashes.",
+        "Restablezca las credenciales del usuario afectado y revise la persistencia creada con privilegios elevados (servicios, tareas programadas, claves Run).",
+        "Considere configurar UAC en 'Notificar siempre' y quitar los privilegios de administrador local innecesarios."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el patrón es muy específico de un UAC bypass conocido, prácticamente no tiene usos legítimos e indica una escalada de privilegios efectiva o un intento de ella."
+    },
+    "en": {
+      "summary": "Amcache recorded winsat.exe running from a user's Temp folder (\\AppData\\Local\\Temp\\system32\\winsat.exe). This matches UACMe method 52, a UAC bypass that abuses winsat.exe path parsing.",
+      "what_it_detects": "Registry writes where TargetObject contains '\\Root\\InventoryApplicationFile\\winsat.exe|' and ends with '\\LowerCaseLongPath', and Details points to c:\\users\\<user>\\appdata\\local\\temp\\system32\\winsat.exe. In other words, the application inventory logged a winsat.exe in Temp instead of C:\\Windows\\System32.",
+      "why_it_matters": "winsat.exe is an auto-elevating Windows binary. Copied into a fake system32 folder under Temp, it can load attacker code with elevated rights and no UAC prompt (ATT&CK T1548.002, Bypass User Account Control). The result is local privilege escalation.",
+      "triage_steps": [
+        "Read Details and TargetObject. Confirm the Temp path, the user name under c:\\users\\ and the hash after 'winsat.exe|'.",
+        "Search for winsat.exe process creation from that path on the same host within +/- 15 minutes. Record its ParentImage and CommandLine.",
+        "Check that winsat.exe's child processes, and look for any high-integrity processes running as the same user.",
+        "List the files dropped in %TEMP%\\system32 (DLLs, EXEs), hash them and check the hashes against threat intelligence.",
+        "Find the process that copied winsat.exe into Temp and set up the folder, using file-creation events and its parent process.",
+        "Look for earlier alerts on the same user or host, such as UACMe-like tools, obfuscated scripts or remote access.",
+        "Confirm whether the user is a local administrator. The bypass only works for accounts in the Administrators group."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Running winsat.exe from Temp\\system32 is not normal legitimate behavior.",
+        "Authorized red team or detection-validation exercises that run UACMe."
+      ],
+      "response_steps": [
+        "Before escalating, check with the user and the responsible team whether this was authorized testing.",
+        "If it was not authorized, isolate the endpoint with your EDR and preserve evidence (Amcache, %TEMP%, memory).",
+        "Kill the malicious elevated processes. Remove the files in %TEMP%\\system32 only after collecting and hashing them.",
+        "Reset the affected user's credentials. Check for persistence created with elevated rights (services, scheduled tasks, Run keys).",
+        "Consider setting UAC to 'Always notify' and removing local admin rights that are not needed."
+      ],
+      "severity_rationale": "High fits because this pattern is specific to a known UAC bypass, has almost no legitimate use, and points to an actual or attempted privilege escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Amcache records winsat.exe executed from the user's Temp\\system32 fake folder (UACMe 52).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "\\REGISTRY\\A\\{6f1c2a3b-4d5e-11ec-9b2a-000c29a1b2c3}\\Root\\InventoryApplicationFile\\winsat.exe|9a3f5c7e2b1d4f60\\LowerCaseLongPath",
+          "Details": "c:\\users\\jperez\\appdata\\local\\temp\\system32\\winsat.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate winsat.exe in C:\\Windows\\System32 inventoried by Amcache; Details does not match the Temp path.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "\\REGISTRY\\A\\{6f1c2a3b-4d5e-11ec-9b2a-000c29a1b2c3}\\Root\\InventoryApplicationFile\\winsat.exe|1c4e8b2a7d9f3e05\\LowerCaseLongPath",
+          "Details": "c:\\windows\\system32\\winsat.exe"
+        }
+      },
+      {
+        "description": "Same Temp path but a different value (Name) under the inventory key; TargetObject does not end with \\LowerCaseLongPath.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "TargetObject": "\\REGISTRY\\A\\{6f1c2a3b-4d5e-11ec-9b2a-000c29a1b2c3}\\Root\\InventoryApplicationFile\\winsat.exe|9a3f5c7e2b1d4f60\\Name",
+          "Details": "c:\\users\\jperez\\appdata\\local\\temp\\system32\\winsat.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

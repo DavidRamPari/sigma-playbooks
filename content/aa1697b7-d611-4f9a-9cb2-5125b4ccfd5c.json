@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "aa1697b7-d611-4f9a-9cb2-5125b4ccfd5c",
+    "title": "Password Dumper Activity on LSASS",
+    "level": "high",
+    "status": "test",
+    "author": "sigma",
+    "path": "windows/builtin/security/win_security_susp_lsass_dump.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_lsass_dump.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se solicitó un handle sobre el objeto SAM_DOMAIN en lsass.exe con la máscara de acceso 0x705, un patrón asociado a herramientas de volcado de contraseñas que leen la base SAM.",
+      "what_it_detects": "Eventos 4656 del log Security donde ProcessName termina en \\lsass.exe, ObjectType es SAM_DOMAIN y AccessMask es exactamente 0x705, que combina derechos de lectura, enumeración y búsqueda de cuentas y administración del servidor sobre el dominio SAM. Requiere tener habilitada la auditoría de la subcategoría Audit SAM.",
+      "why_it_matters": "Corresponde a ATT&CK T1003.001 (OS Credential Dumping: LSASS Memory). Un atacante con privilegios puede extraer hashes de cuentas locales o del dominio y reutilizarlos para pass-the-hash, escalar privilegios y moverse lateralmente.",
+      "triage_steps": [
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId del evento 4656; determine si la cuenta es humana, de servicio o SYSTEM.",
+        "Busque el evento 4624 con el mismo LogonId para obtener el tipo de logon, IpAddress y WorkstationName de origen.",
+        "Revise la creación de procesos (4688 o Sysmon 1) en el mismo host +/- 15 minutos: binarios desconocidos, PowerShell, rundll32 o herramientas de volcado.",
+        "Busque en Sysmon eventos 10 de acceso a lsass.exe y archivos .dmp o volcados creados en el mismo periodo.",
+        "Confirme si el host es un controlador de dominio o un servidor crítico; esto aumenta el impacto.",
+        "Revise alertas previas del mismo usuario, host e IP de origen, y logons posteriores de esas credenciales en otros equipos."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos (Unknown).",
+        "Software de auditoría de seguridad, gestión de identidades o backup que consulta la SAM con amplios permisos; valide el proceso y la cuenta.",
+        "Pruebas de penetración o ejercicios de red team autorizados."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del host y de la cuenta si la actividad estaba autorizada antes de actuar.",
+        "Si se confirma actividad maliciosa, aísle el endpoint desde el EDR y preserve evidencia: memoria, logs y binarios sospechosos.",
+        "Restablezca las contraseñas de las cuentas expuestas en el host; si es un controlador de dominio, evalúe un reset doble de krbtgt.",
+        "Elimine las herramientas y mecanismos de persistencia identificados y busque uso de los hashes en otros equipos.",
+        "Restaure el servicio desde una imagen confiable y refuerce la protección de LSASS (RunAsPPL, Credential Guard)."
+      ],
+      "severity_rationale": "El nivel high se justifica porque esta máscara sobre SAM_DOMAIN rara vez aparece en uso legítimo y suele indicar robo de credenciales ya en curso."
+    },
+    "en": {
+      "summary": "A handle to the SAM_DOMAIN object was requested in lsass.exe with access mask 0x705, a pattern associated with password-dumping tools reading the SAM database.",
+      "what_it_detects": "Security log event 4656 where ProcessName ends with \\lsass.exe, ObjectType is SAM_DOMAIN and AccessMask is exactly 0x705, combining read, account listing, lookup and server administration rights on the SAM domain. Requires the Audit SAM subcategory to be enabled.",
+      "why_it_matters": "Maps to ATT&CK T1003.001 (OS Credential Dumping: LSASS Memory). A privileged attacker can extract local or domain account hashes and reuse them for pass-the-hash, privilege escalation and lateral movement.",
+      "triage_steps": [
+        "Note SubjectUserName, SubjectDomainName and SubjectLogonId from the 4656 event; decide whether the account is human, service or SYSTEM.",
+        "Find the 4624 event with the same LogonId to get logon type, source IpAddress and WorkstationName.",
+        "Review process creation (4688 or Sysmon 1) on the same host +/- 15 minutes: unknown binaries, PowerShell, rundll32 or dumping tools.",
+        "Look for Sysmon event 10 access to lsass.exe and .dmp or dump files created in the same window.",
+        "Check whether the host is a domain controller or critical server; this raises impact.",
+        "Review earlier alerts for the same user, host and source IP, and later logons with those credentials on other machines."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives (Unknown).",
+        "Security auditing, identity management or backup software querying the SAM with broad rights; validate the process and account.",
+        "Authorized penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the host and account owners whether the activity was authorized before acting.",
+        "If malicious, isolate the endpoint through EDR and preserve evidence: memory, logs and suspicious binaries.",
+        "Reset passwords for accounts exposed on the host; on a domain controller, consider a double krbtgt reset.",
+        "Remove identified tools and persistence, and hunt for use of the stolen hashes on other machines.",
+        "Restore from a trusted image if needed and harden LSASS (RunAsPPL, Credential Guard)."
+      ],
+      "severity_rationale": "High fits because this access mask on SAM_DOMAIN rarely appears in legitimate use and usually indicates credential theft in progress."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Handle request on SAM_DOMAIN in lsass.exe with access mask 0x705 by an admin account",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_DOMAIN",
+          "ObjectName": "DOMAIN",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "ProcessId": "0x2a4",
+          "AccessMask": "0x705"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine SAM_DOMAIN lookup in lsass.exe with a narrower access mask",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_DOMAIN",
+          "ObjectName": "DOMAIN",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "ProcessId": "0x2a4",
+          "AccessMask": "0x201"
+        }
+      },
+      {
+        "description": "Same access mask but on a SAM_SERVER object, not SAM_DOMAIN",
+        "event": {
+          "EventID": 4656,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security Account Manager",
+          "ObjectType": "SAM_SERVER",
+          "ObjectName": "CN=Server",
+          "ProcessName": "C:\\Windows\\System32\\lsass.exe",
+          "ProcessId": "0x2a4",
+          "AccessMask": "0x705"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

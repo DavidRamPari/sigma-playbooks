@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "49aae26c-450e-448b-911d-b3c13d178dfc",
+    "title": "Linux Keylogging with Pam.d",
+    "level": "high",
+    "status": "test",
+    "author": "Pawel Mazur",
+    "path": "linux/auditd/lnx_auditd_keylogging_with_pam_d.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/lnx_auditd_keylogging_with_pam_d.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003",
+      "T1056.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró un acceso a /etc/pam.d/system-auth o password-auth, o bien un registro TTY/USER_TTY. En conjunto, esto indica que se pudo activar el registro de pulsaciones con pam_tty_audit.",
+      "what_it_detects": "Dos tipos de registros de auditd. Registros PATH cuyo name es exactamente /etc/pam.d/system-auth o /etc/pam.d/password-auth, las pilas PAM donde suele activarse pam_tty_audit. Registros TTY o USER_TTY, que solo aparecen cuando la auditoría de entrada TTY ya está activa.",
+      "why_it_matters": "pam_tty_audit guarda en el log de auditoría lo que los usuarios teclean en la terminal, incluidos comandos y a veces contraseñas escritas en prompts. Un atacante que lo activa y lee esos logs obtiene un keylogger de captura de entrada (T1056.001) y un camino hacia credenciales (T1003).",
+      "triage_steps": [
+        "Obtenga el evento completo con el serial de msg=audit(...) del registro PATH: ausearch -a <serial>. En el registro SYSCALL, anote exe, comm, auid, uid y syscall.",
+        "Revise nametype (CREATE, NORMAL, DELETE). Importan las escrituras o renombrados. Las lecturas de sshd o login son normales si la regla vigila lecturas.",
+        "Revise los archivos actuales en busca de líneas pam_tty_audit.so, incluidos enable=, disable= y log_passwd. Compárelos con los valores del paquete (rpm -V pam o debsums) y con respaldos.",
+        "En alertas TTY/USER_TTY, ejecute aureport --tty y determine desde cuándo existen registros. Verifique si la auditoría TTY es un control aprobado y documentado en este host.",
+        "Asocie el auid a una persona y una sesión reales. Revise tickets de cambio y ejecuciones de gestión de configuración (Ansible, Puppet, authselect, authconfig).",
+        "Pivote en el mismo host y auid en ±15 minutos: historial de shell, comandos sudo, cuentas nuevas, otros archivos cambiados en /etc/pam.d y accesos a /var/log/audit.",
+        "Busque alertas previas en este host o usuario, y el mismo cambio de PAM en otros hosts."
+      ],
+      "false_positives": [
+        "Administradores o authselect/authconfig aplicando cambios aprobados en la pila PAM.",
+        "Actualizaciones de paquetes (pam, authselect) o gestión de configuración que reescriben system-auth o password-auth.",
+        "Programas de cumplimiento aprobados que activan pam_tty_audit y luego generan registros TTY/USER_TTY de forma continua."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con el responsable del sistema y los registros de cambios si el cambio estaba autorizado.",
+        "Si no estaba autorizado, preserve copias de /etc/pam.d y /var/log/audit y luego aísle el host según la política.",
+        "Elimine las líneas pam_tty_audit no autorizadas o restaure la configuración del paquete. Compruebe que el login funciona desde una segunda sesión antes de cerrar la primera.",
+        "Rote las credenciales de los usuarios que iniciaron sesión desde el cambio, empezando por las cuentas privilegiadas y quienes escribieron contraseñas en prompts.",
+        "Restrinja y revise quién puede leer los logs de auditoría, y busque copia o exfiltración de esos logs.",
+        "Si es un control aprobado, documéntelo y ajuste la selección TTY para ese host."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque una auditoría TTY no autorizada captura pulsaciones y credenciales en todas las sesiones, aunque el trabajo administrativo aprobado puede generar los mismos registros."
+    },
+    "en": {
+      "summary": "auditd recorded either access to /etc/pam.d/system-auth or password-auth, or a TTY/USER_TTY record. Together these suggest that pam_tty_audit keystroke logging may have been turned on.",
+      "what_it_detects": "Two kinds of auditd records. PATH records whose name is exactly /etc/pam.d/system-auth or /etc/pam.d/password-auth, the PAM stacks where pam_tty_audit is usually enabled. TTY or USER_TTY records, which only appear once TTY input auditing is active.",
+      "why_it_matters": "pam_tty_audit writes users' terminal keystrokes into the audit log, including commands and sometimes passwords typed at prompts. An attacker who enables it and reads the logs gets an input-capture keylogger (T1056.001) and a route to credentials (T1003).",
+      "triage_steps": [
+        "Pull the full audit event using the PATH record's serial in msg=audit(...): ausearch -a <serial>. From the SYSCALL record, note exe, comm, auid, uid and syscall.",
+        "Check nametype (CREATE, NORMAL, DELETE). Writes or renames matter. Reads by sshd or login are normal if the watch includes read access.",
+        "Inspect the current files for pam_tty_audit.so lines, including enable=, disable= and log_passwd. Compare them with packaged defaults (rpm -V pam or debsums) and with backups.",
+        "For TTY/USER_TTY alerts, run aureport --tty and work out when the records began. Check whether TTY auditing is an approved, documented control on this host.",
+        "Map auid to a real person and session. Check change tickets and configuration management runs (Ansible, Puppet, authselect, authconfig).",
+        "Pivot on the same host and auid within ±15 minutes: shell history, sudo commands, new accounts, other files changed under /etc/pam.d, and access to /var/log/audit.",
+        "Look for earlier alerts on this host or user, and for the same PAM change on other hosts."
+      ],
+      "false_positives": [
+        "Administrators or authselect/authconfig making approved changes to the PAM stack.",
+        "Package updates (pam, authselect) or configuration management rewriting system-auth or password-auth.",
+        "Approved compliance programs that enable pam_tty_audit, which then produce ongoing TTY/USER_TTY records."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and change records whether the change was authorized before you act.",
+        "If it was not authorized, preserve copies of /etc/pam.d and /var/log/audit, then isolate the host according to policy.",
+        "Remove the unauthorized pam_tty_audit lines or restore the packaged configuration. Check that logins still work from a second session before closing the first.",
+        "Rotate credentials for users who logged in since the change, starting with privileged accounts and anyone who typed passwords at prompts.",
+        "Restrict and review who can read audit logs, and hunt for log copying or exfiltration.",
+        "If this is a sanctioned control, document it and tune the TTY selection for that host."
+      ],
+      "severity_rationale": "High fits because unauthorized TTY auditing captures keystrokes and credentials across every session, even though approved admin work can produce the same records."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PATH record of a write to /etc/pam.d/system-auth, as when a pam_tty_audit line is added.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1716552192.481:2291)",
+          "node": "bastion-01",
+          "item": 1,
+          "name": "/etc/pam.d/system-auth",
+          "inode": 1835102,
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "CREATE",
+          "key": "pam_config"
+        }
+      },
+      {
+        "description": "USER_TTY record that only appears once TTY input auditing is active.",
+        "event": {
+          "type": "USER_TTY",
+          "msg": "audit(1716552410.107:2340)",
+          "node": "bastion-01",
+          "pid": 48213,
+          "uid": 1004,
+          "auid": 1004,
+          "ses": 17,
+          "exe": "/usr/bin/bash",
+          "data": "ls -la /tmp"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PATH record for /etc/pam.d/sshd, a PAM file that is not on the rule's list.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1716553001.220:2402)",
+          "node": "bastion-01",
+          "item": 0,
+          "name": "/etc/pam.d/sshd",
+          "inode": 1835110,
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL",
+          "key": "pam_config"
+        }
+      },
+      {
+        "description": "PATH record for /etc/pam.d/system-auth-ac. The rule matches exact names, so this one does not match.",
+        "event": {
+          "type": "PATH",
+          "msg": "audit(1716553120.554:2417)",
+          "node": "WS-0142",
+          "item": 1,
+          "name": "/etc/pam.d/system-auth-ac",
+          "inode": 1835099,
+          "mode": "0100644",
+          "ouid": 0,
+          "ogid": 0,
+          "nametype": "NORMAL",
+          "key": "pam_config"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

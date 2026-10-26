@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "ec541962-c05a-4420-b9ea-84de072d18f4",
+    "title": "New AWS Lambda Function URL Configuration Created",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Ivan Saakov",
+    "path": "cloud/aws/cloudtrail/aws_lambda_function_url.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_lambda_function_url.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS creó una URL de función (Function URL) para una función Lambda. Esto puede exponer la función a internet y permitir que se abuse del rol IAM de ejecución asociado.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource lambda.amazonaws.com y eventName CreateFunctionUrlConfig. Se registran cada vez que alguien crea un endpoint HTTPS dedicado para una función Lambda.",
+      "why_it_matters": "Una Function URL con authType NONE permite invocar la función desde internet sin autenticación. Un atacante puede usarla para mantener acceso inicial o para escalar privilegios a través de los permisos del rol de servicio de la función (acceso inicial y escalamiento de privilegios).",
+      "triage_steps": [
+        "Identifique al actor en userIdentity.arn, userIdentity.type y accessKeyId. Confirme si se trata de un usuario, un rol o un pipeline autorizado para administrar Lambda.",
+        "Revise requestParameters.authType. NONE significa acceso público; AWS_IAM requiere firma. Revise también la configuración CORS y responseElements.functionUrl.",
+        "Verifique sourceIPAddress y userAgent. Una consola, CLI o SDK que no se use habitualmente, o una IP que no sea corporativa, aumenta la sospecha.",
+        "Revise el rol de ejecución de requestParameters.functionName con GetFunction y evalúe sus políticas para detectar permisos amplios, como iam:*, s3:* o sts:AssumeRole.",
+        "Busque eventos del mismo actor en la cuenta y región dentro de +/- 15 minutos: AddPermission (lambda:InvokeFunctionUrl con principal *), CreateFunction, UpdateFunctionCode, UpdateFunctionConfiguration e iam:PassRole.",
+        "Busque alertas previas del mismo actor o IP, por ejemplo errores AccessDenied, enumeración de servicios o creación de claves de acceso.",
+        "Contraste el cambio con tickets de cambio, despliegues de IaC (CloudFormation, Terraform) o ventanas de mantenimiento."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores que publican webhooks o APIs ligeras mediante Function URL de forma legítima.",
+        "Pipelines de CI/CD o IaC (CloudFormation, Terraform, SAM) que crean la URL durante un despliegue aprobado.",
+        "Pruebas en cuentas de desarrollo o sandbox. Si el comportamiento es conocido, exclúyalo por identidad o por cuenta."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de la función y del actor si el cambio fue autorizado.",
+        "Si no fue autorizado, ejecute DeleteFunctionUrlConfig o cambie authType a AWS_IAM, y elimine los permisos públicos agregados con AddPermission.",
+        "Revise el código desplegado y los logs de CloudWatch de la función para detectar invocaciones externas y llamadas a APIs hechas con el rol.",
+        "Desactive o rote las credenciales del actor comprometido y revise las sesiones activas del rol de ejecución.",
+        "Reduzca los permisos del rol de ejecución según el principio de mínimo privilegio y considere una SCP que restrinja lambda:FunctionUrlAuthType NONE."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque crear una Function URL es una tarea administrativa común, pero puede exponer públicamente los privilegios de un rol IAM."
+    },
+    "en": {
+      "summary": "An AWS identity created a Function URL for a Lambda function. This can expose the function to the internet and allow abuse of its attached IAM execution role.",
+      "what_it_detects": "CloudTrail events where eventSource is lambda.amazonaws.com and eventName is CreateFunctionUrlConfig. These are logged whenever someone creates a dedicated HTTPS endpoint for a Lambda function.",
+      "why_it_matters": "A Function URL with authType NONE lets anyone on the internet invoke the function without authentication. Attackers can use it to keep access or to escalate privileges through the function's service role permissions (initial access, privilege escalation).",
+      "triage_steps": [
+        "Identify the actor from userIdentity.arn, userIdentity.type and accessKeyId. Confirm whether it is a user, role or pipeline expected to manage Lambda.",
+        "Check requestParameters.authType: NONE means public, AWS_IAM requires signed requests. Also review the CORS settings and responseElements.functionUrl.",
+        "Check sourceIPAddress and userAgent. An unusual console, CLI or SDK client, or a non-corporate IP, raises suspicion.",
+        "Use GetFunction to find the execution role of requestParameters.functionName. Review its policies for broad permissions such as iam:*, s3:* or sts:AssumeRole.",
+        "Search the same actor, account and region within +/- 15 minutes for AddPermission (lambda:InvokeFunctionUrl with principal *), CreateFunction, UpdateFunctionCode, UpdateFunctionConfiguration and iam:PassRole.",
+        "Look for earlier alerts from the same actor or IP, such as AccessDenied bursts, service enumeration or access key creation.",
+        "Compare the event against change tickets, IaC deployments (CloudFormation, Terraform) or maintenance windows."
+      ],
+      "false_positives": [
+        "Administrators or developers legitimately publishing webhooks or lightweight APIs through a Function URL.",
+        "CI/CD or IaC pipelines (CloudFormation, Terraform, SAM) creating the URL during an approved deployment.",
+        "Testing in development or sandbox accounts. If the behavior is known, exclude it by identity or account."
+      ],
+      "response_steps": [
+        "Confirm with the function owner and the actor whether the change was authorized.",
+        "If it was not, run DeleteFunctionUrlConfig or switch authType to AWS_IAM, and remove any public permissions added through AddPermission.",
+        "Review the deployed code and the function's CloudWatch logs for external invocations and API calls made with the role.",
+        "Disable or rotate the compromised actor's credentials and review active sessions of the execution role.",
+        "Reduce the execution role to least privilege and consider an SCP that denies lambda:FunctionUrlAuthType NONE."
+      ],
+      "severity_rationale": "Medium fits because creating a Function URL is a common administrative task, but it can publicly expose the privileges of an IAM role."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An IAM user creates a public Function URL (authType NONE) from an unfamiliar IP using the AWS CLI.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "CreateFunctionUrlConfig",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-12-20T03:14:22Z",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Linux/6.1 exe/x86_64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE1234",
+          "requestParameters.functionName": "billing-export",
+          "requestParameters.authType": "NONE",
+          "responseElements.functionUrl": "https://abcdefexample.lambda-url.us-east-1.on.aws/",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "A deployment role creates an IAM-authenticated Function URL through CloudFormation.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "CreateFunctionUrlConfig",
+          "awsRegion": "sa-east-1",
+          "eventTime": "2024-12-20T15:02:10Z",
+          "sourceIPAddress": "cloudformation.amazonaws.com",
+          "userAgent": "cloudformation.amazonaws.com",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/deploy-pipeline/session-ci",
+          "requestParameters.functionName": "orders-webhook",
+          "requestParameters.authType": "AWS_IAM",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same service, but the URL configuration is only updated, not created.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "UpdateFunctionUrlConfig",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-12-20T09:41:00Z",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "console.amazonaws.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mlopez",
+          "requestParameters.functionName": "orders-webhook",
+          "requestParameters.authType": "AWS_IAM",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "Read-only lookup of an existing Function URL configuration.",
+        "event": {
+          "eventVersion": "1.08",
+          "eventSource": "lambda.amazonaws.com",
+          "eventName": "GetFunctionUrlConfig",
+          "awsRegion": "us-east-1",
+          "eventTime": "2024-12-20T10:05:33Z",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-cli/2.15.0 Python/3.11.6 Windows/10 exe/AMD64",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/mlopez",
+          "requestParameters.functionName": "billing-export",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

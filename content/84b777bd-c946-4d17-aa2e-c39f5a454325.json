@@ -1,0 +1,155 @@
+{
+  "rule": {
+    "id": "84b777bd-c946-4d17-aa2e-c39f5a454325",
+    "title": "RBAC Permission Enumeration Attempt",
+    "level": "low",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_rbac_permisions_listing.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_rbac_permisions_listing.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1069.003",
+      "T1087.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó un SelfSubjectRulesReview en el API server de Kubernetes, es decir, listó sus propios permisos RBAC (típicamente con \"kubectl auth can-i --list\"). Puede ser un administrador haciendo troubleshooting o un atacante reconociendo qué puede hacer con credenciales robadas.",
+      "what_it_detects": "Eventos del audit log de Kubernetes con verb \"create\", apiGroup \"authorization.k8s.io\" y objectRef.resource \"selfsubjectrulesreviews\". Esto ocurre cuando un usuario o service account consulta todas las reglas RBAC que tiene en un namespace.",
+      "why_it_matters": "Tras comprometer un pod, un token o un kubeconfig, el atacante suele averiguar primero qué permisos tiene para planear escalamiento o acceso a secrets. Corresponde a descubrimiento de grupos y cuentas en la nube (T1069.003, T1087.004).",
+      "triage_steps": [
+        "Identifique user.username y user.groups. Un service account (system:serviceaccount:<ns>:<nombre>) que liste sus permisos es más sospechoso que un administrador humano.",
+        "Revise sourceIPs: determine si es la IP de un pod del clúster, una red corporativa conocida o una IP externa inesperada.",
+        "Revise userAgent: kubectl desde una estación conocida es habitual; curl, python-requests o binarios kubectl dentro de un contenedor merecen escalamiento.",
+        "Si es un service account, ubique el pod por la IP de origen y busque eventos pods/exec o attach hacia ese pod en +/- 15 minutos.",
+        "Pivote por el mismo usuario en +/- 15 minutos: get/list de secrets, creación de pods, rolebindings o clusterrolebindings, y respuestas 403 repetidas.",
+        "Busque alertas previas para el mismo usuario, IP de origen y namespace, y confirme con el dueño de la identidad si la actividad era esperada."
+      ],
+      "false_positives": [
+        "Administradores o desarrolladores ejecutando \"kubectl auth can-i --list\" para diagnosticar problemas de acceso.",
+        "Interfaces de clúster, plugins de IDE u operadores que consultan los permisos del usuario para mostrar u ocultar funciones.",
+        "Pipelines de CI/CD o scripts de auditoría RBAC que validan permisos de forma programada."
+      ],
+      "response_steps": [
+        "Verifique con el responsable de la identidad y con el registro de cambios si la consulta fue legítima; documente la conclusión.",
+        "Si no es legítima, revoque o rote el token del service account o las credenciales del kubeconfig y aísle el pod de origen con una NetworkPolicy.",
+        "Preserve evidencia (manifiesto, logs, imagen del contenedor) antes de eliminar o reiniciar el pod comprometido.",
+        "Revise y reduzca los bindings RBAC de la identidad y busque recursos creados o modificados por ella.",
+        "Agregue a una lista de exclusión las identidades y herramientas legítimas recurrentes para reducir ruido."
+      ],
+      "severity_rationale": "Nivel bajo porque listar permisos propios no causa impacto por sí solo y es común en administración, pero es una señal temprana útil al correlacionarla con otra actividad."
+    },
+    "en": {
+      "summary": "An identity created a SelfSubjectRulesReview on the Kubernetes API server, meaning it listed its own RBAC permissions (typically via \"kubectl auth can-i --list\"). This may be an admin troubleshooting or an attacker learning what stolen credentials allow.",
+      "what_it_detects": "Kubernetes audit events with verb \"create\", apiGroup \"authorization.k8s.io\" and objectRef.resource \"selfsubjectrulesreviews\", produced when a user or service account requests all RBAC rules it holds in a namespace.",
+      "why_it_matters": "After compromising a pod, token or kubeconfig, attackers first check their permissions to plan privilege escalation or secret access. This maps to cloud group and account discovery (T1069.003, T1087.004).",
+      "triage_steps": [
+        "Identify user.username and user.groups. A service account (system:serviceaccount:<ns>:<name>) listing its permissions is more suspicious than a human admin.",
+        "Check sourceIPs: is it a cluster pod IP, a known corporate network, or an unexpected external address?",
+        "Check userAgent: kubectl from a known workstation is common; curl, python-requests or kubectl running inside a container warrants escalation.",
+        "For a service account, map the source IP to a pod and look for pods/exec or attach events against it within +/- 15 minutes.",
+        "Pivot on the same user within +/- 15 minutes: secrets get/list, pod creation, rolebinding or clusterrolebinding changes, and repeated 403 responses.",
+        "Look for earlier alerts on the same user, source IP and namespace, and confirm with the identity owner whether the activity was expected."
+      ],
+      "false_positives": [
+        "Admins or developers running \"kubectl auth can-i --list\" to troubleshoot access issues.",
+        "Cluster UIs, IDE plugins or operators that query user permissions to show or hide features.",
+        "CI/CD pipelines or RBAC audit scripts validating permissions on a schedule."
+      ],
+      "response_steps": [
+        "Verify with the identity owner and change records whether the query was legitimate; document the outcome.",
+        "If not legitimate, revoke or rotate the service account token or kubeconfig credentials and isolate the source pod with a NetworkPolicy.",
+        "Preserve evidence (manifest, logs, container image) before deleting or restarting the compromised pod.",
+        "Review and tighten the identity's RBAC bindings and hunt for resources it created or modified.",
+        "Exclude recurring legitimate identities and tools to reduce noise."
+      ],
+      "severity_rationale": "Low because listing one's own permissions has no direct impact and is common admin behavior, yet it is a useful early signal when correlated with other activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service account token used from inside a pod to run kubectl auth can-i --list",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "apiGroup": "authorization.k8s.io",
+          "objectRef.resource": "selfsubjectrulesreviews",
+          "objectRef.apiVersion": "v1",
+          "requestURI": "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
+          "user.username": "system:serviceaccount:web:frontend",
+          "user.groups": "system:serviceaccounts,system:serviceaccounts:web,system:authenticated",
+          "sourceIPs": "10.244.1.23",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 201
+        }
+      },
+      {
+        "description": "Human user listing RBAC rules from an external address",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "apiGroup": "authorization.k8s.io",
+          "objectRef.resource": "selfsubjectrulesreviews",
+          "requestURI": "/apis/authorization.k8s.io/v1/selfsubjectrulesreviews",
+          "user.username": "jperez@example.com",
+          "user.groups": "devs,system:authenticated",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "python-requests/2.31.0",
+          "responseStatus.code": 201
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "kubectl auth can-i get pods creates a selfsubjectaccessreview, not a rules review",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "apiGroup": "authorization.k8s.io",
+          "objectRef.resource": "selfsubjectaccessreviews",
+          "requestURI": "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 201
+        }
+      },
+      {
+        "description": "Listing roles in the RBAC API group, not a self rules review",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "level": "Metadata",
+          "stage": "ResponseComplete",
+          "verb": "list",
+          "apiGroup": "rbac.authorization.k8s.io",
+          "objectRef.resource": "roles",
+          "objectRef.namespace": "web",
+          "requestURI": "/apis/rbac.authorization.k8s.io/v1/namespaces/web/roles",
+          "user.username": "admin@example.com",
+          "sourceIPs": "198.51.100.21",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64) kubernetes/4b8e819",
+          "responseStatus.code": 200
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "e2b5163d-7deb-4566-9af3-40afea6858c3",
+    "title": "Certificate Private Key Acquired",
+    "level": "medium",
+    "status": "test",
+    "author": "Zach Mathis",
+    "path": "windows/builtin/capi2/win_capi2_acquire_certificate_private_key.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/capi2/win_capi2_acquire_certificate_private_key.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1649"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en el endpoint adquirió la clave privada de un certificado, según el evento 70 del log CAPI2 Operational. Puede ser uso legítimo de TLS o firma, o un primer paso para robar el certificado.",
+      "what_it_detects": "Cualquier evento con EventID 70 (Acquire Certificate Private Key) en Microsoft-Windows-CAPI2/Operational. La regla no filtra por proceso, usuario ni certificado, así que registra todo acceso a claves privadas.",
+      "why_it_matters": "Si un atacante obtiene la clave privada de un certificado de autenticación de cliente, puede exportarlo y suplantar al usuario o al equipo frente a Kerberos (PKINIT), VPN o servicios web. Esto corresponde a ATT&CK T1649: robar o falsificar certificados de autenticación.",
+      "triage_steps": [
+        "Identifique el proceso que pidió la clave (ProcessName en EventAuxInfo) y su ruta. Desconfíe de binarios en rutas temporales, de perfil de usuario o sin firma.",
+        "Revise el sujeto, la huella y el EKU del certificado. Priorice certificados con Client Authentication o Smart Card Logon y certificados de equipo o de servicio.",
+        "Determine el usuario o SID del contexto y si es normal que use ese certificado en ese host.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque creación de procesos (4688/Sysmon 1) con certutil -exportPFX, Export-PfxCertificate, PowerShell codificado o herramientas de volcado de credenciales.",
+        "Busque archivos .pfx o .p12 recién creados (Sysmon 11) y su posible copia o salida hacia la red.",
+        "Compare con la línea base: frecuencia de este proceso y certificado en el host y en el resto del parque, y alertas previas de la misma entidad."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas que exportan certificados o usan su clave, como navegadores, clientes VPN, Outlook con S/MIME o agentes de gestión.",
+        "Administradores que migran o respaldan certificados con certutil, MMC o Export-PfxCertificate durante un cambio aprobado.",
+        "Servicios como IIS o el agente de inscripción automática que firman o renuevan certificados de forma periódica."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o del certificado si el acceso era esperado y si hubo una exportación autorizada.",
+        "Si es malicioso, aísle el endpoint y conserve evidencia: log CAPI2, procesos, archivos PFX y memoria si corresponde.",
+        "Revoque el certificado afectado en la CA, emita uno nuevo y revise si se usó para autenticarse (4768 con PKINIT) en los controladores de dominio.",
+        "Elimine el artefacto o la herramienta responsable, restablezca las credenciales comprometidas y agregue filtros a la regla para los procesos legítimos ya validados."
+      ],
+      "severity_rationale": "Medium es adecuado porque el evento es frecuente en uso legítimo, pero en el proceso o el contexto equivocado indica posible robo de certificados de autenticación."
+    },
+    "en": {
+      "summary": "A process on the endpoint acquired a certificate's private key, as recorded by CAPI2 Operational event 70. This can be normal TLS or signing activity, or a first step in stealing the certificate.",
+      "what_it_detects": "Any event with EventID 70 (Acquire Certificate Private Key) in Microsoft-Windows-CAPI2/Operational. The rule has no process, user or certificate filters, so it records every private key access.",
+      "why_it_matters": "An attacker who gets the private key of a client authentication certificate can export it and impersonate the user or computer to Kerberos (PKINIT), VPN or web services. This maps to ATT&CK T1649: stealing or forging authentication certificates.",
+      "triage_steps": [
+        "Identify the process that requested the key (ProcessName in EventAuxInfo) and its path. Be suspicious of binaries in temp or user profile paths and of unsigned binaries.",
+        "Check the certificate's subject, thumbprint and EKU. Prioritize Client Authentication or Smart Card Logon certificates, plus machine and service certificates.",
+        "Find the user or SID context and check whether that user normally uses this certificate on this host.",
+        "On the same host within +/- 15 minutes, look for process creation (4688/Sysmon 1) with certutil -exportPFX, Export-PfxCertificate, encoded PowerShell or credential dumping tools.",
+        "Look for newly created .pfx or .p12 files (Sysmon 11) and any sign that they were copied or sent over the network.",
+        "Compare against the baseline: how often this process and certificate appear on the host and across the fleet, and earlier alerts for the same entity."
+      ],
+      "false_positives": [
+        "Legitimate applications that export certificates or use their keys, such as browsers, VPN clients, Outlook with S/MIME or management agents.",
+        "Administrators migrating or backing up certificates with certutil, MMC or Export-PfxCertificate during an approved change.",
+        "Services such as IIS or the autoenrollment agent that sign with or renew certificates on a schedule."
+      ],
+      "response_steps": [
+        "Confirm with the system or certificate owner whether the access was expected and whether an authorized export took place.",
+        "If it is malicious, isolate the endpoint and preserve evidence: the CAPI2 log, process data, PFX files and memory if needed.",
+        "Revoke the affected certificate at the CA, issue a new one and check domain controllers for authentications that used it (4768 with PKINIT).",
+        "Remove the responsible tool or artifact, reset compromised credentials and add rule filters for legitimate processes you have validated."
+      ],
+      "severity_rationale": "Medium fits because this event is common in legitimate use, but with the wrong process or context it points to possible theft of authentication certificates."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user's temp folder acquires the private key of a client authentication certificate",
+        "event": {
+          "EventID": 70,
+          "Channel": "Microsoft-Windows-CAPI2/Operational",
+          "Provider_Name": "Microsoft-Windows-CAPI2",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svcupd.exe",
+          "ProcessID": 6124,
+          "SubjectName": "jperez@andes.example.com",
+          "CertificateThumbprint": "3F2A9C1B7D4E5F60718293A4B5C6D7E8F9012345",
+          "KeySpec": "AT_KEYEXCHANGE",
+          "Result": "0x0",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-1105"
+        }
+      },
+      {
+        "description": "certutil acquires a machine certificate's private key during a PFX export",
+        "event": {
+          "EventID": 70,
+          "Channel": "Microsoft-Windows-CAPI2/Operational",
+          "Provider_Name": "Microsoft-Windows-CAPI2",
+          "Computer": "SRV-WEB-01.andes.example.com",
+          "ProcessName": "C:\\Windows\\System32\\certutil.exe",
+          "ProcessID": 4410,
+          "SubjectName": "SRV-WEB-01.andes.example.com",
+          "CertificateThumbprint": "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678",
+          "KeySpec": "AT_KEYEXCHANGE",
+          "Result": "0x0",
+          "UserID": "S-1-5-21-1004336348-1177238915-682003330-500"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "CAPI2 Build Chain event (EventID 11) for the same certificate. It is certificate validation, not private key acquisition",
+        "event": {
+          "EventID": 11,
+          "Channel": "Microsoft-Windows-CAPI2/Operational",
+          "Provider_Name": "Microsoft-Windows-CAPI2",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessName": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+          "ProcessID": 7788,
+          "SubjectName": "www.example.org",
+          "Result": "0x0"
+        }
+      },
+      {
+        "description": "CAPI2 X509 Objects event (EventID 90) logged while verifying a TLS server certificate",
+        "event": {
+          "EventID": 90,
+          "Channel": "Microsoft-Windows-CAPI2/Operational",
+          "Provider_Name": "Microsoft-Windows-CAPI2",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessName": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessID": 1320,
+          "SubjectName": "update.example.com",
+          "Result": "0x0"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

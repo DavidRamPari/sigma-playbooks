@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "fe20dda1-6f37-4379-bbe0-a98d400cae90",
+    "title": "Potential Persistence Via Scrobj.dll COM Hijacking",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/registry/registry_set/registry_set_persistence_scrobj_dll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_scrobj_dll.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.015"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió el valor (Default) de una clave InprocServer32 con la ruta C:\\WINDOWS\\system32\\scrobj.dll. Esto puede indicar un COM hijacking que ejecuta un scriptlet indicado en ScriptletURL.",
+      "what_it_detects": "Eventos registry_set (por ejemplo, Sysmon 13) en los que TargetObject termina en InprocServer32\\(Default) y Details es exactamente C:\\WINDOWS\\system32\\scrobj.dll. Así un CLSID queda asociado al motor de Windows Script Components.",
+      "why_it_matters": "Cuando un proceso instancia ese CLSID, scrobj.dll lee la subclave ScriptletURL y ejecuta el script (.sct/.wsc) local o remoto que esta indique. Es persistencia y posible escalamiento de privilegios por COM hijacking (ATT&CK T1546.015) usando un binario firmado de Microsoft.",
+      "triage_steps": [
+        "Revise TargetObject: anote el hive (HKU/HKCU frente a HKLM) y el CLSID. Las escrituras en el hive del usuario que suplantan un CLSID existente de HKLM son más sospechosas.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, una escritura en ...\\CLSID\\{mismo GUID}\\ScriptletURL y anote la ruta o URL del scriptlet.",
+        "Identifique el proceso que escribió la clave (Image), su proceso padre y su CommandLine: reg.exe, powershell.exe, regsvr32.exe o scripts de Office son señales de alerta.",
+        "Si ScriptletURL apunta a una URL o a un recurso compartido, revise conexiones de red y DNS del host hacia ese destino y recupere el archivo para analizarlo.",
+        "Busque procesos que cargaron scrobj.dll después del cambio (Sysmon 7) y los procesos hijos que generaron, como explorer.exe o una tarea programada.",
+        "Compruebe si el CLSID está registrado legítimamente en HKLM y qué software lo usa. Consulte alertas previas del mismo usuario y del mismo host."
+      ],
+      "false_positives": [
+        "Uso legítimo de la DLL: registrar Windows Script Components (.wsc) con regsvr32 scrobj.dll /i en aplicaciones antiguas.",
+        "Instalación o reparación de Windows o de software empresarial que registra los CLSID propios de scrobj.dll en HKLM.",
+        "Pruebas de Atomic Red Team o ejercicios de red team autorizados (T1546.015)."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo o con TI si existe un componente de script legítimo asociado al CLSID antes de modificar nada.",
+        "Si es malicioso, aísle el endpoint, exporte las claves CLSID afectadas como evidencia y luego elimínelas del hive comprometido.",
+        "Recupere el scriptlet referenciado y obtenga su hash. Bloquee su URL o dominio en el proxy y busque el mismo CLSID o la misma URL en otros equipos.",
+        "Revise otros mecanismos de persistencia del usuario y restablezca sus credenciales si hubo ejecución de código. Monitoree nuevas escrituras en InprocServer32."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el patrón coincide con una técnica conocida de persistencia, pero el registro legítimo de componentes de script también lo genera y requiere contexto para confirmarse."
+    },
+    "en": {
+      "summary": "An InprocServer32 (Default) registry value was set to C:\\WINDOWS\\system32\\scrobj.dll. This may be COM hijacking that runs a scriptlet named in ScriptletURL.",
+      "what_it_detects": "registry_set events (for example Sysmon 13) where TargetObject ends with InprocServer32\\(Default) and Details is exactly C:\\WINDOWS\\system32\\scrobj.dll. This binds a CLSID to the Windows Script Components engine.",
+      "why_it_matters": "When a process instantiates that CLSID, scrobj.dll reads the ScriptletURL subkey and runs the local or remote .sct/.wsc script it names. This gives persistence and possible privilege escalation through COM hijacking (ATT&CK T1546.015) using a signed Microsoft binary.",
+      "triage_steps": [
+        "Inspect TargetObject: note the hive (HKU/HKCU or HKLM) and the CLSID. User-hive writes that shadow an existing HKLM CLSID are more suspicious.",
+        "Look on the same host within +/- 15 minutes for a write to ...\\CLSID\\{same GUID}\\ScriptletURL, and record the scriptlet path or URL.",
+        "Identify the writing process (Image), its parent and its CommandLine. reg.exe, powershell.exe, regsvr32.exe or Office-spawned scripts are red flags.",
+        "If ScriptletURL points to a URL or share, review the host's network and DNS activity to that destination and retrieve the file for analysis.",
+        "Find processes that loaded scrobj.dll after the change (Sysmon 7), such as explorer.exe or a scheduled task, and the child processes they spawned.",
+        "Check whether the CLSID is legitimately registered in HKLM and which software uses it. Review earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate use of the DLL: registering Windows Script Components (.wsc) via regsvr32 scrobj.dll /i for legacy applications.",
+        "Windows setup or repair, or enterprise software, registering scrobj.dll's own CLSIDs under HKLM.",
+        "Atomic Red Team tests or authorized red team exercises for T1546.015."
+      ],
+      "response_steps": [
+        "Before changing anything, check with the host owner or IT whether a legitimate script component is tied to the CLSID.",
+        "If it is malicious, isolate the endpoint, export the affected CLSID keys as evidence, then delete them from the compromised hive.",
+        "Retrieve and hash the referenced scriptlet. Block its URL or domain at the proxy and hunt for the same CLSID or URL on other hosts.",
+        "Review other persistence mechanisms for the user, reset credentials if code ran, and monitor for new InprocServer32 writes."
+      ],
+      "severity_rationale": "Medium fits because this matches a known persistence technique, but legitimate script component registration produces the same pattern, so you need context to confirm it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe hijacks a CLSID in the user's hive by pointing InprocServer32 (Default) to scrobj.dll (Atomic T1546.015 pattern)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1004336348-1177238915-682003330-1104_Classes\\CLSID\\{B5F8350B-0548-48B1-A6EE-88BD00B4A5E7}\\InprocServer32\\(Default)",
+          "Details": "C:\\WINDOWS\\system32\\scrobj.dll"
+        }
+      },
+      {
+        "description": "PowerShell writes the same value with different casing via HKCU path",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 4388,
+          "TargetObject": "HKCU\\SOFTWARE\\Classes\\CLSID\\{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}\\InprocServer32\\(Default)",
+          "Details": "c:\\windows\\System32\\scrobj.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Software installer registers a COM server pointing to a different DLL",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ProcessId": 2296,
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\CLSID\\{7A2C4E11-3B9D-4F60-9C21-5D8E0A1B2C3D}\\InprocServer32\\(Default)",
+          "Details": "C:\\Program Files\\ExampleApp\\exampleshellext.dll"
+        }
+      },
+      {
+        "description": "ThreadingModel value under InprocServer32, not the (Default) value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1004336348-1177238915-682003330-1104_Classes\\CLSID\\{B5F8350B-0548-48B1-A6EE-88BD00B4A5E7}\\InprocServer32\\ThreadingModel",
+          "Details": "Apartment"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

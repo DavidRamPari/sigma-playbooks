@@ -1,0 +1,122 @@
+{
+  "rule": {
+    "id": "5f1573a7-363b-4114-9208-ad7a61de46eb",
+    "title": "ESXi VM List Discovery Via ESXCLI",
+    "level": "medium",
+    "status": "test",
+    "author": "Cedric Maurugeon",
+    "path": "linux/process_creation/proc_creation_lnx_esxcli_vm_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_esxcli_vm_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1007",
+      "T1033",
+      "T1059.012"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó \"esxcli vm process list\" en un host ESXi para listar las máquinas virtuales en ejecución y sus World ID. Puede ser administración normal o reconocimiento previo a detener VMs y cifrar sus discos.",
+      "what_it_detects": "Procesos cuyo Image termina en /esxcli y cuyo CommandLine contiene 'vm process' y termina en ' list'. Este comando devuelve el nombre, el World ID, el UUID y el archivo .vmx de cada VM en ejecución.",
+      "why_it_matters": "Algunas familias de ransomware para ESXi listan las VMs para conseguir sus World ID, las detienen con 'esxcli vm process kill' y luego cifran los archivos .vmdk. Corresponde a la ejecución mediante el CLI del hipervisor (T1059.012) y al reconocimiento de servicios y usuarios (T1007, T1033).",
+      "triage_steps": [
+        "Identifique el host ESXi, el usuario y el CommandLine exacto. Confirme si hubo una ventana de mantenimiento o un ticket de cambio.",
+        "Revise ParentImage y el árbol de procesos: una shell interactiva, un script en /tmp o un binario desconocido como padre aumentan la sospecha.",
+        "Correlacione con /var/log/shell.log, auth.log y hostd.log: origen del inicio de sesión SSH o DCUI, IP de origen y hora.",
+        "Busque en el mismo host, +/- 15 minutos, 'esxcli vm process kill', 'vim-cmd vmsvc', cambios de firewall o de syslog, y la desactivación de SSH o del modo de bloqueo.",
+        "Busque archivos nuevos o modificados en /tmp, /vmfs/volumes o /etc/rc.local.d, extensiones de archivo inusuales y notas de rescate.",
+        "Compruebe si la misma cuenta o la misma IP de origen accedió a otros ESXi o a vCenter y si hay alertas previas para estas entidades."
+      ],
+      "false_positives": [
+        "Administradores que revisan las VMs en ejecución por SSH o desde la ESXi Shell.",
+        "Scripts de respaldo, monitoreo o automatización que consultan periódicamente el estado de las VMs.",
+        "Procedimientos de mantenimiento o actualización del host que listan las VMs antes de apagarlas."
+      ],
+      "response_steps": [
+        "Valide con el responsable de la plataforma si la actividad estaba autorizada. Si es legítima, documente la cuenta y el script para una posible exclusión.",
+        "Si no está autorizada, restrinja el acceso SSH y de red al host, rote las credenciales root y las de vCenter, y preserve los logs.",
+        "Verifique que existan respaldos íntegros fuera de línea de las VMs afectadas antes de cualquier recuperación.",
+        "Elimine los binarios o la persistencia confirmados, reactive el modo de bloqueo y revise los otros hipervisores en busca de la misma actividad."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el comando es habitual entre administradores, aunque en un contexto no autorizado es un paso típico antes del ransomware en ESXi."
+    },
+    "en": {
+      "summary": "\"esxcli vm process list\" was run on an ESXi host to list running VMs and their World IDs. This can be routine administration or reconnaissance before VMs are stopped and their disks encrypted.",
+      "what_it_detects": "Processes whose Image ends with /esxcli and whose CommandLine contains 'vm process' and ends with ' list'. The command returns each running VM's name, World ID, UUID and .vmx path.",
+      "why_it_matters": "Some ESXi ransomware families list VMs to get their World IDs, stop them with 'esxcli vm process kill', and then encrypt the .vmdk files. This maps to execution through the hypervisor CLI (T1059.012) and to service and user discovery (T1007, T1033).",
+      "triage_steps": [
+        "Identify the ESXi host, the user and the exact CommandLine. Check for a maintenance window or a change ticket.",
+        "Review ParentImage and the process tree. A parent that is an interactive shell, a script in /tmp or an unknown binary raises suspicion.",
+        "Correlate with /var/log/shell.log, auth.log and hostd.log to find the SSH or DCUI login origin, the source IP and the time.",
+        "On the same host within +/- 15 minutes, look for 'esxcli vm process kill', 'vim-cmd vmsvc', firewall or syslog changes, and SSH or lockdown mode being disabled.",
+        "Look for new or modified files in /tmp, /vmfs/volumes or /etc/rc.local.d, unusual file extensions and ransom notes.",
+        "Check whether the same account or source IP reached other ESXi hosts or vCenter, and look for earlier alerts on these entities."
+      ],
+      "false_positives": [
+        "Administrators checking running VMs over SSH or from the ESXi Shell.",
+        "Backup, monitoring or automation scripts that regularly query VM state.",
+        "Host maintenance or patching procedures that list VMs before shutting them down."
+      ],
+      "response_steps": [
+        "Confirm with the platform owner whether the activity was authorized. If it was, document the account and the script for a possible exclusion.",
+        "If it was not, restrict SSH and network access to the host, rotate root and vCenter credentials, and preserve the logs.",
+        "Before any recovery, confirm that intact offline backups of the affected VMs exist.",
+        "Remove confirmed malicious binaries or persistence, re-enable lockdown mode, and check other hypervisors for the same activity."
+      ],
+      "severity_rationale": "Medium fits because admins run this command often, but when unauthorized it is a typical step before ESXi ransomware."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive SSH session on an ESXi host listing running VMs.",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli vm process list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "esxi-prod-03.example.com"
+        }
+      },
+      {
+        "description": "Script dropped in /tmp enumerating VMs via the full esxcli path.",
+        "event": {
+          "Image": "/usr/bin/esxcli",
+          "CommandLine": "/usr/bin/esxcli --formatter=csv vm process list",
+          "ParentImage": "/tmp/enc.sh",
+          "User": "root",
+          "Computer": "esxi-lab-01.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "esxcli vm process kill: contains 'vm process' but does not end with ' list'.",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli vm process kill --type=soft --world-id=2101554",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "esxi-prod-03.example.com"
+        }
+      },
+      {
+        "description": "esxcli network vm list: ends with ' list' but does not contain 'vm process'.",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli network vm list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Computer": "esxi-prod-03.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

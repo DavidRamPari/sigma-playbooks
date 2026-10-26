@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "1ce8c8a3-2723-48ed-8246-906ac91061a6",
+    "title": "Possible PetitPotam Coerce Authentication Attempt",
+    "level": "high",
+    "status": "test",
+    "author": "Mauricio Velazco, Michael Haag",
+    "path": "windows/builtin/security/win_security_petitpotam_network_share.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_petitpotam_network_share.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1187"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente anónimo (sesión nula) abrió el named pipe lsarpc a través del recurso compartido IPC$ en este host. Esto coincide con el patrón de PetitPotam, en el que un atacante intenta que el host se autentique ante un equipo bajo su control.",
+      "what_it_detects": "Evento de seguridad 5145 (acceso detallado a recurso compartido) con ShareName \\\\*\\IPC$, RelativeTargetName lsarpc y SubjectUserName ANONYMOUS LOGON. Requiere la política de auditoría Detailed File Share.",
+      "why_it_matters": "PetitPotam invoca funciones de MS-EFSRPC mediante el pipe lsarpc para forzar a un host, con frecuencia un controlador de dominio, a autenticarse ante el atacante. Esa autenticación NTLM puede retransmitirse (relay), por ejemplo a AD CS, y comprometer el dominio (T1187, Forced Authentication).",
+      "triage_steps": [
+        "Identifique el host destino (Computer) y la IpAddress de origen del evento 5145. Indique si el destino es un controlador de dominio o un servidor AD CS.",
+        "Verifique si la IP de origen corresponde a un escáner de vulnerabilidades autorizado, un equipo de pentest o un activo conocido. Obtenga su hostname y responsable.",
+        "En el destino, busque eventos 4624 tipo 3 de ANONYMOUS LOGON desde la misma IP en +/- 15 minutos.",
+        "Busque conexiones salientes SMB/HTTP del destino hacia la IP de origen u otros hosts inusuales (puertos 445, 80 o 443) justo después del evento.",
+        "En servidores AD CS, revise los eventos 4886/4887 en busca de solicitudes de certificado para la cuenta de equipo del destino, sobre todo vía web enrollment.",
+        "Busque inicios de sesión posteriores con la cuenta de equipo del destino (por ejemplo DC01$) desde IP inesperadas, y actividad de replicación o DCSync (4662).",
+        "Revise alertas previas de la misma IP de origen y del mismo host destino."
+      ],
+      "false_positives": [
+        "Escáneres de vulnerabilidades o pruebas de penetración autorizadas que verifican la exposición a PetitPotam o a sesiones nulas.",
+        "Sistemas heredados o appliances que usan sesiones anónimas para consultar LSA, por ejemplo para resolver SID."
+      ],
+      "response_steps": [
+        "Confirme si la actividad estaba autorizada. Si no lo estaba, aísle el host de origen y bloquee su IP en la red.",
+        "Si se emitió un certificado para la cuenta de equipo del destino, revóquelo e investigue cualquier uso que se le haya dado.",
+        "Si se confirma un relay o el uso de credenciales, restablezca las credenciales de la cuenta de equipo afectada y busque mecanismos de persistencia.",
+        "Refuerce la configuración: aplique las actualizaciones de Microsoft contra PetitPotam, habilite EPA y exija HTTPS en AD CS, y restrinja NTLM y el acceso anónimo a pipes."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque el acceso anónimo a lsarpc es poco común en tráfico legítimo, y una coerción con relay exitosa contra un controlador de dominio puede comprometer todo el dominio con rapidez."
+    },
+    "en": {
+      "summary": "An anonymous (null session) client opened the lsarpc named pipe over the IPC$ share on this host. This matches the PetitPotam pattern, where an attacker tries to make the host authenticate to a machine the attacker controls.",
+      "what_it_detects": "Security event 5145 (detailed file share access) where ShareName is \\\\*\\IPC$, RelativeTargetName is lsarpc and SubjectUserName is ANONYMOUS LOGON. This requires the Detailed File Share audit policy.",
+      "why_it_matters": "PetitPotam calls MS-EFSRPC functions through the lsarpc pipe to force a host, often a domain controller, to authenticate to an attacker. The captured NTLM authentication can be relayed, for example to AD CS web enrollment, which can lead to domain compromise (T1187, Forced Authentication).",
+      "triage_steps": [
+        "Identify the target host (Computer) and the source IpAddress in the 5145 event. Note whether the target is a domain controller or AD CS server.",
+        "Check whether the source IP belongs to an approved vulnerability scanner, a pentest host or a known asset. Find its hostname and owner.",
+        "On the target, search 4624 logon type 3 events for ANONYMOUS LOGON from the same IP within +/- 15 minutes.",
+        "Look for outbound SMB/HTTP connections from the target to the source IP or other unusual hosts on ports 445, 80 or 443 right after the event.",
+        "On AD CS servers, review 4886/4887 events for certificate requests made for the target's machine account, especially through web enrollment.",
+        "Search for later logons that use the target's machine account (for example DC01$) from unexpected IPs, and for replication or DCSync activity (4662).",
+        "Review earlier alerts for the same source IP and target host."
+      ],
+      "false_positives": [
+        "Authorized vulnerability scanners or penetration tests that check for PetitPotam or null session exposure.",
+        "Legacy systems or appliances that use anonymous sessions to query LSA, for example to resolve SIDs."
+      ],
+      "response_steps": [
+        "Confirm whether the activity was authorized. If not, isolate the source host and block its IP at the network level.",
+        "If a certificate was issued for the target's machine account, revoke it and investigate any use of it.",
+        "If relay or credential use is confirmed, reset the affected machine account credentials and look for persistence.",
+        "Harden: apply Microsoft's PetitPotam updates, enable EPA and require HTTPS on AD CS web enrollment, restrict NTLM and anonymous pipe access."
+      ],
+      "severity_rationale": "High fits because anonymous lsarpc access is rare in legitimate traffic, and a successful coercion and relay against a domain controller can quickly lead to full domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An anonymous session from an unknown workstation IP opens the lsarpc pipe over IPC$ on a domain controller, the PetitPotam coercion pattern.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "ANONYMOUS LOGON",
+          "SubjectDomainName": "NT AUTHORITY",
+          "SubjectLogonId": "0x8a3f21",
+          "ObjectType": "File",
+          "IpAddress": "192.0.2.45",
+          "IpPort": "50132",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "lsarpc",
+          "AccessMask": "0x3",
+          "AccessList": "%%4416 %%4417"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A domain workstation's machine account opens lsarpc over IPC$ with an authenticated session. This is normal LSA traffic, so the SubjectUserName check does not match.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x7b1c09",
+          "ObjectType": "File",
+          "IpAddress": "198.51.100.23",
+          "IpPort": "49822",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "lsarpc",
+          "AccessMask": "0x3",
+          "AccessList": "%%4416 %%4417"
+        }
+      },
+      {
+        "description": "An anonymous session reaches IPC$ but opens the srvsvc pipe instead of lsarpc, so RelativeTargetName does not match.",
+        "event": {
+          "EventID": 5145,
+          "Channel": "Security",
+          "Computer": "FS-02.andes.example.com",
+          "SubjectUserName": "ANONYMOUS LOGON",
+          "SubjectDomainName": "NT AUTHORITY",
+          "SubjectLogonId": "0x5d2e44",
+          "ObjectType": "File",
+          "IpAddress": "203.0.113.17",
+          "IpPort": "51544",
+          "ShareName": "\\\\*\\IPC$",
+          "ShareLocalPath": "",
+          "RelativeTargetName": "srvsvc",
+          "AccessMask": "0x3",
+          "AccessList": "%%4416 %%4417"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

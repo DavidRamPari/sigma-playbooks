@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "c420410f-c2d8-4010-856b-dffe21866437",
+    "title": "Enable LM Hash Storage",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_system_lsa_nolmhash.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_system_lsa_nolmhash.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se modificó el valor de registro NoLMHash de LSA a 0 (DWORD). Con eso Windows vuelve a guardar hashes LM de las contraseñas en la SAM local y en Active Directory.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject termina en System\\CurrentControlSet\\Control\\Lsa\\NoLMHash y Details es 'DWORD (0x00000000)'. Esto desactiva la protección que impide almacenar hashes LAN Manager.",
+      "why_it_matters": "Los hashes LM son débiles y se crackean fácilmente. Un atacante puede desactivar esta protección para debilitar las defensas y luego obtener contraseñas en texto claro cuando los usuarios las cambien. Corresponde a ATT&CK T1112 (Modify Registry).",
+      "triage_steps": [
+        "Revise Image y User del evento para saber qué proceso y qué cuenta cambiaron NoLMHash. Desconfíe de reg.exe, powershell.exe, cmd.exe o binarios en rutas temporales.",
+        "Busque la creación del proceso que hizo el cambio y revise CommandLine, ParentImage y la cadena completa de procesos padre e hijo.",
+        "Confirme si el host es un controlador de dominio. En ese caso, el cambio afecta los hashes guardados en Active Directory.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, otros cambios en HKLM\\...\\Control\\Lsa, como WDigest, RunAsPPL o LmCompatibilityLevel.",
+        "Busque en el mismo host o con el mismo usuario actividad de volcado de credenciales: acceso a lsass, reg save de SAM/SYSTEM o ntdsutil.",
+        "Compare con los tickets de cambio y con GPO que configuren 'Network security: Do not store LAN Manager hash value'. Revise si hubo alertas anteriores para la misma entidad."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Hay aplicaciones heredadas que requieren autenticación LM y para las que un administrador habilita el almacenamiento de hashes LM, idealmente con un cambio aprobado.",
+        "Scripts de hardening mal configurados o pruebas de laboratorio y de equipo rojo autorizadas."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema y con el área de cambios si la modificación estaba autorizada.",
+        "Si no estaba autorizada, aísle el endpoint y conserve evidencia: claves de registro, árbol de procesos y memoria si es posible.",
+        "Restaure NoLMHash a 1 mediante GPO o registro y verifique que la configuración se aplique.",
+        "Fuerce el cambio de contraseña de las cuentas que la modificaron después del cambio, para eliminar los hashes LM ya almacenados.",
+        "Busque el mismo cambio en otros hosts e investigue el acceso inicial y los mecanismos de persistencia."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque desactivar NoLMHash rara vez es legítimo, debilita directamente la protección de credenciales y suele preceder al robo de contraseñas."
+    },
+    "en": {
+      "summary": "The LSA NoLMHash registry value was set to 0 (DWORD). Windows will now store LM hashes of passwords in the local SAM and in Active Directory.",
+      "what_it_detects": "registry_set events where TargetObject ends with System\\CurrentControlSet\\Control\\Lsa\\NoLMHash and Details equals 'DWORD (0x00000000)'. This disables the protection that blocks LAN Manager hash storage.",
+      "why_it_matters": "LM hashes are weak and quickly cracked. An attacker can turn off this protection to impair defenses, then recover plaintext passwords as users change them. Maps to ATT&CK T1112 (Modify Registry).",
+      "triage_steps": [
+        "Check the event's Image and User to see which process and account changed NoLMHash. Be suspicious of reg.exe, powershell.exe, cmd.exe or binaries in temp paths.",
+        "Find the process creation event for the writer and review CommandLine, ParentImage and the full chain of parent and child processes.",
+        "Determine whether the host is a domain controller. If it is, the change affects hashes stored in Active Directory.",
+        "Look for other changes under HKLM\\...\\Control\\Lsa on the same host within +/- 15 minutes, such as WDigest, RunAsPPL or LmCompatibilityLevel.",
+        "Search the same host or user for credential dumping: lsass access, reg save of SAM/SYSTEM, or ntdsutil.",
+        "Compare against change tickets and any GPO that sets 'Do not store LAN Manager hash value'. Check for earlier alerts on the same entity."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "An administrator enables LM hash storage for a legacy application that needs LM authentication, ideally under an approved change.",
+        "Misconfigured hardening scripts, lab testing, or authorized red team exercises."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and change management whether the change was authorized.",
+        "If it was not, isolate the endpoint and preserve evidence: registry hives, process tree and, if possible, memory.",
+        "Set NoLMHash back to 1 through GPO or the registry, and confirm the setting is applied.",
+        "Force password resets for accounts that changed their password after the modification, so stored LM hashes are purged.",
+        "Hunt for the same change on other hosts and investigate initial access and persistence."
+      ],
+      "severity_rationale": "High fits because disabling NoLMHash is rarely legitimate, directly weakens credential protection and often comes before password theft."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets NoLMHash to 0 on a workstation",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\NoLMHash",
+          "Details": "DWORD (0x00000000)"
+        }
+      },
+      {
+        "description": "PowerShell sets NoLMHash to 0 on a domain controller",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "DC-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\adm-mrojas",
+          "TargetObject": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\NoLMHash",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "GPO hardening sets NoLMHash to 1, the secure value",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\NoLMHash",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "A different LSA value set to 0, not NoLMHash",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Control\\Lsa\\LmCompatibilityLevel",
+          "Details": "DWORD (0x00000000)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

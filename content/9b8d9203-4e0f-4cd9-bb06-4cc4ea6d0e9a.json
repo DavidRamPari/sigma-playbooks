@@ -1,0 +1,145 @@
+{
+  "rule": {
+    "id": "9b8d9203-4e0f-4cd9-bb06-4cc4ea6d0e9a",
+    "title": "Invoke-Obfuscation Via Use MSHTA - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/builtin/security/win_security_invoke_obfuscation_via_use_mshta_services_security.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_invoke_obfuscation_via_use_mshta_services_security.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (EID 4697) cuyo ServiceFileName usa mshta con vbscript:CreateObject(...).Run(...) y window.close, un patrón típico de Invoke-Obfuscation para lanzar PowerShell oculto.",
+      "what_it_detects": "Eventos 4697 del registro Security en los que ServiceFileName contiene a la vez 'mshta', 'vbscript:createobject', '.run' y 'window.close'. Requiere la subcategoría de auditoría 'System Security Extension' habilitada.",
+      "why_it_matters": "Un servicio que ejecuta mshta con VBScript inline sirve para ejecutar PowerShell ofuscado (T1059.001, T1027) con privilegios de SYSTEM. También se usa para persistencia o movimiento lateral mediante la creación remota de servicios.",
+      "triage_steps": [
+        "Lea el ServiceFileName completo, extraiga el comando que se pasa a .Run y decodifique cualquier bloque -EncodedCommand o cadena ofuscada.",
+        "Revise ServiceName, ServiceStartType y ServiceAccount: los nombres aleatorios, el inicio por demanda y LocalSystem son señales de abuso.",
+        "Identifique SubjectUserName y SubjectLogonId, y correlacione con el evento 4624 del mismo LogonId para obtener el tipo de logon y la IP de origen.",
+        "Si el logon es de tipo 3 desde otro equipo, investigue ese origen como posible punto de movimiento lateral.",
+        "Busque en el mismo host, en un rango de +/- 15 minutos, eventos 7045 (System), 4688 o Sysmon de mshta.exe y powershell.exe, y conexiones de red salientes.",
+        "Busque el mismo ServiceName o ServiceFileName en otros hosts y revise alertas previas para el usuario y el host."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; el patrón es muy poco habitual en software legítimo.",
+        "Ejercicios autorizados de red team o pentesting que usen Invoke-Obfuscation; confírmelos con el equipo responsable."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa decodificando el payload y validando con el dueño del sistema que no se trata de una prueba autorizada.",
+        "Aísle el endpoint de la red y preserve la evidencia: configuración del servicio, registros de eventos y memoria si es posible.",
+        "Detenga y deshabilite el servicio tras documentarlo; elimínelo solo después de capturar la evidencia.",
+        "Restablezca las credenciales de SubjectUserName y revise el uso de esa cuenta en otros sistemas.",
+        "Busque y elimine los artefactos descargados o ejecutados por el payload, y restaure el host desde una imagen confiable si hubo compromiso."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque instalar un servicio que lanza código mshta/VBScript ofuscado casi nunca es legítimo e implica ejecución con privilegios elevados."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EID 4697) whose ServiceFileName runs mshta with vbscript:CreateObject(...).Run(...) and window.close, a typical Invoke-Obfuscation pattern for launching hidden PowerShell.",
+      "what_it_detects": "Security log event 4697 where ServiceFileName contains all of 'mshta', 'vbscript:createobject', '.run' and 'window.close'. The 'System Security Extension' audit subcategory must be enabled.",
+      "why_it_matters": "A service that runs mshta with inline VBScript executes obfuscated PowerShell (T1059.001, T1027) as SYSTEM. It is also used for persistence or lateral movement through remote service creation.",
+      "triage_steps": [
+        "Read the full ServiceFileName, extract the command passed to .Run, and decode any -EncodedCommand or obfuscated strings.",
+        "Check ServiceName, ServiceStartType and ServiceAccount: random names, demand start and LocalSystem point to abuse.",
+        "Identify SubjectUserName and SubjectLogonId, and correlate with the 4624 event for that LogonId to get the logon type and source IP.",
+        "If the logon is type 3 from another machine, investigate that source as a possible lateral movement origin.",
+        "On the same host, +/- 15 minutes, look for 7045 (System), 4688 or Sysmon events for mshta.exe and powershell.exe, and outbound network connections.",
+        "Hunt for the same ServiceName or ServiceFileName on other hosts and review earlier alerts for the user and host."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; this pattern is very rare in legitimate software.",
+        "Authorized red team or penetration tests using Invoke-Obfuscation; confirm with the responsible team."
+      ],
+      "response_steps": [
+        "Confirm the activity is malicious by decoding the payload and checking with the system owner that it is not an authorized test.",
+        "Isolate the endpoint and preserve evidence: service configuration, event logs and memory if possible.",
+        "Stop and disable the service after documenting it; delete it only once evidence is captured.",
+        "Reset credentials for SubjectUserName and review that account's activity on other systems.",
+        "Find and remove artifacts dropped or run by the payload; reimage the host from a trusted baseline if compromise is confirmed."
+      ],
+      "severity_rationale": "High fits because installing a service that launches obfuscated mshta/VBScript code is almost never legitimate and implies execution with elevated privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service installed with mshta inline VBScript that runs hidden PowerShell and closes the window (Invoke-Obfuscation VAR+ / MSHTA launcher).",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ServiceName": "xKqPzT",
+          "ServiceFileName": "C:\\Windows\\System32\\mshta.exe vbscript:CreateObject(\"Wscript.Shell\").Run(\"powershell -NoP -NonI -W Hidden -C Write-Output placeholder\",0,True)(window.close)",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Same technique with mixed casing and cmd wrapper, still containing all four required strings.",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x51B0C4",
+          "ServiceName": "UpdSvc81",
+          "ServiceFileName": "cmd /c MSHTA VBScript:CreateObject(\"WScript.Shell\").RUN(\"powershell -enc UABsAGEAYwBlAGgAbwBsAGQAZQByAA==\",0)(Window.Close)",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate service that launches an HTA file with mshta, without inline VBScript, .run or window.close.",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0207.andes.example.com",
+          "SubjectUserName": "WS-0207$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ServiceName": "VendorKioskUI",
+          "ServiceFileName": "C:\\Windows\\System32\\mshta.exe \"C:\\Program Files\\Vendor\\Kiosk\\kiosk.hta\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Near-miss: mshta with vbscript:CreateObject and .Run but no window.close, so the |all condition is not met.",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ServiceName": "TestSvc",
+          "ServiceFileName": "mshta vbscript:CreateObject(\"Wscript.Shell\").Run(\"notepad.exe\",1)",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

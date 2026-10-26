@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "9541f321-7cba-4b43-80fc-fbd1fb922808",
+    "title": "Azure Kubernetes Cluster Created or Deleted",
+    "level": "low",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_cluster_created_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_cluster_created_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1485",
+      "T1489",
+      "T1496"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad creó, modificó o eliminó un recurso de clúster de Kubernetes conectado (Azure Arc) en la suscripción. Puede ser administración normal o un intento de abusar de recursos o interrumpir servicios.",
+      "what_it_detects": "Eventos de Azure Activity Logs con operationName MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/WRITE o /DELETE. Estas operaciones corresponden a clústeres conectados mediante Azure Arc, no a AKS administrado (Microsoft.ContainerService). WRITE incluye creación y actualización.",
+      "why_it_matters": "Si un atacante elimina un clúster, destruye datos o detiene servicios (T1485, T1489). Si registra clústeres no autorizados, puede ejecutar cargas como minería de criptomonedas o ganar persistencia (T1496).",
+      "triage_steps": [
+        "Identifique el caller, el callerIpAddress, el user agent y el resourceId afectado; distinga si fue WRITE o DELETE y revise el status de la operación.",
+        "Confirme si la identidad es un administrador o service principal autorizado para gestionar Azure Arc y si existe un cambio o ticket aprobado.",
+        "Compare el callerIpAddress con ubicaciones y rangos habituales; revise los inicios de sesión de esa identidad en Entra ID cerca del evento.",
+        "Revise la actividad del mismo caller en la suscripción +/- 15 minutos: asignaciones de roles, nuevas credenciales, otros borrados o creación de recursos.",
+        "Para WRITE, verifique si el clúster es nuevo o existente, su nombre, grupo de recursos y región; nombres o regiones inusuales son señal de alerta.",
+        "Para DELETE, determine qué cargas dependían del clúster y si hubo borrados masivos de otros recursos.",
+        "Busque alertas previas para la misma identidad, IP o suscripción."
+      ],
+      "false_positives": [
+        "Administradores de plataforma que crean, actualizan o retiran clústeres Arc como parte de su trabajo.",
+        "Pipelines de IaC (Terraform, Bicep, ARM) o service principals de automatización que despliegan o destruyen entornos.",
+        "Onboarding con az connectedk8s connect o reconexiones que generan operaciones WRITE de actualización."
+      ],
+      "response_steps": [
+        "Verifique con el responsable de la identidad y del recurso si el cambio fue legítimo antes de actuar.",
+        "Si no está autorizado, deshabilite o revoque las sesiones y credenciales de la identidad comprometida y revise sus roles.",
+        "Para clústeres registrados sin autorización, valide su origen y luego desconéctelos o elimínelos, revisando las cargas que ejecutaban.",
+        "Para clústeres eliminados, restaure desde respaldos o IaC y documente el impacto.",
+        "Aplique mínimo privilegio y, si procede, excepciones documentadas para automatizaciones conocidas."
+      ],
+      "severity_rationale": "Nivel bajo porque crear o eliminar clústeres es una tarea administrativa frecuente; solo gana relevancia con una identidad, IP o contexto inusual."
+    },
+    "en": {
+      "summary": "An identity created, updated or deleted an Azure Arc connected Kubernetes cluster resource in the subscription. This may be routine administration or an attempt to abuse resources or disrupt services.",
+      "what_it_detects": "Azure Activity Log events whose operationName is MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/WRITE or /DELETE. These cover Azure Arc connected clusters, not managed AKS (Microsoft.ContainerService). WRITE covers both creation and updates.",
+      "why_it_matters": "An attacker deleting a cluster destroys data or stops services (T1485, T1489). Registering rogue clusters can host unauthorized workloads such as cryptomining or provide persistence (T1496).",
+      "triage_steps": [
+        "Identify caller, callerIpAddress, user agent and the affected resourceId; note whether it was WRITE or DELETE and check the operation status.",
+        "Confirm the identity is an admin or service principal authorized to manage Azure Arc, and look for an approved change or ticket.",
+        "Compare callerIpAddress with usual locations and ranges; review that identity's Entra ID sign-ins around the event.",
+        "Review the same caller's activity in the subscription +/- 15 minutes: role assignments, new credentials, other deletions or resource creation.",
+        "For WRITE, check whether the cluster is new or existing, plus its name, resource group and region; unusual names or regions are red flags.",
+        "For DELETE, determine which workloads depended on the cluster and whether other resources were deleted in bulk.",
+        "Search for earlier alerts on the same identity, IP or subscription."
+      ],
+      "false_positives": [
+        "Platform administrators creating, updating or retiring Arc clusters as part of their job.",
+        "IaC pipelines (Terraform, Bicep, ARM) or automation service principals deploying or tearing down environments.",
+        "Onboarding with az connectedk8s connect or reconnections that produce update WRITE operations."
+      ],
+      "response_steps": [
+        "Verify with the identity and resource owners whether the change was legitimate before acting.",
+        "If unauthorized, disable the compromised identity or revoke its sessions and credentials, and review its roles.",
+        "For rogue clusters, validate their origin, then disconnect or delete them and review the workloads they ran.",
+        "For deleted clusters, restore from backups or IaC and document the impact.",
+        "Enforce least privilege and add documented exclusions for known automation if needed."
+      ],
+      "severity_rationale": "Low because creating or deleting clusters is a common administrative task; it matters mainly with an unusual identity, IP or context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user deletes an Arc connected cluster from an external IP",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/DELETE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-edge-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-edge-01",
+          "userAgent": "python-requests/2.31.0"
+        }
+      },
+      {
+        "description": "Connected cluster registered (write), mixed-case operation name still matches case-insensitively",
+        "event": {
+          "operationName": "Microsoft.Kubernetes/connectedClusters/write",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "svc-arc-onboard@example.com",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-lab/providers/Microsoft.Kubernetes/connectedClusters/arc-lab-07",
+          "userAgent": "AZURECLI/2.58.0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read-only credential listing on a connected cluster, not a write or delete",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/LISTCLUSTERUSERCREDENTIAL/ACTION",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-edge-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-edge-01"
+        }
+      },
+      {
+        "description": "Managed AKS cluster write uses a different resource provider",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/WRITE",
+          "category": "Administrative",
+          "status": "Succeeded",
+          "caller": "terraform-sp@example.com",
+          "callerIpAddress": "192.0.2.55",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-aks/providers/Microsoft.ContainerService/managedClusters/aks-prod-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

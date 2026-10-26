@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "6b67c12e-5e40-47c6-b3b0-1e6b571184cc",
+    "title": "Google Cloud Service Account Modified",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_service_account_modified.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_service_account_modified.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó, modificó, actualizó, habilitó o restauró (undelete) una cuenta de servicio en Google Cloud. Hay que confirmar que el cambio fue autorizado y que lo hizo una identidad esperada.",
+      "what_it_detects": "Eventos de GCP Audit Logs cuyo gcp.audit.method_name termina en .serviceAccounts.patch, .create, .update, .enable o .undelete, es decir, cambios en el ciclo de vida o en los metadatos de cuentas de servicio IAM.",
+      "why_it_matters": "Las cuentas de servicio dan acceso no interactivo a los recursos del proyecto. Si un atacante crea una, habilita una cuenta inactiva o restaura una eliminada, puede conseguir persistencia y escalar privilegios. La regla está etiquetada con la táctica Impact de ATT&CK.",
+      "triage_steps": [
+        "Identifique el método exacto en gcp.audit.method_name y la cuenta afectada en el nombre del recurso (projects/<proyecto>/serviceAccounts/<email>).",
+        "Revise el principal que hizo el cambio (principal_email): ¿es un administrador, un pipeline de IaC conocido o una identidad poco habitual?",
+        "Valide la IP de origen y el user agent: compárelos con los rangos corporativos, Terraform, gcloud o la consola habituales de ese principal.",
+        "Si fue enable o undelete, averigüe por qué se había deshabilitado o eliminado la cuenta y quién lo hizo.",
+        "Pivotee en el mismo proyecto ±15 minutos: busque serviceAccounts.keys.create, setIamPolicy, actAs o getAccessToken sobre la misma cuenta.",
+        "Consulte los roles IAM asignados a la cuenta de servicio y si se ampliaron hace poco.",
+        "Busque alertas anteriores del mismo principal, la misma IP o la misma cuenta de servicio.",
+        "Contraste el cambio con tickets de cambio o despliegues programados."
+      ],
+      "false_positives": [
+        "Administradores que crean o actualizan cuentas de servicio como parte de su trabajo normal.",
+        "Pipelines de Terraform, Deployment Manager o CI/CD que gestionan cuentas de servicio automáticamente.",
+        "Restauración legítima de una cuenta eliminada por error, documentada en un ticket.",
+        "Cambios de descripción o de display name sin impacto en la seguridad."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del proyecto o con el principal si el cambio estaba autorizado.",
+        "Si no lo estaba, deshabilite la cuenta de servicio afectada y revoque o elimine sus claves, después de verificar las dependencias.",
+        "Suspenda o restrinja las credenciales del principal que hizo el cambio y revise su actividad reciente.",
+        "Revierta los cambios en roles IAM y en políticas asociados a la cuenta.",
+        "Documente el incidente y, si la actividad es legítima y recurrente, cree una excepción acotada por principal y user agent."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estos cambios suelen ser administrativos, pero en manos no autorizadas permiten persistencia y escalamiento en el proyecto."
+    },
+    "en": {
+      "summary": "A Google Cloud service account was created, patched, updated, enabled or undeleted. Confirm the change was authorized and made by an expected identity.",
+      "what_it_detects": "GCP Audit Log events whose gcp.audit.method_name ends with .serviceAccounts.patch, .create, .update, .enable or .undelete, which are lifecycle or metadata changes to IAM service accounts.",
+      "why_it_matters": "Service accounts give non-interactive access to project resources. An attacker who creates one, re-enables a dormant one or restores a deleted one can gain persistence and escalate privileges. The rule is tagged with the ATT&CK Impact tactic.",
+      "triage_steps": [
+        "Note the exact method in gcp.audit.method_name and the affected account in the resource name (projects/<project>/serviceAccounts/<email>).",
+        "Review the acting principal (principal_email): is it an admin, a known IaC pipeline or an unusual identity?",
+        "Check the source IP and user agent against the corporate ranges and the Terraform, gcloud or console usage typical for that principal.",
+        "For enable or undelete, find out why the account was disabled or deleted, and by whom.",
+        "Pivot on the same project +/- 15 minutes for serviceAccounts.keys.create, setIamPolicy, actAs or getAccessToken on the same account.",
+        "Review the IAM roles granted to the service account and whether they were recently expanded.",
+        "Search for earlier alerts on the same principal, source IP or service account.",
+        "Match the change against change tickets or scheduled deployments."
+      ],
+      "false_positives": [
+        "Administrators creating or updating service accounts as part of normal duties.",
+        "Terraform, Deployment Manager or CI/CD pipelines that manage service accounts automatically.",
+        "Legitimate restore of an account deleted by mistake, documented in a ticket.",
+        "Description or display name edits with no security impact."
+      ],
+      "response_steps": [
+        "Confirm with the project owner or the principal that the change was authorized.",
+        "If it was not, disable the affected service account and revoke or delete its keys after checking dependencies.",
+        "Suspend or restrict the acting principal's credentials and review its recent activity.",
+        "Roll back the IAM role and policy changes tied to the account.",
+        "Document the incident. If the activity is legitimate and recurring, add a narrow exception scoped by principal and user agent."
+      ],
+      "severity_rationale": "Medium fits because these changes are often administrative, but in unauthorized hands they enable persistence and privilege escalation within the project."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service account created from gcloud by an unfamiliar user",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.create",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/serviceAccounts/backup-sync@andes-prod.iam.gserviceaccount.com",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0 command/gcloud.iam.service-accounts.create",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Previously deleted service account restored",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.undelete",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "mlopez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/serviceAccounts/112233445566778899000",
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "event.outcome": "success"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Key created for a service account: the method ends with .keys.create, not .serviceAccounts.create",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.keys.create",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/serviceAccounts/backup-sync@andes-prod.iam.gserviceaccount.com",
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/450.0.0",
+          "event.outcome": "success"
+        }
+      },
+      {
+        "description": "Service account disabled, a method the rule does not list",
+        "event": {
+          "gcp.audit.method_name": "google.iam.admin.v1.projects.serviceAccounts.disable",
+          "gcp.audit.service_name": "iam.googleapis.com",
+          "gcp.audit.principal_email": "terraform@andes-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-prod/serviceAccounts/legacy-app@andes-prod.iam.gserviceaccount.com",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "Terraform/1.6.2 terraform-provider-google/5.4.0",
+          "event.outcome": "success"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

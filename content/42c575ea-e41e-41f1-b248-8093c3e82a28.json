@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "42c575ea-e41e-41f1-b248-8093c3e82a28",
+    "title": "PsExec Service Installation",
+    "level": "medium",
+    "status": "test",
+    "author": "Thomas Patzke",
+    "path": "windows/builtin/system/service_control_manager/win_system_service_install_sysinternals_psexec.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/system/service_control_manager/win_system_service_install_sysinternals_psexec.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1569.002"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló en este host un servicio llamado PSEXESVC, o uno cuyo binario termina en \\PSEXESVC.exe. Normalmente esto indica que alguien ejecutó Sysinternals PsExec contra el equipo desde otra máquina.",
+      "what_it_detects": "Evento 7045 del log System, generado por Service Control Manager, con ServiceName igual a PSEXESVC o ImagePath terminado en \\PSEXESVC.exe. PsExec copia ese binario a ADMIN$ y lo registra como servicio para ejecutar comandos remotos.",
+      "why_it_matters": "PsExec (S0029) ejecuta comandos como servicio en hosts remotos (T1569.002, ejecución de servicios). Los atacantes lo usan con credenciales administrativas robadas para moverse lateralmente, desplegar ransomware o ejecutar comandos como SYSTEM.",
+      "triage_steps": [
+        "Revise ServiceName, ImagePath, AccountName y Computer en el evento 7045. Anote la hora exacta para correlacionar otros eventos.",
+        "En el log Security, busque eventos 4624 de tipo 3 en un margen de ±15 minutos. Identifique la IP de origen, la cuenta y el paquete de autenticación de la sesión de PsExec.",
+        "Busque eventos 5140/5145 de acceso a ADMIN$ o IPC$ desde el mismo origen, incluidas escrituras de PSEXESVC.exe y named pipes como PSEXESVC-*-stdin.",
+        "Revise los procesos hijos de PSEXESVC.exe en el destino (cmd.exe, powershell.exe, rundll32) y su CommandLine.",
+        "En el host de origen, busque ejecuciones de psexec.exe o PsExec64.exe, su proceso padre, el usuario que las lanzó y los equipos de destino.",
+        "Calcule el hash de PSEXESVC.exe y verifique que tenga una firma válida de Sysinternals/Microsoft.",
+        "Pivote por la cuenta y la IP de origen para encontrar eventos 7045 en otros hosts y alertas previas que indiquen movimiento lateral."
+      ],
+      "false_positives": [
+        "Administradores que usan PsExec para soporte remoto o diagnóstico.",
+        "Scripts de despliegue, herramientas RMM o procesos de parcheo que invocan PsExec.",
+        "Automatizaciones programadas de TI que ejecutan PsExec con una cuenta de servicio."
+      ],
+      "response_steps": [
+        "Confirme con el responsable de la cuenta o con un ticket de cambio si la actividad estaba autorizada.",
+        "Si no estaba autorizada, aísle los hosts de destino y de origen, y deshabilite la cuenta usada o restablezca su contraseña.",
+        "Recolecte los comandos ejecutados, los archivos creados y los eventos de inicio de sesión. Luego elimine la persistencia y los artefactos maliciosos.",
+        "Busque la misma cuenta u origen en otros hosts y restaure los sistemas afectados cuando estén limpios."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque PsExec es una herramienta administrativa común, pero cada instalación ejecuta código remoto como SYSTEM y requiere una validación rápida."
+    },
+    "en": {
+      "summary": "A service called PSEXESVC, or one whose binary ends in \\PSEXESVC.exe, was installed on this host. Usually this means someone ran Sysinternals PsExec against it from another machine.",
+      "what_it_detects": "System log event 7045 from Service Control Manager where ServiceName is PSEXESVC or ImagePath ends with \\PSEXESVC.exe. PsExec copies this service binary to ADMIN$ and registers it so it can run commands remotely.",
+      "why_it_matters": "PsExec (S0029) runs commands as a service on remote hosts (T1569.002, Service Execution). Attackers often use it with stolen admin credentials to move laterally, deploy ransomware or run commands as SYSTEM.",
+      "triage_steps": [
+        "Check ServiceName, ImagePath, AccountName and Computer in the 7045 event. Note the exact timestamp so you can correlate other events.",
+        "In the Security log, find 4624 logon type 3 within ±15 minutes. Note the source IP, account and authentication package of the PsExec session.",
+        "Look for 5140/5145 access to ADMIN$ or IPC$ from the same source, including PSEXESVC.exe writes and named pipes such as PSEXESVC-*-stdin.",
+        "Review processes spawned by PSEXESVC.exe on the target (cmd.exe, powershell.exe, rundll32) and their CommandLine values.",
+        "On the source host, find psexec.exe or PsExec64.exe executions, their parent process, the user who ran them and the target list.",
+        "Hash PSEXESVC.exe and check that it carries a valid Sysinternals/Microsoft signature.",
+        "Pivot on the account and source IP for 7045 events on other hosts and for earlier alerts that may show lateral movement."
+      ],
+      "false_positives": [
+        "Administrators using PsExec for remote support or troubleshooting.",
+        "Deployment scripts, RMM tools or patch processes that wrap PsExec.",
+        "Scheduled IT automation running PsExec under a service account."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or a change ticket whether the activity was authorized.",
+        "If unauthorized, isolate the target and source hosts and disable or reset the account used.",
+        "Collect the commands run, any dropped files and the logon events, then remove persistence and malicious artifacts.",
+        "Hunt for the same account or source on other hosts, and restore affected systems once they are clean."
+      ],
+      "severity_rationale": "Medium fits because PsExec is a common admin tool, but each installation runs SYSTEM-level remote code and needs a quick check."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Standard PsExec service installation with default service name and binary in SystemRoot",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "PSEXESVC",
+          "ImagePath": "%SystemRoot%\\PSEXESVC.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service registered with a different display name but ImagePath still ending in \\PSEXESVC.exe",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "ServiceName": "PsExecHelper",
+          "ImagePath": "C:\\Windows\\PSEXESVC.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PsExec run with a custom service name (-r), so neither ServiceName nor ImagePath matches",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "ServiceName": "CUSTSVC",
+          "ImagePath": "%SystemRoot%\\CUSTSVC.exe",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service state change event 7036 for PSEXESVC, not a 7045 installation",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7036,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "param1": "PSEXESVC",
+          "param2": "running"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

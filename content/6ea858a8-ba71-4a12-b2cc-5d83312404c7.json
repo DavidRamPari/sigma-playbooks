@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "6ea858a8-ba71-4a12-b2cc-5d83312404c7",
+    "title": "HackTool - Typical HiveNightmare SAM File Export",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_hktl_hivenightmare_file_exports.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_hktl_hivenightmare_file_exports.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un archivo con un nombre típico de las herramientas que explotan HiveNightmare (CVE-2021-36934), lo que sugiere una copia del hive SAM extraída desde una shadow copy.",
+      "what_it_detects": "Eventos de creación de archivos cuyo TargetFilename contiene patrones de nombre usados por las versiones en Go, C++, PowerShell y C# de HiveNightmare: \\hive_sam_, \\SAM-2021-/2022-/2023-, \\SAM-haxx, \\Sam.save o exactamente C:\\windows\\temp\\sam.",
+      "why_it_matters": "HiveNightmare aprovecha ACL permisivas en los hives del registro para que un usuario sin privilegios lea SAM, SYSTEM y SECURITY desde Volume Shadow Copies. Con ellos se obtienen hashes de cuentas locales (ATT&CK T1552.001, credenciales en archivos) para pass-the-hash o escalada.",
+      "triage_steps": [
+        "Revisa TargetFilename, Image y User del evento: identifica qué proceso escribió el archivo y desde qué ruta se ejecutó (Downloads, Desktop, Temp).",
+        "Obtén el hash de Image y del archivo creado; compáralos con inteligencia interna y reputación pública.",
+        "Busca en el mismo host, +/- 15 minutos, archivos similares de SYSTEM y SECURITY (hive_system_, SYSTEM-2021-, Security.save) que confirmen una extracción completa.",
+        "Reconstruye el árbol de procesos: proceso padre, línea de comandos y si se lanzó desde PowerShell, cmd o una sesión remota.",
+        "Verifica si el usuario es administrador; si no lo es, comprueba la exposición con icacls C:\\Windows\\System32\\config\\SAM y vssadmin list shadows.",
+        "Busca exfiltración del archivo: copias a recursos compartidos, cargas web o archivos comprimidos creados poco después por el mismo usuario.",
+        "Revisa logons NTLM (4624, tipo 3) con cuentas locales del host en otros equipos, que indicarían uso de hashes robados.",
+        "Consulta alertas previas para el mismo usuario y host, especialmente descarga de herramientas o reconocimiento."
+      ],
+      "false_positives": [
+        "Archivos que contienen estos nombres de forma accidental, por ejemplo documentos o respaldos llamados SAM-2022-informe.",
+        "Pruebas autorizadas de red team o validaciones de vulnerabilidad documentadas con ticket de cambio."
+      ],
+      "response_steps": [
+        "Confirma con el usuario y el equipo responsable si la actividad estaba autorizada; preserva el archivo y el ejecutable como evidencia.",
+        "Si no está autorizada, aísla el endpoint y elimina las copias del hive tras recolectar evidencia.",
+        "Rota las contraseñas de todas las cuentas locales del host, incluido el administrador local (por ejemplo con LAPS), y revisa reutilización en otros equipos.",
+        "Corrige la vulnerabilidad: aplica la actualización, restringe las ACL de %windir%\\system32\\config y, tras verificar respaldos, elimina las shadow copies expuestas y créalas de nuevo.",
+        "Busca el mismo indicador en toda la flota para identificar otros hosts afectados."
+      ],
+      "severity_rationale": "Nivel alto: los nombres son muy específicos de herramientas ofensivas y su presencia implica un probable robo de credenciales locales."
+    },
+    "en": {
+      "summary": "A file was created with a name typical of tools that exploit HiveNightmare (CVE-2021-36934), suggesting a copy of the SAM hive pulled from a shadow copy.",
+      "what_it_detects": "File creation events whose TargetFilename contains naming patterns of the Go, C++, PowerShell and C# HiveNightmare tools: \\hive_sam_, \\SAM-2021-/2022-/2023-, \\SAM-haxx, \\Sam.save, or exactly C:\\windows\\temp\\sam.",
+      "why_it_matters": "HiveNightmare abuses permissive registry hive ACLs so an unprivileged user can read SAM, SYSTEM and SECURITY from Volume Shadow Copies, yielding local account hashes (ATT&CK T1552.001, credentials in files) for pass-the-hash or escalation.",
+      "triage_steps": [
+        "Review TargetFilename, Image and User: identify which process wrote the file and where it ran from (Downloads, Desktop, Temp).",
+        "Hash the Image and the written file; check internal intel and public reputation.",
+        "On the same host, +/- 15 minutes, look for matching SYSTEM and SECURITY exports (hive_system_, SYSTEM-2021-, Security.save) confirming a full dump.",
+        "Rebuild the process tree: parent process, command line, and whether it came from PowerShell, cmd or a remote session.",
+        "Check whether the user is an admin; if not, confirm exposure with icacls C:\\Windows\\System32\\config\\SAM and vssadmin list shadows.",
+        "Look for exfiltration: copies to shares, web uploads or archives created shortly after by the same user.",
+        "Search for NTLM logons (4624, type 3) using this host's local accounts on other machines, indicating use of stolen hashes.",
+        "Check earlier alerts for the same user and host, especially tool downloads or reconnaissance."
+      ],
+      "false_positives": [
+        "Files that accidentally contain these strings, such as documents or backups named SAM-2022-report.",
+        "Authorized red team tests or vulnerability validation documented in a change ticket."
+      ],
+      "response_steps": [
+        "Confirm with the user and owning team whether activity was authorized; preserve the file and executable as evidence.",
+        "If unauthorized, isolate the endpoint and remove the hive copies after collecting evidence.",
+        "Rotate passwords for all local accounts on the host, including local admin (e.g. via LAPS), and check reuse elsewhere.",
+        "Remediate: apply the update, restrict ACLs on %windir%\\system32\\config, and after verifying backups delete and recreate exposed shadow copies.",
+        "Hunt for the same indicator fleet-wide to find other affected hosts."
+      ],
+      "severity_rationale": "High fits because these filenames are highly specific to offensive tooling and indicate likely theft of local credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "C++ HiveNightmare build writes a dated SAM export to the user's desktop",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\HiveNightmare.exe",
+          "ProcessId": 6120,
+          "TargetFilename": "C:\\Users\\jperez\\Desktop\\SAM-2021-07-23",
+          "CreationUtcTime": "2021-07-23 10:14:02.311"
+        }
+      },
+      {
+        "description": "C# HiveNightmare variant writes the SAM copy to C:\\Windows\\Temp\\SAM",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "Image": "C:\\Users\\mrodriguez\\AppData\\Local\\Temp\\hn.exe",
+          "ProcessId": 4388,
+          "TargetFilename": "C:\\Windows\\Temp\\SAM",
+          "CreationUtcTime": "2021-07-26 15:40:51.007"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate SAM hive write by the System process in the config directory",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "System",
+          "ProcessId": 4,
+          "TargetFilename": "C:\\Windows\\System32\\config\\SAM",
+          "CreationUtcTime": "2021-07-23 08:00:12.500"
+        }
+      },
+      {
+        "description": "Log file in Windows Temp whose name only starts with sam, not an exact match",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-APP-03.andes.example.com",
+          "User": "ANDES\\svc_backup",
+          "Image": "C:\\Program Files\\BackupAgent\\agent.exe",
+          "ProcessId": 2290,
+          "TargetFilename": "C:\\Windows\\Temp\\sam_backup.log",
+          "CreationUtcTime": "2021-07-24 02:15:33.120"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

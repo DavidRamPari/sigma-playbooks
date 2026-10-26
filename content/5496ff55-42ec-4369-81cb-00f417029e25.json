@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "5496ff55-42ec-4369-81cb-00f417029e25",
+    "title": "Multifactor Authentication Interrupted",
+    "level": "medium",
+    "status": "test",
+    "author": "AlertIQ",
+    "path": "cloud/azure/signin_logs/azure_mfa_interrupted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/signin_logs/azure_mfa_interrupted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004",
+      "T1110",
+      "T1621"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un inicio de sesión en Entra ID se detuvo o falló en el desafío de MFA (ResultType 50074 o 500121). Puede indicar que alguien conoce la contraseña de la cuenta pero no logra superar el segundo factor.",
+      "what_it_detects": "Eventos de SigninLogs de Azure con ResultType 50074 y ResultDescription que contiene 'Strong Auth required', o con ResultType 500121 y ResultDescription que contiene 'Authentication failed during strong authentication request'.",
+      "why_it_matters": "La contraseña ya se validó, así que la credencial podría estar comprometida (T1078.004, cuentas cloud; T1110, fuerza bruta). Los fallos repetidos pueden ser fatiga de MFA (T1621), con la que el atacante busca que la víctima apruebe una notificación push.",
+      "triage_steps": [
+        "Identifique UserPrincipalName, IPAddress, Location, AppDisplayName, ClientAppUsed, user agent y CorrelationId del evento.",
+        "Revise si el mismo CorrelationId o usuario tuvo un ResultType 0 en los minutos siguientes; si es así, probablemente fue un desafío MFA normal completado.",
+        "Cuente los eventos 50074/500121 del usuario en las últimas 24 horas; varios intentos seguidos sugieren fatiga de MFA o robo de credenciales.",
+        "Compare IPAddress y Location con el historial del usuario: país nuevo, ASN de hosting, VPN/Tor o viaje imposible aumentan el riesgo.",
+        "Busque otros usuarios con intentos desde la misma IP en un rango de +/- 15 minutos, por si es password spraying.",
+        "Revise eventos previos como 50126 (contraseña inválida) seguidos de éxito parcial, y alertas de Identity Protection para el usuario.",
+        "Contacte al usuario por un canal distinto y confirme si estaba iniciando sesión o recibió notificaciones MFA que no solicitó."
+      ],
+      "false_positives": [
+        "Usuarios legítimos que cancelan, ignoran o dejan expirar el desafío MFA; con frecuencia los sigue un inicio de sesión exitoso.",
+        "Usuarios con un teléfono nuevo, sin cobertura o con la app de autenticación desconfigurada.",
+        "Clientes heredados o cuentas de servicio que no admiten MFA y reintentan automáticamente.",
+        "Primer registro de MFA o cambios de políticas de Acceso Condicional que fuerzan MFA nuevo."
+      ],
+      "response_steps": [
+        "Si el usuario no reconoce el intento, restablezca la contraseña y revoque las sesiones y los refresh tokens activos.",
+        "Revise y elimine los métodos MFA registrados que no reconozca; prefiera number matching o FIDO2 en lugar de push simple.",
+        "Bloquee temporalmente la IP de origen mediante Acceso Condicional o ubicaciones con nombre si muestra actividad maliciosa contra varias cuentas.",
+        "Revise los inicios de sesión exitosos recientes y la actividad de la cuenta (buzón, reglas de reenvío, aplicaciones consentidas) para descartar acceso previo.",
+        "Documente el caso y, si se repite el patrón benigno, ajuste el umbral o correlacione con la ausencia de éxito posterior."
+      ],
+      "severity_rationale": "Medium es adecuado: la contraseña ya se validó y puede haber compromiso, pero el MFA detuvo el acceso y existen muchas causas legítimas."
+    },
+    "en": {
+      "summary": "An Entra ID sign-in was interrupted or failed at the MFA challenge (ResultType 50074 or 500121). Someone may know the account password but cannot pass the second factor.",
+      "what_it_detects": "Azure SigninLogs events with ResultType 50074 and ResultDescription containing 'Strong Auth required', or ResultType 500121 and ResultDescription containing 'Authentication failed during strong authentication request'.",
+      "why_it_matters": "The password was already accepted, so the credential may be compromised (T1078.004 cloud accounts; T1110 brute force). Repeated failures can mean MFA fatigue (T1621), where an attacker spams push prompts hoping the victim approves.",
+      "triage_steps": [
+        "Record UserPrincipalName, IPAddress, Location, AppDisplayName, ClientAppUsed, user agent and CorrelationId from the event.",
+        "Check whether the same CorrelationId or user got ResultType 0 minutes later; if so, it was likely a normal completed MFA prompt.",
+        "Count the user's 50074/500121 events over the last 24 hours; bursts suggest MFA fatigue or stolen credentials.",
+        "Compare IPAddress and Location with the user's history: new country, hosting ASN, VPN/Tor or impossible travel raise risk.",
+        "Look for other users attempting sign-in from the same IP within +/- 15 minutes, indicating password spraying.",
+        "Review earlier 50126 (invalid password) events and Identity Protection risk alerts for the same user.",
+        "Contact the user out-of-band to confirm whether they were signing in or received unsolicited MFA prompts."
+      ],
+      "false_positives": [
+        "Legitimate users cancelling, ignoring or timing out the MFA prompt; often followed by a successful sign-in.",
+        "Users with a new phone, no signal, or a misconfigured authenticator app.",
+        "Legacy clients or service accounts that cannot do MFA and retry automatically.",
+        "First-time MFA registration or Conditional Access policy changes newly requiring MFA."
+      ],
+      "response_steps": [
+        "If the user does not recognize the attempt, reset the password and revoke active sessions and refresh tokens.",
+        "Review and remove unrecognized MFA methods; prefer number matching or FIDO2 over plain push approvals.",
+        "Block the source IP via Conditional Access or named locations if it shows malicious activity across accounts.",
+        "Review recent successful sign-ins and account activity (mailbox rules, forwarding, consented apps) to rule out earlier access.",
+        "Document the case and, for recurring benign patterns, tune by correlating with absence of a later successful sign-in."
+      ],
+      "severity_rationale": "Medium fits because the password was accepted and compromise is possible, yet MFA blocked access and benign causes are common."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Sign-in interrupted at MFA from an unfamiliar IP (ResultType 50074 with 'Strong Auth required').",
+        "event": {
+          "TimeGenerated": "2024-05-14T08:21:37Z",
+          "UserPrincipalName": "jperez@example.com",
+          "ResultType": 50074,
+          "ResultDescription": "Strong Auth required: user did not complete the MFA challenge",
+          "IPAddress": "203.0.113.45",
+          "Location": "NL",
+          "AppDisplayName": "Office 365 Exchange Online",
+          "ClientAppUsed": "Browser",
+          "CorrelationId": "0f1c2d3e-4a5b-6c7d-8e9f-0a1b2c3d4e5f"
+        }
+      },
+      {
+        "description": "MFA challenge failed during strong authentication (ResultType 500121).",
+        "event": {
+          "TimeGenerated": "2024-05-14T08:23:02Z",
+          "UserPrincipalName": "jperez@example.com",
+          "ResultType": 500121,
+          "ResultDescription": "Authentication failed during strong authentication request.",
+          "IPAddress": "203.0.113.45",
+          "Location": "NL",
+          "AppDisplayName": "Azure Portal",
+          "ClientAppUsed": "Browser",
+          "CorrelationId": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Successful sign-in after MFA (ResultType 0), not an interruption.",
+        "event": {
+          "TimeGenerated": "2024-05-14T09:02:11Z",
+          "UserPrincipalName": "mgomez@example.com",
+          "ResultType": 0,
+          "ResultDescription": "Successfully signed in",
+          "IPAddress": "198.51.100.20",
+          "Location": "AR",
+          "AppDisplayName": "Microsoft Teams",
+          "ClientAppUsed": "Mobile Apps and Desktop clients",
+          "CorrelationId": "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
+        }
+      },
+      {
+        "description": "Wrong password (ResultType 50126): failure before MFA, so the rule does not apply.",
+        "event": {
+          "TimeGenerated": "2024-05-14T09:05:44Z",
+          "UserPrincipalName": "mgomez@example.com",
+          "ResultType": 50126,
+          "ResultDescription": "Error validating credentials due to invalid username or password.",
+          "IPAddress": "192.0.2.77",
+          "Location": "US",
+          "AppDisplayName": "Office 365 Exchange Online",
+          "ClientAppUsed": "Browser",
+          "CorrelationId": "3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

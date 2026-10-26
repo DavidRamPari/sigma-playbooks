@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "857c8db3-c89b-42fb-882b-f681c7cf4da2",
+    "title": "Unsigned Image Loaded Into LSASS Process",
+    "level": "medium",
+    "status": "test",
+    "author": "Teymur Kheirkhabarov, oscd.community",
+    "path": "windows/image_load/image_load_lsass_unsigned_image_load.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_lsass_unsigned_image_load.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso lsass.exe cargó una imagen (DLL o EXE) sin firma digital válida. Esto puede indicar un SSP, un password filter o una herramienta de volcado de credenciales inyectados en LSASS.",
+      "what_it_detects": "Eventos de carga de imágenes (Sysmon Event ID 7) donde Image termina en \\lsass.exe y Signed es 'false', es decir, cualquier módulo sin firma cargado dentro de LSASS.",
+      "why_it_matters": "LSASS guarda en memoria hashes, tickets Kerberos y a veces contraseñas en texto claro. Un módulo sin firma cargado en LSASS puede robar credenciales o interceptar contraseñas (T1003.001, LSASS Memory) y facilitar el movimiento lateral.",
+      "triage_steps": [
+        "Revise ImageLoaded: ruta, nombre y carpeta. Las rutas fuera de System32, como Temp, ProgramData o perfiles de usuario, son muy sospechosas.",
+        "Obtenga el hash del campo Hashes, consulte su reputación y busque el mismo hash en otros endpoints del entorno.",
+        "Valide Signature y SignatureStatus. Verifique si el archivo tiene firma por catálogo o si la firma está expirada o es inválida.",
+        "Revise las claves HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa (Security Packages, Notification Packages, Authentication Packages) para detectar si la DLL se registró ahí.",
+        "Busque la creación del archivo (Sysmon Event ID 11) y el proceso que lo escribió en el mismo host, +/- 15 minutos.",
+        "Correlacione en el mismo host los accesos a LSASS (Event ID 10), los reinicios, las instalaciones de software y los inicios de sesión RDP (4624, tipo 10).",
+        "Revise alertas previas del host y del usuario que inició sesión, y confirme si LSASS corre como PPL (RunAsPPL)."
+      ],
+      "false_positives": [
+        "Conexiones RDP legítimas que cargan componentes de autenticación sin firma, según indica la regla.",
+        "Password filters, SSP o agentes MFA de terceros instalados de forma legítima, pero sin firma o con firma por catálogo no reconocida.",
+        "Productos de seguridad o de gestión de identidades en versiones antiguas, con módulos sin firmar."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de TI o de identidades si el módulo corresponde a software aprobado. Si es así, documéntelo y ajuste la regla con una exclusión por hash o ruta.",
+        "Si no está aprobado, aísle el endpoint de la red y preserve la DLL y un volcado de memoria para análisis forense.",
+        "Elimine el registro de la DLL en las claves LSA y el archivo, solo después de preservar la evidencia, y reinicie de forma controlada.",
+        "Restablezca las credenciales de las cuentas que iniciaron sesión en el host y revise el uso de esas credenciales en otros sistemas.",
+        "Considere habilitar RunAsPPL y Credential Guard para reducir el riesgo de que se repita."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: un módulo sin firma en LSASS es un indicador fuerte de robo de credenciales, pero RDP y el software de autenticación de terceros generan falsos positivos legítimos."
+    },
+    "en": {
+      "summary": "lsass.exe loaded an image (DLL or EXE) that has no valid digital signature. This can point to a malicious SSP, a password filter or a credential-dumping module running inside LSASS.",
+      "what_it_detects": "Image load events (Sysmon Event ID 7) where Image ends with \\lsass.exe and Signed is 'false', meaning any unsigned module loaded into the LSASS process.",
+      "why_it_matters": "LSASS holds password hashes, Kerberos tickets and sometimes cleartext passwords in memory. An unsigned module inside LSASS can harvest or intercept credentials (T1003.001, LSASS Memory), which enables lateral movement.",
+      "triage_steps": [
+        "Inspect ImageLoaded for its path, name and folder. Paths outside System32, such as Temp, ProgramData or user profiles, are highly suspicious.",
+        "Take the hash from Hashes, check its reputation, and search for the same hash on other endpoints.",
+        "Check Signature and SignatureStatus. Determine whether the file is catalog-signed or has an expired or invalid signature.",
+        "Review HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa (Security Packages, Notification Packages, Authentication Packages) to see whether the DLL is registered there.",
+        "Find when the file was created (Sysmon Event ID 11) and which process wrote it on the same host, +/- 15 minutes.",
+        "On the same host, correlate LSASS access (Event ID 10), reboots, software installs and RDP logons (4624, type 10).",
+        "Review earlier alerts for the host and logged-on users, and confirm whether LSASS runs as PPL (RunAsPPL)."
+      ],
+      "false_positives": [
+        "Legitimate RDP connections that load unsigned authentication components, as the rule notes.",
+        "Approved third-party password filters, SSPs or MFA agents that ship unsigned or with catalog signatures that are not recognized.",
+        "Older security or identity-management products with unsigned modules."
+      ],
+      "response_steps": [
+        "Ask IT or the identity team whether the module belongs to approved software. If it does, document it and tune the rule with a hash or path exclusion.",
+        "If it is not approved, isolate the endpoint and preserve the DLL and a memory image for forensics.",
+        "Only after preserving evidence, remove the DLL's LSA registry entry and the file, then reboot in a controlled way.",
+        "Reset credentials for accounts that logged on to the host and check where those credentials were used on other systems.",
+        "Consider enabling RunAsPPL and Credential Guard to prevent a repeat."
+      ],
+      "severity_rationale": "Medium fits: an unsigned module in LSASS is a strong sign of credential theft, but RDP sessions and third-party authentication software produce legitimate false positives."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An unsigned DLL from ProgramData loaded into lsass.exe, consistent with a malicious Security Support Provider.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 684,
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "ImageLoaded": "C:\\ProgramData\\Microsoft\\ssp_helper.dll",
+          "Signed": "false",
+          "Signature": "",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=3F1A9C0D2B4E6F7081928374655647382910ABCDEF0123456789ABCDEF012345",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A Microsoft-signed DLL loaded into lsass.exe during normal operation.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 684,
+          "Image": "C:\\Windows\\System32\\lsass.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\kerberos.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid",
+          "Hashes": "SHA256=9A8B7C6D5E4F30211203F4E5D6C7B8A9910A2B3C4D5E6F708192A3B4C5D6E7F8",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "An unsigned DLL loaded into svchost.exe instead of lsass.exe, so the Image condition does not match.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessId": 1320,
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ImageLoaded": "C:\\Program Files\\ExampleVendor\\agent_plugin.dll",
+          "Signed": "false",
+          "Signature": "",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=11223344556677889900AABBCCDDEEFF11223344556677889900AABBCCDDEEFF",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

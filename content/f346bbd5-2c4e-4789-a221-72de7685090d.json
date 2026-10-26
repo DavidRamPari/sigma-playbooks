@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "f346bbd5-2c4e-4789-a221-72de7685090d",
+    "title": "Google Cloud SQL Database Modified or Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/gcp/audit/gcp_sql_database_modified_or_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/gcp/audit/gcp_sql_database_modified_or_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en Cloud Audit Logs una creación o eliminación de una instancia de Cloud SQL, o una modificación o eliminación de un usuario de base de datos. Puede ser administración legítima o un intento de destruir datos o tomar control de credenciales.",
+      "what_it_detects": "Eventos de GCP Audit cuyo gcp.audit.method_name es cloudsql.instances.create, cloudsql.instances.delete, cloudsql.users.update o cloudsql.users.delete.",
+      "why_it_matters": "Corresponde a la táctica Impact de ATT&CK. Borrar una instancia destruye datos y servicio. Cambiar la contraseña de un usuario de base de datos puede dar acceso a un atacante o dejar fuera a los usuarios legítimos. Crear instancias sin autorización puede usarse para exfiltrar datos o generar costos.",
+      "triage_steps": [
+        "Identifique gcp.audit.method_name, el proyecto, el nombre de la instancia (resource_name) y, si aplica, el usuario SQL afectado.",
+        "Revise principal_email: ¿es una persona, una service account o un pipeline de IaC conocido? Valide que tenga motivo para operar ese proyecto.",
+        "Verifique la IP de origen y el user agent (gcloud, Terraform, consola, SDK). Compárelos con el historial de esa identidad.",
+        "Busque un ticket o cambio aprobado que justifique la operación y confirme con el dueño de la instancia.",
+        "Consulte otros eventos de la misma identidad e IP en +/- 15 minutos: cambios de IAM, creación de claves de service account, exportaciones a Cloud Storage, borrado de backups.",
+        "En instancias eliminadas, revise si existían backups o protección contra eliminación y si alguien la desactivó antes.",
+        "Busque alertas anteriores para la misma identidad, proyecto o IP de origen."
+      ],
+      "false_positives": [
+        "Administradores de base de datos que crean, eliminan o rotan credenciales de instancias como parte de su trabajo normal.",
+        "Pipelines de Terraform o Deployment Manager que recrean entornos efímeros de desarrollo o pruebas.",
+        "Rotación automática de contraseñas por herramientas de gestión de secretos mediante cloudsql.users.update.",
+        "Limpieza programada de instancias en proyectos sandbox. Las identidades conocidas pueden exceptuarse de la regla."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del proyecto si el cambio fue autorizado antes de tomar acciones.",
+        "Si no fue autorizado, suspenda o revoque las credenciales de la identidad responsable (claves de service account, sesiones del usuario) y revise sus roles IAM.",
+        "Restablezca las contraseñas de los usuarios SQL modificados y revise conexiones activas a la instancia.",
+        "Restaure instancias o datos eliminados desde backups o recuperación a un punto en el tiempo y active la protección contra eliminación.",
+        "Elimine instancias creadas sin autorización solo después de preservar evidencia y validar que no contienen datos legítimos.",
+        "Documente el incidente y ajuste los permisos cloudsql.* según el principio de mínimo privilegio."
+      ],
+      "severity_rationale": "Es medium porque estas operaciones tienen alto impacto potencial, pero también son tareas administrativas frecuentes que requieren contexto para confirmar abuso."
+    },
+    "en": {
+      "summary": "Cloud Audit Logs recorded a Cloud SQL instance being created or deleted, or a database user being modified or deleted. This may be routine administration or an attempt to destroy data or take over credentials.",
+      "what_it_detects": "GCP Audit events where gcp.audit.method_name is cloudsql.instances.create, cloudsql.instances.delete, cloudsql.users.update or cloudsql.users.delete.",
+      "why_it_matters": "Maps to the ATT&CK Impact tactic. Deleting an instance destroys data and service. Changing a database user's password can hand access to an attacker or lock out legitimate users. Rogue instances can be used to stage exfiltration or run up costs.",
+      "triage_steps": [
+        "Record gcp.audit.method_name, the project, the instance (resource_name) and, if applicable, the affected SQL user.",
+        "Review principal_email: is it a person, a service account or a known IaC pipeline? Check that it has a reason to operate in that project.",
+        "Check the source IP and user agent (gcloud, Terraform, console, SDK) against that identity's history.",
+        "Look for an approved change or ticket and confirm with the instance owner.",
+        "Pivot on the same identity and IP within +/- 15 minutes: IAM changes, service account key creation, exports to Cloud Storage, backup deletion.",
+        "For deleted instances, check whether backups or deletion protection existed and whether someone disabled them first.",
+        "Search for earlier alerts on the same identity, project or source IP."
+      ],
+      "false_positives": [
+        "Database administrators creating, deleting or rotating credentials on instances as part of normal work.",
+        "Terraform or Deployment Manager pipelines recreating ephemeral dev or test environments.",
+        "Automated password rotation by secret management tooling via cloudsql.users.update.",
+        "Scheduled cleanup of instances in sandbox projects. Known identities can be exempted from the rule."
+      ],
+      "response_steps": [
+        "Confirm with the project owner whether the change was authorized before acting.",
+        "If unauthorized, disable or revoke the responsible identity's credentials (service account keys, user sessions) and review its IAM roles.",
+        "Reset passwords of modified SQL users and review active connections to the instance.",
+        "Restore deleted instances or data from backups or point-in-time recovery and enable deletion protection.",
+        "Delete unauthorized instances only after preserving evidence and confirming they hold no legitimate data.",
+        "Document the incident and tighten cloudsql.* permissions to least privilege."
+      ],
+      "severity_rationale": "Medium fits because these operations carry high potential impact but are also common administrative tasks that need context to confirm abuse."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user deletes a production Cloud SQL instance via gcloud from an unusual IP",
+        "event": {
+          "gcp.audit.method_name": "cloudsql.instances.delete",
+          "gcp.audit.service_name": "cloudsql.googleapis.com",
+          "gcp.audit.principal_email": "jperez@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/instances/orders-db-01",
+          "gcp.audit.status.code": 0,
+          "source.ip": "203.0.113.45",
+          "user_agent.original": "google-cloud-sdk gcloud/455.0.0 command/gcloud.sql.instances.delete",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success",
+          "@timestamp": "2024-03-14T02:17:41Z"
+        }
+      },
+      {
+        "description": "Service account changes the password of the root database user",
+        "event": {
+          "gcp.audit.method_name": "cloudsql.users.update",
+          "gcp.audit.service_name": "cloudsql.googleapis.com",
+          "gcp.audit.principal_email": "ci-runner@andes-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-prod/instances/orders-db-01/users/root",
+          "source.ip": "198.51.100.23",
+          "user_agent.original": "google-api-python-client/2.100.0",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success",
+          "@timestamp": "2024-03-14T02:09:05Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Instance settings update (cloudsql.instances.update) is not in the rule's method list",
+        "event": {
+          "gcp.audit.method_name": "cloudsql.instances.update",
+          "gcp.audit.service_name": "cloudsql.googleapis.com",
+          "gcp.audit.principal_email": "dba-team@example.com",
+          "gcp.audit.resource_name": "projects/andes-prod/instances/orders-db-01",
+          "source.ip": "192.0.2.10",
+          "user_agent.original": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Cloud Console",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success",
+          "@timestamp": "2024-03-13T15:30:00Z"
+        }
+      },
+      {
+        "description": "Read-only listing of database users",
+        "event": {
+          "gcp.audit.method_name": "cloudsql.users.list",
+          "gcp.audit.service_name": "cloudsql.googleapis.com",
+          "gcp.audit.principal_email": "monitoring@andes-prod.iam.gserviceaccount.com",
+          "gcp.audit.resource_name": "projects/andes-prod/instances/orders-db-01",
+          "source.ip": "192.0.2.15",
+          "user_agent.original": "google-cloud-sdk gcloud/455.0.0 command/gcloud.sql.users.list",
+          "cloud.project.id": "andes-prod",
+          "event.outcome": "success",
+          "@timestamp": "2024-03-13T16:00:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

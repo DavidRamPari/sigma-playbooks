@@ -1,0 +1,172 @@
+{
+  "rule": {
+    "id": "70b4156e-50fc-4523-aa50-c9dddf1993fc",
+    "title": "Bpfdoor TCP Ports Redirect",
+    "level": "medium",
+    "status": "test",
+    "author": "Rafal Piasecki",
+    "path": "linux/auditd/execve/lnx_auditd_bpfdoor_port_redirect.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/execve/lnx_auditd_bpfdoor_port_redirect.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró una ejecución de iptables con '-t nat' que redirige tráfico TCP a un puerto que empieza por 42 o 43. Este patrón coincide con el que usa el backdoor BPFDoor para ocultar su shell detrás de un puerto legítimo como el 22.",
+      "what_it_detects": "Registros EXECVE donde a0 termina en 'iptables', a1 es '-t', a2 es 'nat' y la línea de comandos contiene '--to-ports 42' o '--to-ports 43', por ejemplo una regla REDIRECT en PREROUTING limitada a una IP de origen.",
+      "why_it_matters": "BPFDoor agrega una regla NAT para que solo el tráfico de la IP del atacante hacia un puerto permitido, como el 22, llegue en realidad a su shell. Así evade firewalls y monitoreo (defense impairment, T1686).",
+      "triage_steps": [
+        "Reconstruya la línea de comandos completa con a0..aN: cadena (PREROUTING), acción (-I/-A/-D), IP de origen (-s), --dport y puerto destino de --to-ports.",
+        "Identifique el proceso padre, el usuario (auid/uid) y la sesión desde los registros SYSCALL con el mismo ID de evento de audit; un padre sin TTY o un daemon inusual es sospechoso.",
+        "Ejecute 'iptables -t nat -S' en el host y confirme si la regla sigue activa; BPFDoor suele borrarla con -D al cerrar la sesión.",
+        "Revise qué proceso escucha en el puerto de --to-ports (ss -lntp) y busque sockets raw o filtros BPF (ss -0p) de binarios en /dev/shm o /tmp.",
+        "Busque la IP de origen de la regla en logs de firewall, NetFlow y sshd, y en otros hosts.",
+        "Revise el mismo host en +/- 15 minutos: procesos con nombres falsos, archivos borrados en ejecución y alertas previas de la entidad.",
+        "Valide con el equipo dueño del servidor si hay un cambio autorizado que justifique la redirección."
+      ],
+      "false_positives": [
+        "Redirecciones de puertos legítimas configuradas por administradores, por ejemplo para servicios en puertos altos dentro del rango 42xx/43xx.",
+        "Scripts de orquestación o contenedores que generan reglas NAT REDIRECT hacia puertos de servicio que empiezan por 42 o 43."
+      ],
+      "response_steps": [
+        "Si no hay cambio autorizado, aísle el host de la red manteniendo el acceso para análisis forense.",
+        "Capture la memoria y la lista de procesos, y conserve los binarios sospechosos antes de eliminar la regla NAT y terminar los procesos.",
+        "Bloquee la IP de origen de la regla en el perímetro y busque conexiones desde ella en todo el entorno.",
+        "Elimine el backdoor y su persistencia, rote las credenciales del host y reconstrúyalo desde una imagen confiable si se confirma el compromiso."
+      ],
+      "severity_rationale": "Medium es adecuado porque el patrón es muy característico de BPFDoor, pero existen redirecciones NAT legítimas hacia puertos 42xx/43xx que requieren validación."
+    },
+    "en": {
+      "summary": "auditd logged an iptables execution with '-t nat' redirecting TCP traffic to a port starting with 42 or 43. This matches the pattern the BPFDoor backdoor uses to hide its shell behind a legitimate port such as 22.",
+      "what_it_detects": "EXECVE records where a0 ends with 'iptables', a1 is '-t', a2 is 'nat' and the command line contains '--to-ports 42' or '--to-ports 43', typically a PREROUTING REDIRECT rule scoped to one source IP.",
+      "why_it_matters": "BPFDoor adds a NAT rule so that only the attacker's traffic to an allowed port, such as 22, actually reaches its shell port. This evades firewalls and monitoring (defense impairment, T1686).",
+      "triage_steps": [
+        "Rebuild the full command line from a0..aN: chain (PREROUTING), action (-I/-A/-D), source IP (-s), --dport and the --to-ports target.",
+        "Identify the parent process, user (auid/uid) and session from SYSCALL records with the same audit event ID; a parent without a TTY or an odd daemon is suspicious.",
+        "Run 'iptables -t nat -S' on the host to see if the rule is still active; BPFDoor often removes it with -D when the session ends.",
+        "Check what listens on the --to-ports port (ss -lntp) and look for raw sockets or BPF filters (ss -0p) owned by binaries in /dev/shm or /tmp.",
+        "Search firewall, NetFlow and sshd logs, and other hosts, for the rule's source IP.",
+        "Review the same host within +/- 15 minutes for masqueraded process names, deleted-but-running binaries and earlier alerts for the entity.",
+        "Confirm with the server owner whether an approved change explains the redirect."
+      ],
+      "false_positives": [
+        "Legitimate port redirects set up by administrators, for example for services on high ports in the 42xx/43xx range.",
+        "Orchestration scripts or containers generating NAT REDIRECT rules to service ports that start with 42 or 43."
+      ],
+      "response_steps": [
+        "If no approved change exists, isolate the host from the network while keeping forensic access.",
+        "Capture memory and the process list and preserve suspicious binaries before removing the NAT rule and killing processes.",
+        "Block the rule's source IP at the perimeter and hunt for connections from it across the environment.",
+        "Remove the backdoor and its persistence, rotate host credentials and rebuild from a trusted image if compromise is confirmed."
+      ],
+      "severity_rationale": "Medium fits because the pattern is highly characteristic of BPFDoor, yet legitimate NAT redirects to 42xx/43xx ports exist and need validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "BPFDoor-style rule inserted in PREROUTING redirecting SSH traffic from one attacker IP to shell port 42392",
+        "event": {
+          "type": "EXECVE",
+          "argc": 15,
+          "a0": "/sbin/iptables",
+          "a1": "-t",
+          "a2": "nat",
+          "a3": "-I",
+          "a4": "PREROUTING",
+          "a5": "-p",
+          "a6": "tcp",
+          "a7": "-s",
+          "a8": "203.0.113.45",
+          "a9": "--dport",
+          "a10": "22",
+          "a11": "-j",
+          "a12": "REDIRECT",
+          "a13": "--to-ports",
+          "a14": "42392",
+          "host": "srv-db-03",
+          "message": "node=srv-db-03 type=PROCTITLE msg=audit(1666706592.123:4521): proctitle=/sbin/iptables -t nat -I PREROUTING -p tcp -s 203.0.113.45 --dport 22 -j REDIRECT --to-ports 42392"
+        }
+      },
+      {
+        "description": "Cleanup of the redirect rule with -D toward port 43210, invoked as plain 'iptables'",
+        "event": {
+          "type": "EXECVE",
+          "argc": 15,
+          "a0": "iptables",
+          "a1": "-t",
+          "a2": "nat",
+          "a3": "-D",
+          "a4": "PREROUTING",
+          "a5": "-p",
+          "a6": "tcp",
+          "a7": "-s",
+          "a8": "198.51.100.23",
+          "a9": "--dport",
+          "a10": "443",
+          "a11": "-j",
+          "a12": "REDIRECT",
+          "a13": "--to-ports",
+          "a14": "43210",
+          "host": "web-02",
+          "message": "node=web-02 type=PROCTITLE msg=audit(1666707011.456:4630): proctitle=iptables -t nat -D PREROUTING -p tcp -s 198.51.100.23 --dport 443 -j REDIRECT --to-ports 43210"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate NAT redirect of port 80 to an application on port 8080",
+        "event": {
+          "type": "EXECVE",
+          "argc": 13,
+          "a0": "/usr/sbin/iptables",
+          "a1": "-t",
+          "a2": "nat",
+          "a3": "-A",
+          "a4": "PREROUTING",
+          "a5": "-p",
+          "a6": "tcp",
+          "a7": "--dport",
+          "a8": "80",
+          "a9": "-j",
+          "a10": "REDIRECT",
+          "a11": "--to-ports",
+          "a12": "8080",
+          "host": "web-01",
+          "message": "node=web-01 type=PROCTITLE msg=audit(1666708000.789:4702): proctitle=/usr/sbin/iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 8080"
+        }
+      },
+      {
+        "description": "Redirect to 42392 but with '-t nat' not in a1/a2 position, so the cmd selection does not match",
+        "event": {
+          "type": "EXECVE",
+          "argc": 13,
+          "a0": "/sbin/iptables",
+          "a1": "-A",
+          "a2": "PREROUTING",
+          "a3": "-t",
+          "a4": "nat",
+          "a5": "-p",
+          "a6": "tcp",
+          "a7": "--dport",
+          "a8": "22",
+          "a9": "-j",
+          "a10": "REDIRECT",
+          "a11": "--to-ports",
+          "a12": "42392",
+          "host": "srv-app-07",
+          "message": "node=srv-app-07 type=PROCTITLE msg=audit(1666708500.111:4810): proctitle=/sbin/iptables -A PREROUTING -t nat -p tcp --dport 22 -j REDIRECT --to-ports 42392"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

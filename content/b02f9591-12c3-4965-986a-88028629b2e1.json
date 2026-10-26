@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "b02f9591-12c3-4965-986a-88028629b2e1",
+    "title": "Azure Kubernetes Pods Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_pods_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_pods_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad eliminó uno o más pods en un clúster de Kubernetes conectado a Azure Arc, y el evento quedó registrado en Azure Activity Logs. Puede ser mantenimiento normal o un intento de interrumpir cargas de trabajo.",
+      "what_it_detects": "Eventos de Azure Activity Logs cuyo operationName es MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/PODS/DELETE, es decir, la eliminación de pods mediante el resource provider Microsoft.Kubernetes en clústeres conectados (Arc). No cubre AKS administrado (Microsoft.ContainerService).",
+      "why_it_matters": "Un atacante con permisos sobre el clúster puede eliminar pods para interrumpir servicios, sabotear controles de seguridad o borrar evidencia. Corresponde a la táctica Impact de ATT&CK: afectar la disponibilidad de las cargas de trabajo.",
+      "triage_steps": [
+        "Identifique al caller (usuario, service principal o managed identity), callerIpAddress y user agent del evento; confirme si es una identidad de administración o de CI/CD conocida.",
+        "Revise resourceId para determinar el clúster, el namespace y el pod afectados; priorice namespaces críticos como kube-system o de producción.",
+        "Verifique resultType/status: confirme si la eliminación tuvo éxito o fue rechazada.",
+        "Busque un ticket de cambio, despliegue o ventana de mantenimiento que justifique la eliminación en ese horario.",
+        "Pivotee sobre el mismo caller en +/- 15 minutos: otras eliminaciones masivas, cambios de roles (roleAssignments/write), listado de secretos o creación de deployments.",
+        "Compruebe si callerIpAddress es habitual para esa identidad o aparece por primera vez; revise inicios de sesión de Entra ID asociados.",
+        "Consulte alertas previas para el mismo clúster, identidad o IP de origen."
+      ],
+      "false_positives": [
+        "Administradores de sistemas que eliminan pods para reiniciarlos o solucionar problemas.",
+        "Pipelines de CI/CD o herramientas GitOps que recrean pods durante despliegues.",
+        "Automatizaciones de mantenimiento o limpieza conocidas; si se validan, pueden exceptuarse por identidad y user agent."
+      ],
+      "response_steps": [
+        "Confirme con el propietario de la identidad o del clúster si la acción fue autorizada.",
+        "Si no lo fue, revoque sesiones y credenciales de la identidad, y retire temporalmente sus asignaciones de rol sobre el clúster.",
+        "Restaure los pods afectados desde sus controladores (Deployment, StatefulSet) o manifiestos versionados y verifique la disponibilidad del servicio.",
+        "Revise logs de auditoría de Kubernetes y de Azure para detectar persistencia o cambios adicionales antes de cerrar el incidente."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque eliminar pods es frecuente en operaciones legítimas, pero en manos no autorizadas puede interrumpir servicios y requiere validación."
+    },
+    "en": {
+      "summary": "An identity deleted one or more pods on an Azure Arc-connected Kubernetes cluster, as recorded in Azure Activity Logs. This may be routine maintenance or an attempt to disrupt workloads.",
+      "what_it_detects": "Azure Activity Log events with operationName MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/PODS/DELETE, meaning pod deletion through the Microsoft.Kubernetes resource provider on connected (Arc) clusters. Managed AKS (Microsoft.ContainerService) is not covered.",
+      "why_it_matters": "An attacker with cluster permissions can delete pods to disrupt services, disable security tooling or remove evidence. This maps to the ATT&CK Impact tactic: degrading workload availability.",
+      "triage_steps": [
+        "Identify the caller (user, service principal or managed identity), callerIpAddress and user agent; confirm whether it is a known admin or CI/CD identity.",
+        "Inspect resourceId for the cluster, namespace and pod affected; prioritize critical namespaces such as kube-system or production.",
+        "Check resultType/status to confirm whether the deletion succeeded or was denied.",
+        "Look for a change ticket, deployment or maintenance window that explains the deletion at that time.",
+        "Pivot on the same caller within +/- 15 minutes: bulk deletions, role assignment changes, secret listing or new deployments.",
+        "Check whether callerIpAddress is usual for that identity or new; review related Entra ID sign-ins.",
+        "Search earlier alerts for the same cluster, identity or source IP."
+      ],
+      "false_positives": [
+        "System administrators deleting pods to restart them or troubleshoot.",
+        "CI/CD pipelines or GitOps tools recreating pods during deployments.",
+        "Known maintenance or cleanup automation; once validated, exempt by identity and user agent."
+      ],
+      "response_steps": [
+        "Confirm with the identity or cluster owner whether the action was authorized.",
+        "If not, revoke the identity's sessions and credentials and temporarily remove its role assignments on the cluster.",
+        "Restore affected pods from their controllers (Deployment, StatefulSet) or versioned manifests and verify service availability.",
+        "Review Kubernetes audit and Azure logs for persistence or further changes before closing the incident."
+      ],
+      "severity_rationale": "Medium fits because pod deletion is common in legitimate operations, yet unauthorized deletion can disrupt services and needs validation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unrecognized user deletes a pod in the production namespace of an Arc-connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/PODS/DELETE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-andes-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/pods/payments-api-7d9f8",
+          "correlationId": "6b1e2c3a-1111-4a2b-9c3d-abcdef012345",
+          "time": "2024-05-14T02:13:47Z"
+        }
+      },
+      {
+        "description": "Service principal deletes a pod in kube-system (lowercase operation name, case-insensitive match)",
+        "event": {
+          "operationName": "Microsoft.Kubernetes/connectedClusters/pods/delete",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.23",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-andes-edge/providers/Microsoft.Kubernetes/connectedClusters/arc-edge-02/pods/kube-proxy-x2k4p",
+          "correlationId": "9a8b7c6d-2222-4b3c-8d4e-0123456789ab",
+          "time": "2024-05-14T02:15:02Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Read operation on pods of the same connected cluster, not a deletion",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/PODS/READ",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-andes-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01/pods/payments-api-7d9f8",
+          "time": "2024-05-14T01:58:10Z"
+        }
+      },
+      {
+        "description": "Pod deletion on a managed AKS cluster via Microsoft.ContainerService, a different operation name",
+        "event": {
+          "operationName": "MICROSOFT.CONTAINERSERVICE/MANAGEDCLUSTERS/PODS/DELETE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "devops-pipeline@example.com",
+          "callerIpAddress": "192.0.2.55",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-andes-aks/providers/Microsoft.ContainerService/managedClusters/aks-dev-01/pods/web-5c6d7",
+          "time": "2024-05-14T03:20:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "rule": {
+    "id": "3761e026-f259-44e6-8826-719ed8079408",
+    "title": "Linux Network Service Scanning - Auditd",
+    "level": "low",
+    "status": "test",
+    "author": "Alejandro Ortuno, oscd.community",
+    "path": "linux/auditd/syscall/lnx_auditd_network_service_scanning.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_network_service_scanning.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1046"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Auditd registró una llamada connect() IPv4 exitosa hecha por un cliente de red usado con frecuencia para sondear servicios (telnet, nmap, netcat, nc, ncat o nc.openbsd). Puede tratarse de descubrimiento de servicios desde este host Linux.",
+      "what_it_detects": "Registros SYSCALL de auditd donde type es SYSCALL, key es network_connect_4 (la regla de connect para sockets IPv4) y exe termina en /telnet, /nmap, /netcat, /nc, /ncat o /nc.openbsd.",
+      "why_it_matters": "Un atacante en un host comprometido enumera servicios locales y remotos para encontrar objetivos de movimiento lateral (MITRE ATT&CK T1046, Network Service Discovery). Las herramientas tipo netcat también permiten reverse shells y transferencia de datos.",
+      "triage_steps": [
+        "Obtenga el evento completo con ausearch -i -k network_connect_4 y use el serial de msg=audit para ver SOCKADDR (IP/puerto destino), PROCTITLE (línea de comandos) y CWD.",
+        "Identifique quién lo ejecutó: revise auid (usuario de login original), uid/euid y si la sesión llegó por SSH desde un origen esperado.",
+        "Revise la línea de comandos en PROCTITLE buscando opciones de escaneo (nmap -sT, rangos con -p, nc -z, -v), listas de puertos o subredes.",
+        "Cuente los connect del mismo pid y exe: muchos destinos o puertos distintos en segundos sugiere escaneo; un solo connect sugiere una prueba manual.",
+        "Revise ppid y el árbol de procesos: se espera una shell interactiva; un servidor web, un cron o un binario desconocido como padre es sospechoso.",
+        "Pivote en el mismo host +/- 15 minutos: descargas, binarios nuevos en /tmp o /dev/shm, cambios de privilegios o conexiones salientes a IPs inusuales.",
+        "Busque alertas previas del mismo auid y host, y verifique si los destinos escaneados recibieron después logins o intentos de explotación."
+      ],
+      "false_positives": [
+        "Administración legítima: administradores que usan nc, telnet o nmap para probar puertos, firewalls o disponibilidad de servicios.",
+        "Health checks programados o scripts de monitoreo que usan nc -z para sondear puertos.",
+        "Escaneos de vulnerabilidades o pruebas de penetración autorizadas ejecutadas desde este host."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el dueño del activo si la actividad estaba autorizada y corresponde a un ticket de cambio o ventana de escaneo.",
+        "Si no está autorizada, aísle el host o restrinja su tráfico saliente y preserve los logs de auditoría y datos de procesos.",
+        "Deshabilite o restablezca las credenciales de la cuenta en auid y revise sus sesiones SSH y uso de sudo recientes.",
+        "Revise los destinos escaneados por accesos posteriores y, tras verificar, elimine herramientas y mecanismos de persistencia del atacante."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estas herramientas son comunes en la administración y un solo connect no prueba daño, pero aporta contexto junto a otra actividad sospechosa."
+    },
+    "en": {
+      "summary": "Auditd recorded a successful IPv4 connect() syscall made by a network client often used for service probing (telnet, nmap, netcat, nc, ncat or nc.openbsd). This may be service discovery from this Linux host.",
+      "what_it_detects": "auditd SYSCALL records where type is SYSCALL, key is network_connect_4 (the connect rule for IPv4 sockets) and exe ends with /telnet, /nmap, /netcat, /nc, /ncat or /nc.openbsd.",
+      "why_it_matters": "Attackers on a compromised host enumerate local and remote services to find lateral movement targets (MITRE ATT&CK T1046, Network Service Discovery). Netcat-family tools also support reverse shells and data transfer, so their connections deserve context.",
+      "triage_steps": [
+        "Pull the full audit event: run ausearch -i -k network_connect_4 and match the msg=audit serial to get the SOCKADDR (destination IP/port), PROCTITLE (command line) and CWD records.",
+        "Identify who ran it: check auid (original login user), uid/euid and whether the session came over SSH from an expected source.",
+        "Review the command line in PROCTITLE for scan flags (nmap -sT, -p ranges, nc -z, -v), port lists or subnet ranges.",
+        "Count connect events from the same pid and exe: many distinct destinations or ports within seconds suggests scanning, while a single connect suggests a manual check.",
+        "Check the ppid and process tree: an interactive shell is expected; a web server, cron job or unknown binary as parent is suspicious.",
+        "Pivot on the same host +/- 15 minutes for downloads, new binaries in /tmp or /dev/shm, privilege changes or outbound connections to unusual IPs.",
+        "Search earlier alerts for the same auid and host, and see whether the scanned destinations later received logins or exploit attempts."
+      ],
+      "false_positives": [
+        "Legitimate administration: admins using nc, telnet or nmap to test ports, firewalls or service availability.",
+        "Scheduled health checks or monitoring scripts that use nc -z to probe service ports.",
+        "Approved vulnerability scans or penetration tests run from this host."
+      ],
+      "response_steps": [
+        "Confirm with the user or asset owner whether the activity was authorized and matches a change ticket or scan window.",
+        "If unauthorized, isolate the host from the network or restrict its egress, and keep audit logs and process data.",
+        "Disable or reset the credentials of the account in auid and review its recent SSH sessions and sudo use.",
+        "Check the scanned destinations for follow-up access attempts, then remove attacker tools and persistence after verification."
+      ],
+      "severity_rationale": "Low fits because these tools are common in normal administration and one connect proves no harm, but the alert is useful context alongside other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "nmap connect scan from an interactive user session, logged by the network_connect_4 audit rule",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "42",
+          "success": "yes",
+          "exit": "0",
+          "pid": "48213",
+          "ppid": "48190",
+          "auid": "1004",
+          "uid": "1004",
+          "comm": "nmap",
+          "exe": "/usr/bin/nmap",
+          "key": "network_connect_4",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "nc.openbsd connecting to a remote port (for example nc -zv 198.51.100.20 22)",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "42",
+          "success": "yes",
+          "exit": "0",
+          "pid": "9921",
+          "ppid": "9874",
+          "auid": "1012",
+          "uid": "1012",
+          "comm": "nc",
+          "exe": "/usr/bin/nc.openbsd",
+          "key": "network_connect_4",
+          "host": "app-srv-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "curl making an IPv4 connect under the same audit key; exe is not one of the listed tools",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "42",
+          "success": "yes",
+          "exit": "0",
+          "pid": "30551",
+          "ppid": "30540",
+          "auid": "1004",
+          "uid": "1004",
+          "comm": "curl",
+          "exe": "/usr/bin/curl",
+          "key": "network_connect_4",
+          "host": "bastion-01"
+        }
+      },
+      {
+        "description": "nmap execution recorded by an exec audit rule key, not the network_connect_4 key",
+        "event": {
+          "type": "SYSCALL",
+          "arch": "c000003e",
+          "syscall": "59",
+          "success": "yes",
+          "exit": "0",
+          "pid": "48213",
+          "ppid": "48190",
+          "auid": "1004",
+          "uid": "1004",
+          "comm": "nmap",
+          "exe": "/usr/bin/nmap",
+          "key": "susp_activity",
+          "host": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "8a63cdd4-6207-414a-85bc-7e032bd3c1a2",
+    "title": "AWS RDS Master Password Change",
+    "level": "medium",
+    "status": "test",
+    "author": "faloker",
+    "path": "cloud/aws/cloudtrail/aws_rds_change_master_password.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_rds_change_master_password.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1020"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una identidad de AWS cambió la contraseña del usuario maestro de una instancia RDS mediante ModifyDBInstance. Quien tenga la nueva contraseña obtiene acceso administrativo total a los datos de esa base de datos.",
+      "what_it_detects": "Eventos de CloudTrail de rds.amazonaws.com con eventName ModifyDBInstance en los que aparece responseElements.pendingModifiedValues.masterUserPassword. CloudTrail enmascara el valor, así que el campo solo indica que hay un cambio de contraseña pendiente.",
+      "why_it_matters": "Al restablecer la contraseña maestra, un atacante con permisos sobre la API de RDS puede entrar a la base de datos y extraer los datos sin conocer las credenciales anteriores (ATT&CK T1020, exfiltración automatizada). El módulo rds__explore_snapshots de Pacu restaura snapshots en instancias nuevas y les cambia la contraseña maestra de esta forma.",
+      "triage_steps": [
+        "Identifique quién hizo la llamada con userIdentity.arn, userIdentity.type y accessKeyId. Anote si es un usuario IAM, un rol asumido, una sesión SSO federada o la cuenta root.",
+        "Revise sourceIPAddress y userAgent. Busque IP inusuales, regiones inesperadas o herramientas como Boto3, Pacu o AWS CLI donde normalmente se usa la consola o IaC.",
+        "Revise requestParameters.dBInstanceIdentifier: ¿la instancia es productiva, contiene datos sensibles o se creó hace poco?",
+        "En la misma cuenta, busque en CloudTrail +/- 15 minutos RestoreDBInstanceFromDBSnapshot, CreateDBInstance, ModifyDBInstance con publiclyAccessible y AuthorizeSecurityGroupIngress.",
+        "Busque también acciones sobre snapshots en ese periodo: CreateDBSnapshot, ModifyDBSnapshotAttribute (compartir con otra cuenta) o CopyDBSnapshot.",
+        "Confirme con el responsable de la base de datos o en gestión de cambios si había una rotación planificada. Verifique si Secrets Manager o pipelines de IaC suelen hacer este cambio.",
+        "Busque alertas previas de la misma identidad o access key, como reconocimiento (DescribeDBInstances, DescribeDBSnapshots) o cambios recientes en IAM."
+      ],
+      "false_positives": [
+        "Rotación planificada de la contraseña por un DBA o mediante gestión de cambios.",
+        "Rotación automática con Secrets Manager, Terraform, CloudFormation o pipelines de CI/CD que usan roles conocidos.",
+        "Recuperación del acceso a una instancia de laboratorio o pruebas tras perder las credenciales."
+      ],
+      "response_steps": [
+        "Si el cambio no está autorizado, vuelva a rotar la contraseña maestra desde una sesión confiable y guárdela en Secrets Manager.",
+        "Tras confirmar con el responsable, desactive o restrinja las access keys o sesiones del rol que hizo el cambio. Revise sus políticas IAM.",
+        "Quite el acceso público y las reglas permisivas de los security groups. Verifique si se compartieron o expusieron instancias o snapshots.",
+        "Revise los logs de la base de datos y de red (logs de RDS, VPC Flow Logs) en busca de conexiones y transferencias grandes posteriores al cambio. Si las encuentra, escale como posible fuga de datos."
+      ],
+      "severity_rationale": "Severidad media: el cambio da acceso total a los datos, pero también es una tarea administrativa habitual que requiere contexto para evaluarse."
+    },
+    "en": {
+      "summary": "An AWS principal changed the master user password of an RDS database instance through ModifyDBInstance. Whoever holds the new password has full administrative access to that database's data.",
+      "what_it_detects": "CloudTrail events from rds.amazonaws.com with eventName ModifyDBInstance where responseElements.pendingModifiedValues.masterUserPassword is present. CloudTrail masks the value, so this field only shows that a password change is pending.",
+      "why_it_matters": "Resetting the master password lets an attacker with RDS API rights log in to the database and dump it without knowing the old credentials (ATT&CK T1020, Automated Exfiltration). Pacu's rds__explore_snapshots module restores snapshots to new instances and resets their master password this way.",
+      "triage_steps": [
+        "Identify the caller from userIdentity.arn, userIdentity.type and accessKeyId. Note whether it is an IAM user, an assumed role, federated SSO or the root account.",
+        "Check sourceIPAddress and userAgent. Look for unusual IPs, unexpected regions, or tooling such as Boto3, Pacu or the AWS CLI where you normally see console or IaC.",
+        "Review requestParameters.dBInstanceIdentifier. Is the instance in production, does it hold sensitive data, and was it created recently?",
+        "In the same account, search CloudTrail +/- 15 minutes for RestoreDBInstanceFromDBSnapshot, CreateDBInstance, ModifyDBInstance with publiclyAccessible, and AuthorizeSecurityGroupIngress.",
+        "Look for snapshot actions too: CreateDBSnapshot, ModifyDBSnapshotAttribute (sharing with another account) or CopyDBSnapshot around the same time.",
+        "Confirm with the database owner or change management that a password rotation was planned. Check whether Secrets Manager or IaC pipelines normally make this change.",
+        "Look for earlier alerts on the same principal or access key, such as reconnaissance (DescribeDBInstances, DescribeDBSnapshots) or recent IAM changes."
+      ],
+      "false_positives": [
+        "Planned password rotation by a DBA or through change management.",
+        "Automated rotation by Secrets Manager, Terraform, CloudFormation or CI/CD pipelines run by known roles.",
+        "Recovering access to a lab or test instance after the credentials were lost."
+      ],
+      "response_steps": [
+        "If the change is not authorized, rotate the master password again from a trusted session and store it in Secrets Manager.",
+        "Disable or restrict the caller's access keys or role sessions after confirming with the owner. Review the attached IAM policies.",
+        "Remove public accessibility and any permissive security group rules. Check whether instances or snapshots were shared or exposed.",
+        "Review database and network logs (RDS logs, VPC Flow Logs) for logins and large data transfers after the change. Escalate as a possible data breach if you find them."
+      ],
+      "severity_rationale": "Medium fits because a master password change gives full data access, but it is also a routine administrative task that needs context to judge."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ModifyDBInstance that resets the master password of a restored instance from an unusual IP via Boto3",
+        "event": {
+          "eventSource": "rds.amazonaws.com",
+          "eventName": "ModifyDBInstance",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "Boto3/1.26.0 Python/3.10.6 Linux/5.15.0 Botocore/1.29.0",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/svc-reporting",
+          "requestParameters.dBInstanceIdentifier": "restored-prod-db-01",
+          "requestParameters.applyImmediately": true,
+          "responseElements.pendingModifiedValues.masterUserPassword": "****",
+          "eventTime": "2024-03-14T02:17:45Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ModifyDBInstance that only changes the instance class, with no master password change",
+        "event": {
+          "eventSource": "rds.amazonaws.com",
+          "eventName": "ModifyDBInstance",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-internal/3 aws-sdk-java/1.12.0",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/dba-admin/mgarcia",
+          "requestParameters.dBInstanceIdentifier": "orders-db",
+          "requestParameters.dBInstanceClass": "db.r6g.large",
+          "responseElements.pendingModifiedValues.dBInstanceClass": "db.r6g.large",
+          "eventTime": "2024-03-14T10:05:12Z"
+        }
+      },
+      {
+        "description": "CreateDBInstance sets a master password at creation, but the event name is not ModifyDBInstance",
+        "event": {
+          "eventSource": "rds.amazonaws.com",
+          "eventName": "CreateDBInstance",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "APN/1.0 HashiCorp/1.0 Terraform/1.5.7",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/terraform-ci/pipeline",
+          "requestParameters.dBInstanceIdentifier": "staging-db",
+          "responseElements.pendingModifiedValues.masterUserPassword": "****",
+          "eventTime": "2024-03-14T11:30:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

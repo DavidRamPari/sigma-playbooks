@@ -1,0 +1,110 @@
+{
+  "rule": {
+    "id": "09570ae5-889e-43ea-aac0-0e1221fb3d95",
+    "title": "Remove Exported Mailbox from Exchange Webserver",
+    "level": "high",
+    "status": "test",
+    "author": "Christian Burkard (Nextron Systems)",
+    "path": "windows/builtin/msexchange/win_exchange_proxyshell_remove_mailbox_export.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/msexchange/win_exchange_proxyshell_remove_mailbox_export.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminó una solicitud de exportación de buzón de Exchange de forma no interactiva (-Confirm \"False\"). Este patrón coincide con la limpieza posterior a la explotación de ProxyShell, en la que se usa una exportación de buzón para dejar un web shell.",
+      "what_it_detects": "Entradas del log MSExchange Management que registran Remove-MailboxExportRequest con -Identity y -Confirm \"False\", el paso de limpieza del código público de explotación de ProxyShell.",
+      "why_it_matters": "En ProxyShell, el atacante exporta un buzón a un archivo .aspx dentro de un directorio web para plantar un web shell y luego borra la solicitud para ocultarla. Es eliminación de indicadores (T1070) y significa que el servidor podría estar comprometido.",
+      "triage_steps": [
+        "Lea el mensaje completo: anote el valor de -Identity (buzón y nombre de la solicitud), el usuario que lo ejecutó y la hora en el servidor Exchange.",
+        "En el mismo servidor, busque New-MailboxExportRequest en +/- 15 minutos, sobre todo con -FilePath hacia una ruta UNC o local terminada en .aspx o en inetpub/FrontEnd.",
+        "Verifique si en el mismo periodo hubo un New-ManagementRoleAssignment que otorgó el rol 'Mailbox Import Export' a un usuario inesperado.",
+        "Busque archivos .aspx creados recientemente en los directorios web (inetpub\\wwwroot, FrontEnd\\HttpProxy de Exchange) y calcule su hash.",
+        "Revise los logs de IIS en busca de solicitudes a autodiscover.json cuyo cs-uri-query contenga /mapi/ o /powershell y anote las IP de origen.",
+        "Revise si w3wp.exe inició cmd.exe, powershell.exe u otros procesos hijos inesperados en el host.",
+        "Confirme con los administradores de Exchange si hubo una limpieza de exportaciones planificada y busque alertas previas en este servidor."
+      ],
+      "false_positives": [
+        "Administradores o scripts que eliminan sin confirmación las solicitudes de exportación ya completadas, por ejemplo en tareas de eDiscovery o de migración.",
+        "Scripts de mantenimiento programados que depuran entradas antiguas de MailboxExportRequest."
+      ],
+      "response_steps": [
+        "Si no puede vincular la actividad con una tarea administrativa documentada, trate el servidor como comprometido y escale a respuesta a incidentes.",
+        "Aísle el servidor Exchange o restrinja su acceso externo; preserve los logs de IIS, de Exchange y de eventos.",
+        "Elimine los web shells confirmados solo después de recolectarlos como evidencia y revoque las asignaciones de roles no autorizadas.",
+        "Aplique los parches de Exchange contra ProxyShell, restablezca las credenciales expuestas y busque movimiento lateral desde el servidor."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque eliminar en silencio una solicitud de exportación es raro en la operación normal y suele seguir al despliegue de un web shell en un servidor expuesto a Internet."
+    },
+    "en": {
+      "summary": "An Exchange mailbox export request was removed non-interactively (-Confirm \"False\"). This pattern matches post-exploitation cleanup after ProxyShell, where a mailbox export is used to drop a web shell.",
+      "what_it_detects": "MSExchange Management log entries that record Remove-MailboxExportRequest with -Identity and -Confirm \"False\", the cleanup step in public ProxyShell exploit code.",
+      "why_it_matters": "In ProxyShell, attackers export a mailbox to an .aspx file in a web directory to plant a web shell, then delete the export request to hide it. This is indicator removal (T1070), and it means the server may already be compromised.",
+      "triage_steps": [
+        "Read the full message: note the -Identity value (mailbox and request name), the executing user and the time on the Exchange server.",
+        "On the same server, look for New-MailboxExportRequest within +/- 15 minutes, especially with -FilePath pointing to a UNC or local path ending in .aspx or in inetpub/FrontEnd folders.",
+        "Check for New-ManagementRoleAssignment granting 'Mailbox Import Export' to an unexpected user around the same time.",
+        "Search the web directories (inetpub\\wwwroot, Exchange FrontEnd\\HttpProxy) for recently created .aspx files and hash them.",
+        "Review IIS logs for autodiscover.json requests whose cs-uri-query contains /mapi/ or /powershell, and note the source IPs.",
+        "Check whether w3wp.exe started cmd.exe, powershell.exe or other unexpected child processes on the host.",
+        "Confirm with Exchange administrators whether a planned export cleanup took place, and look for earlier alerts on this server."
+      ],
+      "false_positives": [
+        "Administrators or scripts that remove completed export requests without prompting, for example during eDiscovery or migration work.",
+        "Scheduled maintenance scripts that clean up old MailboxExportRequest entries."
+      ],
+      "response_steps": [
+        "If you cannot match the activity to a documented admin task, treat the server as compromised and escalate to incident response.",
+        "Isolate the Exchange server or restrict its external access; preserve IIS, Exchange and event logs.",
+        "Remove confirmed web shells only after collecting them as evidence, and revoke any unauthorized role assignments.",
+        "Patch Exchange against ProxyShell, reset credentials that were exposed, and hunt for lateral movement from the server."
+      ],
+      "severity_rationale": "High fits because a silent export-request removal rarely happens in routine work and often follows web shell deployment on an Internet-facing server."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "ProxyShell-style cleanup: export request removed non-interactively after a mailbox was exported to an .aspx path",
+        "event": {
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.corp.example.com",
+          "message": "Cmdlet suceeded. Cmdlet Remove-MailboxExportRequest, parameters -Identity \"corp.example.com/Users/Administrator\\MailboxExport0\" -Confirm \"False\"."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator removes a completed export request interactively (no -Confirm \"False\" parameter)",
+        "event": {
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.corp.example.com",
+          "message": "Cmdlet suceeded. Cmdlet Remove-MailboxExportRequest, parameters -Identity \"corp.example.com/Users/jperez\\eDiscoveryExport1\"."
+        }
+      },
+      {
+        "description": "Legitimate status query of export requests, no removal cmdlet",
+        "event": {
+          "EventID": 1,
+          "Provider_Name": "MSExchange CmdletLogs",
+          "Channel": "MSExchange Management",
+          "Computer": "EXCH-01.corp.example.com",
+          "message": "Cmdlet suceeded. Cmdlet Get-MailboxExportRequest, parameters -Identity \"corp.example.com/Users/jperez\\eDiscoveryExport1\" -Confirm \"False\"."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

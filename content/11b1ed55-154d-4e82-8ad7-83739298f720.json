@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "11b1ed55-154d-4e82-8ad7-83739298f720",
+    "title": "NTDS.DIT Creation By Uncommon Process",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_ntds_dit_uncommon_process.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_ntds_dit_uncommon_process.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.002",
+      "T1003.003"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso poco común (un intérprete de scripts, un LOLBin o un binario ubicado en AppData, Temp, Public o PerfLogs) creó un archivo llamado ntds.dit. Esto suele indicar que alguien está copiando la base de datos de Active Directory para robar sus hashes.",
+      "what_it_detects": "Eventos de creación de archivos en los que TargetFilename termina en \\ntds.dit y el Image es cmd.exe, powershell.exe, pwsh.exe, cscript.exe, wscript.exe, mshta.exe, regsvr32.exe, rundll32.exe, wsl.exe o wt.exe, o bien un proceso cuya ruta contiene \\AppData\\, \\Temp\\, \\Public\\ o \\PerfLogs\\.",
+      "why_it_matters": "ntds.dit guarda los hashes de contraseña de todas las cuentas del dominio, incluida krbtgt. Con una copia de este archivo y la hive SYSTEM, un atacante obtiene credenciales de todo el dominio sin conexión (ATT&CK T1003.003, NTDS; T1003.002, SAM y hives del registro).",
+      "triage_steps": [
+        "Confirme el host (normalmente un controlador de dominio) y revise TargetFilename: una ruta fuera de C:\\Windows\\NTDS, como Public o Temp, apunta a una copia para exfiltrar.",
+        "Revise el Image, el usuario y el ProcessId. Use los eventos de creación de procesos para obtener el CommandLine y el ParentImage del proceso.",
+        "Busque en el mismo host, en un rango de +/- 15 minutos, comandos de vssadmin create shadow, diskshadow, ntdsutil \"ifm\", esentutl /y, wmic shadowcopy o reg save HKLM\\SYSTEM.",
+        "Verifique si en el mismo directorio se crearon también SYSTEM, SECURITY o archivos comprimidos (.zip, .7z, .cab).",
+        "Revise la actividad de red saliente del host y las conexiones SMB o RDP que iniciaron sesión con la misma cuenta.",
+        "Consulte alertas anteriores del mismo usuario y del mismo host, como volcado de LSASS, DCSync o movimiento lateral."
+      ],
+      "false_positives": [
+        "Scripts de respaldo o de medios IFM escritos por administradores que copian ntds.dit con PowerShell o cmd. Valide el cambio con el equipo de directorio.",
+        "Herramientas de respaldo o recuperación de AD que se ejecutan desde carpetas temporales.",
+        "Ejercicios autorizados de red team o pentest. Confírmelos con el responsable del ejercicio."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta y con el equipo de AD si la actividad estaba autorizada antes de actuar.",
+        "Si no estaba autorizada, aísle el host o restrinja su red, deshabilite la cuenta usada y preserve la copia de ntds.dit, la memoria y los logs.",
+        "Ubique y elimine, después de recolectar la evidencia, todas las copias de ntds.dit y SYSTEM, incluidas las que estén en shares o equipos de destino.",
+        "Considere comprometido el dominio: restablezca dos veces la contraseña de krbtgt y cambie las credenciales privilegiadas y de servicio.",
+        "Busque persistencia y otros accesos del atacante antes de restaurar la operación normal."
+      ],
+      "severity_rationale": "Es alta porque crear ntds.dit con un intérprete o desde una ruta sospechosa casi siempre significa robo de credenciales de todo el dominio, y es poco común en la operación legítima."
+    },
+    "en": {
+      "summary": "An uncommon process created a file named ntds.dit. This can be a script interpreter, a LOLBin, or a binary in AppData, Temp, Public or PerfLogs. It usually means someone is copying the Active Directory database to steal its hashes.",
+      "what_it_detects": "File creation events where TargetFilename ends with \\ntds.dit and the Image is cmd.exe, powershell.exe, pwsh.exe, cscript.exe, wscript.exe, mshta.exe, regsvr32.exe, rundll32.exe, wsl.exe or wt.exe. It also fires when the process path contains \\AppData\\, \\Temp\\, \\Public\\ or \\PerfLogs\\.",
+      "why_it_matters": "ntds.dit holds the password hashes of every domain account, including krbtgt. An attacker with this file and the SYSTEM hive can extract domain-wide credentials offline (ATT&CK T1003.003 NTDS; T1003.002 SAM/registry hives).",
+      "triage_steps": [
+        "Confirm the host, which is usually a domain controller. Check TargetFilename: a path outside C:\\Windows\\NTDS, such as Public or Temp, suggests a copy staged for exfiltration.",
+        "Review the Image, user and ProcessId. Use process creation events to get the CommandLine and ParentImage.",
+        "On the same host within +/- 15 minutes, search for vssadmin create shadow, diskshadow, ntdsutil \"ifm\", esentutl /y, wmic shadowcopy or reg save HKLM\\SYSTEM.",
+        "Check whether SYSTEM or SECURITY hives or archives (.zip, .7z, .cab) were written to the same directory.",
+        "Review outbound network activity from the host, plus SMB or RDP sessions opened with the same account.",
+        "Check earlier alerts for the same user and host, such as LSASS dumping, DCSync or lateral movement."
+      ],
+      "false_positives": [
+        "Admin-written backup or IFM media scripts that copy ntds.dit with PowerShell or cmd. Confirm the change with the directory team.",
+        "AD backup or recovery tools that run from temporary folders.",
+        "Authorized red team or penetration tests. Confirm with the engagement owner."
+      ],
+      "response_steps": [
+        "Check with the account owner and the AD team whether the activity was authorized before you act.",
+        "If it was not authorized, isolate the host or restrict its network access and disable the account used. Preserve the ntds.dit copy, memory and logs.",
+        "After collecting evidence, find and remove every copy of ntds.dit and SYSTEM, including copies on shares and destination hosts.",
+        "Treat the domain as compromised: reset the krbtgt password twice and rotate privileged and service credentials.",
+        "Hunt for persistence and other attacker access before returning to normal operations."
+      ],
+      "severity_rationale": "High fits because an interpreter or a process in a suspicious path creating ntds.dit almost always means domain-wide credential theft, and this rarely happens during legitimate work."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell copies ntds.dit from a volume shadow copy to C:\\Users\\Public on a domain controller.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 4812,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetFilename": "C:\\Users\\Public\\ntds.dit",
+          "CreationUtcTime": "2024-10-25 14:03:12.481"
+        }
+      },
+      {
+        "description": "An unknown binary running from a user's AppData\\Local\\Temp folder writes ntds.dit into a staging directory.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-02.andes.example.com",
+          "User": "ANDES\\svc-backup",
+          "ProcessId": 6120,
+          "Image": "C:\\Users\\svc-backup\\AppData\\Local\\Temp\\vcopy.exe",
+          "TargetFilename": "C:\\Windows\\Temp\\stage\\ntds.dit",
+          "CreationUtcTime": "2024-10-25 22:41:07.902"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ntdsutil.exe in System32 creates IFM media. It is not in the image list and not in a suspicious path.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "ProcessId": 3304,
+          "Image": "C:\\Windows\\System32\\ntdsutil.exe",
+          "TargetFilename": "C:\\IFM\\Active Directory\\ntds.dit",
+          "CreationUtcTime": "2024-10-24 09:15:33.120"
+        }
+      },
+      {
+        "description": "PowerShell writes a file whose name only partly matches (ntds.dit.bak), so TargetFilename does not end with \\ntds.dit.",
+        "event": {
+          "EventID": 11,
+          "Computer": "DC-01.andes.example.com",
+          "User": "ANDES\\adm-mrojas",
+          "ProcessId": 5528,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetFilename": "D:\\Docs\\notes\\ntds.dit.bak",
+          "CreationUtcTime": "2024-10-24 10:02:51.774"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "f177f2bc-5f3e-4453-b599-57eefce9a59c",
+    "title": "Remote Schedule Task Recon via AtScv",
+    "level": "high",
+    "status": "test",
+    "author": "Sagie Dulce, Dekel Paz",
+    "path": "application/rpc_firewall/rpc_firewall_atsvc_recon.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/rpc_firewall/rpc_firewall_atsvc_recon.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente remoto llamó por RPC a la interfaz ATSvc (MS-TSCH) para enumerar o consultar tareas programadas del equipo. Suele indicar reconocimiento previo a un movimiento lateral.",
+      "what_it_detects": "Eventos RPCFW con EventID 3 sobre la interfaz InterfaceUuid 1ff70682-0a51-30e8-076d-740be8cee98b (ATSvc) cuyo OpNum no es 0 (NetrJobAdd) ni 1 (NetrJobDel), por ejemplo 2 (NetrJobEnum) o 3 (NetrJobGetInfo).",
+      "why_it_matters": "ATSvc es la interfaz heredada de trabajos tipo AT. Leer sus tareas desde la red permite a un atacante descubrir tareas existentes y planificar persistencia o ejecución remota (táctica Discovery).",
+      "triage_steps": [
+        "Identifique el OpNum y la función invocada, la dirección del cliente (ClientNetworkAddress), el SID y el host servidor del evento.",
+        "Determine si la IP cliente pertenece a un servidor de administración, herramienta de inventario o escáner autorizado; si no, trátela como sospechosa.",
+        "Resuelva el SID a una cuenta y valide si ese usuario administra normalmente este servidor.",
+        "Busque en el mismo host +/- 15 minutos llamadas ATSvc con OpNum 0 o 1, o a ITaskSchedulerService, que indicarían creación de tareas.",
+        "Pivote por la IP cliente: otras llamadas RPC (SAMR, SRVSVC, SVCCTL), inicios de sesión de red 4624 tipo 3 y alertas previas.",
+        "Revise en el host cliente el proceso que originó la conexión y su línea de comandos, si cuenta con telemetría EDR."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Herramientas de inventario o monitoreo que consultan trabajos programados de forma remota con cuentas de servicio.",
+        "Administradores que usan utilidades heredadas para revisar tareas en servidores antiguos."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host o del equipo de TI si la consulta era esperada.",
+        "Si no está autorizada, aísle el equipo cliente y bloquee su acceso RPC al servidor mediante RPC Firewall o reglas de red.",
+        "Restablezca las credenciales de la cuenta asociada al SID y revise sus sesiones activas.",
+        "Inspeccione tareas programadas en los hosts consultados y elimine solo las maliciosas verificadas, conservando evidencia.",
+        "Mantenga la política de RPC Firewall en modo bloqueo para ATSvc donde no se necesite."
+      ],
+      "severity_rationale": "Nivel alto porque la enumeración remota de tareas por ATSvc es poco común en operación normal y suele preceder a ejecución remota o persistencia."
+    },
+    "en": {
+      "summary": "A remote client made an RPC call to the ATSvc (MS-TSCH) interface to enumerate or read scheduled jobs on this host. This is typically reconnaissance ahead of lateral movement.",
+      "what_it_detects": "RPCFW events with EventID 3 on InterfaceUuid 1ff70682-0a51-30e8-076d-740be8cee98b (ATSvc) where OpNum is neither 0 (NetrJobAdd) nor 1 (NetrJobDel), e.g. 2 (NetrJobEnum) or 3 (NetrJobGetInfo).",
+      "why_it_matters": "ATSvc is the legacy AT-style job interface. Reading jobs over the network lets an attacker discover existing tasks and plan remote execution or persistence (Discovery tactic).",
+      "triage_steps": [
+        "Record the OpNum and function, client address (ClientNetworkAddress), SID and the server host from the event.",
+        "Check whether the client IP is an approved management server, inventory tool or scanner; otherwise treat it as suspicious.",
+        "Resolve the SID to an account and confirm whether that user normally administers this server.",
+        "On the same host within +/- 15 minutes, look for ATSvc OpNum 0 or 1 calls, or ITaskSchedulerService calls, indicating task creation.",
+        "Pivot on the client IP: other RPC calls (SAMR, SRVSVC, SVCCTL), 4624 type 3 network logons and earlier alerts.",
+        "If EDR telemetry exists, identify the process and command line on the client that opened the connection."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Inventory or monitoring tools querying scheduled jobs remotely with service accounts.",
+        "Administrators using legacy utilities to review jobs on older servers."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or IT team whether the query was expected.",
+        "If unauthorized, isolate the client host and block its RPC access to the server via RPC Firewall or network rules.",
+        "Reset credentials for the account behind the SID and review its active sessions.",
+        "Inspect scheduled tasks on queried hosts; remove only verified malicious ones and preserve evidence.",
+        "Keep RPC Firewall blocking ATSvc wherever it is not needed."
+      ],
+      "severity_rationale": "High because remote ATSvc job enumeration is rare in normal operations and often precedes remote execution or persistence."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote NetrJobEnum (OpNum 2) call to ATSvc from an unknown workstation",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "1ff70682-0a51-30e8-076d-740be8cee98b",
+          "OpNum": 2,
+          "Function": "RpcServerCall",
+          "ImageName": "svchost.exe",
+          "Protocol": "ncacn_np",
+          "Endpoint": "\\pipe\\atsvc",
+          "ClientNetworkAddress": "192.0.2.45",
+          "ServerNetworkAddress": "198.51.100.10",
+          "SID": "S-1-5-21-1004336348-1177238915-682003330-1145",
+          "Computer": "SRV-FILE-01.andes.example.com"
+        }
+      },
+      {
+        "description": "Remote NetrJobGetInfo (OpNum 3) call to ATSvc",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "1ff70682-0a51-30e8-076d-740be8cee98b",
+          "OpNum": 3,
+          "Function": "RpcServerCall",
+          "ImageName": "svchost.exe",
+          "Protocol": "ncacn_ip_tcp",
+          "ClientNetworkAddress": "203.0.113.77",
+          "ServerNetworkAddress": "198.51.100.20",
+          "SID": "S-1-5-21-1004336348-1177238915-682003330-1203",
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "ATSvc NetrJobAdd (OpNum 0) call, excluded by the filter (covered by a different rule)",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "1ff70682-0a51-30e8-076d-740be8cee98b",
+          "OpNum": 0,
+          "Function": "RpcServerCall",
+          "ImageName": "svchost.exe",
+          "Protocol": "ncacn_np",
+          "ClientNetworkAddress": "192.0.2.45",
+          "ServerNetworkAddress": "198.51.100.10",
+          "Computer": "SRV-FILE-01.andes.example.com"
+        }
+      },
+      {
+        "description": "RPC call to ITaskSchedulerService, a different interface UUID",
+        "event": {
+          "EventLog": "RPCFW",
+          "EventID": 3,
+          "InterfaceUuid": "86d35949-83c9-4044-b424-db363231fd0c",
+          "OpNum": 2,
+          "Function": "RpcServerCall",
+          "ImageName": "svchost.exe",
+          "Protocol": "ncacn_ip_tcp",
+          "ClientNetworkAddress": "192.0.2.12",
+          "ServerNetworkAddress": "198.51.100.10",
+          "Computer": "SRV-FILE-01.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

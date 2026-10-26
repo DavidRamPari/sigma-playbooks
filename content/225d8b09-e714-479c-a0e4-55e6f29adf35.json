@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "225d8b09-e714-479c-a0e4-55e6f29adf35",
+    "title": "Azure Kubernetes Events Deleted",
+    "level": "medium",
+    "status": "test",
+    "author": "Austin Songer @austinsonger",
+    "path": "cloud/azure/activity_logs/azure_kubernetes_events_deleted.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/azure/activity_logs/azure_kubernetes_events_deleted.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se eliminaron objetos Event (API events.k8s.io) en un clúster de Kubernetes conectado a Azure Arc. Un atacante puede borrar eventos para ocultar su actividad en el clúster.",
+      "what_it_detects": "Registros de Azure Activity Logs cuyo operationName es exactamente MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/EVENTS.K8S.IO/EVENTS/DELETE, es decir, la eliminación de eventos de Kubernetes en un recurso connectedClusters a través de Azure.",
+      "why_it_matters": "Los eventos de Kubernetes registran la programación de pods, fallos, cambios de imagen y errores de permisos. Borrarlos debilita la visibilidad y la investigación forense, una forma de deterioro de defensas (ATT&CK T1685).",
+      "triage_steps": [
+        "Identifique el caller (usuario, service principal o identidad administrada), el callerIpAddress y el resourceId del clúster afectado.",
+        "Confirme si la identidad pertenece a un administrador o automatización conocida que gestione ese clúster y si existe un ticket de cambio.",
+        "Revise el resultType: distinga entre intentos fallidos y eliminaciones exitosas.",
+        "Busque en Activity Logs operaciones del mismo caller en +/- 15 minutos: creación de pods, deployments, roles, secretos o cambios de diagnóstico.",
+        "Pivote por callerIpAddress: geolocalización, ASN y otros inicios de sesión de Entra ID desde esa IP.",
+        "Consulte alertas previas para la misma identidad y el mismo clúster en los últimos 30 días.",
+        "Si hay acceso al clúster, revise los audit logs de Kubernetes y los workloads creados poco antes de la eliminación."
+      ],
+      "false_positives": [
+        "Administradores que limpian eventos manualmente durante mantenimiento o resolución de problemas.",
+        "Herramientas de automatización u operadores que purgan eventos antiguos en clústeres Arc.",
+        "Pruebas de laboratorio o pipelines de CI/CD que recrean y limpian entornos de forma periódica."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del clúster o el dueño de la identidad que la eliminación fue autorizada.",
+        "Si no lo fue, deshabilite o rote las credenciales del caller y revoque sus sesiones y asignaciones de rol sobre el clúster.",
+        "Preserve los audit logs de Kubernetes, Activity Logs y registros de Entra ID antes de que expiren.",
+        "Busque y elimine workloads, roles o tokens creados por el atacante, previa validación con el equipo responsable.",
+        "Refuerce RBAC para limitar quién puede borrar eventos y documente excepciones legítimas en la regla."
+      ],
+      "severity_rationale": "Nivel medio: borrar eventos es poco frecuente y útil para evadir detección, pero también lo hacen administradores legítimos, por lo que requiere contexto."
+    },
+    "en": {
+      "summary": "Event objects (events.k8s.io API) were deleted on an Azure Arc-connected Kubernetes cluster. An attacker may delete events to hide their activity in the cluster.",
+      "what_it_detects": "Azure Activity Log records whose operationName is exactly MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/EVENTS.K8S.IO/EVENTS/DELETE, meaning Kubernetes events were deleted on a connectedClusters resource through Azure.",
+      "why_it_matters": "Kubernetes events record pod scheduling, failures, image pulls and permission errors. Deleting them reduces visibility and hampers forensics, a form of defense impairment (ATT&CK T1685).",
+      "triage_steps": [
+        "Identify the caller (user, service principal or managed identity), callerIpAddress and the resourceId of the affected cluster.",
+        "Confirm whether the identity belongs to a known administrator or automation managing that cluster, and whether a change ticket exists.",
+        "Check resultType to separate failed attempts from successful deletions.",
+        "Search Activity Logs for the same caller within +/- 15 minutes: pod, deployment, role or secret creation, or diagnostic setting changes.",
+        "Pivot on callerIpAddress: geolocation, ASN and other Entra ID sign-ins from that IP.",
+        "Look for earlier alerts on the same identity and cluster over the last 30 days.",
+        "If you have cluster access, review Kubernetes audit logs and workloads created shortly before the deletion."
+      ],
+      "false_positives": [
+        "Administrators manually clearing events during maintenance or troubleshooting.",
+        "Automation tools or operators purging old events on Arc clusters.",
+        "Lab tests or CI/CD pipelines that routinely rebuild and clean up environments."
+      ],
+      "response_steps": [
+        "Verify with the cluster owner or identity owner that the deletion was authorized.",
+        "If not, disable or rotate the caller's credentials and revoke its sessions and role assignments on the cluster.",
+        "Preserve Kubernetes audit logs, Activity Logs and Entra ID logs before they expire.",
+        "Find and remove attacker-created workloads, roles or tokens after validating with the owning team.",
+        "Tighten RBAC on who can delete events and document legitimate exceptions in the rule."
+      ],
+      "severity_rationale": "Medium: deleting events is uncommon and useful for evasion, but legitimate administrators also do it, so context is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unfamiliar user deletes Kubernetes events on an Arc-connected cluster",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/EVENTS.K8S.IO/EVENTS/DELETE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "time": "2024-10-25T14:03:12Z"
+        }
+      },
+      {
+        "description": "Service principal deletes events, operation name in lowercase (case-insensitive match)",
+        "event": {
+          "operationName": "microsoft.kubernetes/connectedclusters/events.k8s.io/events/delete",
+          "category": "Administrative",
+          "resultType": "Start",
+          "caller": "11111111-2222-3333-4444-555555555555",
+          "callerIpAddress": "198.51.100.20",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-dev/providers/Microsoft.Kubernetes/connectedClusters/arc-dev-02",
+          "time": "2024-10-25T15:10:40Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Reading events on the same cluster, not a deletion",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/EVENTS.K8S.IO/EVENTS/READ",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "jperez@example.com",
+          "callerIpAddress": "203.0.113.45",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "time": "2024-10-25T14:01:05Z"
+        }
+      },
+      {
+        "description": "Deleting a pod on the cluster; a different operationName that the rule does not cover",
+        "event": {
+          "operationName": "MICROSOFT.KUBERNETES/CONNECTEDCLUSTERS/PODS/DELETE",
+          "category": "Administrative",
+          "resultType": "Success",
+          "caller": "ops-automation@example.com",
+          "callerIpAddress": "192.0.2.10",
+          "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arc-prod/providers/Microsoft.Kubernetes/connectedClusters/arc-prod-01",
+          "time": "2024-10-25T14:20:00Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

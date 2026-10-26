@@ -1,0 +1,138 @@
+{
+  "rule": {
+    "id": "a0edd39f-a0c6-4c17-8141-261f958e8d8f",
+    "title": "PowerShell Remote Session Creation",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_remote_session_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_script/posh_ps_remote_session_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script block de PowerShell registrado (evento 4104) contiene New-PSSession con el parámetro -ComputerName, es decir, se creó o se intentó crear una sesión remota de PowerShell hacia otro equipo.",
+      "what_it_detects": "Texto de ScriptBlockText que incluye a la vez 'New-PSSession' y '-ComputerName ' según Script Block Logging. Indica el uso de PowerShell Remoting (WinRM) para abrir una sesión persistente en uno o más equipos remotos.",
+      "why_it_matters": "Los atacantes usan PowerShell (ATT&CK T1059.001) y sus sesiones remotas para ejecutar comandos en otros equipos con credenciales válidas, moverse lateralmente y desplegar payloads sin copiar binarios al disco.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo: identifique los equipos en -ComputerName, el uso de -Credential y lo que se ejecuta después con Invoke-Command, Enter-PSSession o Copy-Item -ToSession.",
+        "Reconstruya scripts fragmentados agrupando por ScriptBlockId y revise Path para saber si proviene de un archivo .ps1 conocido o de ejecución interactiva o en memoria.",
+        "Identifique el usuario y el host de origen; confirme si es un administrador o una cuenta de servicio que suele usar PowerShell Remoting.",
+        "Revise la creación del proceso powershell.exe en el host de origen: ParentImage, CommandLine y si hay -EncodedCommand, -NoProfile o ventanas ocultas.",
+        "En los equipos destino, busque eventos de WinRM (wsmprovhost.exe, inicios de sesión 4624 de tipo 3) y bloques 4104 en un rango de +/- 15 minutos.",
+        "Busque en el mismo host y usuario, +/- 15 minutos, señales de descarga (Invoke-WebRequest, DownloadString), volcado de credenciales u otras alertas previas.",
+        "Compare con la línea base: ¿este usuario ya había conectado antes a esos destinos y en ese horario?"
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que gestionan servidores de forma remota, como inventario, parches o configuración.",
+        "Herramientas de gestión o monitoreo que usan PowerShell Remoting con cuentas de servicio documentadas.",
+        "Administradores que trabajan de forma interactiva desde estaciones de salto o servidores de administración autorizados."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta o con el equipo de TI si la sesión remota era esperada y está autorizada.",
+        "Si no está autorizada, aísle el host de origen y, si hay actividad sospechosa en ellos, también los destinos; deshabilite o restablezca las credenciales usadas.",
+        "Recolecte los 4104 completos, los logs de WinRM y la línea de tiempo de procesos en el origen y en los destinos antes de remediar.",
+        "Elimine la persistencia o los artefactos que se encuentren, limite WinRM a hosts de administración y cree excepciones documentadas para los scripts legítimos."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque PowerShell Remoting es común en administración, pero también es una vía frecuente de movimiento lateral que requiere revisar el contexto."
+    },
+    "en": {
+      "summary": "A logged PowerShell script block (event 4104) contains New-PSSession with -ComputerName, so a remote PowerShell session to another host was created or attempted.",
+      "what_it_detects": "ScriptBlockText containing both 'New-PSSession' and '-ComputerName ' as captured by Script Block Logging. This indicates PowerShell Remoting (WinRM) being used to open a persistent session on one or more remote computers.",
+      "why_it_matters": "Attackers abuse PowerShell (ATT&CK T1059.001) and its remote sessions to run commands on other hosts with valid credentials, move laterally and stage payloads without copying binaries to disk.",
+      "triage_steps": [
+        "Read the full ScriptBlockText: note the -ComputerName targets, any -Credential use, and follow-up Invoke-Command, Enter-PSSession or Copy-Item -ToSession actions.",
+        "Rebuild split scripts by ScriptBlockId and check Path to tell a known .ps1 file from interactive or in-memory execution.",
+        "Identify the user and source host; confirm whether this is an admin or service account that normally uses PowerShell Remoting.",
+        "Review the powershell.exe process creation on the source: ParentImage, CommandLine, and flags like -EncodedCommand, -NoProfile or hidden windows.",
+        "On target hosts, look for WinRM activity (wsmprovhost.exe, logon 4624 type 3) and 4104 blocks within +/- 15 minutes.",
+        "Pivot on the same host and user within +/- 15 minutes for downloads (Invoke-WebRequest, DownloadString), credential dumping or earlier alerts.",
+        "Compare with baseline: has this user connected to these targets before, and at this time of day?"
+      ],
+      "false_positives": [
+        "Legitimate administrative scripts managing servers remotely, such as inventory, patching or configuration.",
+        "Management or monitoring tools using PowerShell Remoting with documented service accounts.",
+        "Administrators working interactively from authorized jump hosts or admin servers."
+      ],
+      "response_steps": [
+        "Confirm with the account owner or IT whether the remote session was expected and authorized.",
+        "If unauthorized, isolate the source host, plus any targets showing suspicious activity, and disable or reset the credentials used.",
+        "Collect full 4104 events, WinRM logs and process timelines from source and targets before remediating.",
+        "Remove any persistence or artifacts found, restrict WinRM to admin hosts, and add documented exclusions for legitimate scripts."
+      ],
+      "severity_rationale": "Medium fits because PowerShell Remoting is common in administration but is also a frequent lateral movement path that needs context review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive script creates a remote session to a file server with explicit credentials and runs a command through it.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "$cred = Get-Credential ANDES\\jperez; $s = New-PSSession -ComputerName SRV-FILE-02 -Credential $cred; Invoke-Command -Session $s -ScriptBlock { whoami; hostname }",
+          "ScriptBlockId": "3f2a9c1e-7b4d-4e8a-9a51-0c6d2e8f4b17",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1105"
+        }
+      },
+      {
+        "description": "Lowercase cmdlet name with multiple targets from a .ps1 file; matching is case-insensitive.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-JUMP-01.andes.example.com",
+          "ScriptBlockText": "$sessions = new-pssession -computername SRV-APP-01,SRV-APP-02 -ErrorAction Stop\nInvoke-Command -Session $sessions -ScriptBlock { Get-Service W32Time }",
+          "ScriptBlockId": "a81c4d2b-0e93-4f6a-b7c2-5d1e9f0a3c66",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Check-TimeService.ps1",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1202"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Enter-PSSession with -ComputerName, but New-PSSession is absent.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Enter-PSSession -ComputerName SRV-FILE-02",
+          "ScriptBlockId": "c4e7a0d9-2b1f-4a38-8e6c-91f3b5d2a7e0",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1105"
+        }
+      },
+      {
+        "description": "New-PSSession over SSH using -HostName; the '-ComputerName ' parameter is not present.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "ADM-JUMP-01.andes.example.com",
+          "ScriptBlockText": "$s = New-PSSession -HostName linux-web-01.example.com -UserName opsadmin; Invoke-Command -Session $s -ScriptBlock { uptime }",
+          "ScriptBlockId": "9b0d3e6f-5a2c-4d71-a8e4-2f7c1b9e6d35",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "UserID": "S-1-5-21-1111111111-2222222222-3333333333-1202"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "2992ac4d-31e9-4325-99f2-b18a73221bb2",
+    "title": "ESXi VM Kill Via ESXCLI",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems), Cedric Maurugeon",
+    "path": "linux/process_creation/proc_creation_lnx_esxcli_vm_kill.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_esxcli_vm_kill.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.012",
+      "T1529"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó esxcli con los argumentos \"vm process\" y \"kill\" en un host ESXi, lo que fuerza el apagado de una máquina virtual. Puede ser administración legítima o un paso previo al cifrado de discos por ransomware.",
+      "what_it_detects": "Eventos de creación de procesos en Linux/ESXi donde Image termina en /esxcli y CommandLine contiene \"vm process\" y \"kill\", por ejemplo \"esxcli vm process kill --type=force --world-id=<id>\".",
+      "why_it_matters": "Detener las VM libera los bloqueos de los archivos .vmdk para que el ransomware pueda cifrarlos, y además interrumpe servicios (T1529, apagado o reinicio del sistema). Se ejecuta desde el shell del hipervisor (T1059.012, comandos del hipervisor).",
+      "triage_steps": [
+        "Revise CommandLine: el tipo de kill (soft, hard, force) y el world-id. Use la salida de \"esxcli vm process list\" o hostd.log para identificar la VM afectada.",
+        "Identifique el usuario y el ParentImage: ¿la sesión viene de SSH, de la ESXi Shell, de un script o de una herramienta de gestión conocida?",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, más ejecuciones de kill. Si se detienen muchas VM en bucle, es un fuerte indicio de ransomware.",
+        "Revise /var/log/shell.log, auth.log y hostd.log para ubicar inicios de sesión SSH, la IP de origen y si SSH o la ESXi Shell se habilitaron poco antes.",
+        "Busque actividad asociada: vim-cmd vmsvc/power.off, cambios de firewall, borrado de logs, binarios nuevos en /tmp o en datastores, y archivos .vmdk renombrados o cifrados.",
+        "Confirme con el equipo de virtualización si había un cambio o mantenimiento programado para esa VM y ese horario.",
+        "Revise alertas anteriores del mismo host, usuario o IP de origen."
+      ],
+      "false_positives": [
+        "Administradores que fuerzan el apagado de una VM colgada que no responde a vSphere.",
+        "Scripts de mantenimiento o de backup que detienen VM antes de tareas programadas.",
+        "Pruebas de recuperación ante desastres o laboratorios con apagados forzados documentados."
+      ],
+      "response_steps": [
+        "Valide con el responsable del host si la acción fue autorizada y quedó registrada en un cambio.",
+        "Si no fue autorizada, aísle el host ESXi de la red de gestión, deshabilite SSH y la ESXi Shell, y rote las credenciales root y las de vCenter.",
+        "Preserve los logs del host y los binarios sospechosos antes de reiniciar o reinstalar.",
+        "Verifique la integridad de los datastores. Restaure las VM desde backups confiables y reinstale el host si hay evidencia de compromiso."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque los administradores también fuerzan apagados de VM, pero en un contexto de ataque el comando antecede al cifrado masivo, así que se debe revisar pronto."
+    },
+    "en": {
+      "summary": "esxcli was run with \"vm process\" and \"kill\" on an ESXi host, which forcibly stops a virtual machine. This may be normal admin work or a ransomware step before disks are encrypted.",
+      "what_it_detects": "Linux/ESXi process creation events where Image ends with /esxcli and CommandLine contains both \"vm process\" and \"kill\", for example \"esxcli vm process kill --type=force --world-id=<id>\".",
+      "why_it_matters": "Killing VMs releases the locks on .vmdk files so ransomware can encrypt them, and it disrupts services (T1529, System Shutdown/Reboot). The command runs from the hypervisor shell (T1059.012, Hypervisor CLI).",
+      "triage_steps": [
+        "Check CommandLine for the kill type (soft, hard, force) and the world-id. Map the world-id to a VM using hostd.log or \"esxcli vm process list\" output.",
+        "Identify the user and ParentImage: does the session come from SSH, the ESXi Shell, a script or a known management tool?",
+        "Look for more kill executions on the same host within +/- 15 minutes. Many VMs stopped in a loop strongly suggests ransomware.",
+        "Review /var/log/shell.log, auth.log and hostd.log for SSH logins and the source IP, and check whether SSH or the ESXi Shell was enabled shortly before.",
+        "Look for related activity: vim-cmd vmsvc/power.off, firewall changes, log deletion, new binaries in /tmp or on datastores, and renamed or encrypted .vmdk files.",
+        "Ask the virtualization team whether maintenance or a change was scheduled for that VM at that time.",
+        "Review earlier alerts for the same host, user or source IP."
+      ],
+      "false_positives": [
+        "Administrators forcing a hung VM off when it does not respond to vSphere.",
+        "Maintenance or backup scripts that stop VMs before scheduled tasks.",
+        "Disaster recovery tests or lab work with documented forced shutdowns."
+      ],
+      "response_steps": [
+        "Confirm with the host owner that the action was authorized and covered by a change record.",
+        "If it was not authorized, isolate the ESXi host from the management network, disable SSH and the ESXi Shell, and rotate the root and vCenter credentials.",
+        "Preserve the host logs and any suspicious binaries before rebooting or reinstalling.",
+        "Check datastore integrity. Restore VMs from trusted backups and rebuild the host if you find evidence of compromise."
+      ],
+      "severity_rationale": "Medium fits because admins also force VMs off, but in an attack this command comes just before mass encryption, so the alert needs a prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Forced kill of a VM world via esxcli from an SSH shell session on an ESXi host",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli vm process kill --type=force --world-id=2101543",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Hostname": "esxi-prod-03",
+          "ProcessId": 48213
+        }
+      },
+      {
+        "description": "Soft kill issued by a shell script looping over VM world IDs",
+        "event": {
+          "Image": "/usr/bin/esxcli",
+          "CommandLine": "/usr/bin/esxcli vm process kill -t soft -w 2098871",
+          "ParentImage": "/tmp/stop_all.sh",
+          "User": "root",
+          "Hostname": "esxi-prod-01",
+          "ProcessId": 51122
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator lists running VM processes without killing any",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli vm process list",
+          "ParentImage": "/bin/sh",
+          "User": "root",
+          "Hostname": "esxi-prod-03",
+          "ProcessId": 48190
+        }
+      },
+      {
+        "description": "Network inventory command via esxcli that has no vm process kill arguments",
+        "event": {
+          "Image": "/bin/esxcli",
+          "CommandLine": "esxcli network ip interface list",
+          "ParentImage": "/bin/sh",
+          "User": "svc-monitor",
+          "Hostname": "esxi-prod-02",
+          "ProcessId": 47002
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "30aed7b6-d2c1-4eaf-9382-b6bc43e50c57",
+    "title": "File Deletion",
+    "level": "informational",
+    "status": "stable",
+    "author": "Ömer Günal, oscd.community",
+    "path": "linux/process_creation/proc_creation_lnx_file_deletion.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_file_deletion.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó rm, shred o unlink en un host Linux. Por sí solo es muy común; importa cuando el contexto sugiere que alguien está borrando rastros de una intrusión.",
+      "what_it_detects": "Eventos de creación de procesos cuyo Image termina en /rm, /shred o /unlink, sin importar los argumentos ni el proceso padre.",
+      "why_it_matters": "Los atacantes borran herramientas, scripts, logs e historiales para ocultar su actividad (MITRE ATT&CK T1070.004, eliminación de archivos como evasión). shred sobrescribe el contenido y complica el análisis forense.",
+      "triage_steps": [
+        "Revise CommandLine: rutas borradas (/tmp, /dev/shm, /var/tmp, directorios ocultos, .bash_history, /var/log) y opciones como -rf, shred -u -z o -n.",
+        "Revise ParentImage y la cadena de procesos: shell interactivo, cron, gestor de paquetes, script de despliegue o un proceso web como apache o php-fpm.",
+        "Identifique el usuario y el origen de la sesión (SSH, sudo, IP de origen) y confirme si corresponde a un administrador conocido.",
+        "Correlacione en el mismo host +/- 15 minutos: descargas con curl o wget, chmod +x, ejecución desde /tmp, conexiones salientes nuevas o cambios de cron.",
+        "Busque alertas previas para el mismo host o usuario, sobre todo de mayor severidad, que este borrado podría estar encubriendo.",
+        "Si los archivos borrados son relevantes, intente recuperarlos desde snapshots, backups o descriptores abiertos en /proc/<pid>/fd y obtenga su hash."
+      ],
+      "false_positives": [
+        "Tareas legítimas de administración: limpieza de directorios temporales, rotación manual de logs o liberación de espacio.",
+        "Scripts de instalación, gestores de paquetes, pipelines de CI/CD y herramientas de configuración como Ansible que eliminan archivos temporales.",
+        "Trabajos de cron o systemd-tmpfiles y borrado seguro con shred aplicado por política de retención de datos."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host o el usuario si el borrado fue esperado antes de escalar.",
+        "Si es sospechoso, preserve evidencia: imagen de disco o memoria, snapshot de la VM y logs remotos, antes de cualquier cambio.",
+        "Contenga aislando el host de la red y suspendiendo las credenciales o llaves SSH implicadas mientras se investiga.",
+        "Erradique las herramientas, persistencias y accesos identificados en la correlación y restaure archivos o logs desde backup.",
+        "Ajuste la regla con exclusiones por ParentImage o usuario para automatizaciones verificadas y así reducir ruido."
+      ],
+      "severity_rationale": "El nivel informational es adecuado porque rm, shred y unlink son de uso diario; la alerta solo aporta contexto y debe correlacionarse con otra actividad sospechosa."
+    },
+    "en": {
+      "summary": "rm, shred or unlink was run on a Linux host. This is very common on its own and only matters when the context suggests someone is wiping traces of an intrusion.",
+      "what_it_detects": "Process creation events where Image ends with /rm, /shred or /unlink. Arguments and parent process are not checked.",
+      "why_it_matters": "Attackers delete tools, scripts, logs and shell history to hide what they did (MITRE ATT&CK T1070.004, file deletion for indicator removal). shred overwrites content, which makes forensic recovery harder.",
+      "triage_steps": [
+        "Review CommandLine for the deleted paths (/tmp, /dev/shm, /var/tmp, hidden directories, .bash_history, /var/log) and flags such as -rf, shred -u -z or -n.",
+        "Review ParentImage and the process chain: interactive shell, cron, package manager, deployment script, or a web process such as apache or php-fpm.",
+        "Identify the user and how the session started (SSH, sudo, source IP). Confirm whether it is a known administrator.",
+        "Correlate on the same host within +/- 15 minutes: curl or wget downloads, chmod +x, execution from /tmp, new outbound connections, cron changes.",
+        "Look for earlier alerts on the same host or user, especially higher-severity ones that this deletion might be covering up.",
+        "If the deleted files matter, try to recover them from snapshots, backups or open descriptors in /proc/<pid>/fd, then hash them."
+      ],
+      "false_positives": [
+        "Legitimate administration: cleaning temp directories, manual log rotation, freeing disk space.",
+        "Installers, package managers, CI/CD pipelines and configuration tools such as Ansible that remove temporary files.",
+        "cron or systemd-tmpfiles jobs, and secure deletion with shred required by a data retention policy."
+      ],
+      "response_steps": [
+        "Check with the host owner or the user whether the deletion was expected before escalating.",
+        "If it looks suspicious, preserve evidence first: disk or memory image, VM snapshot and remote logs.",
+        "Contain by isolating the host and suspending the credentials or SSH keys involved while you investigate.",
+        "Remove the tools, persistence and access found during correlation, then restore files or logs from backup.",
+        "Tune the rule with ParentImage or user exclusions for verified automation to reduce noise."
+      ],
+      "severity_rationale": "Informational fits because rm, shred and unlink run all the time; the alert only adds context and needs to be correlated with other suspicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "shred used to overwrite and remove a dropped script in a hidden /tmp directory, launched from an interactive bash session",
+        "event": {
+          "Image": "/usr/bin/shred",
+          "CommandLine": "shred -u -z -n 3 /tmp/.x/payload.sh",
+          "ParentImage": "/usr/bin/bash",
+          "User": "www-data",
+          "CurrentDirectory": "/tmp/.x",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "rm recursively deleting a staging directory and the shell history",
+        "event": {
+          "Image": "/usr/bin/rm",
+          "CommandLine": "rm -rf /var/tmp/.cache/tool /home/jperez/.bash_history",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 51002,
+          "ParentProcessId": 50977,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "mv moving a file to another directory; Image does not end with /rm, /shred or /unlink",
+        "event": {
+          "Image": "/usr/bin/mv",
+          "CommandLine": "mv /tmp/report.csv /home/jperez/reports/",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 51230,
+          "ParentProcessId": 50977,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "find with -delete cleaning old files; the process image is find, not rm",
+        "event": {
+          "Image": "/usr/bin/find",
+          "CommandLine": "find /var/tmp -type f -mtime +7 -delete",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 3021,
+          "ParentProcessId": 812,
+          "Computer": "web-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

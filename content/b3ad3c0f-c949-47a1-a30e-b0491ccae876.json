@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "b3ad3c0f-c949-47a1-a30e-b0491ccae876",
+    "title": "Uncommon Connection to Active Directory Web Services",
+    "level": "medium",
+    "status": "test",
+    "author": "@kostastsale",
+    "path": "windows/network_connection/net_connection_win_adws_unusual_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/network_connection/net_connection_win_adws_unusual_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1087"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso que no está en la lista de herramientas habituales de administración de ADWS abrió una conexión saliente al puerto TCP 9389 (Active Directory Web Services). Puede tratarse de una enumeración de Active Directory por ADWS, como la que hace SOAPHound.",
+      "what_it_detects": "Eventos de conexión de red en Windows (por ejemplo, Sysmon Event ID 3) con Initiated=true y DestinationPort=9389, cuando el Image no es dsac.exe, PowerShell (Windows PowerShell o pwsh 7) ni la ruta exacta del Microsoft Monitoring Agent.",
+      "why_it_matters": "ADWS ofrece consultas SOAP sobre el directorio, y herramientas como SOAPHound lo usan para recolectar usuarios, grupos y ACL sin generar el tráfico LDAP que suele vigilarse. Corresponde a Account Discovery (T1087) y suele preceder al movimiento lateral o a la escalada de privilegios.",
+      "triage_steps": [
+        "Revise el Image: ruta, firma digital y hash. Desconfíe de binarios en carpetas de usuario, Temp, ProgramData o recursos compartidos, y de ensamblados .NET sin firma.",
+        "Verifique que DestinationIp corresponda a un controlador de dominio y anote el SourceIp y el host de origen.",
+        "Identifique al User que ejecutó el proceso y confirme si su rol justifica consultar AD mediante ADWS.",
+        "Busque la creación del proceso (ProcessGuid/ProcessId) para obtener CommandLine, ParentImage y los procesos hijos. Fíjese en argumentos como --dnsdump, --certdump o en rutas de salida.",
+        "Cuente las conexiones al puerto 9389 desde ese host en +/- 15 minutos. Un volumen alto y en ráfaga sugiere recolección masiva.",
+        "Revise si en el mismo host aparecen archivos JSON o ZIP nuevos, consultas LDAP o SMB al DC y otras alertas de descubrimiento.",
+        "Busque alertas anteriores del mismo Image, hash, usuario o host y confirme si es una aplicación de AD ya conocida."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas que trabajan con AD mediante ADWS: consolas de administración de terceros, herramientas de gestión de identidades y soluciones de auditoría o backup de AD.",
+        "Binarios del Microsoft Monitoring Agent o de otros agentes de monitoreo: el filtro compara la ruta de carpeta de forma exacta y puede no excluir sus ejecutables.",
+        "Scripts o utilidades internas de administradores, compiladas en .NET y que usan el módulo de AD."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o el usuario si la herramienta está autorizada. Si es legítima, agregue a la lista de permitidos la ruta exacta y la firma o el hash del binario.",
+        "Si no está autorizada, aísle el endpoint, conserve el binario, sus artefactos de salida y la memoria, y bloquee el hash en el EDR.",
+        "Restablezca las credenciales de la cuenta usada y revise su actividad en los DC. Suponga que la información de AD quedó expuesta y vigile las rutas de ataque que revela.",
+        "Busque el mismo hash o comportamiento en otros equipos y elimine el binario una vez completada la investigación."
+      ],
+      "severity_rationale": "Medium es adecuado porque se trata de una fase de reconocimiento, sin impacto directo, y porque hay aplicaciones legítimas que usan ADWS, aunque desde binarios inusuales sigue siendo una señal fuerte de enumeración encubierta."
+    },
+    "en": {
+      "summary": "A process outside the usual ADWS management tools opened an outbound connection to TCP 9389 (Active Directory Web Services). This may be Active Directory enumeration over ADWS, such as SOAPHound performs.",
+      "what_it_detects": "Windows network connection events (for example Sysmon Event ID 3) with Initiated=true and DestinationPort=9389, where Image is not dsac.exe, PowerShell (Windows PowerShell or pwsh 7) or the exact Microsoft Monitoring Agent path.",
+      "why_it_matters": "ADWS accepts SOAP queries against the directory. Tools like SOAPHound use it to collect users, groups and ACLs without the LDAP traffic defenders usually watch. This is Account Discovery (T1087), which often comes before lateral movement or privilege escalation.",
+      "triage_steps": [
+        "Check the Image path, signature and hash. Distrust binaries in user profiles, Temp, ProgramData or shares, and unsigned .NET assemblies.",
+        "Confirm that DestinationIp is a domain controller and note the source IP and host.",
+        "Identify the User running the process and confirm whether their role justifies querying AD over ADWS.",
+        "Find the process creation event (ProcessGuid/ProcessId) to get CommandLine, ParentImage and child processes. Look for flags such as --dnsdump, --certdump or output paths.",
+        "Count port 9389 connections from the host within +/- 15 minutes. High-volume bursts suggest bulk collection.",
+        "Look for new JSON or ZIP output files, LDAP or SMB activity to DCs and other discovery alerts on the same host.",
+        "Search for earlier alerts with the same Image, hash, user or host, and check whether it is a known AD application."
+      ],
+      "false_positives": [
+        "Legitimate applications that work with AD over ADWS: third-party admin consoles, identity management tools, and AD auditing or backup products.",
+        "Microsoft Monitoring Agent or other monitoring agent binaries: the filter compares an exact folder path and may not exclude their executables.",
+        "Internal .NET admin scripts or utilities that use the AD module."
+      ],
+      "response_steps": [
+        "Ask the host owner or user whether the tool is approved. If it is legitimate, allow-list its exact path and its signer or hash.",
+        "If it is not approved, isolate the endpoint, preserve the binary, its output and memory, and block the hash in EDR.",
+        "Reset the credentials of the account used and review its DC activity. Assume the AD data is exposed and watch the attack paths it reveals.",
+        "Hunt for the same hash or behavior on other hosts, and remove the binary once the investigation is complete."
+      ],
+      "severity_rationale": "Medium fits because this is reconnaissance with no direct impact and legitimate apps do use ADWS, yet an unusual binary making these connections is a strong sign of stealthy enumeration."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user Temp folder connects to ADWS on a domain controller (SOAPHound-like enumeration).",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\SOAPHound.exe",
+          "Initiated": true,
+          "Protocol": "tcp",
+          "User": "ANDES\\jperez",
+          "SourceIp": "192.0.2.45",
+          "SourceHostname": "WS-0142.andes.example.com",
+          "SourcePort": 51544,
+          "DestinationIp": "192.0.2.10",
+          "DestinationHostname": "DC-01.andes.example.com",
+          "DestinationPort": 9389,
+          "Computer": "WS-0142.andes.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Windows PowerShell running the AD module connects to ADWS; excluded by filter_main_powershell.",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "Initiated": true,
+          "Protocol": "tcp",
+          "User": "ANDES\\admin.mrojas",
+          "SourceIp": "192.0.2.50",
+          "SourcePort": 50211,
+          "DestinationIp": "192.0.2.10",
+          "DestinationHostname": "DC-01.andes.example.com",
+          "DestinationPort": 9389,
+          "Computer": "ADM-07.andes.example.com"
+        }
+      },
+      {
+        "description": "Active Directory Administrative Center (dsac.exe) connecting to ADWS; excluded by filter_main_dsac.",
+        "event": {
+          "EventID": 3,
+          "Image": "C:\\Windows\\system32\\dsac.exe",
+          "Initiated": true,
+          "Protocol": "tcp",
+          "User": "ANDES\\admin.mrojas",
+          "SourceIp": "192.0.2.50",
+          "SourcePort": 50230,
+          "DestinationIp": "192.0.2.10",
+          "DestinationHostname": "DC-01.andes.example.com",
+          "DestinationPort": 9389,
+          "Computer": "ADM-07.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "rule": {
+    "id": "96b9f619-aa91-478f-bacb-c3e50f8df575",
+    "title": "Remote PowerShell Session (PS Module)",
+    "level": "high",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g, Tim Shelton",
+    "path": "windows/powershell/powershell_module/posh_pm_remote_powershell_session.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/powershell/powershell_module/posh_pm_remote_powershell_session.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.006",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró actividad de módulos de PowerShell (evento 4103) dentro de una sesión remota de PowerShell Remoting (WinRM) alojada por wsmprovhost.exe en este host. Alguien ejecutó comandos de forma remota en el equipo.",
+      "what_it_detects": "Eventos de registro de módulos de PowerShell cuyo campo ContextInfo contiene 'Host Name = ServerRemoteHost' y 'wsmprovhost.exe' como Host Application, lo que indica una sesión remota entrante (Enter-PSSession / Invoke-Command). Excluye la carga del módulo Microsoft.PowerShell.Archive.",
+      "why_it_matters": "PowerShell Remoting sobre WinRM permite ejecutar comandos en otro equipo con credenciales válidas. Los atacantes lo usan para movimiento lateral (T1021.006, Windows Remote Management) y ejecución (T1059.001, PowerShell), con poco rastro en disco.",
+      "triage_steps": [
+        "Revise ContextInfo: anote User, Connected User, Command Name, Script Name y Runspace ID; revise Payload para ver los parámetros de cada cmdlet ejecutado.",
+        "Agrupe todos los eventos 4103/4104 con el mismo Runspace ID para reconstruir la sesión completa y su secuencia de comandos.",
+        "Identifique el origen: busque en el mismo host, +/- 15 minutos, inicios de sesión 4624 tipo 3 y eventos WinRM (Microsoft-Windows-WinRM/Operational 91) para obtener IP y cuenta.",
+        "Confirme si la cuenta y el equipo de origen son administradores o servidores de gestión autorizados para usar WinRM hacia este host.",
+        "Busque comandos sospechosos: descargas, codificación Base64, Invoke-Expression, volcado de credenciales, creación de servicios, tareas programadas o cambios de Defender.",
+        "Revise procesos hijos de wsmprovhost.exe y conexiones de red del host en la misma ventana de tiempo.",
+        "Busque alertas previas de la misma cuenta o IP de origen y sesiones remotas similares hacia otros hosts (patrón de movimiento lateral)."
+      ],
+      "false_positives": [
+        "Administradores que usan Enter-PSSession o Invoke-Command de forma legítima para soporte y mantenimiento.",
+        "Herramientas de gestión y automatización (SCCM, scripts de inventario, DSC, orquestadores) que ejecutan PowerShell vía WinRM.",
+        "Exchange, Server Manager u otras consolas de administración que usan PowerShell Remoting internamente."
+      ],
+      "response_steps": [
+        "Valide con el dueño de la cuenta o el equipo de TI si la sesión estaba autorizada y documentada.",
+        "Si no es legítima, aísle el host destino y el de origen, y deshabilite o restablezca la contraseña de la cuenta usada.",
+        "Elimine persistencia o artefactos creados durante la sesión (servicios, tareas, cuentas, archivos) tras preservar evidencia.",
+        "Restrinja WinRM a hosts de administración autorizados y recupere el equipo desde un estado conocido si hubo compromiso."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque la ejecución remota de PowerShell es una vía común de movimiento lateral, aunque requiere validar el contexto por su uso administrativo frecuente."
+    },
+    "en": {
+      "summary": "PowerShell module logging (event 4103) recorded activity inside an inbound PowerShell Remoting (WinRM) session hosted by wsmprovhost.exe. Someone ran commands on this host remotely.",
+      "what_it_detects": "PowerShell module logging events whose ContextInfo contains 'Host Name = ServerRemoteHost' and 'wsmprovhost.exe' as Host Application, indicating an inbound remote session (Enter-PSSession / Invoke-Command). Loading of the Microsoft.PowerShell.Archive module is excluded.",
+      "why_it_matters": "PowerShell Remoting over WinRM lets anyone with valid credentials run commands on another machine. Attackers use it for lateral movement (T1021.006, Windows Remote Management) and execution (T1059.001, PowerShell) with little on-disk footprint.",
+      "triage_steps": [
+        "Read ContextInfo: note User, Connected User, Command Name, Script Name and Runspace ID; read Payload for the parameters of each executed cmdlet.",
+        "Group all 4103/4104 events sharing the Runspace ID to rebuild the full session and its command sequence.",
+        "Find the source: on the same host, +/- 15 minutes, check 4624 logon type 3 and WinRM events (Microsoft-Windows-WinRM/Operational 91) for source IP and account.",
+        "Confirm whether the account and source machine are admins or management servers authorized to use WinRM to this host.",
+        "Look for suspicious commands: downloads, Base64 encoding, Invoke-Expression, credential dumping, service or scheduled task creation, Defender changes.",
+        "Review child processes of wsmprovhost.exe and network connections from the host in the same window.",
+        "Search earlier alerts for the same account or source IP and similar remote sessions to other hosts (lateral movement pattern)."
+      ],
+      "false_positives": [
+        "Administrators legitimately using Enter-PSSession or Invoke-Command for support and maintenance.",
+        "Management and automation tools (SCCM, inventory scripts, DSC, orchestrators) running PowerShell over WinRM.",
+        "Exchange, Server Manager or other admin consoles that use PowerShell Remoting internally."
+      ],
+      "response_steps": [
+        "Validate with the account owner or IT team whether the session was authorized and documented.",
+        "If not legitimate, isolate the target and source hosts, and disable or reset the account used.",
+        "After preserving evidence, remove persistence or artifacts created during the session (services, tasks, accounts, files).",
+        "Restrict WinRM to authorized admin hosts and restore the machine from a known-good state if compromised."
+      ],
+      "severity_rationale": "High fits because remote PowerShell execution is a common lateral movement path, though frequent admin use means context must be validated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Inbound remote session via Invoke-Command running Get-Process under wsmprovhost.exe",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ServerRemoteHost Host Version = 1.0.0.0 Host ID = 3f1c2a9e-7b4d-4e21-9a6f-1d2c3b4a5e6f Host Application = C:\\Windows\\system32\\wsmprovhost.exe -Embedding Engine Version = 5.1.19041.3803 Runspace ID = 8a7b6c5d-4e3f-2a1b-9c8d-7e6f5a4b3c2d Pipeline ID = 1 Command Name = Get-Process Command Type = Cmdlet Script Name =  Command Path =  Sequence Number = 16 User = ANDES\\jperez Connected User =  Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Get-Process): \"Get-Process\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote session that only loads the Microsoft.PowerShell.Archive module (excluded by filter)",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ServerRemoteHost Host Version = 1.0.0.0 Host ID = 3f1c2a9e-7b4d-4e21-9a6f-1d2c3b4a5e6f Host Application = C:\\Windows\\system32\\wsmprovhost.exe -Embedding Engine Version = 5.1.19041.3803 Runspace ID = 8a7b6c5d-4e3f-2a1b-9c8d-7e6f5a4b3c2d Pipeline ID = 2 Command Name = Expand-Archive Command Type = Function Script Name = C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Archive\\Microsoft.PowerShell.Archive.psm1 Command Path =  Sequence Number = 22 User = ANDES\\jperez Connected User =  Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Expand-Archive): \"Expand-Archive\""
+        }
+      },
+      {
+        "description": "Local interactive PowerShell console (ConsoleHost, powershell.exe), not a remote session",
+        "event": {
+          "EventID": 4103,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ContextInfo": "Severity = Informational Host Name = ConsoleHost Host Version = 5.1.19041.3803 Host ID = 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d Host Application = C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe Engine Version = 5.1.19041.3803 Runspace ID = 2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e Pipeline ID = 5 Command Name = Get-Process Command Type = Cmdlet Script Name =  Command Path =  Sequence Number = 31 User = ANDES\\jperez Connected User =  Shell ID = Microsoft.PowerShell",
+          "Payload": "CommandInvocation(Get-Process): \"Get-Process\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "3fcc9b35-39e4-44c0-a2ad-9e82b6902b31",
+    "title": "Syslog Clearing or Removal Via System Utilities",
+    "level": "high",
+    "status": "test",
+    "author": "Max Altgelt (Nextron Systems), Roberto Rodriguez (Cyb3rWard0g), OTR (Open Threat Research), MSTIC",
+    "path": "linux/process_creation/proc_creation_lnx_clear_syslog.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_clear_syslog.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685.006"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en un host Linux ejecutó un comando que elimina, vacía, redirige o reemplaza /var/log/syslog, o que purga o rota el journal de systemd. Puede indicar que alguien intenta borrar sus huellas.",
+      "what_it_detects": "Eventos process_creation donde CommandLine contiene /var/log/syslog y la Image termina en rm, unlink, mv, truncate (tamaño 0), ln -sf hacia /dev/null, cp /dev/null o shred -u; también redirecciones vacías (': > /var/log/syslog') y 'journalctl --vacuum' o 'journalctl --rotate'.",
+      "why_it_matters": "Borrar o vaciar los logs del sistema es una técnica de evasión (eliminación de indicadores, limpieza de logs en Linux; el tag de la regla es T1685.006). El atacante destruye evidencia de accesos, escalamiento o persistencia previos.",
+      "triage_steps": [
+        "Revisar Image, CommandLine, User y el host: identificar qué acción exacta se hizo sobre syslog o el journal.",
+        "Revisar ParentImage y la cadena de procesos: ¿shell interactivo, sshd, cron, script de mantenimiento o un binario desconocido en /tmp o /dev/shm?",
+        "Confirmar si existe un cambio aprobado o una tarea de logrotate/mantenimiento que explique el comando a esa hora.",
+        "Revisar los procesos del mismo host en +/- 15 minutos: descargas, cambios de cuentas, sudo, history -c, borrado de wtmp, auth.log o bash_history.",
+        "Buscar inicios de sesión SSH y origen IP del usuario antes del evento; comparar con su comportamiento habitual.",
+        "Consultar en el SIEM los logs ya reenviados del host: un hueco en la recepción de syslog confirma el impacto.",
+        "Buscar alertas previas del mismo host, usuario o IP de origen y el mismo CommandLine en otros servidores."
+      ],
+      "false_positives": [
+        "Rotación de logs con logrotate o scripts propios que mueven o truncan syslog.",
+        "Mantenimiento manual para liberar disco, como 'rm -f /var/log/syslog.2.gz' o 'journalctl --vacuum-size'.",
+        "Imágenes base, plantillas de VM o pipelines de build que limpian logs antes de generar la imagen.",
+        "Ejercicios de Atomic Red Team o pruebas autorizadas del equipo de seguridad."
+      ],
+      "response_steps": [
+        "Verificar con el dueño del sistema o el usuario si la acción fue legítima y está documentada.",
+        "Si no está justificada, aislar el host de la red y preservar la evidencia: memoria, journal restante y copias en el SIEM.",
+        "Bloquear o restablecer las credenciales del usuario involucrado y revisar sus claves SSH y permisos sudo.",
+        "Investigar persistencia (cron, servicios systemd, authorized_keys) y eliminarla solo después de documentarla.",
+        "Reconstruir la línea de tiempo con los logs centralizados y restaurar el reenvío y la configuración de rsyslog/journald."
+      ],
+      "severity_rationale": "Es alta porque destruir logs del sistema rara vez es rutinario fuera de la rotación y suele acompañar a una intrusión activa."
+    },
+    "en": {
+      "summary": "A process on a Linux host ran a command that deletes, empties, redirects or replaces /var/log/syslog, or that vacuums or rotates the systemd journal. This may mean someone is covering their tracks.",
+      "what_it_detects": "process_creation events where CommandLine contains /var/log/syslog and Image ends in rm, unlink, mv, truncate (size 0), ln -sf to /dev/null, cp /dev/null or shred -u; also empty redirections (': > /var/log/syslog') and 'journalctl --vacuum' or 'journalctl --rotate'.",
+      "why_it_matters": "Clearing or removing system logs is a defense evasion technique (indicator removal, clearing Linux logs; the rule tags T1685.006). It destroys evidence of earlier access, privilege escalation or persistence.",
+      "triage_steps": [
+        "Review Image, CommandLine, User and host to identify exactly what was done to syslog or the journal.",
+        "Check ParentImage and the process tree: interactive shell, sshd, cron, a maintenance script, or an unknown binary in /tmp or /dev/shm?",
+        "Confirm whether an approved change or logrotate/maintenance job explains the command at that time.",
+        "Review processes on the same host within +/- 15 minutes: downloads, account changes, sudo, history -c, wiping wtmp, auth.log or bash_history.",
+        "Look for the user's SSH logins and source IP before the event; compare with their normal behavior.",
+        "Check logs already forwarded to the SIEM from the host; a gap in syslog ingestion confirms impact.",
+        "Search for earlier alerts for the same host, user or source IP, and the same CommandLine on other servers."
+      ],
+      "false_positives": [
+        "Log rotation by logrotate or custom scripts that move or truncate syslog.",
+        "Manual disk cleanup, such as 'rm -f /var/log/syslog.2.gz' or 'journalctl --vacuum-size'.",
+        "Golden images, VM templates or build pipelines that wipe logs before sealing the image.",
+        "Atomic Red Team exercises or authorized security testing."
+      ],
+      "response_steps": [
+        "Verify with the system owner or user whether the action was legitimate and documented.",
+        "If unjustified, isolate the host and preserve evidence: memory, remaining journal and SIEM copies.",
+        "Disable or reset the involved user's credentials and review their SSH keys and sudo rights.",
+        "Hunt for persistence (cron, systemd services, authorized_keys) and remove it only after documenting it.",
+        "Rebuild the timeline from centralized logs and restore rsyslog/journald configuration and forwarding."
+      ],
+      "severity_rationale": "High fits because destroying system logs is rarely routine outside rotation and often accompanies an active intrusion."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rm -f deleting /var/log/syslog from an interactive shell (selection_file + selection_command_rm).",
+        "event": {
+          "Image": "/usr/bin/rm",
+          "CommandLine": "rm -f /var/log/syslog",
+          "ParentImage": "/usr/bin/bash",
+          "ParentCommandLine": "-bash",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "journalctl vacuuming the entire journal (selection_unique_journalctl).",
+        "event": {
+          "Image": "/usr/bin/journalctl",
+          "CommandLine": "journalctl --vacuum-time=1s",
+          "ParentImage": "/usr/bin/sudo",
+          "ParentCommandLine": "sudo journalctl --vacuum-time=1s",
+          "User": "root",
+          "ProcessId": 48230,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Reading syslog with tail: the file path matches selection_file but no command selection or unique selection applies.",
+        "event": {
+          "Image": "/usr/bin/tail",
+          "CommandLine": "tail -n 200 /var/log/syslog",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 51002,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "journalctl checking disk usage only, without --vacuum or --rotate.",
+        "event": {
+          "Image": "/usr/bin/journalctl",
+          "CommandLine": "journalctl --disk-usage",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 51017,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

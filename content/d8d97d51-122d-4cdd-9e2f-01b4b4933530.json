@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "d8d97d51-122d-4cdd-9e2f-01b4b4933530",
+    "title": "Capabilities Discovery - Linux",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "linux/process_creation/proc_creation_lnx_capa_discovery.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_capa_discovery.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1083"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó getcap con la opción -r, que recorre directorios de forma recursiva para listar binarios con file capabilities de Linux. Suele formar parte del reconocimiento previo a una escalada de privilegios.",
+      "what_it_detects": "Eventos de process_creation en Linux donde Image termina en '/getcap' y CommandLine contiene ' -r ', por ejemplo 'getcap -r / 2>/dev/null'. Esta búsqueda recursiva la usan herramientas de enumeración como linPEAS o linux-smart-enumeration.",
+      "why_it_matters": "Los binarios con capabilities como cap_setuid o cap_dac_read_search pueden abusarse (GTFOBins) para obtener root o leer archivos protegidos. Corresponde a ATT&CK T1083 (File and Directory Discovery) y suele anticipar una escalada local.",
+      "triage_steps": [
+        "Revise CommandLine: un recorrido desde '/' con salida a /dev/null es típico de reconocimiento; una ruta acotada (por ejemplo /usr/bin) es más propia de auditoría.",
+        "Identifique el usuario: una cuenta de servicio, www-data o un usuario sin funciones administrativas es más sospechoso que un administrador conocido.",
+        "Analice ParentImage y el árbol de procesos: un shell lanzado por un servidor web, un script en /tmp o /dev/shm, o linpeas.sh indican enumeración automatizada.",
+        "Busque en el mismo host, +/- 15 minutos, otros comandos de enumeración: find -perm -4000, sudo -l, id, uname -a, lectura de /etc/passwd o descargas con curl/wget.",
+        "Verifique si después se ejecutaron binarios que tienen capabilities (python, perl, tar, openssl) con argumentos inusuales o si aparecieron procesos con UID 0 lanzados por ese usuario.",
+        "Revise el origen de la sesión (IP de SSH, hora, MFA) y las alertas anteriores del mismo usuario y host."
+      ],
+      "false_positives": [
+        "Administradores o herramientas de auditoría y hardening (Lynis, scripts de cumplimiento CIS) que inventarian capabilities.",
+        "Pruebas de penetración o ejercicios de red team autorizados.",
+        "Scripts de empaquetado o de verificación de imágenes de contenedores que validan capabilities de binarios."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o el equipo de administración si la ejecución estaba autorizada o planificada.",
+        "Si no está justificada, aísle el host o restrinja la sesión, y preserve el historial del shell, los scripts y los procesos activos para el análisis forense.",
+        "Ejecute 'getcap -r /' de forma controlada y elimine con setcap -r las capabilities innecesarias, previa validación con los responsables del servicio.",
+        "Restablezca las credenciales de la cuenta implicada, revise claves SSH y persistencia (cron, systemd) y busque señales de escalada exitosa."
+      ],
+      "severity_rationale": "Nivel bajo porque getcap por sí solo es inofensivo y lo usan auditores, pero merece revisión al combinarse con otra actividad de enumeración o escalada."
+    },
+    "en": {
+      "summary": "getcap ran with -r, recursively walking directories to list binaries that have Linux file capabilities. This is common privilege-escalation reconnaissance.",
+      "what_it_detects": "Linux process_creation events where Image ends with '/getcap' and CommandLine contains ' -r ', such as 'getcap -r / 2>/dev/null'. Enumeration tools like linPEAS and linux-smart-enumeration run this recursive search.",
+      "why_it_matters": "Binaries with capabilities such as cap_setuid or cap_dac_read_search can be abused (GTFOBins) to gain root or read protected files. Maps to ATT&CK T1083 (File and Directory Discovery) and often comes before local privilege escalation.",
+      "triage_steps": [
+        "Read CommandLine: scanning from '/' with errors sent to /dev/null looks like recon; a narrow path such as /usr/bin looks more like an audit.",
+        "Identify the user: a service account, www-data or a non-admin user is more suspicious than a known administrator.",
+        "Check ParentImage and the process tree: a shell spawned by a web server, a script in /tmp or /dev/shm, or linpeas.sh suggests automated enumeration.",
+        "On the same host within +/- 15 minutes, look for other recon: find -perm -4000, sudo -l, id, uname -a, /etc/passwd reads, curl/wget downloads.",
+        "Check whether capability-bearing binaries (python, perl, tar, openssl) later ran with unusual arguments, or whether UID 0 processes appeared under that user's session.",
+        "Review the session source (SSH IP, time, MFA) and earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Administrators or audit and hardening tools (Lynis, CIS compliance scripts) inventorying capabilities.",
+        "Authorized penetration tests or red team exercises.",
+        "Packaging or container image validation scripts that check binary capabilities."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or admin team whether the run was authorized or scheduled.",
+        "If unexplained, isolate the host or restrict the session, and preserve shell history, scripts and running processes for forensics.",
+        "Run 'getcap -r /' in a controlled way and remove unneeded capabilities with setcap -r after validating with service owners.",
+        "Reset credentials for the involved account, review SSH keys and persistence (cron, systemd), and look for signs of successful escalation."
+      ],
+      "severity_rationale": "Low because getcap alone is harmless and used by auditors, but it deserves review when combined with other enumeration or escalation activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Recursive getcap scan from root by www-data, launched from a shell in /tmp",
+        "event": {
+          "Image": "/usr/sbin/getcap",
+          "CommandLine": "getcap -r / 2>/dev/null",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash /tmp/linpeas.sh",
+          "User": "www-data",
+          "ProcessId": 48213,
+          "Computer": "web-02.example.com"
+        }
+      },
+      {
+        "description": "Recursive getcap scan of /usr by an ordinary user over SSH",
+        "event": {
+          "Image": "/usr/bin/getcap",
+          "CommandLine": "/usr/bin/getcap -r /usr",
+          "ParentImage": "/usr/bin/zsh",
+          "User": "jperez",
+          "ProcessId": 9921,
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Administrator checks the capabilities of a single binary without -r",
+        "event": {
+          "Image": "/usr/sbin/getcap",
+          "CommandLine": "getcap /usr/bin/ping",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 3310,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "setcap used to remove a capability; the image is not getcap",
+        "event": {
+          "Image": "/usr/sbin/setcap",
+          "CommandLine": "setcap -r /usr/local/bin/tool",
+          "ParentImage": "/bin/bash",
+          "User": "root",
+          "ProcessId": 3402,
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

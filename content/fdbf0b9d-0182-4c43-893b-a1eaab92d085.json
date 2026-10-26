@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "fdbf0b9d-0182-4c43-893b-a1eaab92d085",
+    "title": "Potential Persistence Via Custom Protocol Handler",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_persistence_custom_protocol_handler.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/registry/registry_set/registry_set_persistence_custom_protocol_handler.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1112"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de las carpetas estándar de programas escribió en HKCR un valor que empieza con 'URL:', con lo que registró un nuevo manejador de protocolo URL personalizado. Un atacante puede usarlo para ejecutar un payload cada vez que se abra ese esquema.",
+      "what_it_detects": "Eventos de modificación de registro donde TargetObject empieza con HKCR\\ y Details empieza con 'URL:'. Excluye los protocolos de Microsoft 'URL:ms-' y los procesos cuyo Image está en Program Files, Program Files (x86), System32 o SysWOW64.",
+      "why_it_matters": "Un manejador de protocolo asocia un esquema (por ejemplo miproto://) con un comando definido en shell\\open\\command. Al abrir un enlace, documento o página con ese esquema, el comando se ejecuta. Así se logra persistencia y ejecución mediante modificación del registro (T1112), con poca visibilidad para el usuario.",
+      "triage_steps": [
+        "Tome de TargetObject el nombre de la clave del protocolo y consulte HKCR\\<protocolo>\\shell\\open\\command. Anote el ejecutable y los argumentos que lanza.",
+        "Verifique si el comando apunta a rutas con permisos de escritura para el usuario (AppData, Temp, ProgramData, Public) o a intérpretes como powershell.exe, mshta.exe, wscript.exe o rundll32.exe.",
+        "Analice el Image que escribió el valor: ruta, firma digital, reputación del hash y si corresponde a un instalador que el usuario esperaba.",
+        "Reconstruya el árbol de procesos de Image (proceso padre e hijos) e identifique el usuario bajo el que se hizo la escritura.",
+        "En el mismo host, revise eventos de registro, archivos, procesos y red en +/- 15 minutos, sobre todo archivos nuevos y escrituras de DefaultIcon o 'URL Protocol'.",
+        "Busque en toda la flota el mismo nombre de protocolo, valor de Details o hash de Image, y revise alertas previas del host y del usuario."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas (videoconferencia, lanzadores de juegos, gestores de contraseñas, herramientas de desarrollo) que registran esquemas como zoommtg o steam desde rutas de AppData por usuario.",
+        "Aplicaciones por usuario con actualización automática (por ejemplo en AppData\\Local\\Programs) que vuelven a registrar su protocolo después de actualizarse.",
+        "Agentes de distribución de software o herramientas de empaquetado que ejecutan instaladores desde carpetas temporales o no estándar."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el inventario de software si la aplicación y el protocolo son esperados. Si lo son, documéntelos y agregue un filtro específico para ese protocolo o Image.",
+        "Si es malicioso, aísle el endpoint y recolecte la clave de registro, el ejecutable del manejador y el Image que la creó para su análisis.",
+        "Respalde y luego elimine la clave de protocolo maliciosa en HKCR, borre los payloads ya verificados y bloquee sus hashes.",
+        "Busque el mismo protocolo o hash en otros equipos, cambie las credenciales si hubo exfiltración y vigile si el protocolo se vuelve a registrar."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el software legítimo registra protocolos con frecuencia, pero un registro desde una ruta no estándar puede indicar persistencia y conviene revisarlo pronto."
+    },
+    "en": {
+      "summary": "A process outside the standard program folders wrote a registry value under HKCR that starts with 'URL:', which registers a new custom URL protocol handler. Attackers can use the handler to launch a payload whenever that URL scheme is opened.",
+      "what_it_detects": "Registry set events where TargetObject starts with HKCR\\ and Details starts with 'URL:'. The rule ignores Microsoft 'URL:ms-' protocols and writers whose Image is in Program Files, Program Files (x86), System32 or SysWOW64.",
+      "why_it_matters": "A custom protocol handler maps a URL scheme (for example myproto://) to a command under shell\\open\\command. Opening a link, document or browser page with that scheme then runs the command. This gives persistence and execution through registry modification (T1112) and can bypass user scrutiny.",
+      "triage_steps": [
+        "From TargetObject, take the protocol key name and read HKCR\\<protocol>\\shell\\open\\command. Record the executable and arguments it launches.",
+        "Check whether that command points to user-writable paths such as AppData, Temp, ProgramData or Public, or to script hosts like powershell.exe, mshta.exe, wscript.exe or rundll32.exe.",
+        "Review the Image that wrote the value: its path, signer, hash reputation and whether it belongs to an installer the user expected.",
+        "Build the process tree for Image (parent and children) and note the user context of the registry write.",
+        "On the same host, look at registry, file, process and network events within +/- 15 minutes, especially payload drops and DefaultIcon or 'URL Protocol' writes.",
+        "Search the fleet for the same protocol name, Details value or Image hash, and check earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Legitimate apps such as conferencing, game launchers, password managers or IDE tools registering schemes like zoommtg or steam while installed from per-user AppData paths.",
+        "Self-updating per-user apps (for example in AppData\\Local\\Programs) re-registering their protocol after an update.",
+        "Software deployment agents or packaging tools that run installers from temporary or non-standard folders."
+      ],
+      "response_steps": [
+        "Verify with the user or software inventory whether the application and protocol are expected. If they are, document them and add a tuned filter for that protocol or Image.",
+        "If malicious, isolate the endpoint and collect the registry key, the handler executable and the writing Image for analysis.",
+        "Back up and then remove the rogue HKCR protocol key, delete verified payload files, and block their hashes.",
+        "Hunt for the same protocol or hash on other hosts, reset credentials if the payload exfiltrated data, and monitor for re-registration."
+      ],
+      "severity_rationale": "Medium fits because protocol handler registration is common for legitimate software, but one from a non-standard location can mean persistence and needs a prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder registers a custom 'syncupd' protocol handler under HKCR",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6620,
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\syncupd.exe",
+          "TargetObject": "HKCR\\syncupd\\(Default)",
+          "Details": "URL:syncupd Protocol"
+        }
+      },
+      {
+        "description": "PowerShell launched from ProgramData copy registers 'docview' protocol handler",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrodriguez",
+          "ProcessId": 4412,
+          "Image": "C:\\ProgramData\\cache\\pwsh_helper.exe",
+          "TargetObject": "HKCR\\docview\\(Default)",
+          "Details": "URL:docview"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Zoom client in Program Files registers its zoommtg protocol (excluded by the generic location filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 3104,
+          "Image": "C:\\Program Files\\Zoom\\bin\\Zoom.exe",
+          "TargetObject": "HKCR\\zoommtg\\(Default)",
+          "Details": "URL:zoommtg Protocol"
+        }
+      },
+      {
+        "description": "Microsoft protocol 'ms-teams' registered from a per-user path (excluded by the ms- filter)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0311.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "ProcessId": 5280,
+          "Image": "C:\\Users\\lgomez\\AppData\\Local\\Microsoft\\Teams\\Update.exe",
+          "TargetObject": "HKCR\\ms-teams\\(Default)",
+          "Details": "URL:ms-teams"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

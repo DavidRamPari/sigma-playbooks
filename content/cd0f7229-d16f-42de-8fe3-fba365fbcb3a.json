@@ -1,0 +1,145 @@
+{
+  "rule": {
+    "id": "cd0f7229-d16f-42de-8fe3-fba365fbcb3a",
+    "title": "Invoke-Obfuscation Via Use Rundll32 - Security",
+    "level": "high",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/builtin/security/win_security_invoke_obfuscation_via_use_rundll32_services_security.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_invoke_obfuscation_via_use_rundll32_services_security.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027",
+      "T1059.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló un servicio de Windows (EID 4697) cuyo ServiceFileName encadena comandos con '&&' y lanza rundll32 shell32.dll,ShellExec_RunDLL con palabras clave de PowerShell ofuscado. Es un patrón típico de Invoke-Obfuscation para ejecutar código como servicio.",
+      "what_it_detects": "Eventos 4697 del registro Security donde ServiceFileName contiene '&&', 'rundll32', 'shell32.dll' y 'shellexec_rundll', además de 'value', 'invoke', 'comspec' o 'iex'. Requiere la auditoría 'System Security Extension'.",
+      "why_it_matters": "Crear un servicio con una línea de comandos ofuscada permite ejecutar PowerShell con privilegios SYSTEM, persistir o moverse lateralmente, y evadir firmas. Corresponde a ofuscación (T1027) y ejecución mediante PowerShell (T1059.001).",
+      "triage_steps": [
+        "Lea el ServiceFileName completo: identifique el comando tras ShellExec_RunDLL, variables de entorno usadas (COMSPEC, set) y cualquier IEX o Invoke- que reconstruya el payload.",
+        "Revise ServiceName, ServiceAccount y ServiceStartType; nombres aleatorios, cuenta LocalSystem o inicio manual inmediato son sospechosos.",
+        "Identifique SubjectUserName y SubjectLogonId; busque el 4624 correspondiente para obtener tipo de logon y la IP de origen (logon tipo 3 sugiere instalación remota).",
+        "Correlacione en el mismo host +/- 15 minutos: 7045 en System, 4688 o Sysmon 1 de cmd.exe, rundll32.exe y powershell.exe, y eventos 4104 de Script Block Logging.",
+        "Pivote por la IP de origen y la cuenta: busque otros 4697/7045 en distintos hosts que indiquen movimiento lateral.",
+        "Verifique conexiones de red salientes de powershell.exe o rundll32.exe en el host y revise alertas previas de la misma entidad."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; el patrón rara vez aparece en software legítimo.",
+        "Ejercicios de red team o pruebas de detección autorizadas que usan Invoke-Obfuscation; confirme con el equipo responsable y la ventana de pruebas."
+      ],
+      "response_steps": [
+        "Confirme la actividad con el dueño del sistema y descarte una prueba autorizada antes de actuar.",
+        "Aísle el endpoint si se confirma la ejecución maliciosa y preserve evidencia: registro del servicio, logs de eventos y memoria si es posible.",
+        "Detenga y elimine el servicio malicioso tras documentar su configuración; elimine artefactos descargados por el payload.",
+        "Restablezca las credenciales de la cuenta que instaló el servicio y revise su uso en otros hosts.",
+        "Busque el mismo ServiceFileName o patrón en todo el entorno y recupere los hosts afectados desde una línea base confiable."
+      ],
+      "severity_rationale": "Nivel alto porque la combinación de instalación de servicio, rundll32 ShellExec_RunDLL y PowerShell ofuscado casi no tiene usos legítimos e implica ejecución con privilegios elevados."
+    },
+    "en": {
+      "summary": "A Windows service was installed (EID 4697) whose ServiceFileName chains commands with '&&' and launches rundll32 shell32.dll,ShellExec_RunDLL with obfuscated PowerShell keywords. This is a typical Invoke-Obfuscation pattern for running code as a service.",
+      "what_it_detects": "Security log 4697 events where ServiceFileName contains '&&', 'rundll32', 'shell32.dll' and 'shellexec_rundll', plus one of 'value', 'invoke', 'comspec' or 'iex'. Requires the 'System Security Extension' audit subcategory.",
+      "why_it_matters": "A service with an obfuscated command line runs PowerShell as SYSTEM, enabling persistence or lateral movement while evading signatures. Maps to obfuscation (T1027) and PowerShell execution (T1059.001).",
+      "triage_steps": [
+        "Read the full ServiceFileName: identify the command after ShellExec_RunDLL, environment variables used (COMSPEC, set) and any IEX or Invoke- that rebuilds the payload.",
+        "Check ServiceName, ServiceAccount and ServiceStartType; random names, LocalSystem and immediate manual start are suspicious.",
+        "Take SubjectUserName and SubjectLogonId; find the matching 4624 for logon type and source IP (type 3 suggests remote installation).",
+        "Correlate on the same host +/- 15 minutes: System 7045, 4688 or Sysmon 1 for cmd.exe, rundll32.exe, powershell.exe, and 4104 script block events.",
+        "Pivot on the source IP and account: look for other 4697/7045 events on different hosts indicating lateral movement.",
+        "Check outbound connections from powershell.exe or rundll32.exe on the host and review earlier alerts for the same entities."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; this pattern rarely appears in legitimate software.",
+        "Authorized red team exercises or detection tests using Invoke-Obfuscation; confirm with the responsible team and test window."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and rule out an authorized test before acting.",
+        "If malicious, isolate the endpoint and preserve evidence: service registry key, event logs and memory if possible.",
+        "Stop and delete the malicious service after documenting its configuration; remove artifacts dropped by the payload.",
+        "Reset credentials of the account that installed the service and review its use on other hosts.",
+        "Hunt for the same ServiceFileName pattern across the environment and restore affected hosts from a trusted baseline."
+      ],
+      "severity_rationale": "High fits because service installation combined with rundll32 ShellExec_RunDLL and obfuscated PowerShell has almost no legitimate use and implies privileged execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Remote service install using cmd chaining, rundll32 ShellExec_RunDLL and iex",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ServiceName": "xKq9vT",
+          "ServiceFileName": "C:\\Windows\\System32\\cmd.exe /c echo placeholder > C:\\Users\\Public\\t.txt && rundll32.exe shell32.dll,ShellExec_RunDLL powershell.exe -NoP -NonI -c \"iex $env:CentinelaTest\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service using %COMSPEC% and set variable chained into rundll32 shellexec_rundll",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "svc_backup",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5512AB",
+          "ServiceName": "WinUpdSvc7",
+          "ServiceFileName": "%COMSPEC% /c set MSHL=Write-Output placeholder && rundll32 SHELL32.DLL,shellexec_rundll powershell -c \"${env:MSHL}\"",
+          "ServiceType": "0x10",
+          "ServiceStartType": "3",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Chained rundll32 ShellExec_RunDLL launching an installer without any of the PowerShell keywords",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0207.andes.example.com",
+          "SubjectUserName": "admin_it",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x2A11F0",
+          "ServiceName": "ToolsUpdater",
+          "ServiceFileName": "cmd /c cd C:\\Tools && rundll32.exe shell32.dll,ShellExec_RunDLL C:\\Tools\\updater.exe",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      },
+      {
+        "description": "Legitimate agent service installation with a plain executable path",
+        "event": {
+          "EventID": 4697,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "ServiceName": "ExampleAgent",
+          "ServiceFileName": "\"C:\\Program Files\\Example\\Agent\\agent.exe\" --service",
+          "ServiceType": "0x10",
+          "ServiceStartType": "2",
+          "ServiceAccount": "LocalSystem"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

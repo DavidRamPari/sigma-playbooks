@@ -1,0 +1,146 @@
+{
+  "rule": {
+    "id": "db014773-d9d9-4792-91e5-133337c0ffee",
+    "title": "AWS IAM S3Browser User or AccessKey Creation",
+    "level": "high",
+    "status": "test",
+    "author": "daniel.bohannon@permiso.io (@danielhbohannon)",
+    "path": "cloud/aws/cloudtrail/aws_iam_s3browser_user_or_accesskey_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/cloud/aws/cloudtrail/aws_iam_s3browser_user_or_accesskey_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.009",
+      "T1078.004"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un usuario IAM o una access key en AWS mediante una solicitud cuyo user agent identifica a S3 Browser, un cliente gráfico de Windows para S3. No es habitual que se administre IAM desde esta herramienta, así que puede tratarse de credenciales robadas usadas para dejar persistencia.",
+      "what_it_detects": "Eventos de CloudTrail con eventSource iam.amazonaws.com, eventName CreateUser o CreateAccessKey y un userAgent que contiene 'S3 Browser'.",
+      "why_it_matters": "Si un atacante tiene una access key válida, puede crear usuarios o claves nuevas para mantener el acceso aunque se rote la credencial original. Corresponde a Valid Accounts: Cloud Accounts (T1078.004) y a Cloud API (T1059.009).",
+      "triage_steps": [
+        "Identifique la identidad que hizo la llamada (userIdentity.arn, userIdentity.accessKeyId) y la cuenta (recipientAccountId). Confirme quién es el responsable de esa identidad.",
+        "Revise requestParameters.userName y responseElements para saber qué usuario o access key se creó y si el usuario apunta a una cuenta de servicio conocida.",
+        "Valide sourceIPAddress: geolocalización, ASN, si es una VPN o un hosting, y si esa identidad ya la usó antes. Compárela con las IP corporativas.",
+        "Busque en CloudTrail, en una ventana de +/- 15 minutos, llamadas de la misma clave: AttachUserPolicy, PutUserPolicy, AddUserToGroup, CreateLoginProfile, ListBuckets o GetObject.",
+        "Verifique si la access key recién creada ya se usó, desde qué IP y con qué user agent.",
+        "Consulte alertas anteriores sobre la misma identidad, IP o user agent S3 Browser en todas las cuentas de la organización.",
+        "Pregunte al dueño de la identidad si usa S3 Browser y si la creación estaba autorizada mediante un ticket de cambio."
+      ],
+      "false_positives": [
+        "Administradores que usan S3 Browser a propósito para crear usuarios IAM o access keys, por ejemplo para darle acceso a un proveedor a un bucket.",
+        "Equipos de soporte o de datos que generan claves para integraciones de carga de archivos con S3 Browser, siguiendo un procedimiento documentado."
+      ],
+      "response_steps": [
+        "Si no puede confirmar que la actividad es legítima, desactive (estado Inactive) la access key que hizo la llamada y las claves nuevas. No las elimine hasta preservar la evidencia.",
+        "Quite las políticas, los grupos y los perfiles de inicio de sesión que se hayan asignado al usuario nuevo, y adjunte una política de denegación total mientras dure la investigación.",
+        "Rote las credenciales de la identidad comprometida y averigüe cómo se filtró la clave: repositorios, endpoints, scripts.",
+        "Revise todas las acciones de las identidades involucradas, borre los recursos persistentes creados por el atacante y documente las lecciones aprendidas."
+      ],
+      "severity_rationale": "El nivel high se justifica porque una herramienta de S3 rara vez crea identidades IAM, y esta acción da persistencia directa en la cuenta AWS."
+    },
+    "en": {
+      "summary": "An IAM user or access key was created in AWS by a request whose user agent identifies S3 Browser, a Windows GUI client for S3. IAM is rarely managed from this tool, so this may be stolen credentials being used to set up persistence.",
+      "what_it_detects": "CloudTrail events with eventSource iam.amazonaws.com, eventName CreateUser or CreateAccessKey, and a userAgent containing 'S3 Browser'.",
+      "why_it_matters": "An attacker holding a valid access key can create new users or keys to keep access even after the original credential is rotated. This maps to Valid Accounts: Cloud Accounts (T1078.004) and Cloud API (T1059.009).",
+      "triage_steps": [
+        "Identify the calling identity (userIdentity.arn, userIdentity.accessKeyId) and the account (recipientAccountId). Confirm who owns that identity.",
+        "Review requestParameters.userName and responseElements to see which user or access key was created and whether the user looks like a known service account.",
+        "Assess sourceIPAddress: geolocation, ASN, whether it is a VPN or hosting provider, and whether this identity has used it before. Compare it with corporate IPs.",
+        "In CloudTrail, look at the same key within +/- 15 minutes for AttachUserPolicy, PutUserPolicy, AddUserToGroup, CreateLoginProfile, ListBuckets or GetObject.",
+        "Check whether the newly created access key has already been used, from which IP and with which user agent.",
+        "Look for earlier alerts on the same identity, IP or S3 Browser user agent across all organization accounts.",
+        "Ask the identity owner whether they use S3 Browser and whether a change ticket authorized the creation."
+      ],
+      "false_positives": [
+        "Administrators deliberately using S3 Browser to create IAM users or access keys, for example to give a vendor access to a bucket.",
+        "Support or data teams generating keys for file-upload integrations with S3 Browser under a documented procedure."
+      ],
+      "response_steps": [
+        "If legitimacy cannot be confirmed, deactivate (set to Inactive) the calling access key and any new keys. Do not delete them until evidence is preserved.",
+        "Remove policies, groups and login profiles added to the new user, and attach a deny-all policy while the investigation is open.",
+        "Rotate the compromised identity's credentials and find out how the key leaked: repositories, endpoints, scripts.",
+        "Review all actions by the involved identities, remove persistent resources the attacker created, and document lessons learned."
+      ],
+      "severity_rationale": "High fits because an S3 tool rarely creates IAM identities, and this action gives direct persistence in the AWS account."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "CreateUser called from S3 Browser using a developer's access key from an unfamiliar IP",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T02:14:37Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateUser",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "S3 Browser/11.5.7 https://s3browser.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/dev-jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.userName": "backup-svc",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "CreateAccessKey for an existing user issued through S3 Browser",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T02:16:05Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateAccessKey",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "203.0.113.45",
+          "userAgent": "S3 Browser/11.5.7 https://s3browser.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/dev-jperez",
+          "userIdentity.accessKeyId": "AKIAEXAMPLE0000001",
+          "requestParameters.userName": "backup-svc",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "CreateUser made with the AWS CLI by an administrator; the user agent does not contain S3 Browser",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T15:02:11Z",
+          "eventSource": "iam.amazonaws.com",
+          "eventName": "CreateUser",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "aws-cli/2.15.10 Python/3.11.6 Windows/10 exe/AMD64",
+          "userIdentity.type": "AssumedRole",
+          "userIdentity.arn": "arn:aws:sts::111122223333:assumed-role/IAMAdmin/mlopez",
+          "requestParameters.userName": "etl-reporting",
+          "recipientAccountId": "111122223333"
+        }
+      },
+      {
+        "description": "S3 Browser listing buckets; S3 event source, not an IAM creation call",
+        "event": {
+          "eventVersion": "1.08",
+          "eventTime": "2024-03-12T15:20:44Z",
+          "eventSource": "s3.amazonaws.com",
+          "eventName": "ListBuckets",
+          "awsRegion": "us-east-1",
+          "sourceIPAddress": "198.51.100.20",
+          "userAgent": "S3 Browser/11.5.7 https://s3browser.com",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/data-upload",
+          "recipientAccountId": "111122223333"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

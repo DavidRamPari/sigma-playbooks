@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "fa4aaed5-4fe0-498d-bbc0-08e3346387ba",
+    "title": "Copy Passwd Or Shadow From TMP Path",
+    "level": "high",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "linux/process_creation/proc_creation_lnx_cp_passwd_or_shadow_tmp.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_cp_passwd_or_shadow_tmp.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.001"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario cp con una línea de comandos que incluye una ruta /tmp/ y la palabra passwd o shadow. Esto puede ser un intento de reemplazar archivos de cuentas del sistema o de sacar hashes de contraseñas hacia un directorio temporal.",
+      "what_it_detects": "Eventos de creación de procesos en Linux donde Image termina en /cp y CommandLine contiene '/tmp/' y además 'passwd' o 'shadow'. La regla coincide en ambas direcciones: copias desde /tmp hacia /etc y copias desde /etc hacia /tmp.",
+      "why_it_matters": "Si se sobrescribe /etc/passwd o /etc/shadow con una versión preparada en /tmp, el atacante puede crear cuentas con privilegios o fijar contraseñas conocidas. Si copia shadow a /tmp, puede extraer hashes para crackearlos sin conexión. La regla lo etiqueta como ATT&CK T1552.001 (credenciales en archivos).",
+      "triage_steps": [
+        "Revise CommandLine: identifique el origen y el destino, y determine si /etc/passwd o /etc/shadow fue sobrescrito o copiado hacia /tmp.",
+        "Identifique el usuario que ejecutó cp, el ParentImage y la cadena completa de procesos padre (shell, sudo, cron, servicio web).",
+        "Compare /etc/passwd y /etc/shadow con un respaldo conocido: busque UID 0 nuevos, cuentas desconocidas o hashes cambiados.",
+        "Revise el archivo en /tmp: fecha de creación, propietario, contenido, y qué proceso lo escribió.",
+        "Pivote en el mismo host +/- 15 minutos: descargas (curl, wget), uso de sudo, chmod, nuevos inicios de sesión SSH y conexiones salientes.",
+        "Busque alertas previas del mismo host o usuario, sobre todo de escalamiento de privilegios o de acceso inicial."
+      ],
+      "false_positives": [
+        "Scripts de respaldo o restauración que usan /tmp como área intermedia para passwd o shadow.",
+        "Herramientas de gestión de configuración o aprovisionamiento (Ansible, scripts de imagen) que colocan los archivos de cuentas en /tmp antes de instalarlos.",
+        "Construcción de imágenes de contenedor o de VM que copian archivos de cuentas predefinidos.",
+        "Administradores que restauran manualmente un archivo de cuentas durante una recuperación documentada."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si la acción estaba autorizada (cambio aprobado, ventana de mantenimiento).",
+        "Si no estaba autorizada, aísle el host de la red y preserve /tmp, /etc/passwd, /etc/shadow y los registros de shell y auth.",
+        "Elimine cuentas o cambios no autorizados restaurando los archivos desde un respaldo verificado; borre las copias de shadow que queden en /tmp.",
+        "Rote las contraseñas de todas las cuentas cuyos hashes pudieron quedar expuestos, priorizando root y las cuentas reutilizadas en otros sistemas.",
+        "Determine el vector de acceso y busque el mismo patrón en otros hosts Linux."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque manipular o copiar passwd o shadow mediante /tmp no es común y afecta directamente a las credenciales y al control de cuentas privilegiadas."
+    },
+    "en": {
+      "summary": "The cp binary ran with a command line containing a /tmp/ path and the word passwd or shadow. This may be an attempt to replace system account files or to stage password hashes in a temporary directory.",
+      "what_it_detects": "Linux process creation events where Image ends with /cp and CommandLine contains '/tmp/' plus either 'passwd' or 'shadow'. It matches both directions: copies from /tmp into /etc and copies from /etc into /tmp.",
+      "why_it_matters": "Overwriting /etc/passwd or /etc/shadow with a version prepared in /tmp lets an attacker add privileged accounts or set known passwords. Copying shadow to /tmp lets them take the hashes and crack them offline. The rule maps this to ATT&CK T1552.001 (Credentials in Files).",
+      "triage_steps": [
+        "Read CommandLine: identify source and destination, and decide whether /etc/passwd or /etc/shadow was overwritten or copied into /tmp.",
+        "Identify the executing user, ParentImage and the full parent chain (shell, sudo, cron, web service).",
+        "Compare /etc/passwd and /etc/shadow against a known-good backup: look for new UID 0 entries, unknown accounts or changed hashes.",
+        "Inspect the /tmp file: creation time, owner, contents, and which process wrote it.",
+        "Pivot on the same host +/- 15 minutes: downloads (curl, wget), sudo use, chmod, new SSH logins and outbound connections.",
+        "Check earlier alerts for the same host or user, especially privilege escalation or initial access."
+      ],
+      "false_positives": [
+        "Backup or restore scripts that use /tmp as a staging area for passwd or shadow.",
+        "Configuration management or provisioning tools (Ansible, image scripts) that stage account files in /tmp before installing them.",
+        "Container or VM image builds copying predefined account files.",
+        "Administrators manually restoring an account file during a documented recovery."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the action was authorized (approved change, maintenance window).",
+        "If not authorized, isolate the host and preserve /tmp, /etc/passwd, /etc/shadow, and shell and auth logs.",
+        "Remove unauthorized accounts or changes by restoring the files from a verified backup; delete leftover shadow copies in /tmp.",
+        "Rotate passwords for every account whose hashes may be exposed, starting with root and accounts reused elsewhere.",
+        "Determine the access vector and hunt for the same pattern on other Linux hosts."
+      ],
+      "severity_rationale": "High fits because tampering with or copying passwd or shadow through /tmp is uncommon and directly affects credentials and control of privileged accounts."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Attacker overwrites /etc/shadow with a version staged in /tmp",
+        "event": {
+          "Image": "/usr/bin/cp",
+          "CommandLine": "cp /tmp/shadow /etc/shadow",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "CurrentDirectory": "/tmp",
+          "ProcessId": 48213,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "System passwd file copied into a hidden /tmp location for exfiltration",
+        "event": {
+          "Image": "/bin/cp",
+          "CommandLine": "cp /etc/passwd /tmp/.cache_p",
+          "ParentImage": "/usr/bin/sh",
+          "User": "www-data",
+          "CurrentDirectory": "/var/www/html",
+          "ProcessId": 7731,
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate backup of passwd to /var/backups, no /tmp/ path involved",
+        "event": {
+          "Image": "/usr/bin/cp",
+          "CommandLine": "cp /etc/passwd /var/backups/passwd.bak",
+          "ParentImage": "/usr/sbin/cron",
+          "User": "root",
+          "CurrentDirectory": "/root",
+          "ProcessId": 1902,
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "cp copies an unrelated report from /tmp, no passwd or shadow in the command line",
+        "event": {
+          "Image": "/usr/bin/cp",
+          "CommandLine": "cp /tmp/report-2024.csv /home/jperez/reports/",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "CurrentDirectory": "/home/jperez",
+          "ProcessId": 5520,
+          "Computer": "WS-0142"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

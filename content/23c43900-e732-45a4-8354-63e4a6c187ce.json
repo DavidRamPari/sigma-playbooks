@@ -1,0 +1,124 @@
+{
+  "rule": {
+    "id": "23c43900-e732-45a4-8354-63e4a6c187ce",
+    "title": "MacOS Emond Launch Daemon",
+    "level": "medium",
+    "status": "test",
+    "author": "Alejandro Ortuno, oscd.community",
+    "path": "macos/file_event/file_event_macos_emond_launch_daemon.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/macos/file_event/file_event_macos_emond_launch_daemon.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1546.014"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió un archivo en el directorio de reglas de emond (/etc/emond.d/rules/*.plist) o en /private/var/db/emondClients/ de un equipo macOS. Esto puede crear persistencia con privilegios de root mediante el Event Monitor daemon.",
+      "what_it_detects": "Eventos de creación o modificación de archivos en los que TargetFilename contiene /etc/emond.d/rules/ y termina en .plist, o en los que TargetFilename contiene /private/var/db/emondClients/. Un archivo en emondClients es lo que hace que emond inicie y procese sus reglas.",
+      "why_it_matters": "emond es un daemon heredado de macOS que se ejecuta como root y realiza las acciones definidas en plists de reglas, incluida la ejecución de comandos ante eventos como el arranque. Los atacantes lo usan para persistencia y escalamiento de privilegios (ATT&CK T1546.014, Event Triggered Execution: Emond).",
+      "triage_steps": [
+        "Identificar el TargetFilename, el proceso que escribió (Image) y el usuario. Verificar si se crearon tanto un plist de reglas como un archivo en emondClients, porque juntos activan la regla.",
+        "Obtener el plist de la regla y revisar sus acciones, sobre todo las entradas RunCommand, los scripts o binarios que invocan y los disparadores como el arranque.",
+        "Revisar los procesos padre e hijo del Image que escribió. Suelen ser cp, mv, tee, plutil, python o un shell ejecutado con sudo.",
+        "Pivotar en el mismo host dentro de +/- 15 minutos para buscar descargas, binarios nuevos, uso de sudo o cambios en LaunchDaemons y LaunchAgents.",
+        "Comprobar si los comandos del plist ya se ejecutaron, por ejemplo procesos cuyo padre es emond después de un reinicio.",
+        "Buscar alertas anteriores de este host y usuario, y preguntar al administrador si un cambio documentado explica el archivo."
+      ],
+      "false_positives": [
+        "Actividades legítimas de administración, como administradores o herramientas de gestión que despliegan reglas emond personalizadas.",
+        "Archivos de reglas predeterminados de Apple, por ejemplo SampleRules.plist, que se restauran durante una instalación o actualización del sistema.",
+        "Pruebas de seguridad que ejecutan el test T1546.014 de Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirmar que la actividad no está autorizada revisando el contenido del plist y consultando al responsable del equipo antes de hacer cambios.",
+        "Aislar el endpoint si se encuentran comandos maliciosos, y conservar copias del plist, de los archivos de emondClients y de los payloads referenciados.",
+        "Eliminar la regla maliciosa y el archivo de emondClients, detener emond y borrar los payloads referenciados solo después de haber conservado sus copias.",
+        "Restablecer las credenciales del usuario que escribió los archivos, buscar otras formas de persistencia y buscar el mismo hash o ruta del plist en otros Mac."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque se trata de un mecanismo de persistencia con privilegios de root poco usado, pero existen reglas administrativas legítimas, así que el contenido del plist define si la alerta es maliciosa."
+    },
+    "en": {
+      "summary": "A file was written to an emond rules directory (/etc/emond.d/rules/*.plist) or to /private/var/db/emondClients/ on a macOS host. This can set up root-level persistence through the Event Monitor daemon.",
+      "what_it_detects": "File creation or modification events where TargetFilename contains /etc/emond.d/rules/ and ends in .plist, or where TargetFilename contains /private/var/db/emondClients/. A file in emondClients is what makes emond start and process its rules.",
+      "why_it_matters": "emond is a legacy macOS daemon that runs as root and carries out actions defined in rule plists, including running commands on events such as system startup. Attackers use it for persistence and privilege escalation (ATT&CK T1546.014, Event Triggered Execution: Emond).",
+      "triage_steps": [
+        "Identify the TargetFilename, the writing process (Image) and the user. Check whether a plist rule and an emondClients file were both created, which together make the rule active.",
+        "Collect the rule plist and review its actions, especially RunCommand entries, the scripts or binaries they call, and event triggers like startup.",
+        "Review the parent and child processes of the writing Image. Common writers are cp, mv, tee, plutil, python or a shell running through sudo.",
+        "Pivot on the same host within +/- 15 minutes for downloads, new binaries, sudo use or edits to LaunchDaemons and LaunchAgents.",
+        "Check whether the commands referenced in the plist have run yet, for example processes whose parent is emond after a reboot.",
+        "Look up earlier alerts for this host and user, and ask the administrator whether a documented change explains the file."
+      ],
+      "false_positives": [
+        "Legitimate administration activities, such as admins or management tools deploying custom emond rules.",
+        "Default Apple rule files, for example SampleRules.plist, being restored during an OS install or upgrade.",
+        "Security testing that runs the Atomic Red Team T1546.014 test."
+      ],
+      "response_steps": [
+        "Confirm the activity is unauthorized by reviewing the plist content and checking with the asset owner before you change anything.",
+        "Isolate the endpoint if malicious commands are found, and keep copies of the plist, emondClients files and referenced payloads.",
+        "Remove the malicious rule and emondClients file, stop emond, and delete referenced payloads only after you have kept copies of them.",
+        "Reset credentials for the user who wrote the files, look for other persistence, and hunt for the same plist hash or path on other Macs."
+      ],
+      "severity_rationale": "Medium fits because this is a rarely used, root-level persistence mechanism, but legitimate admin rules exist, so the plist content decides whether the alert is malicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An Atomic-style emond rule plist copied into the rules directory with sudo. TargetFilename contains /etc/emond.d/rules/ and ends in .plist.",
+        "event": {
+          "TargetFilename": "/private/etc/emond.d/rules/maintenance_update.plist",
+          "Image": "/bin/cp",
+          "User": "root",
+          "ParentImage": "/usr/bin/sudo",
+          "Computer": "MBP-0142.example.com",
+          "EventType": "create"
+        }
+      },
+      {
+        "description": "A file created in emondClients, which makes emond start processing its rules.",
+        "event": {
+          "TargetFilename": "/private/var/db/emondClients/a1b2c3",
+          "Image": "/usr/bin/touch",
+          "User": "root",
+          "ParentImage": "/bin/zsh",
+          "Computer": "MBP-0142.example.com",
+          "EventType": "create"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "An edit to the main emond configuration file, which is outside the rules directory and the emondClients directory.",
+        "event": {
+          "TargetFilename": "/private/etc/emond.d/emond.plist",
+          "Image": "/usr/bin/plutil",
+          "User": "root",
+          "ParentImage": "/usr/bin/sudo",
+          "Computer": "MBP-0142.example.com",
+          "EventType": "modify"
+        }
+      },
+      {
+        "description": "A text file in the rules directory. The path matches, but the name does not end in .plist.",
+        "event": {
+          "TargetFilename": "/private/etc/emond.d/rules/README.txt",
+          "Image": "/usr/bin/vim",
+          "User": "root",
+          "ParentImage": "/bin/zsh",
+          "Computer": "MBP-0142.example.com",
+          "EventType": "create"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

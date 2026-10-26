@@ -1,0 +1,152 @@
+{
+  "rule": {
+    "id": "2dad0cba-c62a-4a4f-949f-5f6ecd619769",
+    "title": "Split A File Into Pieces - Linux",
+    "level": "low",
+    "status": "test",
+    "author": "Igor Fits, oscd.community",
+    "path": "linux/auditd/syscall/lnx_auditd_split_file_into_pieces.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/auditd/syscall/lnx_auditd_split_file_into_pieces.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1030"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "auditd registró una llamada al sistema (SYSCALL) del proceso split, que divide un archivo en fragmentos. Puede ser administración rutinaria o la preparación de datos para exfiltrarlos en partes pequeñas.",
+      "what_it_detects": "Eventos auditd de tipo SYSCALL cuyo campo comm es exactamente 'split', es decir, cualquier ejecución del binario GNU split que generó un evento auditado por las reglas de auditd del host.",
+      "why_it_matters": "Un atacante puede dividir un archivo grande (bases de datos, archivos comprimidos, volcados) en partes más pequeñas para que la transferencia no supere umbrales o pase desapercibida. Es la técnica MITRE ATT&CK T1030, límites de tamaño en la transferencia de datos.",
+      "triage_steps": [
+        "Identifique el host, el pid, el ppid, el exe y el usuario: auid (usuario original del login) frente a uid/euid, para detectar escalamientos con sudo o su.",
+        "Busque el registro EXECVE con el mismo número de serie de auditoría (msg=audit(...:N)) para recuperar los argumentos: archivo de origen, -b/-l/-n y prefijo de salida.",
+        "Determine qué archivo se dividió: ¿contiene datos sensibles (backups, dumps SQL, archivos .tar/.zip, directorios home o /etc)?",
+        "Revise el proceso padre (ppid): shell interactiva por SSH, cron, script de respaldo o un proceso web o servicio inesperado.",
+        "En el mismo host, +/- 15 minutos, busque compresión o cifrado previos (tar, gzip, zip, openssl, gpg) y transferencias posteriores (curl, wget, scp, rsync, nc, ftp).",
+        "Revise conexiones de red salientes del host y del usuario hacia destinos externos poco comunes en esa ventana.",
+        "Consulte alertas previas del mismo host o usuario (accesos SSH anómalos, escalamiento de privilegios, descubrimiento de archivos)."
+      ],
+      "false_positives": [
+        "Actividad administrativa legítima: dividir backups o imágenes grandes para guardarlos o transferirlos a medios con límite de tamaño.",
+        "Scripts de respaldo, rotación o procesamiento de logs que usan split de forma programada desde cron o systemd timers.",
+        "Pipelines de datos o de CI que fragmentan archivos para procesamiento en paralelo o para subidas multiparte."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o el usuario si la ejecución estaba prevista; documente los argumentos y el archivo de origen.",
+        "Si es sospechosa, preserve los fragmentos (xaa, xab, etc.) y el historial de shell antes de cualquier limpieza y calcule su hash.",
+        "Ante evidencia de transferencia externa, aísle el host o bloquee los destinos implicados y suspenda o rote credenciales de la cuenta.",
+        "Determine el alcance de los datos expuestos, active el proceso de respuesta a fuga de datos y agregue exclusiones solo para scripts verificados."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque split es una herramienta común de administración y por sí sola no prueba exfiltración; adquiere relevancia junto con datos sensibles o transferencias salientes."
+    },
+    "en": {
+      "summary": "auditd logged a SYSCALL event from the split process, which breaks a file into pieces. This may be routine administration or staging data for exfiltration in small chunks.",
+      "what_it_detects": "auditd SYSCALL records whose comm field is exactly 'split', meaning any execution of the GNU split binary that triggered an audited syscall on the host.",
+      "why_it_matters": "Attackers can split large files (databases, archives, dumps) into smaller chunks so transfers stay under size thresholds or avoid notice. This maps to MITRE ATT&CK T1030, Data Transfer Size Limits.",
+      "triage_steps": [
+        "Identify host, pid, ppid, exe and user: compare auid (original login user) with uid/euid to spot sudo or su escalation.",
+        "Find the EXECVE record with the same audit serial (msg=audit(...:N)) to recover arguments: source file, -b/-l/-n options and output prefix.",
+        "Determine what file was split: is it sensitive (backups, SQL dumps, .tar/.zip archives, home directories, /etc)?",
+        "Check the parent process (ppid): interactive SSH shell, cron, backup script, or an unexpected web or service process.",
+        "On the same host, +/- 15 minutes, look for prior compression or encryption (tar, gzip, zip, openssl, gpg) and later transfers (curl, wget, scp, rsync, nc, ftp).",
+        "Review outbound network connections from the host and user to unusual external destinations in that window.",
+        "Check earlier alerts for the same host or user (unusual SSH logins, privilege escalation, file discovery)."
+      ],
+      "false_positives": [
+        "Legitimate administrative activity: splitting large backups or images to store or move them on size-limited media.",
+        "Backup, rotation or log processing scripts running split on a schedule from cron or systemd timers.",
+        "Data or CI pipelines that chunk files for parallel processing or multipart uploads."
+      ],
+      "response_steps": [
+        "Confirm with the system owner or user whether the run was expected; record the arguments and source file.",
+        "If suspicious, preserve the chunks (xaa, xab, etc.) and shell history before any cleanup and hash them.",
+        "If external transfer is evident, isolate the host or block the destinations involved and suspend or rotate the account's credentials.",
+        "Scope the exposed data, start the data-leak response process, and add exclusions only for verified scripts."
+      ],
+      "severity_rationale": "Low fits because split is a common admin utility and alone does not prove exfiltration; it matters when combined with sensitive data or outbound transfers."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive user escalated with sudo runs split on a database dump; auditd SYSCALL record with comm=split.",
+        "event": {
+          "type": "SYSCALL",
+          "comm": "split",
+          "exe": "/usr/bin/split",
+          "syscall": "59",
+          "success": "yes",
+          "pid": "48213",
+          "ppid": "48190",
+          "auid": "1001",
+          "uid": "0",
+          "euid": "0",
+          "tty": "pts1",
+          "key": "exec_log",
+          "host": "bastion-01",
+          "msg": "audit(1729865000.123:9842)"
+        }
+      },
+      {
+        "description": "split executed from a web service account shell, SYSCALL openat on the source file.",
+        "event": {
+          "type": "SYSCALL",
+          "comm": "split",
+          "exe": "/usr/bin/split",
+          "syscall": "257",
+          "success": "yes",
+          "pid": "7731",
+          "ppid": "7702",
+          "auid": "4294967295",
+          "uid": "33",
+          "euid": "33",
+          "tty": "(none)",
+          "key": "file_access",
+          "host": "web-02",
+          "msg": "audit(1729866112.441:12007)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "csplit (a different utility) run by a log processing script; comm does not equal 'split'.",
+        "event": {
+          "type": "SYSCALL",
+          "comm": "csplit",
+          "exe": "/usr/bin/csplit",
+          "syscall": "59",
+          "success": "yes",
+          "pid": "5120",
+          "ppid": "5101",
+          "auid": "1002",
+          "uid": "1002",
+          "euid": "1002",
+          "tty": "(none)",
+          "key": "exec_log",
+          "host": "logproc-01",
+          "msg": "audit(1729867000.010:3311)"
+        }
+      },
+      {
+        "description": "EXECVE record for the split command; record type is not SYSCALL so the selection does not match.",
+        "event": {
+          "type": "EXECVE",
+          "argc": "4",
+          "a0": "split",
+          "a1": "-b",
+          "a2": "100M",
+          "a3": "backup.tar.gz",
+          "host": "bastion-01",
+          "msg": "audit(1729865000.123:9842)"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:12+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

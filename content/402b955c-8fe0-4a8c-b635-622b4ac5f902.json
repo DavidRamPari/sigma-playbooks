@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "402b955c-8fe0-4a8c-b635-622b4ac5f902",
+    "title": "Container With A hostPath Mount Created",
+    "level": "low",
+    "status": "test",
+    "author": "Leo Tsaousis (@laripping)",
+    "path": "application/kubernetes/audit/kubernetes_audit_hostpath_mount.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/application/kubernetes/audit/kubernetes_audit_hostpath_mount.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1611"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó un pod en Kubernetes que monta un directorio o archivo del nodo mediante un volumen hostPath. Puede ser legítimo (DaemonSets de sistema) o un intento de escapar del contenedor hacia el nodo.",
+      "what_it_detects": "Eventos del audit log de Kubernetes con verb 'create' sobre objectRef.resource 'pods' en los que el campo hostPath tiene un valor, es decir, el pod declara un volumen hostPath.",
+      "why_it_matters": "Un hostPath con permisos de escritura, sobre todo de '/' o de rutas sensibles como /etc, /var/run/docker.sock o /var/lib/kubelet, permite hacer chroot al nodo, leer secretos o controlar el runtime. Esto corresponde a escape a host (ATT&CK T1611) y escalamiento de privilegios.",
+      "triage_steps": [
+        "Identifique al solicitante en user.username, sus grupos y sourceIPs. Distinga cuentas de servicio de controladores (system:serviceaccount:kube-system:daemon-set-controller) de usuarios humanos o tokens externos.",
+        "Revise objectRef.namespace y objectRef.name. Las creaciones fuera de kube-system o de namespaces de agentes conocidos (monitoreo, CNI, CSI) merecen más atención.",
+        "Examine la ruta de hostPath y el requestObject: verifique si monta '/', /etc, /root, /var/run/docker.sock, containerd.sock o /var/lib/kubelet, y si readOnly es falso.",
+        "Revise el resto del spec: privileged, hostPID, hostNetwork, hostIPC, runAsUser 0, la imagen usada y comandos como chroot, nsenter o shells inversos.",
+        "Verifique si el pod pertenece a un DaemonSet, Deployment o Job conocido (ownerReferences) y si coincide con un cambio aprobado o un pipeline de GitOps.",
+        "Pivote por el mismo usuario y sourceIPs en ±15 minutos: busque exec/attach sobre el pod, lectura de secrets, creación de rolebindings o pruebas de permisos (selfsubjectaccessreviews).",
+        "Consulte alertas anteriores del mismo usuario, namespace o nodo, y revise los logs del nodo donde se programó el pod."
+      ],
+      "false_positives": [
+        "El controlador de DaemonSet crea pods con hostPath en kube-system (kube-proxy, CNI, recolectores de logs).",
+        "Agentes de monitoreo, seguridad o almacenamiento (exportadores de nodo, drivers CSI, EDR para contenedores) desplegados en sus propios namespaces.",
+        "Administradores que depuran nodos con pods temporales aprobados, por ejemplo mediante kubectl debug node."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del workload o del namespace si el pod y su montaje hostPath estaban autorizados.",
+        "Si no está autorizado, preserve el manifiesto y los logs, y luego elimine el pod; aísle o acordone (cordon) el nodo afectado mientras investiga.",
+        "Revoque o rote las credenciales del usuario o la cuenta de servicio usada y revise sus RoleBindings y ClusterRoleBindings.",
+        "Revise el nodo en busca de persistencia (cron, claves SSH, binarios modificados) y rote los secretos expuestos en el nodo.",
+        "Aplique Pod Security Admission (baseline/restricted) o políticas de admisión que restrinjan hostPath a namespaces y rutas aprobadas."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque los pods con hostPath son comunes en cargas de sistema; el riesgo aumenta con rutas sensibles, escritura, privilegios o un solicitante inusual."
+    },
+    "en": {
+      "summary": "A Kubernetes pod was created that mounts a node directory or file through a hostPath volume. This may be a legitimate system DaemonSet or an attempt to escape from the container to the node.",
+      "what_it_detects": "Kubernetes audit events with verb 'create' on objectRef.resource 'pods' where the hostPath field has a value, meaning the pod declares a hostPath volume.",
+      "why_it_matters": "A writable hostPath, especially of '/' or sensitive paths such as /etc, /var/run/docker.sock or /var/lib/kubelet, lets an attacker chroot into the node, read secrets or control the runtime. This is escape to host (ATT&CK T1611) and privilege escalation.",
+      "triage_steps": [
+        "Identify the requester from user.username, groups and sourceIPs. Separate controller service accounts (system:serviceaccount:kube-system:daemon-set-controller) from human users or external tokens.",
+        "Check objectRef.namespace and objectRef.name. Creations outside kube-system or known agent namespaces (monitoring, CNI, CSI) need closer review.",
+        "Inspect the hostPath path and requestObject: does it mount '/', /etc, /root, /var/run/docker.sock, containerd.sock or /var/lib/kubelet, and is readOnly false?",
+        "Review the rest of the spec: privileged, hostPID, hostNetwork, hostIPC, runAsUser 0, the image, and commands such as chroot, nsenter or reverse shells.",
+        "Check whether the pod belongs to a known DaemonSet, Deployment or Job (ownerReferences) and matches an approved change or GitOps pipeline.",
+        "Pivot on the same user and sourceIPs within +/- 15 minutes: exec/attach on the pod, secret reads, new rolebindings or permission probing (selfsubjectaccessreviews).",
+        "Look for earlier alerts on the same user, namespace or node, and review logs on the node where the pod was scheduled."
+      ],
+      "false_positives": [
+        "The DaemonSet controller creates pods with hostPath volumes in kube-system (kube-proxy, CNI, log collectors).",
+        "Monitoring, security or storage agents (node exporters, CSI drivers, container EDR) deployed in their own namespaces.",
+        "Administrators debugging nodes with approved temporary pods, for example via kubectl debug node."
+      ],
+      "response_steps": [
+        "Confirm with the workload or namespace owner whether the pod and its hostPath mount were authorized.",
+        "If unauthorized, preserve the manifest and logs, then delete the pod; cordon or isolate the affected node while investigating.",
+        "Revoke or rotate credentials of the user or service account involved and review its RoleBindings and ClusterRoleBindings.",
+        "Check the node for persistence (cron, SSH keys, modified binaries) and rotate secrets exposed on that node.",
+        "Enforce Pod Security Admission (baseline/restricted) or admission policies that restrict hostPath to approved namespaces and paths."
+      ],
+      "severity_rationale": "Low fits because hostPath pods are common for system workloads; risk rises with sensitive paths, write access, privileges or an unusual requester."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A user creates a pod in the default namespace that mounts the node root filesystem through hostPath.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "default",
+          "objectRef.name": "debug-tools",
+          "hostPath": "/",
+          "user.username": "jperez@example.com",
+          "sourceIPs": "203.0.113.45",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64)",
+          "responseStatus.code": 201
+        }
+      },
+      {
+        "description": "Service account creates a pod mounting the container runtime socket via hostPath.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "ci-runners",
+          "objectRef.name": "build-agent-7f9c",
+          "hostPath": "/var/run/containerd/containerd.sock",
+          "user.username": "system:serviceaccount:ci-runners:runner",
+          "sourceIPs": "198.51.100.20",
+          "userAgent": "Go-http-client/2.0",
+          "responseStatus.code": 201
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Pod creation that only uses emptyDir and configMap volumes, with no hostPath field.",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "create",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "web",
+          "objectRef.name": "frontend-5d8b7",
+          "user.username": "system:serviceaccount:kube-system:replicaset-controller",
+          "sourceIPs": "192.0.2.10",
+          "userAgent": "kube-controller-manager/v1.29.2",
+          "responseStatus.code": 201
+        }
+      },
+      {
+        "description": "Reading an existing pod that has a hostPath volume (verb get, not create).",
+        "event": {
+          "kind": "Event",
+          "apiVersion": "audit.k8s.io/v1",
+          "stage": "ResponseComplete",
+          "verb": "get",
+          "objectRef.resource": "pods",
+          "objectRef.namespace": "kube-system",
+          "objectRef.name": "kube-proxy-x2k4p",
+          "hostPath": "/lib/modules",
+          "user.username": "mrodriguez@example.com",
+          "sourceIPs": "192.0.2.33",
+          "userAgent": "kubectl/v1.29.2 (linux/amd64)",
+          "responseStatus.code": 200
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

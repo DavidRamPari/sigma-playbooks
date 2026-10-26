@@ -1,0 +1,144 @@
+{
+  "rule": {
+    "id": "4508a70e-97ef-4300-b62b-ff27992990ea",
+    "title": "DotNet CLR DLL Loaded By Scripting Applications",
+    "level": "high",
+    "status": "test",
+    "author": "omkar72, oscd.community",
+    "path": "windows/image_load/image_load_susp_script_dotnet_clr_dll_load.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/image_load/image_load_susp_script_dotnet_clr_dll_load.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un binario de scripting o LOLBin (wscript, cscript, mshta, regsvr32, cmstp, msxsl o wmic) cargó una DLL del CLR de .NET. Puede indicar que se está ejecutando un ensamblado .NET en memoria desde un script.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon ID 7) en los que Image termina en cmstp.exe, cscript.exe, mshta.exe, msxsl.exe, regsvr32.exe, wmic.exe o wscript.exe, e ImageLoaded termina en clr.dll, mscoree.dll o mscorlib.dll.",
+      "why_it_matters": "Herramientas como DotNetToJScript o Donut permiten ejecutar ensamblados .NET en memoria desde JScript, VBScript, HTA o shellcode, sin dejar un ejecutable en disco. Se relaciona con inyección de procesos (T1055) y con la ejecución sigilosa mediante binarios firmados de Microsoft.",
+      "triage_steps": [
+        "Identifique Image, ImageLoaded, ProcessId/ProcessGuid, User y Computer del evento.",
+        "Ubique el evento de creación del proceso con el mismo ProcessGuid: revise CommandLine, ParentImage y el archivo de script, HTA, XSL o DLL invocado.",
+        "Evalúe el origen del script: rutas como %TEMP%, Downloads, AppData o adjuntos de correo, y obtenga su hash y el contenido si es posible.",
+        "Busque en el script blobs base64 grandes, BinaryFormatter, DynamicInvoke o referencias a Donut o DotNetToJScript.",
+        "Revise en el mismo host +/- 15 minutos los procesos hijos, las conexiones de red, los archivos escritos y los accesos a otros procesos que haga ese proceso.",
+        "Pivotee por usuario y por hash del script en otros endpoints, y revise alertas previas de la misma entidad.",
+        "Si el proceso sigue activo, considere capturar memoria antes de terminarlo."
+      ],
+      "false_positives": [
+        "Scripts administrativos legítimos que usan objetos .NET visibles por COM, por ejemplo CreateObject(\"System.Collections.ArrayList\").",
+        "Agentes de gestión o instaladores que registran componentes .NET con regsvr32 o ejecutan scripts WSH.",
+        "Proveedores WMI basados en .NET consultados mediante wmic."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del sistema o del script si la ejecución es esperada antes de actuar.",
+        "Si se confirma actividad maliciosa, aísle el endpoint y adquiera memoria y el script o archivo invocado.",
+        "Termine el proceso, elimine la persistencia asociada y bloquee los hashes y dominios identificados.",
+        "Restablezca las credenciales del usuario afectado si hubo ejecución con su sesión, y busque la misma actividad en toda la flota.",
+        "Si es legítimo, documéntelo y cree una exclusión específica por ruta de script y por proceso padre."
+      ],
+      "severity_rationale": "Es alta porque estos binarios rara vez necesitan cargar el CLR y esa carga es típica de los loaders .NET en memoria, aunque existen usos COM legítimos."
+    },
+    "en": {
+      "summary": "A scripting host or LOLBin (wscript, cscript, mshta, regsvr32, cmstp, msxsl or wmic) loaded a .NET CLR DLL. This may mean a .NET assembly is running in memory from a script.",
+      "what_it_detects": "Image load events (Sysmon ID 7) where Image ends with cmstp.exe, cscript.exe, mshta.exe, msxsl.exe, regsvr32.exe, wmic.exe or wscript.exe and ImageLoaded ends with clr.dll, mscoree.dll or mscorlib.dll.",
+      "why_it_matters": "Tools such as DotNetToJScript and Donut run .NET assemblies in memory from JScript, VBScript, HTA or shellcode without dropping an executable to disk. This maps to process injection (T1055) and to stealthy execution through signed Microsoft binaries.",
+      "triage_steps": [
+        "Record Image, ImageLoaded, ProcessId/ProcessGuid, User and Computer from the event.",
+        "Find the process creation event with the same ProcessGuid and review CommandLine, ParentImage and the script, HTA, XSL or DLL it invoked.",
+        "Check where the script came from (%TEMP%, Downloads, AppData, email attachments) and collect its hash and content.",
+        "Look in the script for large base64 blobs, BinaryFormatter, DynamicInvoke or references to Donut or DotNetToJScript.",
+        "On the same host within +/- 15 minutes, review the process's child processes, network connections, file writes and access to other processes.",
+        "Pivot on the user and the script hash across other endpoints, and check earlier alerts for the same entity.",
+        "If the process is still running, consider capturing memory before you kill it."
+      ],
+      "false_positives": [
+        "Legitimate admin scripts that use COM-visible .NET objects, such as CreateObject(\"System.Collections.ArrayList\").",
+        "Management agents or installers that register .NET components with regsvr32 or run WSH scripts.",
+        ".NET-based WMI providers queried through wmic."
+      ],
+      "response_steps": [
+        "Before acting, check with the system or script owner whether the execution was expected.",
+        "If it is malicious, isolate the endpoint and collect memory plus the invoked script or file.",
+        "Kill the process, remove any related persistence and block the hashes and domains you found.",
+        "If it ran in the user's session, reset that user's credentials, then hunt for the same activity across the fleet.",
+        "If it is benign, document it and add a narrow exclusion for that script path and parent process."
+      ],
+      "severity_rationale": "High fits because these binaries rarely need the CLR and loading it is typical of in-memory .NET loaders, though some legitimate COM uses exist."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "wscript.exe running a JScript file from the user's Downloads folder loads the .NET 4 clr.dll",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 13:22:41.118",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessGuid": "{6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8}",
+          "ProcessId": 5124,
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "ImageLoaded": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Corporation",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "mshta.exe loads mscoree.dll while running an HTA",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 15:07:09.532",
+          "Computer": "WS-0217.andes.example.com",
+          "ProcessGuid": "{7a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809}",
+          "ProcessId": 7340,
+          "Image": "C:\\Windows\\System32\\mshta.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\mscoree.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "User": "ANDES\\mlopez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "powershell.exe loading clr.dll is normal and Image is not in the rule's list",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 13:30:02.004",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessGuid": "{8b3c4d5e-6f70-8192-a3b4-c5d6e7f8091a}",
+          "ProcessId": 6012,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ImageLoaded": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Corporation",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "wscript.exe loading the JScript engine, which is not a CLR DLL",
+        "event": {
+          "EventID": 7,
+          "UtcTime": "2024-05-14 13:22:40.987",
+          "Computer": "WS-0142.andes.example.com",
+          "ProcessGuid": "{6f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8}",
+          "ProcessId": 5124,
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\jscript.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-25T21:59:49+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

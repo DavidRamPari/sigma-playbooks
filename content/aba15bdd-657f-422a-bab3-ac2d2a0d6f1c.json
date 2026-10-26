@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "aba15bdd-657f-422a-bab3-ac2d2a0d6f1c",
+    "title": "Potentially Suspicious DMP/HDMP File Creation",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_dump_file_susp_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/file/file_event/file_event_win_dump_file_susp_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": []
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un shell o motor de scripts (cmd, PowerShell, pwsh, cscript, wscript o mshta) creó un archivo con extensión .dmp, .dump o .hdmp. Puede ser un volcado de memoria con credenciales u otros datos sensibles.",
+      "what_it_detects": "Eventos de creación de archivos en Windows donde Image termina en cmd.exe, cscript.exe, mshta.exe, powershell.exe, pwsh.exe o wscript.exe y TargetFilename termina en .dmp, .dump o .hdmp.",
+      "why_it_matters": "Los volcados suelen generarlos el sistema o los depuradores, no un shell. Si un script crea o mueve un dump, puede ser memoria de un proceso como LSASS volcada para extraer credenciales o preparada para exfiltración. El rule está etiquetado con la táctica stealth de ATT&CK.",
+      "triage_steps": [
+        "Revise TargetFilename: ruta, nombre y tamaño. Nombres como lsass, rutas en Temp, Public o ProgramData y tamaños grandes elevan la sospecha.",
+        "Identifique el proceso en Image y obtenga su CommandLine desde la creación de procesos (ProcessId/ProcessGuid). Busque MiniDump, Out-Minidump, comsvcs, procdump o copias de dumps.",
+        "Revise el proceso padre (ParentImage) y la cadena completa: ¿lo lanzó un administrador, una tarea programada, Office o un servicio web?",
+        "Verifique el usuario del evento y si tiene privilegios elevados o SeDebugPrivilege. Confirme con el equipo si la actividad estaba planificada.",
+        "Busque en el mismo host ±15 minutos accesos a lsass.exe (Sysmon 10), compresión del dump, copias a recursos compartidos o conexiones salientes.",
+        "Consulte alertas previas del mismo host y usuario, y busque el mismo nombre de archivo o hash en otros endpoints."
+      ],
+      "false_positives": [
+        "Scripts administrativos de PowerShell o VBScript que recolectan dumps de WER y los mueven a otra carpeta o recurso compartido.",
+        "Herramientas de soporte o diagnóstico de proveedores que invocan desde cmd o PowerShell la captura de volcados de una aplicación con fallas.",
+        "Equipos de desarrollo o QA que generan volcados de procesos propios durante la depuración."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host o el usuario si la generación del dump fue legítima antes de actuar.",
+        "Si es sospechoso, aísle el endpoint y preserve el archivo dump y su hash para análisis forense; no lo elimine aún.",
+        "Si el dump corresponde a LSASS u otro proceso con secretos, restablezca las credenciales de las cuentas con sesión en el host y revise su uso posterior.",
+        "Elimine scripts, tareas o herramientas maliciosas identificadas, borre el dump tras preservarlo y restaure el equipo; agregue exclusiones específicas solo para scripts aprobados."
+      ],
+      "severity_rationale": "Nivel medio porque existen usos administrativos legítimos, pero un dump creado por un shell puede indicar volcado de credenciales y requiere revisión rápida."
+    },
+    "en": {
+      "summary": "A shell or scripting host (cmd, PowerShell, pwsh, cscript, wscript or mshta) created a file ending in .dmp, .dump or .hdmp. It may be a memory dump holding credentials or other sensitive data.",
+      "what_it_detects": "Windows file creation events where Image ends with cmd.exe, cscript.exe, mshta.exe, powershell.exe, pwsh.exe or wscript.exe and TargetFilename ends with .dmp, .dump or .hdmp.",
+      "why_it_matters": "Dumps are normally written by the OS or debuggers, not shells. A script creating or moving a dump may mean process memory, such as LSASS, was dumped to extract credentials or staged for exfiltration. The rule is tagged with the ATT&CK stealth tactic.",
+      "triage_steps": [
+        "Review TargetFilename: path, name and size. Names like lsass, paths under Temp, Public or ProgramData, and large sizes raise suspicion.",
+        "Identify the Image process and get its CommandLine from process creation via ProcessId/ProcessGuid. Look for MiniDump, Out-Minidump, comsvcs, procdump or dump copying.",
+        "Review ParentImage and the full process tree: was it launched by an admin, scheduled task, Office or a web service?",
+        "Check the user and whether it is privileged or holds SeDebugPrivilege. Confirm with the owner whether the activity was planned.",
+        "On the same host within +/- 15 minutes, look for lsass.exe access (Sysmon 10), archiving of the dump, copies to shares or outbound connections.",
+        "Check earlier alerts for the same host and user, and hunt for the same file name or hash on other endpoints."
+      ],
+      "false_positives": [
+        "Administrative PowerShell or VBScript scripts that collect WER crash dumps and move them to another folder or share.",
+        "Vendor support or diagnostic tools that trigger dump capture of a crashing application from cmd or PowerShell.",
+        "Developer or QA machines generating dumps of their own processes while debugging."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or user whether the dump was legitimate before acting.",
+        "If suspicious, isolate the endpoint and preserve the dump file and its hash for forensics; do not delete it yet.",
+        "If the dump is of LSASS or another secret-holding process, reset credentials of accounts logged on to the host and review their later use.",
+        "Remove identified malicious scripts, tasks or tools, delete the dump after preservation and recover the host; add narrow exclusions only for approved scripts."
+      ],
+      "severity_rationale": "Medium because legitimate admin uses exist, but a shell-created dump can indicate credential dumping and warrants prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell writes an LSASS-named minidump to C:\\Users\\Public",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6624,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetFilename": "C:\\Users\\Public\\lsass_6624.dmp",
+          "CreationUtcTime": "2024-05-14 13:22:07.512"
+        }
+      },
+      {
+        "description": "cmd.exe copies a WER heap dump (.hdmp) into a staging folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0217.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ProcessId": 4120,
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "TargetFilename": "C:\\ProgramData\\stage\\app.exe.4120.hdmp",
+          "CreationUtcTime": "2024-05-14 15:01:44.090"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WerFault.exe writes a crash dump to the standard CrashDumps folder (Image is not a shell)",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7012,
+          "Image": "C:\\Windows\\System32\\WerFault.exe",
+          "TargetFilename": "C:\\Users\\jperez\\AppData\\Local\\CrashDumps\\excel.exe.5532.dmp",
+          "CreationUtcTime": "2024-05-14 09:10:31.004"
+        }
+      },
+      {
+        "description": "PowerShell archives a dump into a .zip; TargetFilename does not end in a dump extension",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-FS-01.andes.example.com",
+          "User": "ANDES\\svc_backup",
+          "ProcessId": 3388,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetFilename": "D:\\Support\\Collected\\app_crash.dmp.zip",
+          "CreationUtcTime": "2024-05-14 02:00:12.777"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

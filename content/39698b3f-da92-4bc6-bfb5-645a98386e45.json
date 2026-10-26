@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "39698b3f-da92-4bc6-bfb5-645a98386e45",
+    "title": "Win Susp Computer Name Containing Samtheadmin",
+    "level": "critical",
+    "status": "test",
+    "author": "elhoim",
+    "path": "windows/builtin/security/win_security_susp_computer_name.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/windows/builtin/security/win_security_susp_computer_name.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró en el log Security una cuenta de equipo con nombre SAMTHEADMIN-<n>$, que es el patrón que genera la herramienta sam-the-admin. Indica un posible intento de explotar CVE-2021-42278/CVE-2021-42287 para obtener privilegios de administrador de dominio.",
+      "what_it_detects": "Cualquier evento de Security de Windows cuyo SamAccountName o TargetUserName empiece con 'SAMTHEADMIN-' y termine en '$'. La regla no filtra por EventID, así que cubre la creación de la cuenta (4741), los cambios, los tickets Kerberos y los inicios de sesión.",
+      "why_it_matters": "La herramienta crea una cuenta de equipo, le pone el nombre de un DC sin '$', pide un TGT, le devuelve el nombre original y usa S4U2self para obtener un ticket de administrador hacia el DC. Corresponde a T1078 (cuentas válidas) y puede terminar en el compromiso total del dominio.",
+      "triage_steps": [
+        "Identifique el EventID, el DC que lo registró y la cuenta afectada en SamAccountName o TargetUserName.",
+        "En el 4741, revise SubjectUserName y SubjectDomainName para saber qué usuario creó la cuenta de equipo y si es una cuenta estándar que aprovecha MachineAccountQuota.",
+        "Busque en todos los DC eventos 4742 y 4781 de la misma cuenta en un rango de +/- 15 minutos, sobre todo renombres a un nombre de DC sin '$'.",
+        "Revise los eventos 4768 y 4769 de esa cuenta y del nombre del DC. Anote IpAddress para ubicar el host de origen.",
+        "Desde la IP de origen, busque eventos 4624 con privilegios, acceso a ADMIN$, creación de servicios o DCSync (4662 con permisos de replicación).",
+        "Confirme si los DC tienen instaladas las actualizaciones de noviembre de 2021 que corrigen CVE-2021-42278/42287.",
+        "Busque alertas anteriores del usuario creador y de la IP de origen."
+      ],
+      "false_positives": [
+        "Pentest o ejercicio de red team autorizado que ejecuta sam-the-admin. Confírmelo con el responsable y con la ventana aprobada.",
+        "Pruebas de validación de detecciones en un laboratorio conectado al SIEM de producción."
+      ],
+      "response_steps": [
+        "Trate el caso como incidente crítico mientras no se demuestre una prueba autorizada y escale de inmediato a respuesta a incidentes.",
+        "Preserve los eventos de los DC, deshabilite la cuenta SAMTHEADMIN-<n>$ y elimínela solo después de documentarla.",
+        "Aísle el host de origen y restablezca la contraseña del usuario creador. Revoque sus sesiones activas.",
+        "Si hay señales de que se emitió un ticket como administrador o de DCSync, restablezca dos veces la contraseña de krbtgt y la de las cuentas privilegiadas.",
+        "Aplique los parches en todos los DC y configure ms-DS-MachineAccountQuota en 0."
+      ],
+      "severity_rationale": "Es crítica porque el nombre solo lo genera una herramienta de explotación cuyo objetivo es tomar el control del dominio, y la regla declara falsos positivos desconocidos."
+    },
+    "en": {
+      "summary": "A Windows Security event referenced a computer account named SAMTHEADMIN-<n>$, the pattern the sam-the-admin hacktool generates. This suggests an attempt to exploit CVE-2021-42278/CVE-2021-42287 to gain domain admin privileges.",
+      "what_it_detects": "Any Windows Security event whose SamAccountName or TargetUserName starts with 'SAMTHEADMIN-' and ends with '$'. The rule has no EventID filter, so it covers account creation (4741), changes, Kerberos tickets and logons.",
+      "why_it_matters": "The tool creates a machine account, renames it to a DC name without '$', requests a TGT, renames it back, then uses S4U2self to get an admin ticket to the DC. This maps to T1078 (Valid Accounts) and can lead to full domain compromise.",
+      "triage_steps": [
+        "Note the EventID, the reporting DC and the account in SamAccountName or TargetUserName.",
+        "For 4741, check SubjectUserName and SubjectDomainName to see who created the machine account and whether it is a standard user relying on MachineAccountQuota.",
+        "Search all DCs within +/- 15 minutes for 4742 and 4781 events on the same account, especially renames to a DC name without '$'.",
+        "Review 4768 and 4769 events for the account and the DC name. Record IpAddress to find the source host.",
+        "From the source IP, look for privileged 4624 logons, ADMIN$ access, service creation or DCSync (4662 with replication rights).",
+        "Confirm whether the DCs have the November 2021 updates that fix CVE-2021-42278/42287.",
+        "Look for earlier alerts on the creating user and the source IP."
+      ],
+      "false_positives": [
+        "An authorized penetration test or red team exercise running sam-the-admin. Confirm with the test owner and the approved window.",
+        "Detection validation testing in a lab that forwards events to the production SIEM."
+      ],
+      "response_steps": [
+        "Treat it as a critical incident until you confirm an authorized test, and escalate to incident response right away.",
+        "Preserve the DC events. Disable the SAMTHEADMIN-<n>$ account, and delete it only after you document it.",
+        "Isolate the source host, reset the creating user's password and revoke their active sessions.",
+        "If an admin ticket was issued or there are signs of DCSync, reset the krbtgt password twice and reset the privileged account passwords.",
+        "Patch all DCs and set ms-DS-MachineAccountQuota to 0."
+      ],
+      "severity_rationale": "It is critical because only an exploitation tool that aims to take over the domain generates this name, and the rule lists no known false positives."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Event 4741: a standard domain user creates the computer account SAMTHEADMIN-42$ (sam-the-admin pattern).",
+        "event": {
+          "EventID": 4741,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "SAMTHEADMIN-42$",
+          "TargetDomainName": "ANDES",
+          "SamAccountName": "SAMTHEADMIN-42$",
+          "DnsHostName": "-"
+        }
+      },
+      {
+        "description": "Event 4768: a Kerberos TGT request for the account SAMTHEADMIN-17$ from an internal host.",
+        "event": {
+          "EventID": 4768,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "TargetUserName": "SAMTHEADMIN-17$",
+          "TargetDomainName": "ANDES.EXAMPLE.COM",
+          "IpAddress": "::ffff:192.0.2.45",
+          "Status": "0x0",
+          "TicketEncryptionType": "0x12"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Event 4741: a legitimate workstation account WS-0142$ created by the helpdesk. The name does not start with SAMTHEADMIN-.",
+        "event": {
+          "EventID": 4741,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "helpdesk01",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "WS-0142$",
+          "TargetDomainName": "ANDES",
+          "SamAccountName": "WS-0142$",
+          "DnsHostName": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Event 4720: a user account named SAMTHEADMIN-LAB without a trailing '$'. It starts with the prefix but fails the endswith '$' condition.",
+        "event": {
+          "EventID": 4720,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "SubjectUserName": "admin.ops",
+          "SubjectDomainName": "ANDES",
+          "TargetUserName": "SAMTHEADMIN-LAB",
+          "TargetDomainName": "ANDES",
+          "SamAccountName": "SAMTHEADMIN-LAB"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

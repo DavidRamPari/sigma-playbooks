@@ -1,0 +1,128 @@
+{
+  "rule": {
+    "id": "8737b7f6-8df3-4bb7-b1da-06019b99b687",
+    "title": "Shell Invocation Via Ssh - Linux",
+    "level": "high",
+    "status": "test",
+    "author": "Li Ling, Andy Parkidomo, Robert Rakowski, Blake Hartstein (Bloomberg L.P.)",
+    "path": "linux/process_creation/proc_creation_lnx_ssh_shell_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules/linux/process_creation/proc_creation_lnx_ssh_shell_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ]
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó el binario ssh con una línea de comandos que lanza una shell local mediante ProxyCommand, PermitLocalCommand o una conexión a localhost. Esto puede indicar escape de una shell restringida, ejecución no autorizada o escalamiento de privilegios.",
+      "what_it_detects": "Procesos cuyo Image termina en /ssh y cuyo CommandLine contiene 'ProxyCommand=;', 'permitlocalcommand=yes' o 'localhost', junto con una ruta de shell (/bin/bash, /bin/sh, /bin/zsh, /bin/dash, /bin/fish) o redirecciones como 'sh 0<&2 1>&2', técnica documentada en GTFOBins.",
+      "why_it_matters": "ssh puede ejecutar comandos locales antes o en lugar de conectarse. Un atacante lo usa para obtener una shell interactiva fuera de un entorno restringido o, si ssh corre vía sudo, con privilegios elevados (T1059, Command and Scripting Interpreter).",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique si usa ProxyCommand=; con redirecciones, PermitLocalCommand=yes con LocalCommand o 'ssh localhost' seguido de una shell.",
+        "Identifique el usuario y si el ssh se ejecutó vía sudo; revise /etc/sudoers y los logs de sudo para ver si el usuario tiene permitido ssh como root.",
+        "Examine ParentImage y la cadena de procesos: shell restringida (rbash), aplicación web, cron o sesión interactiva legítima.",
+        "Busque procesos hijos de ssh (sh, bash) y los comandos ejecutados por ellos en el mismo host dentro de +/- 15 minutos.",
+        "Verifique si el usuario normalmente opera con ssh; compare con su historial de shell y con alertas previas para el mismo usuario o host.",
+        "Revise el origen de la sesión del usuario (IP de login SSH, TTY) y si hubo autenticaciones inusuales previas."
+      ],
+      "false_positives": [
+        "Administradores que prueban la configuración de ssh conectándose a localhost y abriendo /bin/bash.",
+        "Scripts de automatización o pruebas de CI que usan 'ssh localhost' para ejecutar comandos con otro usuario o entorno.",
+        "Hosts o alias cuyo nombre contiene 'localhost' (por ejemplo localhost.localdomain) usados con comandos /bin/sh -c legítimos."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del sistema si la ejecución fue esperada y documentada.",
+        "Si no es legítima, termine la shell derivada y aísle el endpoint de la red preservando evidencia (memoria, historial, logs).",
+        "Restrinja reglas de sudo que permitan ssh y endurezca shells restringidas; restablezca credenciales del usuario afectado.",
+        "Revise persistencia (cron, claves authorized_keys, servicios) creada desde la shell y elimínela tras validarla."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque estos patrones casi no aparecen en uso administrativo normal y producen directamente una shell que puede eludir restricciones o elevar privilegios."
+    },
+    "en": {
+      "summary": "The ssh binary was run with a command line that spawns a local shell through ProxyCommand, PermitLocalCommand or a localhost connection. This may indicate a restricted-shell breakout, unauthorized execution or privilege escalation.",
+      "what_it_detects": "Processes whose Image ends in /ssh and whose CommandLine contains 'ProxyCommand=;', 'permitlocalcommand=yes' or 'localhost', together with a shell path (/bin/bash, /bin/sh, /bin/zsh, /bin/dash, /bin/fish) or redirections such as 'sh 0<&2 1>&2', a technique documented on GTFOBins.",
+      "why_it_matters": "ssh can run local commands before or instead of connecting. Attackers abuse this to get an interactive shell outside a restricted environment or, when ssh runs via sudo, with elevated privileges (T1059, Command and Scripting Interpreter).",
+      "triage_steps": [
+        "Read the full CommandLine: ProxyCommand=; with redirections, PermitLocalCommand=yes with LocalCommand, or 'ssh localhost' followed by a shell.",
+        "Identify the user and whether ssh ran through sudo; check sudoers and sudo logs for rules allowing ssh as root.",
+        "Inspect ParentImage and the process chain: restricted shell (rbash), web application, cron, or a normal interactive session.",
+        "Find child processes of ssh (sh, bash) and the commands they ran on the same host within +/- 15 minutes.",
+        "Check whether the user routinely uses ssh this way; compare with shell history and earlier alerts for the same user or host.",
+        "Review how the user logged in (source IP, TTY) and any unusual prior authentications."
+      ],
+      "false_positives": [
+        "Administrators testing ssh configuration by connecting to localhost and opening /bin/bash.",
+        "Automation scripts or CI tests that use 'ssh localhost' to run commands as another user or environment.",
+        "Hosts or aliases containing 'localhost' (e.g. localhost.localdomain) used with legitimate /bin/sh -c commands."
+      ],
+      "response_steps": [
+        "Confirm with the user or system owner whether the execution was expected and documented.",
+        "If not legitimate, kill the spawned shell and isolate the endpoint while preserving evidence (memory, history, logs).",
+        "Tighten sudo rules that allow ssh, harden restricted shells, and reset the affected user's credentials.",
+        "Review and, after validation, remove persistence created from the shell (cron, authorized_keys, services)."
+      ],
+      "severity_rationale": "High fits because these patterns are rare in normal administration and directly yield a shell that can bypass restrictions or escalate privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "GTFOBins-style ssh ProxyCommand breakout spawning sh with redirected stdio, run via sudo",
+        "event": {
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "ssh -o ProxyCommand=;sh 0<&2 1>&2 x",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 48213,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "ssh with PermitLocalCommand=yes running /bin/bash as LocalCommand from a restricted shell",
+        "event": {
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "ssh -o PermitLocalCommand=yes -o LocalCommand=/bin/bash jperez@app-01.example.com",
+          "ParentImage": "/usr/bin/rbash",
+          "User": "jperez",
+          "ProcessId": 51077,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin runs a non-shell command over ssh to localhost; no shell path in the command line",
+        "event": {
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "ssh -p 2222 localhost systemctl status nginx",
+          "ParentImage": "/bin/bash",
+          "User": "mrodriguez",
+          "ProcessId": 39102,
+          "CurrentDirectory": "/home/mrodriguez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Deployment script runs /bin/bash on a remote host; no localhost, ProxyCommand=; or PermitLocalCommand",
+        "event": {
+          "Image": "/usr/bin/ssh",
+          "CommandLine": "ssh deploy@app-01.example.com /bin/bash -c /opt/app/deploy.sh",
+          "ParentImage": "/usr/bin/python3",
+          "User": "deploy",
+          "ProcessId": 40551,
+          "CurrentDirectory": "/srv/ci",
+          "Computer": "ci-runner-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-26T02:55:13+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

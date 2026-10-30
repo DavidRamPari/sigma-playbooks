@@ -1,0 +1,118 @@
+{
+  "rule": {
+    "id": "c9b86500-1ec2-4de6-9120-d744c8fb5caf",
+    "title": "Potential KamiKakaBot Activity - Winlogon Shell Persistence",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems), X__Junior",
+    "path": "2024/Malware/KamiKakaBot/registry_set_malware_kamikakabot_winlogon_persistence.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2024/Malware/KamiKakaBot/registry_set_malware_kamikakabot_winlogon_persistence.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1547.001"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso modificó el valor Shell de la clave Winlogon con una cadena que lanza explorer.exe junto con un comando PowerShell oculto, un patrón observado en muestras de KamiKakaBot para persistir.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject termina en \\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell y cuyo campo Details contiene a la vez '-nop -w h', '$env', 'explorer.exe' y 'Start-Process'.",
+      "why_it_matters": "El valor Shell define qué se ejecuta al iniciar sesión. Si se agrega un PowerShell oculto junto a explorer.exe, el payload se ejecuta en cada inicio de sesión sin que el usuario lo note. La regla lo etiqueta como persistencia por autoarranque en el registro (T1547.001).",
+      "triage_steps": [
+        "Revise Details completo: identifique la ruta resuelta con $env, el ejecutable o archivo que lanza Start-Process y cualquier argumento adicional.",
+        "Confirme si TargetObject está en HKLM (todo el equipo) o en HKU\\<SID> (un solo usuario) y asocie el SID con la cuenta.",
+        "Identifique el Image que escribió el valor, su ParentImage, línea de comandos, hash y firma; revise la cadena de procesos completa.",
+        "Busque en el disco los archivos referenciados en Details, obtenga sus hashes y revise fecha de creación y origen (descarga, adjunto, unidad USB).",
+        "Revise en el mismo host, +/- 15 minutos, la creación de procesos, conexiones de red, archivos nuevos y ejecuciones de powershell.exe o binarios LOLBin.",
+        "Busque el mismo patrón de Details o los mismos hashes en otros endpoints y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Poco probable según la regla; un Shell legítimo suele ser solo 'explorer.exe'.",
+        "Pruebas autorizadas de red team o emulación de adversarios que reproducen esta técnica; confirme con el equipo responsable y el ticket correspondiente."
+      ],
+      "response_steps": [
+        "Valide que el valor no corresponde a una prueba autorizada antes de actuar.",
+        "Aísle el endpoint de la red y conserve evidencia: exportación de la clave Winlogon, archivos referenciados y memoria si es posible.",
+        "Restaure el valor Shell a 'explorer.exe' tras documentar el original y elimine los archivos maliciosos confirmados.",
+        "Restablezca las credenciales del usuario afectado, busque los IOC en toda la flota y bloquee los hashes y dominios identificados."
+      ],
+      "severity_rationale": "Nivel high porque la combinación de cadenas es muy específica de esta familia, los falsos positivos son poco probables y implica persistencia activa en cada inicio de sesión."
+    },
+    "en": {
+      "summary": "A process set the Winlogon Shell value to a string that launches explorer.exe plus a hidden PowerShell command, a pattern seen in KamiKakaBot samples for persistence.",
+      "what_it_detects": "registry_set events where TargetObject ends with \\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell and Details contains all of '-nop -w h', '$env', 'explorer.exe' and 'Start-Process'.",
+      "why_it_matters": "The Shell value controls what runs at logon. Appending hidden PowerShell next to explorer.exe runs a payload at every logon without the user noticing. The rule tags this as registry autostart persistence (T1547.001).",
+      "triage_steps": [
+        "Read the full Details value: resolve the $env path, the file or binary Start-Process launches, and any extra arguments.",
+        "Check whether TargetObject is under HKLM (machine-wide) or HKU\\<SID> (single user) and map the SID to an account.",
+        "Identify the Image that wrote the value, its ParentImage, command line, hash and signature; walk the full process tree.",
+        "Locate the files referenced in Details, hash them, and review creation time and origin (download, attachment, USB).",
+        "On the same host within +/- 15 minutes, review process creation, network connections, new files and powershell.exe or LOLBin executions.",
+        "Hunt for the same Details pattern or hashes on other endpoints and check prior alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Unlikely per the rule; a legitimate Shell value is normally just 'explorer.exe'.",
+        "Authorized red team or adversary emulation reproducing this technique; confirm with the owning team and ticket."
+      ],
+      "response_steps": [
+        "Confirm the change is not part of an authorized test before acting.",
+        "Isolate the endpoint and preserve evidence: Winlogon key export, referenced files and memory if possible.",
+        "After documenting the original, reset Shell to 'explorer.exe' and remove confirmed malicious files.",
+        "Reset the affected user's credentials, sweep the fleet for the IOCs, and block identified hashes and domains."
+      ],
+      "severity_rationale": "High because the string combination is very specific to this family, false positives are unlikely, and it means active persistence at every logon."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Winlogon Shell for a user hive set to explorer.exe plus hidden PowerShell Start-Process using an $env path",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ProcessId": 6120,
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell",
+          "Details": "explorer.exe, powershell.exe -nop -w h \"Start-Process -WindowStyle Hidden -FilePath $env:SystemRoot\\Microsoft.NET\\Framework\\v4.0.30319\\MSBuild.exe -ArgumentList $env:LOCALAPPDATA\\Temp\\data.xml\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate default Shell value written during a Windows update",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 4312,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell",
+          "Details": "explorer.exe"
+        }
+      },
+      {
+        "description": "Similar PowerShell string but written to Winlogon Userinit, not Shell, so TargetObject does not match",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\regedit.exe",
+          "ProcessId": 5088,
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Userinit",
+          "Details": "C:\\Windows\\system32\\userinit.exe, powershell.exe -nop -w h \"Start-Process $env:ProgramData\\tools\\agent.exe; explorer.exe\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

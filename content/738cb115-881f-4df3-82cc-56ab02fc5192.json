@@ -1,0 +1,130 @@
+{
+  "rule": {
+    "id": "738cb115-881f-4df3-82cc-56ab02fc5192",
+    "title": "Potential CVE-2022-46169 Exploitation Attempt",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "2022/Exploits/CVE-2022-46169/web_cve_2022_46169_cacti_exploitation_attempt.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2022/Exploits/CVE-2022-46169/web_cve_2022_46169_cacti_exploitation_attempt.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un servidor web registró una solicitud GET a remote_agent.php de Cacti con action=polldata y un parámetro poller_id que contiene comandos del sistema, lo que coincide con intentos de explotación de CVE-2022-46169.",
+      "what_it_detects": "Solicitudes GET cuyo cs-uri-query incluye '/remote_agent.php', 'action=polldata' y 'poller_id=', además de un indicador de inyección de comandos: '| base64 -d | /bin/bash`' (en texto plano o codificado en URL), '`whoami', 'powershell', 'cmd' o 'wget'.",
+      "why_it_matters": "CVE-2022-46169 permite evadir la autenticación de remote_agent.php y ejecutar comandos sin autenticarse mediante poller_id (T1190, explotación de una aplicación expuesta al público). Si tiene éxito, el atacante ejecuta código con los privilegios del servidor web y puede tomar control del servidor de monitoreo.",
+      "triage_steps": [
+        "Revise el cs-uri-query completo y decodifique la parte de poller_id (URL y base64) para identificar el comando y cualquier URL o IP de descarga.",
+        "Verifique el código de respuesta y el tamaño: un 200 con contenido sugiere que el endpoint procesó la solicitud; un 403 o 404 sugiere que el intento falló o que la ruta no existe.",
+        "Si el servidor registra X-Forwarded-For, compruebe si apunta al propio servidor Cacti o a 127.0.0.1, señal de la evasión de autenticación.",
+        "Busque solicitudes previas de la misma IP de origen a remote_agent.php que recorran valores de host_id y local_data_ids, típicas de la fuerza bruta que precede al exploit.",
+        "Revise el user agent y la reputación de la IP de origen para distinguir un escáner de un actor dirigido.",
+        "En el host Cacti, dentro de +/- 15 minutos, busque procesos hijo del servidor web o de php (sh, bash, wget, curl, base64) y nuevas conexiones salientes.",
+        "Confirme la versión de Cacti instalada y si ya tiene aplicado el parche para CVE-2022-46169."
+      ],
+      "false_positives": [
+        "Escáneres de vulnerabilidades web autorizados que prueban CVE-2022-46169; valide la IP de origen contra el inventario de escáneres y las ventanas de prueba.",
+        "Ejercicios de pentesting o red team aprobados contra la instancia de Cacti."
+      ],
+      "response_steps": [
+        "Si hay indicios de ejecución (respuesta 200, procesos hijo sospechosos o tráfico saliente), aísle el servidor Cacti de la red tras coordinar con su responsable.",
+        "Bloquee la IP de origen en el WAF o el firewall y restrinja el acceso a remote_agent.php a los pollers autorizados.",
+        "Actualice Cacti a una versión corregida según el advisory del proveedor.",
+        "Busque persistencia (cron, web shells, claves SSH, usuarios nuevos), elimínela tras confirmarla y rote las credenciales que almacena Cacti (SNMP, base de datos)."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque la solicitud combina el endpoint vulnerable con comandos inyectados en una aplicación expuesta, aunque muchos casos son escaneos que no tuvieron éxito."
+    },
+    "en": {
+      "summary": "A web server logged a GET request to Cacti's remote_agent.php with action=polldata and a poller_id parameter carrying system commands, matching CVE-2022-46169 exploitation attempts.",
+      "what_it_detects": "GET requests whose cs-uri-query contains '/remote_agent.php', 'action=polldata' and 'poller_id=' plus a command-injection marker: '| base64 -d | /bin/bash`' (plain or URL-encoded), '`whoami', 'powershell', 'cmd' or 'wget'.",
+      "why_it_matters": "CVE-2022-46169 lets an attacker bypass authentication on remote_agent.php and inject commands through poller_id without logging in (T1190, Exploit Public-Facing Application). Success means code execution as the web server user on the monitoring server.",
+      "triage_steps": [
+        "Read the full cs-uri-query and decode the poller_id value (URL and base64) to identify the command and any download URL or IP.",
+        "Check status code and response size: 200 with content suggests the endpoint processed it; 403 or 404 suggests failure or a missing path.",
+        "If X-Forwarded-For is logged, check whether it points to the Cacti host itself or 127.0.0.1, which indicates the auth bypass.",
+        "Look for earlier requests from the same source IP to remote_agent.php iterating host_id and local_data_ids, the brute force that precedes the exploit.",
+        "Review the user agent and source IP reputation to separate scanners from targeted activity.",
+        "On the Cacti host, within +/- 15 minutes, look for child processes of the web server or php (sh, bash, wget, curl, base64) and new outbound connections.",
+        "Confirm the installed Cacti version and whether the CVE-2022-46169 fix is applied."
+      ],
+      "false_positives": [
+        "Authorized web vulnerability scanners testing for CVE-2022-46169; check the source IP against the scanner inventory and scan windows.",
+        "Approved penetration tests or red team exercises against the Cacti instance."
+      ],
+      "response_steps": [
+        "If execution is likely (200 response, suspicious child processes or outbound traffic), isolate the Cacti server after coordinating with its owner.",
+        "Block the source IP at the WAF or firewall and restrict remote_agent.php to authorized pollers.",
+        "Upgrade Cacti to a fixed release per the vendor advisory.",
+        "Hunt for persistence (cron, web shells, SSH keys, new users), remove it once confirmed, and rotate credentials stored in Cacti (SNMP, database)."
+      ],
+      "severity_rationale": "High fits because the request pairs the vulnerable endpoint with injected commands against an exposed application, though many hits are unsuccessful scans."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unauthenticated polldata request with a backtick whoami injection in poller_id and a spoofed X-Forwarded-For",
+        "event": {
+          "cs-method": "GET",
+          "cs-uri-stem": "/cacti/remote_agent.php",
+          "cs-uri-query": "/cacti/remote_agent.php?action=polldata&local_data_ids[]=6&host_id=1&poller_id=1`whoami`",
+          "c-ip": "203.0.113.45",
+          "cs-host": "cacti.example.com",
+          "X-Forwarded-For": "127.0.0.1",
+          "sc-status": 200,
+          "cs-user-agent": "Mozilla/5.0 (X11; Linux x86_64)"
+        }
+      },
+      {
+        "description": "Metasploit-style URL-encoded base64 payload piped to bash in poller_id",
+        "event": {
+          "cs-method": "GET",
+          "cs-uri-stem": "/remote_agent.php",
+          "cs-uri-query": "/remote_agent.php?action=polldata&local_data_ids[]=1&host_id=2&poller_id=1;`echo%20ZWNobyB0ZXN0%20%7C%20base64%20-d%20%7C%20%2Fbin%2Fbash%60",
+          "c-ip": "198.51.100.23",
+          "cs-host": "cacti.example.com",
+          "sc-status": 200,
+          "cs-user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate remote poller polldata request with a numeric poller_id and no injected command",
+        "event": {
+          "cs-method": "GET",
+          "cs-uri-stem": "/cacti/remote_agent.php",
+          "cs-uri-query": "/cacti/remote_agent.php?action=polldata&local_data_ids[]=6&host_id=1&poller_id=2",
+          "c-ip": "192.0.2.10",
+          "cs-host": "cacti.example.com",
+          "sc-status": 200,
+          "cs-user-agent": "Cacti/1.2.23"
+        }
+      },
+      {
+        "description": "POST request containing wget in the query, which fails the cs-method GET requirement",
+        "event": {
+          "cs-method": "POST",
+          "cs-uri-stem": "/remote_agent.php",
+          "cs-uri-query": "/remote_agent.php?action=polldata&host_id=1&poller_id=1;wget",
+          "c-ip": "198.51.100.77",
+          "cs-host": "cacti.example.com",
+          "sc-status": 403,
+          "cs-user-agent": "curl/7.88.1"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

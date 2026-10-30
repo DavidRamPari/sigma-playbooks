@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "3a525307-d100-48ae-b3b9-0964699d7f97",
+    "title": "DMP/HDMP File Creation",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/file/file_event/file_event_win_dump_file_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/file/file_event/file_event_win_dump_file_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en un endpoint Windows un archivo con extensión .dmp, .dump o .hdmp. Suele deberse a un fallo de software, pero también puede ser un volcado de memoria hecho a propósito, por ejemplo de LSASS.",
+      "what_it_detects": "Eventos de creación de archivos (file_event) cuyo TargetFilename termina en .dmp, .dump o .hdmp. Es una regla de threat hunting y no tiene filtros por proceso ni por ruta.",
+      "why_it_matters": "Un volcado de memoria puede contener credenciales, tokens o datos sensibles del proceso volcado. Los atacantes vuelcan procesos como LSASS a disco para extraer credenciales sin conexión (OS Credential Dumping).",
+      "triage_steps": [
+        "Revise TargetFilename: ruta y nombre. Nombres como lsass.dmp o rutas en Temp, ProgramData, Public o recursos compartidos aumentan la sospecha.",
+        "Identifique el Image que creó el archivo. WerFault.exe en rutas de WER es lo esperado; rundll32, procdump, taskmgr o binarios desconocidos requieren análisis.",
+        "Revise la creación de procesos del mismo host en +/- 15 minutos: CommandLine y ParentImage del proceso creador, por ejemplo comsvcs.dll MiniDump o procdump -ma.",
+        "Busque accesos a lsass.exe en el mismo intervalo (Sysmon EventID 10) y alertas previas de credenciales en el host.",
+        "Confirme si hubo un fallo real: eventos de Application Error o WER del mismo proceso a la misma hora.",
+        "Valide el usuario: ¿es administrador o soporte con una tarea documentada? Revise sus inicios de sesión en otros hosts.",
+        "Verifique si después el archivo se comprimió, se renombró, se copió por SMB o se exfiltró."
+      ],
+      "false_positives": [
+        "Fallos de aplicaciones que generan volcados mediante Windows Error Reporting (WerFault.exe) en LocalDumps o ReportQueue.",
+        "Volcados que generan los administradores o desarrolladores para depurar con procdump, Task Manager o Visual Studio.",
+        "Agentes de soporte, antivirus o herramientas de diagnóstico del proveedor que recopilan volcados automáticamente."
+      ],
+      "response_steps": [
+        "Si el volcado corresponde a LSASS o a un origen no justificado, aísle el endpoint y preserve el archivo y su hash como evidencia.",
+        "Restablezca las credenciales de las cuentas con sesión en el host y revise el uso posterior de esas cuentas.",
+        "Elimine el volcado y las herramientas del atacante solo después de preservar la evidencia y confirmar el alcance.",
+        "Si el fallo es legítimo, documente la aplicación y considere una exclusión acotada por Image y ruta."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque los volcados suelen venir de fallos legítimos; la regla es para hunting y solo se vuelve crítica según el proceso volcado y su origen."
+    },
+    "en": {
+      "summary": "A file ending in .dmp, .dump or .hdmp was created on a Windows endpoint. Usually this is a software crash, but it may be a deliberate memory dump, for example of LSASS.",
+      "what_it_detects": "File creation events (file_event) where TargetFilename ends with .dmp, .dump or .hdmp. It is a threat-hunting rule with no process or path filters.",
+      "why_it_matters": "Memory dumps can contain credentials, tokens or other sensitive data from the dumped process. Attackers dump processes such as LSASS to disk to extract credentials offline (OS Credential Dumping).",
+      "triage_steps": [
+        "Review the TargetFilename path and name. Names like lsass.dmp, or locations in Temp, ProgramData, Public or network shares, raise suspicion.",
+        "Identify the Image that wrote the file. WerFault.exe writing to WER folders is expected. Investigate rundll32, procdump, taskmgr or unknown binaries.",
+        "Check process creation on the same host within +/- 15 minutes: the writer's CommandLine and ParentImage, for example comsvcs.dll MiniDump or procdump -ma.",
+        "Look for access to lsass.exe in the same window (Sysmon EventID 10) and for earlier credential-related alerts on the host.",
+        "Confirm whether a real crash happened: Application Error or WER events for the same process at the same time.",
+        "Validate the user: is it an admin or support account doing documented work? Review its logons to other hosts.",
+        "Check whether the file was later compressed, renamed, copied over SMB or exfiltrated."
+      ],
+      "false_positives": [
+        "Application crashes that produce dumps through Windows Error Reporting (WerFault.exe) in LocalDumps or ReportQueue.",
+        "Dumps created by administrators or developers for debugging with procdump, Task Manager or Visual Studio.",
+        "Support agents, antivirus or vendor diagnostic tools that collect dumps automatically."
+      ],
+      "response_steps": [
+        "If the dump is of LSASS or has no justified source, isolate the endpoint and preserve the file and its hash as evidence.",
+        "Reset credentials for accounts with sessions on the host and review how those accounts were used afterwards.",
+        "Remove the dump and any attacker tooling only after preserving evidence and confirming scope.",
+        "If the crash is legitimate, document the application and consider a narrow exclusion by Image and path."
+      ],
+      "severity_rationale": "Low fits because dumps usually come from legitimate crashes. The rule is meant for hunting, and an alert only becomes critical depending on which process was dumped and who dumped it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rundll32 writes an LSASS memory dump to the Windows Temp folder",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "ProcessId": 6412,
+          "TargetFilename": "C:\\Windows\\Temp\\lsass.dmp",
+          "CreationUtcTime": "2024-10-25 14:03:12.481"
+        }
+      },
+      {
+        "description": "WerFault writes a heap dump after an application crash",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WerFault.exe",
+          "ProcessId": 9120,
+          "TargetFilename": "C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportQueue\\AppCrash_example.exe_4b1c\\memory.hdmp",
+          "CreationUtcTime": "2024-10-25 09:41:55.112"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Compressed archive whose name contains .dmp but ends in .zip",
+        "event": {
+          "EventID": 11,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\explorer.exe",
+          "ProcessId": 4388,
+          "TargetFilename": "C:\\Users\\jperez\\Documents\\crash_report.dmp.zip",
+          "CreationUtcTime": "2024-10-25 15:10:02.003"
+        }
+      },
+      {
+        "description": "Debugger log file in a dump folder, extension .log",
+        "event": {
+          "EventID": 11,
+          "Computer": "SRV-APP-03.andes.example.com",
+          "User": "ANDES\\svc_app",
+          "Image": "C:\\Tools\\Sysinternals\\procdump64.exe",
+          "ProcessId": 2210,
+          "TargetFilename": "C:\\Dumps\\procdump_session.log",
+          "CreationUtcTime": "2024-10-25 11:22:37.640"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

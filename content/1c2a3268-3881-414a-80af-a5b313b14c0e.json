@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "1c2a3268-3881-414a-80af-a5b313b14c0e",
+    "title": "Registry Set With Crypto-Classes From The \"Cryptography\" PowerShell Namespace",
+    "level": "medium",
+    "status": "test",
+    "author": "Andreas Braathen (mnemonic.io)",
+    "path": "windows/registry/registry_set/registry_set_powershell_crypto_namespace.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/registry/registry_set/registry_set_powershell_crypto_namespace.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.010",
+      "T1059.001",
+      "T1547.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió un comando de PowerShell que usa clases de cifrado de System.Security.Cryptography en un valor \\Shell\\Open\\Command del registro. Puede ser persistencia que descifra un payload al abrir un tipo de archivo.",
+      "what_it_detects": "Eventos registry_set en los que TargetObject contiene \\Shell\\Open\\Command y Details incluye powershell o pwsh, el namespace System.Security.Cryptography. y una clase como AesCryptoServiceProvider, Rijndael, RSACryptoServiceProvider o TripleDESCryptoServiceProvider.",
+      "why_it_matters": "Si se asocia un controlador de apertura a una extensión o ProgID, PowerShell (T1059.001) se ejecuta cada vez que se abre ese tipo de archivo. Así se logra persistencia (T1547.001) y se descifra en memoria un payload ofuscado (T1027.010), como describe la referencia sobre SolarMarker.",
+      "triage_steps": [
+        "Revise TargetObject: identifique el ProgID o la extensión (con frecuencia, nombres aleatorios en HKCU\\Software\\Classes) y busque qué extensión apunta a ese ProgID.",
+        "Analice Details: rutas de archivos que lee el comando (AppData, Temp), la clase de cifrado, las claves o IV embebidos y si usa -WindowStyle Hidden o Invoke-Expression.",
+        "Identifique el Image que escribió el valor y su proceso padre. Un instalador poco común, un archivo descargado o PowerShell lanzado desde el navegador aumentan la sospecha.",
+        "Busque en el mismo host (±15 minutos) la creación de archivos con la extensión asociada y de accesos .lnk en la carpeta Startup que apunten a ellos.",
+        "Obtenga el hash de los archivos referenciados y del binario que escribió la clave, y consulte su prevalencia en la organización.",
+        "Revise conexiones de red y procesos hijos de powershell.exe o pwsh.exe en ese host después del evento.",
+        "Busque el mismo TargetObject o un Details similar en otros endpoints, y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Software legítimo que registra controladores de archivo con PowerShell y descifra configuración con clases de .NET. Es poco común, sobre todo cuando el padre tiene baja prevalencia.",
+        "Herramientas internas de administración o empaquetado que cifran scripts y los registran como acción de apertura, si se documentan y se firman.",
+        "Pruebas de equipos de red team o de detección autorizadas."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa con el contenido de Details, los archivos referenciados y la cadena de procesos antes de actuar.",
+        "Si se confirma, aísle el endpoint y preserve la clave de registro, los archivos cifrados, los .lnk y la memoria de PowerShell.",
+        "Elimine el valor \\Shell\\Open\\Command, la asociación de extensión, los archivos del payload y los accesos de inicio, siempre después de preservar la evidencia.",
+        "Restablezca las credenciales del usuario afectado, revise los datos del navegador expuestos y busque los IoC en toda la flota."
+      ],
+      "severity_rationale": "Es medium porque la combinación es inusual y coincide con técnicas de persistencia y de descifrado de payloads, pero es una regla de hunting y requiere contexto para confirmarse."
+    },
+    "en": {
+      "summary": "A PowerShell command that uses System.Security.Cryptography classes was written to a \\Shell\\Open\\Command registry value. This may be persistence that decrypts a payload when a file type is opened.",
+      "what_it_detects": "registry_set events where TargetObject contains \\Shell\\Open\\Command and Details includes powershell or pwsh, the System.Security.Cryptography. namespace and a class such as AesCryptoServiceProvider, Rijndael, RSACryptoServiceProvider or TripleDESCryptoServiceProvider.",
+      "why_it_matters": "An open handler on a file extension or ProgID runs PowerShell (T1059.001) every time that file type is opened. This gives persistence (T1547.001) and decrypts an obfuscated payload in memory (T1027.010), as the SolarMarker reference describes.",
+      "triage_steps": [
+        "Review TargetObject: identify the ProgID or extension (often random names under HKCU\\Software\\Classes) and find which extension points to that ProgID.",
+        "Analyze Details: which files the command reads (AppData, Temp), which crypto class it uses, any embedded keys or IVs, and whether it uses -WindowStyle Hidden or Invoke-Expression.",
+        "Identify the Image that wrote the value and its parent. A rare installer, a downloaded file or PowerShell spawned by a browser makes this more suspicious.",
+        "On the same host within ±15 minutes, look for new files with the associated extension and for .lnk files in the Startup folder that point to them.",
+        "Hash the referenced files and the writing binary, then check how common they are across the organization.",
+        "Review network connections and child processes of powershell.exe or pwsh.exe on the host after the event.",
+        "Hunt for the same TargetObject or similar Details on other endpoints, and check earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Legitimate software that registers PowerShell file handlers and decrypts its config with .NET classes. This is uncommon, especially when the parent process is rare.",
+        "Internal admin or packaging tools that encrypt scripts and register them as an open action, if they are documented and signed.",
+        "Authorized red team or detection testing."
+      ],
+      "response_steps": [
+        "Before acting, confirm malicious intent from the Details content, the referenced files and the process chain.",
+        "If confirmed, isolate the endpoint and preserve the registry key, the encrypted files, the .lnk files and PowerShell memory.",
+        "After preserving evidence, remove the \\Shell\\Open\\Command value, the extension mapping, the payload files and the startup shortcuts.",
+        "Reset the affected user's credentials, review which browser data was exposed and sweep the fleet for the IoCs."
+      ],
+      "severity_rationale": "Medium fits because this combination is unusual and matches persistence and payload-decryption tradecraft, but it is a hunting rule and needs context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SolarMarker-style handler: a random ProgID's open command runs hidden PowerShell that decrypts a file with AesCryptoServiceProvider",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104_Classes\\uxzqjvbtfk\\Shell\\Open\\Command\\(Default)",
+          "Details": "powershell.exe -WindowStyle Hidden -Command \"$b=[System.IO.File]::ReadAllBytes('C:\\Users\\jperez\\AppData\\Roaming\\placeholder.dat');$a=New-Object System.Security.Cryptography.AesCryptoServiceProvider;$a.Key=[byte[]](1..32);$a.IV=[byte[]](1..16);$d=$a.CreateDecryptor()\""
+        }
+      },
+      {
+        "description": "pwsh open handler that uses RijndaelManaged to decrypt content in Temp",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Users\\mrojas\\Downloads\\setup_viewer.exe",
+          "TargetObject": "HKCU\\Software\\Classes\\qwlkfile\\Shell\\Open\\Command\\(Default)",
+          "Details": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -nop -c \"$r=[System.Security.Cryptography.RijndaelManaged]::new();$f=Get-Content -Raw $env:TEMP\\cache.bin\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Default Windows handler for .ps1 files: PowerShell in Shell\\Open\\Command but no cryptography classes",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\Microsoft.PowerShellScript.1\\Shell\\Open\\Command\\(Default)",
+          "Details": "\"C:\\Windows\\System32\\notepad.exe\" \"%1\""
+        }
+      },
+      {
+        "description": "PowerShell with AesCryptoServiceProvider written to a Run key, not to a Shell\\Open\\Command key",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0310.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\ConfigSync",
+          "Details": "powershell.exe -File C:\\ProgramData\\ITTools\\sync.ps1 -Cipher System.Security.Cryptography.AesCryptoServiceProvider"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

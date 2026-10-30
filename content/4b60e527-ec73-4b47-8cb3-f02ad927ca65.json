@@ -1,0 +1,160 @@
+{
+  "rule": {
+    "id": "4b60e527-ec73-4b47-8cb3-f02ad927ca65",
+    "title": "Access To Browser Credential Files By Uncommon Applications - Security",
+    "level": "low",
+    "status": "test",
+    "author": "Daniel Koifman (@Koifsec), Nasreddine Bencherchali",
+    "path": "windows/builtin/security/win_security_file_access_browser_credential.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/builtin/security/win_security_file_access_browser_credential.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1555.003"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de Program Files, System32 o SysWOW64 abrió con permiso de lectura (4663, AccessMask 0x1) un almacén de credenciales o cookies de Chrome, Edge u otro navegador Chromium, o de Firefox. Puede tratarse de un infostealer, aunque es una regla de hunting que requiere baseline.",
+      "what_it_detects": "Eventos 4663 de Security con ObjectType File y AccessMask 0x1 sobre Login Data, Local State o Network\\Cookies de Chromium, o sobre cookies.sqlite, places.sqlite, key3.db, key4.db o logins.json de Firefox. Se excluyen los accesos de System, de rutas de Program Files y del sistema, y de Microsoft Defender.",
+      "why_it_matters": "Los navegadores guardan contraseñas, cookies de sesión y la clave de cifrado (Local State). Robarlas permite secuestrar sesiones y obtener acceso a cuentas sin MFA (ATT&CK T1555.003, credenciales de navegadores web).",
+      "triage_steps": [
+        "Revise ProcessName y ProcessId: identifique el ejecutable, su ruta (AppData, Temp, Public, Downloads son sospechosas), su firma digital y su hash.",
+        "Compruebe ObjectName: anote qué navegador y qué archivo se leyó, y si Login Data y Local State se leyeron juntos, señal típica de descifrado de credenciales.",
+        "Revise SubjectUserName y SubjectLogonId: confirme si el usuario es el dueño del perfil del navegador o si se accede al perfil de otro usuario.",
+        "Busque el evento 4688 o Sysmon 1 del mismo ProcessId para obtener la línea de comandos y el proceso padre.",
+        "En el mismo host, en un rango de +/- 15 minutos, busque más eventos 4663 del mismo proceso, archivos copiados a Temp y conexiones salientes o subidas HTTP.",
+        "Consulte alertas anteriores para el host, el usuario y el hash del ejecutable, y verifique si ese proceso ya forma parte del baseline."
+      ],
+      "false_positives": [
+        "Gestores de contraseñas, herramientas de respaldo o sincronización de perfiles instalados por usuario en AppData.",
+        "Navegadores portables o instalados por usuario, como Chrome en AppData\\Local, que leen sus propios archivos.",
+        "Herramientas de migración de perfiles, soporte técnico o forense ejecutadas por TI.",
+        "Agentes EDR o antivirus de terceros ubicados fuera de Program Files."
+      ],
+      "response_steps": [
+        "Verifique la legitimidad del binario con el usuario o con TI y obtenga el hash; si es legítimo, agregue una exclusión específica por ruta y hash.",
+        "Si es malicioso, aísle el endpoint, conserve el binario y la memoria del proceso y finalice el proceso después de capturar la evidencia.",
+        "Restablezca las contraseñas guardadas en el navegador, revoque las sesiones y tokens activos de los servicios afectados y revise inicios de sesión anómalos.",
+        "Erradique la persistencia, busque el mismo hash en otros hosts y restaure el equipo desde una imagen confiable si hay compromiso confirmado."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque es una regla de threat hunting con un filtro amplio, propensa a falsos positivos de software instalado por usuario, aunque su verdadero positivo implica robo de credenciales."
+    },
+    "en": {
+      "summary": "A process outside Program Files, System32 or SysWOW64 opened a Chromium or Firefox credential or cookie store for reading (4663, AccessMask 0x1). It may be an infostealer, but this is a hunting rule that needs baselining.",
+      "what_it_detects": "Security 4663 events with ObjectType File and AccessMask 0x1 on Chromium Login Data, Local State or Network\\Cookies, or Firefox cookies.sqlite, places.sqlite, key3.db, key4.db or logins.json. Excludes System, Program Files and system paths, and Microsoft Defender.",
+      "why_it_matters": "Browsers store passwords, session cookies and the encryption key (Local State). Stealing them enables session hijacking and account access that bypasses MFA (ATT&CK T1555.003, Credentials from Web Browsers).",
+      "triage_steps": [
+        "Check ProcessName and ProcessId: identify the executable, its path (AppData, Temp, Public, Downloads are suspicious), its signature and hash.",
+        "Check ObjectName: note which browser and file were read, and whether Login Data and Local State were read together, typical of credential decryption.",
+        "Review SubjectUserName and SubjectLogonId: confirm the user owns the browser profile and is not reading another user's profile.",
+        "Find the 4688 or Sysmon 1 event for the same ProcessId to get the command line and parent process.",
+        "On the same host within +/- 15 minutes, look for more 4663 events from that process, files copied to Temp, and outbound connections or HTTP uploads.",
+        "Check earlier alerts for the host, user and executable hash, and whether the process is already in the baseline."
+      ],
+      "false_positives": [
+        "Password managers, backup or profile sync tools installed per user in AppData.",
+        "Portable or per-user browsers, such as Chrome in AppData\\Local, reading their own files.",
+        "Profile migration, IT support or forensic tools run by IT staff.",
+        "Third-party EDR or antivirus agents located outside Program Files."
+      ],
+      "response_steps": [
+        "Verify the binary with the user or IT and get its hash; if legitimate, add a specific path-and-hash exclusion.",
+        "If malicious, isolate the endpoint, preserve the binary and process memory, then kill the process after collecting evidence.",
+        "Reset browser-saved passwords, revoke active sessions and tokens for affected services, and review anomalous sign-ins.",
+        "Remove persistence, hunt for the same hash on other hosts, and reimage from a trusted baseline if compromise is confirmed."
+      ],
+      "severity_rationale": "Low fits because this is a broad threat-hunting rule prone to false positives from per-user software, even though a true positive means credential theft."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder reads Chrome Login Data",
+        "event": {
+          "EventID": 4663,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data",
+          "HandleId": "0x1a4",
+          "AccessList": "%%4416",
+          "AccessMask": "0x1",
+          "ProcessId": "0x2f14",
+          "ProcessName": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svchelper.exe"
+        }
+      },
+      {
+        "description": "Binary in C:\\Users\\Public reads Firefox logins.json",
+        "event": {
+          "EventID": 4663,
+          "Channel": "Security",
+          "Computer": "WS-0188.andes.example.com",
+          "SubjectUserName": "mrojas",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x51B0C2",
+          "ObjectServer": "Security",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\mrojas\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\k3x9q2ab.default-release\\logins.json",
+          "FileName": "C:\\Users\\mrojas\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\k3x9q2ab.default-release\\logins.json",
+          "HandleId": "0x2c8",
+          "AccessList": "%%4416",
+          "AccessMask": "0x1",
+          "ProcessId": "0x1b60",
+          "ProcessName": "C:\\Users\\Public\\sync.exe"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Chrome installed in Program Files reads its own Login Data (excluded by generic filter)",
+        "event": {
+          "EventID": 4663,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "ObjectServer": "Security",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\jperez\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data",
+          "HandleId": "0x3b0",
+          "AccessList": "%%4416",
+          "AccessMask": "0x1",
+          "ProcessId": "0x1d2c",
+          "ProcessName": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        }
+      },
+      {
+        "description": "Microsoft Defender scanning Edge Local State (excluded by Defender filter)",
+        "event": {
+          "EventID": 4663,
+          "Channel": "Security",
+          "Computer": "WS-0201.andes.example.com",
+          "SubjectUserName": "WS-0201$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "ObjectServer": "Security",
+          "ObjectType": "File",
+          "ObjectName": "C:\\Users\\lgomez\\AppData\\Local\\Microsoft\\Edge\\User Data\\Local State",
+          "HandleId": "0x8f4",
+          "AccessList": "%%4416",
+          "AccessMask": "0x1",
+          "ProcessId": "0x0f10",
+          "ProcessName": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24090.11-0\\MsMpEng.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

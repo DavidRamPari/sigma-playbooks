@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "ce2c44b5-a6ac-412a-afba-9e89326fa972",
+    "title": "Regsvr32.EXE Calling of DllRegisterServer Export Function Implicitly",
+    "level": "medium",
+    "status": "test",
+    "author": "Andreas Braathen (mnemonic.io), Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/process_creation/proc_creation_win_regsvr32_dllregisterserver_exec.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_regsvr32_dllregisterserver_exec.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó regsvr32.exe con el modificador silencioso (/s o /e) y sin otros modificadores sobre una DLL fuera de Program Files, System32 o SysWOW64. Esta forma de invocación llama de manera implícita a la exportación DllRegisterServer de la DLL.",
+      "what_it_detects": "Eventos de creación de procesos donde Image termina en \\regsvr32.exe u OriginalFileName es REGSVR32.EXE, el CommandLine contiene ' /s ' o ' /e ', no incluye /i: ni /u, y ni el CommandLine ni el CurrentDirectory apuntan a rutas estándar del sistema o de aplicaciones.",
+      "why_it_matters": "Regsvr32 es un binario firmado de Windows. Un atacante puede abusar de él para ejecutar código de una DLL maliciosa mediante DllRegisterServer y así evadir controles (T1218, System Binary Proxy Execution). Las referencias de la regla documentan este patrón dentro de una intrusión que terminó en ransomware.",
+      "triage_steps": [
+        "Revise el CommandLine e identifique la ruta y el nombre de la DLL. Las rutas Temp, Downloads, AppData, ProgramData o de perfiles de usuario aumentan la sospecha.",
+        "Revise ParentImage y ParentCommandLine. Que el padre sea explorer.exe abriendo un LNK, wscript, cscript, mshta, powershell o un cliente de correo es sospechoso.",
+        "Obtenga el hash de la DLL, verifique su firma y consulte la reputación. Busque el Mark of the Web (Zone.Identifier) y si proviene de un ISO, ZIP o adjunto.",
+        "Busque conexiones de red, procesos hijo y archivos creados por regsvr32 en el mismo host dentro de +/- 15 minutos.",
+        "Confirme el usuario y si el host tenía una instalación de software legítima en curso (msiexec, setup.exe) en ese periodo.",
+        "Busque la misma DLL o el mismo hash en otros endpoints, además de alertas previas para el usuario y el host."
+      ],
+      "false_positives": [
+        "Instaladores legítimos que registran componentes COM en silencio, aunque es menos probable que lo hagan desde rutas temporales.",
+        "Scripts de despliegue de TI que registran DLL desde recursos compartidos o carpetas de paquetes, como SCCM o Intune.",
+        "Software de nicho que se instala en rutas no estándar, como C:\\Apps o D:\\Tools."
+      ],
+      "response_steps": [
+        "Valide con el usuario o con TI si existe una instalación autorizada. Si no la hay, trate el caso como un posible compromiso.",
+        "Si la DLL es maliciosa o desconocida y tuvo actividad de red, aísle el endpoint con el EDR.",
+        "Preserve la DLL y los artefactos relacionados para su análisis. Después ponga en cuarentena el archivo y bloquee su hash.",
+        "Revise la persistencia (claves CLSID en el registro, tareas y servicios) y restablezca las credenciales del usuario si hubo exposición."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque esta regla de hunting combina un binario LOLBin con una ruta inusual, pero algunas instalaciones legítimas generan el mismo patrón."
+    },
+    "en": {
+      "summary": "regsvr32.exe ran with only the silent flag (/s or /e) on a DLL outside Program Files, System32 or SysWOW64. Called this way, it implicitly executes the DLL's DllRegisterServer export.",
+      "what_it_detects": "Process creation events where Image ends with \\regsvr32.exe or OriginalFileName is REGSVR32.EXE, and CommandLine contains ' /s ' or ' /e ' without /i: or /u. Neither CommandLine nor CurrentDirectory references a standard system or program path.",
+      "why_it_matters": "Regsvr32 is a signed Windows binary. Attackers can use it to run code from a malicious DLL through DllRegisterServer and bypass application controls (T1218, System Binary Proxy Execution). The rule's references show this pattern in an intrusion that led to ransomware.",
+      "triage_steps": [
+        "Read CommandLine to get the DLL path and name. Paths under Temp, Downloads, AppData, ProgramData or user profiles raise suspicion.",
+        "Review ParentImage and ParentCommandLine. Treat explorer.exe opening an LNK, wscript, cscript, mshta, powershell or a mail client as suspicious parents.",
+        "Hash the DLL, check its signature and reputation, and look for Mark of the Web and whether it came from an ISO, ZIP or attachment.",
+        "Look for network connections, child processes and files created by regsvr32 on the same host within +/- 15 minutes.",
+        "Confirm the user and whether a legitimate install (msiexec, setup.exe) ran on the host at the same time.",
+        "Search other endpoints for the same DLL name or hash, and check earlier alerts for this user and host."
+      ],
+      "false_positives": [
+        "Legitimate installers silently registering COM components, though this is less likely from temporary paths.",
+        "IT deployment scripts (SCCM, Intune) registering DLLs from package caches or shares.",
+        "Niche software installed in non-standard paths such as C:\\Apps or D:\\Tools."
+      ],
+      "response_steps": [
+        "Check with the user or IT whether the install was authorized. If not, treat it as a possible compromise.",
+        "If the DLL is malicious or unknown and made network connections, isolate the endpoint through EDR.",
+        "Preserve the DLL and related artifacts for analysis, then quarantine the file and block its hash.",
+        "Check for persistence (CLSID registry keys, scheduled tasks, services) and reset the user's credentials if they were exposed."
+      ],
+      "severity_rationale": "Medium fits this hunting rule: a LOLBin running a DLL from an unusual path is suspicious, but some legitimate installations produce the same pattern."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Silent regsvr32 on a DLL in the user's Temp folder, launched from an LNK through explorer",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\regsvr32.exe",
+          "OriginalFileName": "REGSVR32.EXE",
+          "CommandLine": "regsvr32.exe /s C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_2023.dll",
+          "CurrentDirectory": "C:\\Users\\jperez\\Downloads\\",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "ParentCommandLine": "C:\\Windows\\Explorer.EXE"
+        }
+      },
+      {
+        "description": "regsvr32 with /e on a file in ProgramData, launched by wscript",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\SysWOW64\\regsvr32.exe",
+          "OriginalFileName": "REGSVR32.EXE",
+          "CommandLine": "regsvr32 /e C:\\ProgramData\\cache\\upd.dat",
+          "CurrentDirectory": "C:\\ProgramData\\cache\\",
+          "ParentImage": "C:\\Windows\\System32\\wscript.exe",
+          "ParentCommandLine": "wscript.exe C:\\Users\\mrojas\\Downloads\\doc.js"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate silent registration of a DLL under Program Files (excluded by the path filter)",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\regsvr32.exe",
+          "OriginalFileName": "REGSVR32.EXE",
+          "CommandLine": "regsvr32.exe /s \"C:\\Program Files\\ExampleVendor\\plugin.dll\"",
+          "CurrentDirectory": "C:\\Program Files\\ExampleVendor\\",
+          "ParentImage": "C:\\Windows\\System32\\msiexec.exe",
+          "ParentCommandLine": "C:\\Windows\\System32\\msiexec.exe /V"
+        }
+      },
+      {
+        "description": "Silent unregistration with /u from a Temp path (excluded by the other-flags filter)",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0318",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Windows\\System32\\regsvr32.exe",
+          "OriginalFileName": "REGSVR32.EXE",
+          "CommandLine": "regsvr32.exe /s /u C:\\Users\\lgomez\\AppData\\Local\\Temp\\oldcomp.dll",
+          "CurrentDirectory": "C:\\Users\\lgomez\\",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "ParentCommandLine": "cmd.exe /c uninstall.bat"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

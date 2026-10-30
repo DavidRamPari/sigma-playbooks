@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "93ff0ceb-e0ef-4586-8cd8-a6c277d738e3",
+    "title": "Scheduled Task Created - Registry",
+    "level": "low",
+    "status": "test",
+    "author": "Center for Threat Informed Defense (CTID) Summiting the Pyramid Team",
+    "path": "windows/registry/registry_event/registry_event_scheduled_task_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/registry/registry_event/registry_event_scheduled_task_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.005"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió una clave de registro en TaskCache\\Tasks o TaskCache\\Tree, lo que indica la creación o modificación de una tarea programada. Es una regla de threat hunting y la mayoría de los eventos serán legítimos.",
+      "what_it_detects": "Eventos de registro (creación de clave o escritura de valor) cuyo TargetObject contiene \\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\ o \\TaskCache\\Tree\\, donde Windows guarda la definición y el nombre de cada tarea programada.",
+      "why_it_matters": "Las tareas programadas (ATT&CK T1053.005) permiten ejecutar código de forma persistente, a veces como SYSTEM. Un atacante puede crearlas con schtasks, la API o escribiendo el registro directamente; incluso puede ocultarlas eliminando el valor SD.",
+      "triage_steps": [
+        "Revise Image: lo normal es svchost.exe (servicio Schedule). Si escribe reg.exe, powershell.exe u otro proceso directamente, aumente la prioridad.",
+        "Extraiga el nombre de la tarea desde la ruta de TargetObject bajo Tree\\ y obtenga el GUID del valor Id para ubicarla en Tasks\\{GUID}.",
+        "Revise los valores Actions, Path y Author en Tasks\\{GUID}, o el XML en C:\\Windows\\System32\\Tasks, para ver qué binario y argumentos ejecuta.",
+        "Verifique si la acción apunta a rutas sospechosas (AppData, Temp, ProgramData, Public) o usa powershell, mshta, rundll32 o comandos codificados.",
+        "Busque en el mismo host, +/- 15 minutos, la creación de procesos de schtasks.exe o powershell (Register-ScheduledTask) y su ParentImage.",
+        "Compruebe si se eliminó el valor SD bajo Tree\\<tarea>, técnica que oculta la tarea de schtasks y del Programador de tareas.",
+        "Revise eventos 4698 de Security o 106 de TaskScheduler/Operational, el usuario asociado y alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Comportamiento normal de Windows: actualizaciones, mantenimiento del sistema y tareas de Microsoft creadas por svchost.exe.",
+        "Instaladores y actualizadores de software (navegadores, Office, agentes de seguridad) que registran sus propias tareas.",
+        "Herramientas de administración como GPO, SCCM/Intune o scripts de TI que despliegan tareas programadas."
+      ],
+      "response_steps": [
+        "Valide con el responsable del equipo o de TI si la tarea y su acción son esperadas y está firmado el binario que ejecuta.",
+        "Si es maliciosa, aísle el endpoint, exporte la tarea (XML y claves de registro) y calcule el hash del binario como evidencia.",
+        "Deshabilite y elimine la tarea, incluidas las entradas Tree y Tasks huérfanas, y elimine el payload asociado tras preservar la evidencia.",
+        "Busque la misma tarea o el mismo hash en otros hosts, restablezca credenciales comprometidas y documente indicadores para nuevas detecciones."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque crear tareas programadas es habitual en Windows; el evento sirve como pista de hunting que requiere contexto adicional."
+    },
+    "en": {
+      "summary": "A registry key under TaskCache\\Tasks or TaskCache\\Tree was written, indicating a scheduled task was created or modified. This is a threat-hunting rule; most hits are benign.",
+      "what_it_detects": "Registry events (key creation or value set) whose TargetObject contains \\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\ or \\TaskCache\\Tree\\, where Windows stores each scheduled task's definition and name.",
+      "why_it_matters": "Scheduled tasks (ATT&CK T1053.005) give persistent, often SYSTEM-level code execution. Attackers create them via schtasks, the API or direct registry writes, and can hide them by deleting the SD value.",
+      "triage_steps": [
+        "Check Image: svchost.exe (Schedule service) is normal. Direct writes by reg.exe, powershell.exe or other processes deserve higher priority.",
+        "Take the task name from the TargetObject path under Tree\\ and read its Id value to find the matching Tasks\\{GUID} key.",
+        "Review Actions, Path and Author under Tasks\\{GUID}, or the XML in C:\\Windows\\System32\\Tasks, to see the executed binary and arguments.",
+        "Flag actions pointing to AppData, Temp, ProgramData or Public, or using powershell, mshta, rundll32 or encoded commands.",
+        "On the same host within +/- 15 minutes, look for schtasks.exe or Register-ScheduledTask process creation and their ParentImage.",
+        "Check whether the SD value under Tree\\<task> was deleted, which hides the task from schtasks and Task Scheduler.",
+        "Correlate with Security 4698 or TaskScheduler/Operational 106 events, the responsible user, and earlier alerts for the host or user."
+      ],
+      "false_positives": [
+        "Normal Windows behaviour: updates, maintenance and built-in Microsoft tasks written by svchost.exe.",
+        "Software installers and updaters (browsers, Office, security agents) registering their own tasks.",
+        "Admin tooling such as GPO, SCCM/Intune or IT scripts deploying scheduled tasks."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner or IT whether the task and its action are expected and the executed binary is signed.",
+        "If malicious, isolate the endpoint, export the task (XML and registry keys) and hash the binary as evidence.",
+        "Disable and delete the task, including orphaned Tree and Tasks entries, and remove the payload after preserving evidence.",
+        "Hunt for the same task name or hash on other hosts, reset exposed credentials and record indicators for new detections."
+      ],
+      "severity_rationale": "Low fits because task creation is routine on Windows; the event is a hunting lead that needs additional context to be actionable."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Schedule service writes the Id value for a new task under TaskCache\\Tree (Sysmon EID 13).",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\UpdaterCheck\\Id",
+          "Details": "{4B1C9E2A-7D3F-4A6B-9C11-2E5F8A0D3B77}",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "reg.exe directly creates a task definition key under TaskCache\\Tasks (Sysmon EID 12).",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\{4B1C9E2A-7D3F-4A6B-9C11-2E5F8A0D3B77}",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Write under TaskCache\\Plain, which is neither the Tasks nor the Tree subkey.",
+        "event": {
+          "EventID": 12,
+          "EventType": "CreateKey",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\system32\\svchost.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Plain\\{4B1C9E2A-7D3F-4A6B-9C11-2E5F8A0D3B77}",
+          "User": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Persistence via the Run key, not scheduled task registry paths.",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Program Files\\ExampleApp\\setup.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run\\ExampleApp",
+          "Details": "C:\\Program Files\\ExampleApp\\app.exe",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

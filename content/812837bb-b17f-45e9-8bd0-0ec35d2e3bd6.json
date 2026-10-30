@@ -1,0 +1,108 @@
+{
+  "rule": {
+    "id": "812837bb-b17f-45e9-8bd0-0ec35d2e3bd6",
+    "title": "bXOR Operator Usage In PowerShell Command Line - PowerShell Classic",
+    "level": "low",
+    "status": "test",
+    "author": "Teymur Kheirkhabarov, Harish Segar",
+    "path": "windows/powershell/powershell_classic/posh_pc_bxor_operator_usage.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/powershell/powershell_classic/posh_pc_bxor_operator_usage.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una sesión interactiva de consola de PowerShell (HostName=ConsoleHost) se inició con una línea de comandos que contiene el operador -bxor. A veces se usa XOR en lugar de Base64 para ocultar payloads, así que trátela como pista de hunting.",
+      "what_it_detects": "Evento 400 del registro clásico Windows PowerShell (inicio del motor) cuyo campo Data contiene 'HostName=ConsoleHost' y ' -bxor ', es decir, la línea de comandos en HostApplication usa XOR bit a bit.",
+      "why_it_matters": "Los atacantes codifican cadenas o shellcode con XOR para que el script se decodifique en tiempo de ejecución y evada detecciones simples por palabras clave o Base64. Corresponde a ejecución con PowerShell (ATT&CK T1059.001) combinada con ofuscación.",
+      "triage_steps": [
+        "Extraiga HostApplication del campo Data y lea la línea completa: qué datos se procesan con XOR, la clave y qué recibe el resultado (IEX, Invoke-Expression, [Reflection.Assembly]::Load, VirtualAlloc).",
+        "Decodifique los bytes fuera de línea en un entorno aislado para recuperar el texto claro; nunca ejecute el comando original.",
+        "Identifique el proceso padre con Sysmon evento 1 o Security 4688 en el mismo host y hora; Office, wscript, mshta o un servicio como padre son sospechosos.",
+        "Revise Script Block Logging (evento 4104) en el host dentro de +/- 15 minutos para ver el contenido desofuscado.",
+        "Revise conexiones de red, consultas DNS y archivos escritos por ese powershell.exe en la misma ventana de tiempo.",
+        "Identifique al usuario y si suele ejecutar scripts de PowerShell; busque alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Scripts de administradores o desarrolladores que usan XOR para checksums, cifrado simple o manipulación de bytes.",
+        "Capacitaciones de seguridad, ejercicios CTF o pruebas de red team autorizadas.",
+        "Herramientas internas que ofuscan valores de configuración con XOR."
+      ],
+      "response_steps": [
+        "Si el contenido decodificado es benigno y el script es conocido, documéntelo y evalúe una exclusión acotada por host, usuario y línea de comandos.",
+        "Si es malicioso o no tiene explicación, aísle el endpoint y preserve memoria, registros de PowerShell y archivos descargados.",
+        "Bloquee los indicadores obtenidos del payload decodificado (dominios, IP, hashes) y búsquelos en toda la flota.",
+        "Si se confirma la ejecución, restablezca las credenciales del usuario, elimine la persistencia y restaure el host a un estado conocido."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque es una regla de threat hunting: -bxor tiene usos legítimos y solo el contenido decodificado y el contexto indican si hay actividad maliciosa."
+    },
+    "en": {
+      "summary": "An interactive PowerShell console session (HostName=ConsoleHost) started with a command line containing the -bxor operator. XOR is sometimes used instead of Base64 to hide payloads, so treat this as a hunting lead.",
+      "what_it_detects": "Windows PowerShell classic event 400 (engine start) where the Data field contains both 'HostName=ConsoleHost' and ' -bxor ', meaning the HostApplication command line uses bitwise XOR.",
+      "why_it_matters": "Attackers XOR-encode strings or shellcode so that a script decodes itself at runtime, evading simple keyword and Base64 detections. This is PowerShell command execution (ATT&CK T1059.001) combined with obfuscation.",
+      "triage_steps": [
+        "Extract HostApplication from the Data field and read the full command line: what is XORed, the key value, and what consumes the output (IEX, Invoke-Expression, [Reflection.Assembly]::Load, VirtualAlloc).",
+        "Decode the XORed bytes offline in an isolated environment to recover the cleartext; never run the command itself.",
+        "Find the parent process via Sysmon event 1 or Security 4688 on the same host and time; Office apps, wscript, mshta or a service as parent are suspicious.",
+        "Check Script Block Logging (event 4104) on the host within +/- 15 minutes for the deobfuscated content.",
+        "Review network connections, DNS queries and file writes from the powershell.exe process in the same window.",
+        "Identify the user and whether they normally run PowerShell scripts; look for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Administrator or developer scripts that use XOR for checksums, simple encryption or byte manipulation.",
+        "Security training, CTF exercises or authorized red-team testing.",
+        "Internal tooling that obfuscates configuration values with XOR."
+      ],
+      "response_steps": [
+        "If the decoded content is benign and the script is known, document it and consider a scoped exclusion by host, user and command line.",
+        "If malicious or unexplained, isolate the endpoint and preserve memory, the PowerShell logs and any dropped files.",
+        "Block indicators recovered from the decoded payload (domains, IPs, hashes) and search the fleet for them.",
+        "Reset credentials of the affected user if execution was confirmed, remove persistence, and restore the host from a known-good state."
+      ],
+      "severity_rationale": "Low fits because this is a threat-hunting rule: -bxor has legitimate uses, and only the decoded content and context show whether the activity is malicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Console PowerShell started with an XOR-decoding one-liner piped to IEX",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Computer": "WS-0142.andes.example.com",
+          "Data": "\tNewEngineState=Available\n\tPreviousEngineState=None\n\n\tSequenceNumber=13\n\n\tHostName=ConsoleHost\n\tHostVersion=5.1.19041.3803\n\tHostId=3f2a6c1e-8b4d-4e0a-9c11-7d5e2b9a0f42\n\tHostApplication=powershell.exe -NoP -W Hidden -c \"$k=0x5A;$b=[IO.File]::ReadAllBytes('C:\\Users\\jperez\\AppData\\Local\\Temp\\d.bin');IEX([Text.Encoding]::ASCII.GetString(($b|%{$_ -bxor $k})))\"\n\tEngineVersion=5.1.19041.3803\n\tRunspaceId=a1b2c3d4-0000-4000-8000-000000000001\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same XOR code executed from PowerShell ISE, so HostName is not ConsoleHost",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Computer": "WS-0142.andes.example.com",
+          "Data": "\tNewEngineState=Available\n\tPreviousEngineState=None\n\n\tSequenceNumber=9\n\n\tHostName=Windows PowerShell ISE Host\n\tHostVersion=5.1.19041.3803\n\tHostId=7c9e1a2b-3d4f-4a5b-8c6d-9e0f1a2b3c4d\n\tHostApplication=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe\n\tEngineVersion=5.1.19041.3803\n\tRunspaceId=a1b2c3d4-0000-4000-8000-000000000002\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      },
+      {
+        "description": "Console PowerShell admin script using -band, not -bxor",
+        "event": {
+          "EventID": 400,
+          "Channel": "Windows PowerShell",
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "Data": "\tNewEngineState=Available\n\tPreviousEngineState=None\n\n\tSequenceNumber=13\n\n\tHostName=ConsoleHost\n\tHostVersion=5.1.17763.5329\n\tHostId=0d4e5f6a-7b8c-4d9e-a0b1-c2d3e4f5a6b7\n\tHostApplication=powershell.exe -NoProfile -c \"Get-ChildItem D:\\Shares | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReadOnly }\"\n\tEngineVersion=5.1.17763.5329\n\tRunspaceId=a1b2c3d4-0000-4000-8000-000000000003\n\tPipelineId=\n\tCommandName=\n\tCommandType=\n\tScriptName=\n\tCommandPath=\n\tCommandLine="
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

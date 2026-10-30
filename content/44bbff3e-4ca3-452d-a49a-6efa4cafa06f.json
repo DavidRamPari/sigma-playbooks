@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "44bbff3e-4ca3-452d-a49a-6efa4cafa06f",
+    "title": "Potential CVE-2021-42278 Exploitation Attempt",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "2021/Exploits/CVE-2021-42278/win_system_exploit_cve_2021_42278.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Exploits/CVE-2021-42278/win_system_exploit_cve_2021_42278.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró un evento del KDC (35, 36, 37 o 38) de validación del PAC. Puede indicar un ataque de suplantación de sAMAccountName (CVE-2021-42278, con frecuencia encadenado con CVE-2021-42287).",
+      "what_it_detects": "Eventos del log System con Provider_Name Microsoft-Windows-Kerberos-Key-Distribution-Center y EventID 35 (PAC sin atributos), 36 (ticket sin PAC), 37 (ticket sin solicitante) o 38 (el solicitante no coincide).",
+      "why_it_matters": "El atacante crea o modifica una cuenta de equipo, borra su ServicePrincipalName y la renombra con el nombre de un DC sin '$'. Así obtiene tickets Kerberos que lo hacen pasar por el DC y puede escalar a administrador del dominio (T1558.003, robo o falsificación de tickets Kerberos).",
+      "triage_steps": [
+        "Lea el mensaje del evento en el DC indicado (Computer) y anote la cuenta y el tipo de anomalía según el EventID.",
+        "Busque en el log Security del mismo DC, +/- 15 minutos, los eventos 4741 (equipo creado), 4742 (equipo modificado) y 4781 (cambio de nombre de cuenta).",
+        "Compruebe si alguna cuenta de equipo se renombró a un sAMAccountName igual al de un DC pero sin '$', o si perdió su ServicePrincipalName.",
+        "Revise los eventos 4768/4769 de la misma cuenta y obtenga la IP de origen de las solicitudes de TGT y TGS.",
+        "Identifique quién creó la cuenta de equipo (usuario en el 4741) y si suele unir equipos al dominio.",
+        "Verifique en la IP de origen la ejecución de herramientas como noPac, Rubeus o Impacket, y revise alertas previas del usuario y del host.",
+        "Confirme si todos los DC tienen instaladas las actualizaciones de noviembre de 2021 que corrigen estas CVE."
+      ],
+      "false_positives": [
+        "DC sin parches o en distintos niveles de actualización durante el despliegue de los cambios en la validación del PAC.",
+        "Implementaciones Kerberos de terceros (appliances, Samba, MIT) o relaciones de confianza entre bosques que emiten tickets sin PAC o con un PAC incompleto."
+      ],
+      "response_steps": [
+        "Valide con los eventos 4741/4742/4781 si hubo creación o renombrado malicioso antes de actuar.",
+        "Si se confirma, deshabilite la cuenta de equipo implicada y aísle el host de origen.",
+        "Revise los cambios hechos con privilegios elevados (membresías de grupos, DCSync, nuevas cuentas) y revierta lo no autorizado.",
+        "Aplique los parches en todos los DC y fije ms-DS-MachineAccountQuota en 0.",
+        "Si hubo compromiso del dominio, restablezca las credenciales afectadas y la contraseña de krbtgt dos veces, siguiendo el procedimiento controlado."
+      ],
+      "severity_rationale": "Medium es adecuado porque estos eventos también aparecen en entornos mixtos o sin parches, pero ante un intento real el impacto puede ser el compromiso total del dominio."
+    },
+    "en": {
+      "summary": "A domain controller logged a KDC PAC-validation event (35, 36, 37 or 38). This may point to sAMAccountName spoofing (CVE-2021-42278, often chained with CVE-2021-42287).",
+      "what_it_detects": "System log events with Provider_Name Microsoft-Windows-Kerberos-Key-Distribution-Center and EventID 35 (PAC without attributes), 36 (ticket without a PAC), 37 (ticket without requestor) or 38 (requestor mismatch).",
+      "why_it_matters": "The attacker creates or modifies a computer account, clears its ServicePrincipalName and renames it to a DC name without '$'. They then get Kerberos tickets that impersonate the DC and can escalate to domain admin (T1558.003, Kerberos ticket theft or forgery).",
+      "triage_steps": [
+        "Read the event message on the reporting DC (Computer) and note the account and the anomaly type for the EventID.",
+        "Search that DC's Security log, +/- 15 minutes, for 4741 (computer created), 4742 (computer changed) and 4781 (account name changed).",
+        "Check whether any computer account was renamed to a DC's sAMAccountName without '$', or had its ServicePrincipalName cleared.",
+        "Review 4768/4769 events for the same account and get the source IP of the TGT and TGS requests.",
+        "Identify who created the computer account (the user in 4741) and whether they normally join machines to the domain.",
+        "On the source IP, look for tools such as noPac, Rubeus or Impacket, and check earlier alerts for that user and host.",
+        "Confirm that every DC has the November 2021 updates that fix these CVEs."
+      ],
+      "false_positives": [
+        "Unpatched DCs, or DCs on different update levels while the PAC validation changes are being rolled out.",
+        "Third-party Kerberos implementations (appliances, Samba, MIT) or cross-forest trusts that issue tickets without a PAC or with an incomplete one."
+      ],
+      "response_steps": [
+        "Before acting, use 4741/4742/4781 to confirm whether a malicious creation or rename took place.",
+        "If confirmed, disable the computer account involved and isolate the source host.",
+        "Review changes made with elevated privileges (group memberships, DCSync, new accounts) and revert anything unauthorized.",
+        "Patch all DCs and set ms-DS-MachineAccountQuota to 0.",
+        "If the domain was compromised, reset the affected credentials and reset the krbtgt password twice, following the controlled procedure."
+      ],
+      "severity_rationale": "Medium fits because these events also appear in mixed or unpatched environments, but a real attempt can lead to full domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "KDC event 38: requestor mismatch on a DC after a computer account was renamed to the DC name",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Kerberos-Key-Distribution-Center",
+          "EventID": 38,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Warning",
+          "Message": "The Key Distribution Center (KDC) encountered a ticket that did not contain information about the account that requested the ticket while processing a request for another ticket. Requesting account: DC-01"
+        }
+      },
+      {
+        "description": "KDC event 36: TGT without a PAC presented to the KDC",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Kerberos-Key-Distribution-Center",
+          "EventID": 36,
+          "Channel": "System",
+          "Computer": "DC-02.andes.example.com",
+          "Level": "Warning",
+          "Message": "The Key Distribution Center (KDC) encountered a ticket that did not contain a PAC while processing a request for another ticket."
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine KDC event 16 (encryption type issue), not one of the PAC validation event IDs",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Kerberos-Key-Distribution-Center",
+          "EventID": 16,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Error",
+          "Message": "While processing a TGS request for the target server http/web01.andes.example.com, the account WS-0142$ did not have a suitable key for generating a Kerberos ticket."
+        }
+      },
+      {
+        "description": "Event ID 37 from a different provider, so the Provider_Name condition fails",
+        "event": {
+          "Provider_Name": "Service Control Manager",
+          "EventID": 37,
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "Level": "Information",
+          "Message": "The Windows Update service entered the running state."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

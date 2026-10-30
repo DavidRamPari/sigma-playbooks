@@ -1,0 +1,177 @@
+{
+  "rule": {
+    "id": "474b415a-8b3d-4e6a-9f12-0d5c8a7b6e94",
+    "title": "Linux AF_ALG Socket Creation - Kernel Crypto API Exploit Indicator",
+    "level": "high",
+    "status": "experimental",
+    "author": "Gene Kazimiarovich",
+    "path": "2026/Exploits/CVE-2026-31431/lnx_auditd_exploit_cve_2026_31431_af_alg_socket_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2026/Exploits/CVE-2026-31431/lnx_auditd_exploit_cve_2026_31431_af_alg_socket_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un socket AF_ALG (familia 38, a0=26 en hex), la interfaz de usuario de la API criptográfica del kernel. Es un indicador de explotación de CVE-2026-31431, una escalada local de privilegios.",
+      "what_it_detects": "Registros auditd SYSCALL de socket() con a0=26 (AF_ALG) cuyo exe no termina en cryptsetup, kcapi-speed, kcapi-enc, kcapi-dgst, charon ni charon-systemd.",
+      "why_it_matters": "CVE-2026-31431 abusa de un desbordamiento de buffer en la ruta splice AEAD de AF_ALG para corromper el page cache de binarios SUID y obtener root (T1068, explotación para escalar privilegios).",
+      "triage_steps": [
+        "Revise exe, comm, cwd y ppid del evento. Un binario en /tmp, /dev/shm o el home del usuario, o un intérprete como python o perl, aumenta la sospecha.",
+        "Identifique al usuario mediante auid, uid y euid, y confirme si es una cuenta interactiva, de servicio o comprometida.",
+        "Reconstruya el árbol de procesos con ppid: verifique si viene de SSH, de una web shell o de una tarea cron.",
+        "Busque en el mismo host, dentro de +/- 15 minutos, ejecuciones de binarios SUID (su, sudo, passwd, mount) y procesos con euid=0 lanzados por ese usuario.",
+        "Obtenga el hash del exe y búsquelo en otros endpoints. Revise también alertas previas para el host y el usuario.",
+        "Verifique la versión del kernel y si tiene el parche para CVE-2026-31431.",
+        "Descarte uso legítimo: herramientas libkcapi en otra ruta, cryptsetup con --use-kernel-crypto o strongSwan con kernel-libipsec."
+      ],
+      "false_positives": [
+        "cryptsetup con --use-kernel-crypto instalado en una ruta no estándar o invocado mediante un wrapper.",
+        "Herramientas libkcapi de benchmarking o pruebas de la API criptográfica del kernel, como binarios compilados localmente.",
+        "strongSwan con el plugin kernel-libipsec ejecutado con un nombre de binario distinto a charon.",
+        "Suites de pruebas del kernel o de librerías criptográficas en hosts de desarrollo."
+      ],
+      "response_steps": [
+        "Confirme la actividad maliciosa con el árbol de procesos y la cronología antes de actuar.",
+        "Aísle el host de la red, conservando el acceso de gestión. Preserve la memoria, el binario y los logs de auditd.",
+        "Termine los procesos del atacante y revise la persistencia: cron, systemd, authorized_keys y cuentas nuevas.",
+        "Tenga en cuenta que la corrupción del page cache puede no verse en disco. Tras recolectar la evidencia, reinicie para limpiar la caché.",
+        "Aplique el parche del kernel. Si no se necesita AF_ALG, considere bloquear el módulo algif_aead después de verificar que nada depende de él.",
+        "Rote las credenciales del usuario y revise los demás hosts con el mismo hash o patrón."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque el uso legítimo de AF_ALG es raro y el evento puede indicar una escalada a root en curso."
+    },
+    "en": {
+      "summary": "A process created an AF_ALG socket (family 38, a0=26 hex), the userspace interface to the kernel crypto API. This indicates possible exploitation of CVE-2026-31431, a local privilege escalation.",
+      "what_it_detects": "auditd SYSCALL records for socket() with a0=26 (AF_ALG) where exe does not end in cryptsetup, kcapi-speed, kcapi-enc, kcapi-dgst, charon or charon-systemd.",
+      "why_it_matters": "CVE-2026-31431 abuses a buffer overflow in the AF_ALG AEAD splice path to corrupt the page cache of SUID binaries and gain root (T1068, exploitation for privilege escalation).",
+      "triage_steps": [
+        "Check the event's exe, comm, cwd and ppid. A binary in /tmp, /dev/shm or a home directory, or an interpreter such as python or perl, is more suspicious.",
+        "Identify the user from auid, uid and euid. Decide whether it is an interactive, service or possibly compromised account.",
+        "Rebuild the process tree from ppid. Check whether the process came from SSH, a web shell or a cron job.",
+        "On the same host within +/- 15 minutes, look for SUID binary executions (su, sudo, passwd, mount) and euid=0 processes started by that user.",
+        "Hash the exe and search for it on other endpoints. Review earlier alerts for the same host and user.",
+        "Check the kernel version and whether it is patched for CVE-2026-31431.",
+        "Rule out legitimate use: libkcapi tools in other paths, cryptsetup with --use-kernel-crypto, or strongSwan with kernel-libipsec."
+      ],
+      "false_positives": [
+        "cryptsetup with --use-kernel-crypto installed in a non-standard path or run through a wrapper.",
+        "libkcapi benchmarking or kernel crypto API test tools, including locally compiled binaries.",
+        "strongSwan with the kernel-libipsec plugin running under a binary name other than charon.",
+        "Kernel or crypto library test suites on development hosts."
+      ],
+      "response_steps": [
+        "Confirm the activity is malicious from the process tree and timeline before acting.",
+        "Isolate the host but keep management access. Preserve memory, the binary and the auditd logs.",
+        "Kill the attacker's processes. Check for persistence: cron, systemd units, authorized_keys and new accounts.",
+        "Page cache corruption may not show on disk. After collecting evidence, reboot to clear the cache.",
+        "Patch the kernel. If AF_ALG is not needed, consider blocking the algif_aead module after confirming nothing depends on it.",
+        "Rotate the user's credentials. Hunt for the same hash or pattern on other hosts."
+      ],
+      "severity_rationale": "High fits because legitimate AF_ALG use is rare and the event may mark a root escalation in progress."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unknown binary in /tmp run by an unprivileged user creates an AF_ALG socket",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "socket",
+          "arch": "c000003e",
+          "a0": "26",
+          "a1": "5",
+          "a2": "0",
+          "success": "yes",
+          "exit": "3",
+          "exe": "/tmp/.cache/cf",
+          "comm": "cf",
+          "uid": "1001",
+          "auid": "1001",
+          "euid": "1001",
+          "ppid": "48211",
+          "pid": "48230",
+          "host": "web-03",
+          "key": "af_alg_detect"
+        }
+      },
+      {
+        "description": "Python interpreter creates an AF_ALG socket from a user session",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "socket",
+          "arch": "c000003e",
+          "a0": "26",
+          "a1": "5",
+          "a2": "0",
+          "success": "yes",
+          "exit": "4",
+          "exe": "/usr/bin/python3.11",
+          "comm": "python3",
+          "uid": "1002",
+          "auid": "1002",
+          "euid": "1002",
+          "ppid": "51002",
+          "pid": "51017",
+          "host": "bastion-01",
+          "key": "af_alg_detect"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "cryptsetup with kernel crypto offload creates an AF_ALG socket and is excluded by the filter",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "socket",
+          "arch": "c000003e",
+          "a0": "26",
+          "a1": "5",
+          "a2": "0",
+          "success": "yes",
+          "exit": "5",
+          "exe": "/usr/sbin/cryptsetup",
+          "comm": "cryptsetup",
+          "uid": "0",
+          "auid": "1000",
+          "euid": "0",
+          "ppid": "2210",
+          "pid": "2245",
+          "host": "db-02",
+          "key": "af_alg_detect"
+        }
+      },
+      {
+        "description": "curl creates an ordinary AF_INET socket (a0=2), not AF_ALG",
+        "event": {
+          "type": "SYSCALL",
+          "SYSCALL": "socket",
+          "arch": "c000003e",
+          "a0": "2",
+          "a1": "1",
+          "a2": "6",
+          "success": "yes",
+          "exit": "3",
+          "exe": "/usr/bin/curl",
+          "comm": "curl",
+          "uid": "1001",
+          "auid": "1001",
+          "euid": "1001",
+          "ppid": "48211",
+          "pid": "48299",
+          "host": "web-03",
+          "key": "af_alg_detect"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "4f86b304-3e02-40e3-aa5d-e88a167c9617",
+    "title": "Scheduled Task Deletion",
+    "level": "low",
+    "status": "test",
+    "author": "David Strassegger, Tim Shelton",
+    "path": "windows/builtin/security/win_security_scheduled_task_deletion.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/builtin/security/win_security_scheduled_task_deletion.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.005"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró el evento 4699 de Windows: se eliminó una tarea programada que no está entre las exclusiones conocidas (MRT y Firefox Default Browser Agent). Por sí solo no indica actividad maliciosa, pero las tareas de corta duración suelen asociarse a ejecución remota o a limpieza de huellas.",
+      "what_it_detects": "Eventos de seguridad 4699 (tarea programada eliminada) que no corresponden a la tarea de error de MRT ni a las tareas del Firefox Default Browser Agent. Requiere la auditoría de Object Access > Audit Other Object Access Events.",
+      "why_it_matters": "Los atacantes crean tareas programadas para ejecutar código, escalar privilegios o persistir (ATT&CK T1053.005) y luego las borran para ocultar rastros. Herramientas de ejecución remota crean, ejecutan y eliminan tareas en segundos, a menudo en la raíz (\\NOMBRE).",
+      "triage_steps": [
+        "Revise TaskName: las tareas en la raíz (\\Nombre) o con nombres aleatorios son más sospechosas que las de \\Microsoft\\Windows\\ o de fabricantes conocidos.",
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId; correlacione el LogonId con el evento 4624 para conocer el tipo de inicio de sesión y la IP de origen.",
+        "Busque un evento 4698 (creación) de la misma TaskName en el mismo host; una tarea creada y eliminada en minutos sugiere ejecución remota.",
+        "Extraiga el campo Command y Arguments del XML de TaskContent del evento 4698 y evalúe el binario, la ruta y los parámetros.",
+        "Revise procesos en el host +/- 15 minutos: schtasks.exe /delete, PowerShell Unregister-ScheduledTask, cmd.exe lanzado por svchost.exe o taskeng.exe.",
+        "Verifique si el binario referenciado existe, calcule su hash y consúltelo en su plataforma de inteligencia.",
+        "Busque la misma TaskName o la misma cuenta en otros hosts y alertas previas para detectar movimiento lateral.",
+        "Confirme con el equipo de TI si hubo instalaciones, desinstalaciones o despliegues de software en ese momento."
+      ],
+      "false_positives": [
+        "Instalación, actualización o desinstalación de software que elimina sus propias tareas programadas.",
+        "Herramientas de gestión (SCCM, Intune, GPO) que limpian tareas obsoletas.",
+        "Administradores que eliminan tareas manualmente durante mantenimiento.",
+        "Actualizadores de fabricantes que recrean tareas con nombres nuevos en cada versión."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del host o de la cuenta si la eliminación fue legítima antes de actuar.",
+        "Si es sospechosa, aísle el endpoint y preserve evidencia: Security.evtx, Microsoft-Windows-TaskScheduler/Operational y el binario referenciado.",
+        "Restablezca las credenciales de la cuenta involucrada y revise sus sesiones activas en otros hosts.",
+        "Elimine artefactos maliciosos confirmados y restaure tareas legítimas que el atacante haya borrado.",
+        "Busque en toda la flota la misma TaskName, hash o IP de origen y documente nuevas exclusiones para software validado."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque es una regla de threat hunting y la eliminación de tareas es frecuente en actividad legítima; solo gana relevancia con contexto adicional."
+    },
+    "en": {
+      "summary": "Windows logged event 4699: a scheduled task was deleted that is not one of the known exclusions (MRT and Firefox Default Browser Agent). This alone is not malicious, but short-lived tasks are common in remote execution and cleanup.",
+      "what_it_detects": "Security event 4699 (scheduled task deleted), excluding the MRT error heartbeat task and Firefox Default Browser Agent tasks. Requires the Object Access > Audit Other Object Access Events audit policy.",
+      "why_it_matters": "Attackers create scheduled tasks to execute code, escalate privileges or persist (ATT&CK T1053.005), then delete them to hide traces. Remote execution tools create, run and delete tasks within seconds, often at the root (\\NAME).",
+      "triage_steps": [
+        "Review TaskName: tasks at the root (\\Name) or with random names are more suspicious than those under \\Microsoft\\Windows\\ or known vendors.",
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId; correlate the LogonId with event 4624 to get logon type and source IP.",
+        "Look for a 4698 (task created) event with the same TaskName on the host; creation and deletion minutes apart suggests remote execution.",
+        "Extract Command and Arguments from the TaskContent XML of the 4698 event and assess the binary, path and parameters.",
+        "Review process activity on the host +/- 15 minutes: schtasks.exe /delete, PowerShell Unregister-ScheduledTask, cmd.exe spawned by svchost.exe or taskeng.exe.",
+        "Check whether the referenced binary exists, hash it and look it up in threat intelligence.",
+        "Search other hosts and earlier alerts for the same TaskName or account to spot lateral movement.",
+        "Confirm with IT whether software installs, uninstalls or deployments occurred at that time."
+      ],
+      "false_positives": [
+        "Software installation, update or uninstall removing its own scheduled tasks.",
+        "Management tooling (SCCM, Intune, GPO) cleaning up obsolete tasks.",
+        "Administrators deleting tasks manually during maintenance.",
+        "Vendor updaters recreating tasks under new names with each version."
+      ],
+      "response_steps": [
+        "Verify with the host or account owner whether the deletion was legitimate before acting.",
+        "If suspicious, isolate the endpoint and preserve Security.evtx, the TaskScheduler/Operational log and the referenced binary.",
+        "Reset credentials for the involved account and review its active sessions on other hosts.",
+        "Remove confirmed malicious artifacts and restore legitimate tasks the attacker may have deleted.",
+        "Hunt fleet-wide for the same TaskName, hash or source IP, and document exclusions for validated software."
+      ],
+      "severity_rationale": "Low fits because this is a threat-hunting rule and task deletion is common in legitimate activity; it matters only with supporting context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Task at the root node with a random-looking name deleted via a network logon session, typical of remote execution cleanup.",
+        "event": {
+          "EventID": 4699,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "TaskName": "\\kXqTzpLw",
+          "TaskContent": ""
+        }
+      },
+      {
+        "description": "Deletion of a non-Microsoft task under a custom folder by a local administrator.",
+        "event": {
+          "EventID": 4699,
+          "Channel": "Security",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "SubjectUserName": "adm-mlopez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5C1F0A",
+          "TaskName": "\\Updates\\OneSync",
+          "TaskContent": ""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MRT heartbeat error task deleted by the Malicious Software Removal Tool, excluded by filter_main_generic.",
+        "event": {
+          "EventID": 4699,
+          "Channel": "Security",
+          "Computer": "WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7",
+          "TaskName": "\\Microsoft\\Windows\\RemovalTools\\MRT_ERROR_HB",
+          "TaskContent": ""
+        }
+      },
+      {
+        "description": "Firefox Default Browser Agent task removed during a Firefox update, excluded by filter_main_firefox.",
+        "event": {
+          "EventID": 4699,
+          "Channel": "Security",
+          "Computer": "WS-0207.andes.example.com",
+          "SubjectUserName": "SYSTEM",
+          "SubjectDomainName": "NT AUTHORITY",
+          "SubjectLogonId": "0x3E7",
+          "TaskName": "\\Mozilla\\Firefox Default Browser Agent 308046B0AF4A39CB",
+          "TaskContent": ""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

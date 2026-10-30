@@ -1,0 +1,157 @@
+{
+  "rule": {
+    "id": "052ec6f6-1adc-41e6-907a-f1c813478bee",
+    "title": "CreateRemoteThread API and LoadLibrary",
+    "level": "medium",
+    "status": "test",
+    "author": "Roberto Rodriguez @Cyb3rWard0g",
+    "path": "windows/create_remote_thread/create_remote_thread_win_loadlibrary.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/create_remote_thread/create_remote_thread_win_loadlibrary.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso creó un hilo en otro proceso cuya dirección de inicio es LoadLibraryA de kernel32.dll, un patrón clásico de inyección de DLL. Es una regla de threat hunting: requiere validar el contexto antes de escalar.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon Event ID 8) donde StartModule termina en \\kernel32.dll y StartFunction es exactamente LoadLibraryA, lo que indica que el hilo nuevo cargará una DLL indicada por el proceso origen.",
+      "why_it_matters": "La inyección de DLL (ATT&CK T1055.001) permite ejecutar código dentro de un proceso legítimo para ocultarse, heredar sus privilegios o robar datos de su memoria, por ejemplo credenciales de lsass.exe o sesiones del navegador.",
+      "triage_steps": [
+        "Identifique SourceImage y TargetImage: ruta, firma digital, hash y usuario (SourceUser, TargetUser). Un origen sin firma o en carpetas temporales es sospechoso.",
+        "Evalúe el destino: inyección en lsass.exe, explorer.exe, svchost.exe, navegadores o procesos de otro usuario o de mayor integridad eleva la prioridad.",
+        "Busque en el mismo host, +/- 15 minutos, eventos de carga de imagen (Sysmon ID 7) en TargetProcessId para identificar la DLL cargada y su ruta.",
+        "Revise el árbol de procesos del SourceImage: proceso padre, CommandLine y si llegó por correo, descarga o ejecución remota.",
+        "Verifique si el proceso destino abrió conexiones de red, accedió a lsass o creó procesos hijos tras la inyección.",
+        "Consulte alertas previas para el mismo host, usuario y hash del SourceImage, y si el mismo par origen-destino aparece en otros equipos de forma habitual."
+      ],
+      "false_positives": [
+        "Productos de seguridad, EDR o antivirus que inyectan módulos de monitoreo en procesos.",
+        "Herramientas de depuración, profiling o APM usadas por desarrolladores.",
+        "Overlays de juegos, anti-cheat, grabadores de pantalla y herramientas de accesibilidad o automatización de interfaz.",
+        "Software legado o instaladores que extienden aplicaciones mediante inyección de DLL."
+      ],
+      "response_steps": [
+        "Confirme la legitimidad del par origen-destino con el dueño del equipo o del software; si es conocido y aprobado, documente una exclusión específica por ruta y firma.",
+        "Si es sospechoso, aísle el endpoint desde el EDR y preserve memoria de los procesos involucrados antes de terminarlos.",
+        "Obtenga la DLL inyectada y el SourceImage, calcule hashes y analícelos en un entorno controlado.",
+        "Si el destino fue lsass.exe u otro proceso con credenciales, restablezca las contraseñas de las cuentas expuestas.",
+        "Elimine la persistencia asociada, reimagine si hay compromiso confirmado y busque los mismos hashes en el resto de la flota."
+      ],
+      "severity_rationale": "Medium es adecuado: el patrón es típico de inyección maliciosa, pero también lo usan herramientas legítimas, por lo que exige contexto antes de escalar."
+    },
+    "en": {
+      "summary": "A process created a thread in another process whose start address is LoadLibraryA in kernel32.dll, the classic DLL injection pattern. This is a hunting rule, so validate context before escalating.",
+      "what_it_detects": "Remote thread creation events (Sysmon Event ID 8) where StartModule ends with \\kernel32.dll and StartFunction is exactly LoadLibraryA, meaning the new thread will load a DLL path supplied by the source process.",
+      "why_it_matters": "DLL injection (ATT&CK T1055.001) runs code inside a legitimate process to hide, inherit its privileges or read its memory, such as credentials in lsass.exe or browser sessions.",
+      "triage_steps": [
+        "Identify SourceImage and TargetImage: path, signature, hash and accounts (SourceUser, TargetUser). Unsigned sources or sources in temp or user folders are suspicious.",
+        "Assess the target: injection into lsass.exe, explorer.exe, svchost.exe, browsers, or processes of another user or higher integrity raises priority.",
+        "On the same host within +/- 15 minutes, look for image load events (Sysmon ID 7) in TargetProcessId to identify the loaded DLL and its path.",
+        "Review the SourceImage process tree: parent, CommandLine, and whether it arrived via email, download or remote execution.",
+        "Check whether the target process opened network connections, accessed lsass or spawned children after the injection.",
+        "Search prior alerts for the same host, user and SourceImage hash, and whether this source-target pair is routine across other hosts."
+      ],
+      "false_positives": [
+        "Security, EDR or antivirus products injecting monitoring modules into processes.",
+        "Debuggers, profilers or APM agents used by developers.",
+        "Game overlays, anti-cheat, screen recorders, and accessibility or UI automation tools.",
+        "Legacy software or installers that extend applications through DLL injection."
+      ],
+      "response_steps": [
+        "Confirm the source-target pair with the host or software owner; if known and approved, document a narrow exclusion by path and signer.",
+        "If suspicious, isolate the endpoint via EDR and capture memory of the involved processes before terminating them.",
+        "Collect the injected DLL and SourceImage, hash them and analyze in a controlled environment.",
+        "If the target was lsass.exe or another credential-holding process, reset passwords for exposed accounts.",
+        "Remove related persistence, reimage on confirmed compromise, and sweep the fleet for the same hashes."
+      ],
+      "severity_rationale": "Medium fits: the pattern is typical of malicious injection, but legitimate tools also use it, so context is required before escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in a user temp folder injects a DLL into explorer.exe via LoadLibraryA",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-03-14 10:22:41.118",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\updater.exe",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "NewThreadId": 7712,
+          "StartAddress": "0x00007FFB2C1E0B40",
+          "StartModule": "C:\\Windows\\System32\\kernel32.dll",
+          "StartFunction": "LoadLibraryA",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "32-bit injector targets a process with the SysWOW64 kernel32.dll LoadLibraryA",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2024-03-15 08:05:12.630",
+          "SourceProcessId": 3304,
+          "SourceImage": "C:\\ProgramData\\svc\\inj.exe",
+          "TargetProcessId": 2980,
+          "TargetImage": "C:\\Program Files (x86)\\Example\\app.exe",
+          "NewThreadId": 5120,
+          "StartAddress": "0x76A21E30",
+          "StartModule": "C:\\Windows\\SysWOW64\\KERNEL32.DLL",
+          "StartFunction": "LoadLibraryA",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Remote thread starting at LoadLibraryW (wide-char variant) does not match the exact StartFunction value",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-03-14 11:02:09.400",
+          "SourceProcessId": 1880,
+          "SourceImage": "C:\\Program Files\\ExampleVendor\\Agent\\agent.exe",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "NewThreadId": 6604,
+          "StartAddress": "0x00007FFB2C1E0C10",
+          "StartModule": "C:\\Windows\\System32\\kernel32.dll",
+          "StartFunction": "LoadLibraryW",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Remote thread from csrss.exe starting in KernelBase.dll, not kernel32.dll LoadLibraryA",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-03-14 11:15:33.020",
+          "SourceProcessId": 620,
+          "SourceImage": "C:\\Windows\\System32\\csrss.exe",
+          "TargetProcessId": 5012,
+          "TargetImage": "C:\\Windows\\System32\\cmd.exe",
+          "NewThreadId": 8020,
+          "StartAddress": "0x00007FFB2A3F2B20",
+          "StartModule": "C:\\Windows\\System32\\KERNELBASE.dll",
+          "StartFunction": "CtrlRoutine",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

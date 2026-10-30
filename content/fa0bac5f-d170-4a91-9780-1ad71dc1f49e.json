@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "fa0bac5f-d170-4a91-9780-1ad71dc1f49e",
+    "title": "ADCS - Certighost Ghost Machine Account Creation",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_ghost_machine_account_creation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_ghost_machine_account_creation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1136.002",
+      "T1649"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se creó en Active Directory una cuenta de equipo cuyo nombre empieza con 'GHOST' y termina en '$' (evento 4741). Ese patrón coincide con la herramienta pública de explotación de Certighost (CVE-2026-54121).",
+      "what_it_detects": "El evento de seguridad 4741 (cuenta de equipo creada) cuando TargetUserName empieza con 'GHOST' y termina en '$'. La prueba de concepto de Certighost crea esta cuenta de máquina temporal antes de pedirle a AD CS un certificado falsificado de controlador de dominio.",
+      "why_it_matters": "El atacante usa la cuenta para solicitar un certificado que lleva el SID y el nombre DNS de un DC. Con ese certificado puede autenticarse como el DC mediante PKINIT y ejecutar DCSync, lo que compromete todo el dominio. Corresponde a ATT&CK T1136.002 (creación de cuenta de dominio) y T1649 (robo o falsificación de certificados de autenticación).",
+      "triage_steps": [
+        "Registre TargetUserName, TargetDomainName, el DC que generó el evento y la hora. Confirme con el equipo de directorio que nadie aprovisionó esta cuenta a propósito.",
+        "Identifique al creador con SubjectUserName y SubjectLogonId. Pivote a los eventos 4624 con ese logon ID en el mismo DC para obtener la IpAddress de origen y la estación de trabajo.",
+        "En los servidores de la CA, busque eventos 4886/4887 en +/- 15 minutos con solicitudes de la cuenta GHOST o certificados emitidos a nombres de DC.",
+        "En los DC, busque solicitudes de TGT (4768) para cuentas de máquina de DC con preautenticación por certificado (PreAuthType 16) desde IP inesperadas.",
+        "Busque DCSync: evento 4662 con GUID de replicación (DS-Replication-Get-Changes y Get-Changes-All) originado en cuentas o equipos que no son DC.",
+        "Verifique si hay un 4743 (cuenta eliminada) para la misma cuenta GHOST, porque el exploit puede borrarla al terminar. Revise alertas previas del creador y la actividad de procesos en su equipo."
+      ],
+      "false_positives": [
+        "La regla no indica ninguno. Una cuenta así solo sería legítima con una convención de nombres inusual, por ejemplo en un laboratorio o en un ejercicio de red team autorizado. Confírmelo con el responsable antes de cerrar."
+      ],
+      "response_steps": [
+        "Si se confirma que no está autorizada, deshabilite la cuenta GHOST y consérvela como evidencia. Deshabilite o restablezca al usuario creador y aísle el equipo de origen.",
+        "Revoque todos los certificados emitidos a la cuenta GHOST o a identidades de DC falsificadas, y revise las plantillas de AD CS y la configuración de la CA.",
+        "Si hay PKINIT como DC o DCSync, trátelo como un compromiso total del dominio: rote krbtgt dos veces, restablezca las credenciales del DC afectado y las privilegiadas, y escale a respuesta a incidentes.",
+        "Aplique la corrección del fabricante para CVE-2026-54121, ponga ms-DS-MachineAccountQuota en 0 y mantenga activa la auditoría de cuentas de equipo."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque el patrón de nombre pertenece a una herramienta de explotación concreta y casi nunca se crea una cuenta así de forma legítima. La cadena de ataque lleva directamente a suplantar un DC y tomar el control del dominio."
+    },
+    "en": {
+      "summary": "A computer account whose name starts with 'GHOST' and ends with '$' was created in Active Directory (event 4741). This name pattern matches the public Certighost (CVE-2026-54121) exploit tooling.",
+      "what_it_detects": "Security event 4741 (computer account created) where TargetUserName starts with 'GHOST' and ends with '$'. The Certighost proof-of-concept creates this temporary machine account before it requests a forged Domain Controller certificate from AD CS.",
+      "why_it_matters": "The attacker uses the account to enroll for a certificate that carries a DC's SID and DNS name. With that certificate they can authenticate as the DC through PKINIT and run DCSync, which compromises the whole domain. This maps to ATT&CK T1136.002 (domain account creation) and T1649 (steal or forge authentication certificates).",
+      "triage_steps": [
+        "Record TargetUserName, TargetDomainName, the DC that logged the event and the event time. Confirm with the directory team that nobody provisioned this account on purpose.",
+        "Identify the creator from SubjectUserName and SubjectLogonId. Pivot to 4624 events with that logon ID on the same DC to get the source IpAddress and workstation.",
+        "On the CA servers, search events 4886/4887 within +/- 15 minutes for certificate requests by the GHOST account or certificates issued to DC names.",
+        "On DCs, look for 4768 TGT requests for DC machine accounts that used certificate pre-authentication (PreAuthType 16) from unexpected IP addresses.",
+        "Hunt for DCSync: event 4662 with replication GUIDs (DS-Replication-Get-Changes and Get-Changes-All) from accounts or hosts that are not DCs.",
+        "Check for 4743 (account deleted) for the same GHOST account, since exploit cleanup may remove it. Review the creator's earlier alerts and their host's process activity."
+      ],
+      "false_positives": [
+        "The rule lists none. A matching account would only be legitimate under an unusual naming convention, for example a lab or a sanctioned red-team exercise. Confirm with the account owner before closing."
+      ],
+      "response_steps": [
+        "Once confirmed unauthorized, disable the GHOST account and keep it for evidence. Disable or reset the creating user and isolate the source host.",
+        "Revoke every certificate issued to the GHOST account or to forged DC identities, then review AD CS templates and the CA configuration.",
+        "If you see PKINIT as a DC or DCSync, treat it as a full domain compromise: rotate krbtgt twice, reset the affected DC and privileged credentials, and escalate to incident response.",
+        "Apply the vendor fix for CVE-2026-54121, set ms-DS-MachineAccountQuota to 0, and keep computer account auditing enabled."
+      ],
+      "severity_rationale": "High fits because the name pattern belongs to specific exploit tooling and an account like this is rarely created legitimately. The attack chain leads straight to impersonating a DC and taking over the domain."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A regular domain user creates the Certighost-style machine account GHOST7QK2M$ by using the machine account quota.",
+        "event": {
+          "EventID": 4741,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "GHOST7QK2M$",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-4721",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21",
+          "SamAccountName": "GHOST7QK2M$",
+          "DnsHostName": "-",
+          "UserAccountControl": "%%2087"
+        }
+      },
+      {
+        "description": "Lowercase variant ghostx91$ still matches because Sigma string matching is case-insensitive.",
+        "event": {
+          "EventID": 4741,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "TargetUserName": "ghostx91$",
+          "TargetDomainName": "ANDES",
+          "SubjectUserName": "mlopez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x5B19C4",
+          "SamAccountName": "ghostx91$"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate workstation join: the computer account name does not start with GHOST.",
+        "event": {
+          "EventID": 4741,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "WS-0142$",
+          "TargetDomainName": "ANDES",
+          "SubjectUserName": "svc-deploy",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x2A11F0",
+          "SamAccountName": "WS-0142$",
+          "DnsHostName": "WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Deletion of a GHOST account (event 4743) is not an account creation event, so this rule does not fire on it.",
+        "event": {
+          "EventID": 4743,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "GHOST7QK2M$",
+          "TargetDomainName": "ANDES",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3E7A21"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

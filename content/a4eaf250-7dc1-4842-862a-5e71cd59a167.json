@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "a4eaf250-7dc1-4842-862a-5e71cd59a167",
+    "title": "Suspicious RazerInstaller Explorer Subprocess",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Maxime Thiebaut",
+    "path": "2021/Exploits/RazerInstaller-LPE-Exploit/proc_creation_win_exploit_other_razorinstaller_lpe.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Exploits/RazerInstaller-LPE-Exploit/proc_creation_win_exploit_other_razorinstaller_lpe.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1553"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "RazerInstaller.exe inició un proceso hijo con integridad System fuera de su carpeta de instalación. Puede ser un usuario que abusa del diálogo de selección de carpeta del instalador para obtener una shell como LOCAL SYSTEM.",
+      "what_it_detects": "Eventos de creación de procesos en Windows cuyo ParentImage termina en \\RazerInstaller.exe e IntegrityLevel es System (S-1-16-16384), salvo los procesos cuyo Image empieza por C:\\Windows\\Installer\\Razer\\Installer\\.",
+      "why_it_matters": "Al conectar un dispositivo Razer, Windows puede ejecutar RazerInstaller como SYSTEM. El diálogo para elegir la carpeta de instalación permite abrir explorer.exe, PowerShell o cmd con esos privilegios. Así un usuario sin privilegios obtiene control total del endpoint. La regla lo etiqueta como escalamiento de privilegios y T1553 (subversión de controles de confianza).",
+      "triage_steps": [
+        "Revise Image, CommandLine y User del proceso hijo. Una shell (cmd.exe, powershell.exe) o una herramienta administrativa con integridad System es muy sospechosa.",
+        "Confirme que ParentImage es la ruta esperada de RazerInstaller.exe y valide el hash y la firma digital del binario padre.",
+        "Si el hijo es explorer.exe, busque sus propios procesos hijo: una shell o un binario lanzado desde ese explorer.exe confirma el abuso.",
+        "Identifique qué usuario tenía la sesión interactiva activa en el host y si conectó un periférico Razer poco antes (eventos PnP, instalación de drivers).",
+        "En el mismo host, dentro de +/- 15 minutos, busque creación de cuentas, cambios en el grupo Administradores, servicios nuevos, tareas programadas o desactivación del antivirus.",
+        "Busque alertas previas del mismo host o usuario y otros endpoints con procesos hijo de RazerInstaller.exe con integridad System."
+      ],
+      "false_positives": [
+        "Un usuario elige otra carpeta de instalación y el instalador abre explorer.exe sin otros procesos hijo después.",
+        "Un despliegue corporativo del software Razer que ejecuta componentes auxiliares fuera de C:\\Windows\\Installer\\Razer\\Installer\\; valídelo con el equipo de TI."
+      ],
+      "response_steps": [
+        "Confirme con el usuario y con TI si hubo una instalación legítima de Razer; conserve los árboles de procesos y la telemetría del host.",
+        "Si se confirma una shell u otra actividad como SYSTEM, aísle el endpoint de la red y finalice los procesos sospechosos.",
+        "Revise y revierta la persistencia creada (cuentas, servicios, tareas) y restablezca las credenciales expuestas en el host.",
+        "Actualice o elimine el software Razer vulnerable y restrinja la instalación automática de software de periféricos mediante políticas de dispositivos."
+      ],
+      "severity_rationale": "El nivel high es adecuado: un proceso interactivo lanzado como SYSTEM desde un instalador es una vía conocida de escalamiento local, aunque una selección de carpeta legítima puede generar ruido."
+    },
+    "en": {
+      "summary": "RazerInstaller.exe started a child process with System integrity outside its own installer folder. A user may be abusing the installer's folder-selection dialog to get a LOCAL SYSTEM shell.",
+      "what_it_detects": "Windows process creation events where ParentImage ends with \\RazerInstaller.exe and IntegrityLevel is System (S-1-16-16384), excluding processes whose Image starts with C:\\Windows\\Installer\\Razer\\Installer\\.",
+      "why_it_matters": "When a Razer device is plugged in, Windows may run RazerInstaller as SYSTEM. Its install-folder dialog can launch explorer.exe, PowerShell or cmd with those privileges, giving an unprivileged user full control of the endpoint. The rule tags this as privilege escalation and T1553 (Subvert Trust Controls).",
+      "triage_steps": [
+        "Check the child process Image, CommandLine and User. A shell (cmd.exe, powershell.exe) or admin tool running with System integrity is highly suspicious.",
+        "Confirm ParentImage is the expected RazerInstaller.exe path and validate the parent binary's hash and digital signature.",
+        "If the child is explorer.exe, look for its own child processes; a shell or binary launched from that explorer.exe confirms abuse.",
+        "Identify the interactive user on the host and whether a Razer peripheral was connected shortly before (PnP and driver install events).",
+        "On the same host within +/- 15 minutes, look for new accounts, Administrators group changes, new services, scheduled tasks or antivirus tampering.",
+        "Search for earlier alerts on the same host or user, and other endpoints with System-integrity children of RazerInstaller.exe."
+      ],
+      "false_positives": [
+        "A user picks a different install folder and the installer opens explorer.exe with no further child processes.",
+        "A corporate Razer software rollout running helper components outside C:\\Windows\\Installer\\Razer\\Installer\\; confirm with IT."
+      ],
+      "response_steps": [
+        "Confirm with the user and IT whether a legitimate Razer install happened; preserve process trees and host telemetry.",
+        "If a shell or other SYSTEM activity is confirmed, isolate the endpoint and terminate the suspicious processes.",
+        "Review and revert any persistence created (accounts, services, tasks) and reset credentials exposed on the host.",
+        "Update or remove the vulnerable Razer software and restrict automatic peripheral software installation through device policies."
+      ],
+      "severity_rationale": "High fits because an interactive process spawned as SYSTEM from an installer is a known local privilege escalation path, though legitimate folder selection can cause some noise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell launched as SYSTEM from the RazerInstaller folder-selection dialog",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "CommandLine": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoExit -Command Set-Location -LiteralPath 'C:\\Users\\jperez\\Desktop'",
+          "ParentImage": "C:\\Windows\\Installer\\Razer\\Installer\\RazerInstaller.exe",
+          "ParentCommandLine": "\"C:\\Windows\\Installer\\Razer\\Installer\\RazerInstaller.exe\" /showdevice",
+          "IntegrityLevel": "System"
+        }
+      },
+      {
+        "description": "explorer.exe spawned by RazerInstaller with System integrity recorded as SID",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\explorer.exe",
+          "CommandLine": "C:\\Windows\\explorer.exe /factory,{75dff2b7-6936-4c06-a8bb-676a7b00b24b} -Embedding",
+          "ParentImage": "C:\\Windows\\Installer\\Razer\\Installer\\RazerInstaller.exe",
+          "ParentCommandLine": "\"C:\\Windows\\Installer\\Razer\\Installer\\RazerInstaller.exe\" /showdevice",
+          "IntegrityLevel": "S-1-16-16384"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate helper child running from the Razer installer folder, excluded by the filter",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\Installer\\Razer\\Installer\\App\\RazerInstallerHelper.exe",
+          "CommandLine": "\"C:\\Windows\\Installer\\Razer\\Installer\\App\\RazerInstallerHelper.exe\" --update",
+          "ParentImage": "C:\\Windows\\Installer\\Razer\\Installer\\RazerInstaller.exe",
+          "ParentCommandLine": "\"C:\\Windows\\Installer\\Razer\\Installer\\RazerInstaller.exe\" /showdevice",
+          "IntegrityLevel": "System"
+        }
+      },
+      {
+        "description": "User-launched RazerInstaller opening explorer.exe at Medium integrity",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0318.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\explorer.exe",
+          "CommandLine": "C:\\Windows\\explorer.exe /factory,{75dff2b7-6936-4c06-a8bb-676a7b00b24b} -Embedding",
+          "ParentImage": "C:\\Users\\jperez\\Downloads\\RazerInstaller.exe",
+          "ParentCommandLine": "\"C:\\Users\\jperez\\Downloads\\RazerInstaller.exe\"",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

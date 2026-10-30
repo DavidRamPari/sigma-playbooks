@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "90b63c33-2b97-4631-a011-ceb0f47b77c3",
+    "title": "Potential Suspicious Execution From GUID Like Folder Names",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/process_creation/proc_creation_win_susp_execution_from_guid_folder_names.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_susp_execution_from_guid_folder_names.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se inició un proceso cuya línea de comandos apunta a un archivo dentro de una carpeta con nombre tipo GUID en %TEMP% o %APPDATA%, sin que la imagen ejecutada esté en esa carpeta. Es una pista de hunting de baja severidad inspirada en la actividad del loader IcedID.",
+      "what_it_detects": "Eventos de creación de procesos donde CommandLine contiene \\AppData\\Local\\Temp\\ o \\AppData\\Roaming\\ y además '\\{' y '}\\' (carpeta {GUID}), excluyendo los casos en que Image está en una carpeta GUID, Image es nulo, o es drvinst.exe o msiexec.exe.",
+      "why_it_matters": "Loaders como IcedID dejan payloads en carpetas aleatorias tipo GUID en rutas escribibles por el usuario y los ejecutan con binarios como rundll32.exe para confundirse con instaladores (ATT&CK T1027, Archivos o información ofuscados).",
+      "triage_steps": [
+        "Revise CommandLine: identifique el archivo dentro de la carpeta {GUID}, su extensión (.dll, .dat, .js) y cualquier export u ordinal como ',#1' pasado a rundll32.",
+        "Revise Image y ParentImage: rundll32.exe, regsvr32.exe, wscript.exe o cmd.exe lanzados por Office, un navegador o explorer.exe son más sospechosos que un instalador conocido.",
+        "Obtenga el hash y la firma del archivo referenciado; consulte su reputación y si otros endpoints tienen el mismo hash.",
+        "Revise la creación de archivos en esa carpeta GUID en el mismo host en +/- 15 minutos para hallar el dropper (adjunto, ISO, ZIP, descarga).",
+        "Busque procesos hijos y conexiones de red del proceso, sobre todo beaconing a dominios o IP inusuales, y nuevas tareas programadas o claves Run.",
+        "Pivote por el usuario: otros hosts con el mismo patrón de línea de comandos y alertas previas para este usuario o host."
+      ],
+      "false_positives": [
+        "Instaladores y actualizadores que descomprimen componentes en %TEMP%\\{GUID}\\ y los ejecutan con un proceso auxiliar no cubierto por los filtros de msiexec o drvinst.",
+        "Aplicaciones legítimas que guardan plugins o caché en rutas %APPDATA%\\{GUID}\\, como algunos clientes de colaboración o de actualización."
+      ],
+      "response_steps": [
+        "Verifique si el archivo es un componente firmado de un instalador conocido; si es benigno, agregue un filtro acotado por Image y proceso padre.",
+        "Si es sospechoso, aísle el endpoint con el EDR y preserve el contenido de la carpeta GUID y la memoria antes de eliminar nada.",
+        "Erradique: elimine el payload y la persistencia (tareas programadas, claves Run) y bloquee los hash e indicadores de C2 identificados.",
+        "Recupere: restablezca las credenciales del usuario si hay posible robo y busque los mismos indicadores en toda la flota."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque esta regla de hunting coincide con frecuencia con instaladores legítimos y solo cobra relevancia con padres sospechosos, payloads sin firma o actividad posterior."
+    },
+    "en": {
+      "summary": "A process was started whose command line points to a file inside a GUID-named folder under %TEMP% or %APPDATA%, while the executing image itself is not in such a folder. This is a low-severity hunting lead modeled on IcedID loader activity.",
+      "what_it_detects": "Process creation events where CommandLine contains \\AppData\\Local\\Temp\\ or \\AppData\\Roaming\\ and also both '\\{' and '}\\' (a {GUID} folder), excluding cases where Image is itself in a GUID folder, Image is empty, or Image is drvinst.exe or msiexec.exe.",
+      "why_it_matters": "Malware loaders such as IcedID drop payloads into random GUID-like folders in user-writable paths and launch them through hosts like rundll32.exe, so they blend in with installer noise (ATT&CK T1027, Obfuscated Files or Information).",
+      "triage_steps": [
+        "Read CommandLine: identify the file referenced inside the {GUID} folder, its extension (.dll, .dat, .js) and any export or ordinal such as ',#1' passed to rundll32.",
+        "Check Image and ParentImage: rundll32.exe, regsvr32.exe, wscript.exe or cmd.exe spawned by Office, a browser or explorer.exe is more suspicious than a known installer.",
+        "Obtain the hash and signature of the referenced file; check reputation and whether other endpoints hold the same hash.",
+        "Review file creation events in that GUID folder on the same host within +/- 15 minutes to find the dropper (email attachment, ISO, ZIP, browser download).",
+        "Look for child processes and network connections from the process, especially beaconing to unusual domains or IPs, and new scheduled tasks or Run keys.",
+        "Pivot on the user: other hosts with the same command-line pattern and earlier alerts for this user or host."
+      ],
+      "false_positives": [
+        "Software installers and updaters that unpack components into %TEMP%\\{GUID}\\ folders and run them via a helper process not covered by the msiexec or drvinst filters.",
+        "Legitimate applications storing plugins or caches in %APPDATA%\\{GUID}\\ paths, such as some collaboration or update clients."
+      ],
+      "response_steps": [
+        "Verify: confirm whether the file is a signed, known installer component; if benign, add a narrowly scoped filter on Image and parent.",
+        "If suspicious, isolate the endpoint through EDR and preserve the GUID folder contents and memory before removal.",
+        "Eradicate: remove the payload and any persistence (scheduled tasks, Run keys) and block identified hashes and C2 indicators.",
+        "Recover: reset the user's credentials if theft is plausible, and hunt for the same indicators across the fleet."
+      ],
+      "severity_rationale": "Low fits because this hunting rule regularly matches benign installers and only becomes significant with suspicious parents, unsigned payloads or follow-on activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rundll32 launched by explorer loads a DLL from a GUID folder under %TEMP%, IcedID-style",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "rundll32.exe \"C:\\Users\\jperez\\AppData\\Local\\Temp\\{8A1F3C2D-4B5E-4F60-9A7B-1C2D3E4F5A6B}\\Ixeyuvi.dll\",#1",
+          "CurrentDirectory": "C:\\Users\\jperez\\Desktop\\"
+        }
+      },
+      {
+        "description": "regsvr32 loads a .dat file from a GUID folder under %APPDATA%",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207",
+          "User": "ANDES\\mlopez",
+          "Image": "C:\\Windows\\SysWOW64\\regsvr32.exe",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "regsvr32.exe /s \"C:\\Users\\mlopez\\AppData\\Roaming\\{3D9E7B10-AC42-4E8F-B5D1-77F0E2C9A410}\\license.dat\"",
+          "CurrentDirectory": "C:\\Users\\mlopez\\"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "msiexec running a package from a GUID folder in %TEMP%, excluded by filter_main_msiexec",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\msiexec.exe",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "\"C:\\Windows\\System32\\msiexec.exe\" /i \"C:\\Users\\jperez\\AppData\\Local\\Temp\\{5C2B8E91-0F3A-4D7C-9E61-A2B4C6D8E0F1}\\setup.msi\" /qn"
+        }
+      },
+      {
+        "description": "Installer executable that itself lives in the GUID folder, excluded by filter_main_image_guid",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0311",
+          "User": "ANDES\\rgomez",
+          "Image": "C:\\Users\\rgomez\\AppData\\Local\\Temp\\{B7E4A1C3-62D5-4F89-8A0B-3C5D7E9F1A2B}\\setup.exe",
+          "ParentImage": "C:\\Users\\rgomez\\Downloads\\AppInstaller.exe",
+          "CommandLine": "\"C:\\Users\\rgomez\\AppData\\Local\\Temp\\{B7E4A1C3-62D5-4F89-8A0B-3C5D7E9F1A2B}\\setup.exe\" /silent"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

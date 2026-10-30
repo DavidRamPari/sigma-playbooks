@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "868df2d1-0939-4562-83a7-27408c4a1ada",
+    "title": "Shell Context Menu Command Tampering",
+    "level": "low",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/registry/registry_set/registry_set_shell_context_menu_tampering.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/registry/registry_set/registry_set_shell_context_menu_tampering.yml",
+    "license": "DRL-1.1",
+    "techniques": [],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se escribió un valor bajo una clave de comando del menú contextual del shell (Software\\Classes\\...\\shell\\...\\command\\). Es una regla de threat hunting: suele reflejar instalaciones legítimas, pero también puede indicar persistencia que se ejecuta cuando el usuario usa el menú contextual o abre un archivo.",
+      "what_it_detects": "Eventos registry_set (por ejemplo, Sysmon Event ID 13) cuyo TargetObject contiene a la vez '\\Software\\Classes\\', '\\shell\\' y '\\command\\'. Esto cubre verbos nuevos o modificados del menú contextual y los manejadores 'open' de tipos de archivo, tanto en HKLM como en HKU/HKCU.",
+      "why_it_matters": "Si un atacante agrega o modifica un comando del shell, su payload se ejecuta cada vez que el usuario hace clic derecho o abre un tipo de archivo. Es una persistencia por ejecución activada por eventos que se mezcla con la actividad normal del Explorador.",
+      "triage_steps": [
+        "Lee TargetObject: identifica la clase (*, Directory, Directory\\Background, txtfile, etc.) y el verbo, y determina si es un verbo nuevo o un manejador existente secuestrado, como shell\\open\\command.",
+        "Revisa Details: ¿el comando apunta a rutas escribibles por el usuario (AppData, Temp, ProgramData), a LOLBins (powershell, mshta, rundll32, cmd /c) o a argumentos codificados?",
+        "Revisa Image y User: un instalador firmado o msiexec es lo esperado; reg.exe, powershell.exe o un binario desconocido en una ruta del usuario resultan sospechosos.",
+        "Verifica el binario que referencia Details: existencia, firma, hash y reputación, y su fecha de creación en el disco.",
+        "Busca en el mismo host, +/- 15 minutos, eventos de creación de procesos, instalaciones de software y archivos nuevos que coincidan con la ruta del comando.",
+        "Busca procesos hijos de explorer.exe que ejecuten ese comando después del cambio, lo que confirmaría que el payload se disparó.",
+        "Busca el mismo TargetObject o el mismo valor de Details en otros hosts y revisa alertas previas de este usuario o equipo."
+      ],
+      "false_positives": [
+        "Software que agrega entradas al menú contextual, como PowerShell, Everything, Git, VS Code, 7-Zip, WinRAR o antivirus.",
+        "Actualizaciones o reparaciones de aplicaciones que reescriben sus manejadores de asociación de archivos.",
+        "Cambios de asociación hechos por el usuario o por GPO o herramientas de gestión como Intune o SCCM."
+      ],
+      "response_steps": [
+        "Confirma con el usuario o el área de TI si el cambio corresponde a un software autorizado antes de actuar.",
+        "Si es malicioso, aísla el endpoint y conserva una exportación de la clave del registro y el binario referenciado.",
+        "Elimina o restaura el valor del comando a su estado original solo después de documentarlo; pon en cuarentena el payload.",
+        "Investiga cómo se obtuvo el acceso inicial, rota las credenciales del usuario afectado y busca la misma clave en toda la flota."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque las instalaciones legítimas modifican estas claves con frecuencia; la alerta es una pista de hunting que requiere contexto antes de escalarla."
+    },
+    "en": {
+      "summary": "A value was written under a shell context menu command key (Software\\Classes\\...\\shell\\...\\command\\). This is a hunting rule: usually a software install, but possibly persistence triggered when the user right-clicks or opens a file.",
+      "what_it_detects": "registry_set events (for example Sysmon Event ID 13) where TargetObject contains '\\Software\\Classes\\', '\\shell\\' and '\\command\\'. This covers new or changed context menu verbs and file-type 'open' handlers in HKLM and HKU/HKCU.",
+      "why_it_matters": "An attacker who adds or changes a shell command gets their payload run whenever the user right-clicks or opens that file type. It is event-triggered persistence that blends into normal Explorer activity.",
+      "triage_steps": [
+        "Read TargetObject: note the class (*, Directory, Directory\\Background, txtfile) and verb, and decide whether it is a new verb or a hijacked existing handler such as shell\\open\\command.",
+        "Inspect Details: does the command point to user-writable paths (AppData, Temp, ProgramData), LOLBins (powershell, mshta, rundll32, cmd /c) or encoded arguments?",
+        "Check Image and User: a signed installer or msiexec is expected; reg.exe, powershell.exe or an unknown binary in a user path is suspicious.",
+        "Verify the binary referenced in Details: presence, signature, hash, reputation and file creation time.",
+        "Pivot on the same host +/- 15 minutes for process creation, software installs and new files matching the command path.",
+        "Look for explorer.exe child processes running that command after the change, which shows the payload fired.",
+        "Search other hosts for the same TargetObject or Details value and review earlier alerts for this user or host."
+      ],
+      "false_positives": [
+        "Software adding context menu entries, such as PowerShell, Everything, Git, VS Code, 7-Zip, WinRAR or antivirus tools.",
+        "Application updates or repairs rewriting their file association handlers.",
+        "User-made file association changes, or changes pushed by GPO or management tools like Intune or SCCM."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT whether the change matches authorized software before acting.",
+        "If malicious, isolate the endpoint and preserve an export of the registry key and the referenced binary.",
+        "After documenting it, delete or restore the command value and quarantine the payload.",
+        "Investigate the initial access, rotate the affected user's credentials and hunt for the same key across the fleet."
+      ],
+      "severity_rationale": "Low fits because legitimate installers change these keys often; the alert is a hunting lead that needs context before escalation."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell adds a context menu verb for all files in the user hive that runs a script from AppData",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-07 14:03:12.481",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Classes\\*\\shell\\Scan with Defender\\command\\(Default)",
+          "Details": "powershell.exe -w hidden -ep bypass -File C:\\Users\\jperez\\AppData\\Roaming\\upd\\svc.ps1",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "reg.exe hijacks the txtfile open handler in HKLM",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-07 15:21:44.102",
+          "ComputerName": "WS-0177.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\txtfile\\shell\\open\\command\\(Default)",
+          "Details": "C:\\ProgramData\\cache\\loader.exe \"%1\"",
+          "User": "ANDES\\adm-lgomez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Git installer sets the DefaultIcon of its context menu verb, not the command subkey",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-07 09:12:05.330",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Users\\jperez\\Downloads\\Git-2.44.0-64-bit.tmp",
+          "TargetObject": "HKLM\\SOFTWARE\\Classes\\Directory\\shell\\git_shell\\DefaultIcon\\(Default)",
+          "Details": "C:\\Program Files\\Git\\git-bash.exe",
+          "User": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Explorer writes a value under the Explorer key, outside Software\\Classes shell command keys",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "UtcTime": "2024-03-07 10:40:51.009",
+          "ComputerName": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\explorer.exe",
+          "TargetObject": "HKU\\S-1-5-21-1111111111-2222222222-3333333333-1104\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU\\a",
+          "Details": "cmd\\1",
+          "User": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

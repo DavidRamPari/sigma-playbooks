@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "53c15703-b04c-42bb-9055-1937ddfb3392",
+    "title": ".Class Extension URI Ending Request",
+    "level": "medium",
+    "status": "test",
+    "author": "Andreas Hunkeler (@Karneades)",
+    "path": "web/proxy_generic/proxy_susp_class_extension_request.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/web/proxy_generic/proxy_susp_class_extension_request.yml",
+    "license": "DRL-1.1",
+    "techniques": [],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un cliente detrás del proxy solicitó una URI que termina en \".class\", es decir, posiblemente descargó una clase Java compilada. Es una regla de hunting: puede ser actividad legítima, pero también el paso de carga remota de clases de una explotación tipo Log4Shell.",
+      "what_it_detects": "Eventos de proxy cuyo campo c-uri termina en \".class\" (sin distinguir mayúsculas y minúsculas), sin importar host, método ni user agent.",
+      "why_it_matters": "En Log4Shell, un servidor vulnerable resuelve una cadena JNDI y descarga y ejecuta una clase Java remota desde la infraestructura del atacante. Esto corresponde a acceso inicial mediante explotación de una aplicación expuesta y puede llevar a ejecución remota de código.",
+      "triage_steps": [
+        "Identifique el c-ip de origen: confirme si es un servidor que ejecuta Java (Tomcat, Elasticsearch, VMware, apps internas) o una estación de usuario.",
+        "Revise cs-host y la URL completa en c-uri: ¿es una IP externa, un puerto no estándar o un dominio recién registrado? Consulte la reputación.",
+        "Verifique c-useragent: un user agent \"Java/1.x\" desde un servidor es mucho más sospechoso que un navegador.",
+        "Busque en los logs web y del WAF del mismo host, en las 24 horas previas, solicitudes entrantes con \"${jndi:\" en URI, headers o user agent.",
+        "Revise conexiones salientes del mismo host en +/- 15 minutos hacia puertos LDAP/RMI (389, 636, 1389, 1099) o hacia el mismo destino.",
+        "En el EDR del host, busque procesos hijos del proceso java (sh, bash, cmd, powershell, curl, wget) poco después de la descarga.",
+        "Compruebe sc-status y el tamaño de la respuesta para confirmar que la clase se descargó, y busque alertas previas para el mismo host o destino."
+      ],
+      "false_positives": [
+        "Applets Java o aplicaciones Java Web Start que cargan clases desde servidores internos o de proveedores.",
+        "Aplicaciones empresariales o herramientas de desarrollo que descargan clases individuales desde repositorios internos.",
+        "Escáneres de vulnerabilidades autorizados que prueban Log4Shell con su propia infraestructura de callback.",
+        "Rastreadores o desarrolladores que navegan por listados de directorios con archivos .class."
+      ],
+      "response_steps": [
+        "Valide el contexto: si el origen es un servidor y el destino es externo o desconocido, escale como posible explotación activa.",
+        "Contenga: bloquee el destino en el proxy y el firewall y, tras confirmar, aísle el host desde el EDR.",
+        "Si es posible, obtenga la clase descargada desde la caché del proxy o el tráfico capturado y calcule su hash para analizarla.",
+        "Erradique: actualice o mitigue Log4j en el host, elimine persistencia y rote las credenciales expuestas en el servidor.",
+        "Recupere y aprenda: restaure servicios desde una base limpia, busque el mismo destino en toda la flota y documente las exclusiones legítimas."
+      ],
+      "severity_rationale": "Medium es adecuado porque descargar archivos .class suele ser legítimo, pero desde un servidor y hacia un destino externo puede indicar ejecución remota de código."
+    },
+    "en": {
+      "summary": "A client behind the proxy requested a URI ending in \".class\", which may be a download of a compiled Java class. This is a hunting rule: it can be benign, but it is also the remote class-loading step of Log4Shell-style exploitation.",
+      "what_it_detects": "Proxy events where the c-uri field ends with \".class\" (case-insensitive), regardless of host, method or user agent.",
+      "why_it_matters": "In Log4Shell, a vulnerable server resolves a JNDI string, then downloads and runs a remote Java class from attacker infrastructure. This is initial access through exploitation of an exposed application and can lead to remote code execution.",
+      "triage_steps": [
+        "Identify the source c-ip: is it a server running Java (Tomcat, Elasticsearch, internal apps) or a user workstation?",
+        "Review cs-host and the full c-uri: is it an external IP, a non-standard port or a newly registered domain? Check its reputation.",
+        "Check c-useragent: a \"Java/1.x\" user agent coming from a server is far more suspicious than a browser.",
+        "Search the same host's web and WAF logs for the previous 24 hours for inbound requests containing \"${jndi:\" in the URI, headers or user agent.",
+        "Review the same host's outbound connections within +/- 15 minutes to LDAP/RMI ports (389, 636, 1389, 1099) or to the same destination.",
+        "In EDR, look for child processes of java (sh, bash, cmd, powershell, curl, wget) shortly after the download.",
+        "Check sc-status and response size to confirm the class was delivered, and look for earlier alerts on the same host or destination."
+      ],
+      "false_positives": [
+        "Java applets or Java Web Start applications loading classes from internal or vendor servers.",
+        "Enterprise applications or developer tools fetching individual classes from internal repositories.",
+        "Authorized vulnerability scanners testing for Log4Shell with their own callback infrastructure.",
+        "Crawlers or developers browsing directory listings that contain .class files."
+      ],
+      "response_steps": [
+        "Validate context: if the source is a server and the destination is external or unknown, escalate as possible active exploitation.",
+        "Contain: block the destination at the proxy and firewall and, once confirmed, isolate the host through EDR.",
+        "If possible, retrieve the downloaded class from proxy cache or packet capture and hash it for analysis.",
+        "Eradicate: patch or mitigate Log4j on the host, remove persistence and rotate credentials exposed on the server.",
+        "Recover and learn: restore services from a clean baseline, hunt for the same destination fleet-wide and document legitimate exclusions."
+      ],
+      "severity_rationale": "Medium fits because .class downloads are often legitimate, yet from a server to an external destination they can indicate remote code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Java-based server fetches a remote class from an external IP on a non-standard port, typical of Log4Shell's second stage.",
+        "event": {
+          "c-uri": "http://203.0.113.45:8000/Exploit.class",
+          "cs-host": "203.0.113.45:8000",
+          "cs-method": "GET",
+          "c-ip": "192.0.2.20",
+          "c-useragent": "Java/1.8.0_181",
+          "sc-status": 200,
+          "sc-bytes": 1324
+        }
+      },
+      {
+        "description": "Uppercase extension still matches because Sigma string matching is case-insensitive.",
+        "event": {
+          "c-uri": "http://cdn.example.org/payloads/a/Loader.CLASS",
+          "cs-host": "cdn.example.org",
+          "cs-method": "GET",
+          "c-ip": "192.0.2.31",
+          "c-useragent": "Java/11.0.12",
+          "sc-status": 200,
+          "sc-bytes": 2048
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Request for a JAR archive from an internal Maven repository; the URI does not end in .class.",
+        "event": {
+          "c-uri": "https://repo.example.com/maven2/org/apache/logging/log4j/log4j-core/2.17.1/log4j-core-2.17.1.jar",
+          "cs-host": "repo.example.com",
+          "cs-method": "GET",
+          "c-ip": "192.0.2.55",
+          "c-useragent": "Apache-Maven/3.8.4",
+          "sc-status": 200,
+          "sc-bytes": 1790452
+        }
+      },
+      {
+        "description": "Web page whose path contains 'class' but ends in .html, so endswith '.class' does not match.",
+        "event": {
+          "c-uri": "https://intranet.example.com/training/class-schedule.html",
+          "cs-host": "intranet.example.com",
+          "cs-method": "GET",
+          "c-ip": "192.0.2.88",
+          "c-useragent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "sc-status": 200,
+          "sc-bytes": 8812
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

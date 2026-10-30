@@ -1,0 +1,159 @@
+{
+  "rule": {
+    "id": "eeb2e3dc-c1f4-40dd-9bd5-149ee465ad50",
+    "title": "Remote Thread Creation Via PowerShell",
+    "level": "medium",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community",
+    "path": "windows/create_remote_thread/create_remote_thread_win_powershell_generic.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/create_remote_thread/create_remote_thread_win_powershell_generic.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de PowerShell (powershell.exe o pwsh.exe) creó un hilo remoto en otro proceso. Es una regla de threat hunting: puede indicar inyección de código, pero también puede deberse a actividad legítima.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon Event ID 8) en los que SourceImage termina en \\powershell.exe o \\pwsh.exe. Se excluyen los casos en que SourceParentImage es CompatTelRunner.exe, el ejecutor de telemetría de compatibilidad de Windows.",
+      "why_it_matters": "Muchos frameworks ofensivos usan PowerShell para inyectar shellcode o DLL en otros procesos con CreateRemoteThread. Así ocultan la ejecución dentro de procesos confiables y evaden controles. La regla corresponde a ATT&CK T1059.001 (PowerShell) y suele estar ligada a inyección de procesos.",
+      "triage_steps": [
+        "Revise SourceImage, SourceParentImage, SourceUser y TargetImage. Desconfíe de destinos como lsass.exe, explorer.exe, svchost.exe, rundll32.exe o navegadores.",
+        "Revise StartAddress, StartModule y StartFunction. Si StartModule está vacío o el hilo inicia en memoria sin respaldo de módulo, es muy probable que haya shellcode inyectado.",
+        "Recupere el CommandLine del PowerShell de origen con su eventos de creación de proceso. Busque -enc, IEX, DownloadString, VirtualAlloc, Add-Type o reflection.",
+        "Revise los logs de Script Block Logging (Event ID 4104) del mismo host en una ventana de +/- 15 minutos para ver el script completo.",
+        "Si el destino fue lsass.exe, revise el acceso al proceso (Sysmon Event ID 10) y las conexiones de red que hizo el proceso destino después de la inyección.",
+        "Busque alertas anteriores del mismo host y usuario. Compruebe si el script o la herramienta de gestión que lo lanzó son conocidos en su entorno."
+      ],
+      "false_positives": [
+        "Herramientas de administración, monitoreo o EDR que usan PowerShell e interactúan con otros procesos.",
+        "Scripts de soporte o depuración que usan Add-Type y llamadas a la API de Win32 de forma legítima.",
+        "Componentes de telemetría o de compatibilidad de Windows que la exclusión de CompatTelRunner.exe no cubre."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o del script si la actividad es esperada. Si lo es, documéntela y agregue una exclusión específica.",
+        "Si confirma que fue malicioso, aísle el endpoint y capture memoria del proceso destino antes de terminarlo.",
+        "Termine los procesos de PowerShell y los procesos destino comprometidos. Elimine los mecanismos de persistencia relacionados.",
+        "Restablezca las credenciales del usuario. Si hubo acceso a lsass.exe, trate como comprometidas todas las credenciales que estaban en caché en el host.",
+        "Busque el mismo hash, CommandLine o patrón de inyección en el resto de los equipos."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: la creación de hilos remotos desde PowerShell es poco común y es típica de la inyección, pero esta regla de hunting también detecta herramientas legítimas."
+    },
+    "en": {
+      "summary": "A PowerShell process (powershell.exe or pwsh.exe) created a remote thread in another process. This is a hunting rule: the event may indicate code injection or legitimate tooling.",
+      "what_it_detects": "Remote thread creation events (Sysmon Event ID 8) where SourceImage ends in \\powershell.exe or \\pwsh.exe. Events whose SourceParentImage is CompatTelRunner.exe, the Windows compatibility telemetry runner, are excluded.",
+      "why_it_matters": "Offensive PowerShell frameworks commonly use CreateRemoteThread to inject shellcode or DLLs into other processes. This hides execution inside trusted processes and helps evade defenses. The rule maps to ATT&CK T1059.001 (PowerShell) and is often linked to process injection.",
+      "triage_steps": [
+        "Review SourceImage, SourceParentImage, SourceUser and TargetImage. Treat targets such as lsass.exe, explorer.exe, svchost.exe, rundll32.exe or browsers as suspicious.",
+        "Review StartAddress, StartModule and StartFunction. An empty StartModule or a thread starting in memory that no module backs strongly suggests injected shellcode.",
+        "Pull the CommandLine of the source PowerShell from its process creation event. Look for -enc, IEX, DownloadString, VirtualAlloc, Add-Type or reflection.",
+        "Check Script Block Logging (Event ID 4104) on the same host within +/- 15 minutes to see the full script.",
+        "If the target is lsass.exe, check process access events (Sysmon Event ID 10). Also check network connections made by the target process after the injection.",
+        "Look for earlier alerts on the same host and user. Confirm whether the parent tool or script is known in your environment."
+      ],
+      "false_positives": [
+        "Admin, monitoring or EDR tools that use PowerShell and interact with other processes.",
+        "Support or debugging scripts that legitimately use Add-Type with Win32 API calls.",
+        "Windows telemetry or compatibility components that the CompatTelRunner.exe exclusion does not cover."
+      ],
+      "response_steps": [
+        "Check with the system or script owner whether the activity is expected. If it is, document it and add a narrow exclusion.",
+        "If the activity is confirmed malicious, isolate the endpoint and capture the target process memory before you terminate it.",
+        "Kill the malicious PowerShell processes and the compromised target processes, and remove any related persistence.",
+        "Reset the user's credentials. If lsass.exe was accessed, treat all credentials cached on the host as compromised.",
+        "Hunt for the same hash, CommandLine or injection pattern across the rest of the fleet."
+      ],
+      "severity_rationale": "Medium fits because remote thread creation from PowerShell is uncommon and typical of injection, but this hunting rule also matches legitimate tooling."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "powershell.exe launched from cmd.exe creates a remote thread in explorer.exe that starts in memory no module backs",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 13:22:41.118",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "SourceParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "SourceUser": "ANDES\\jperez",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetUser": "ANDES\\jperez",
+          "NewThreadId": 7712,
+          "StartAddress": "0x0000020A4B6F0000",
+          "StartModule": "",
+          "StartFunction": ""
+        }
+      },
+      {
+        "description": "pwsh.exe (PowerShell 7) creates a remote thread in notepad.exe",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "UtcTime": "2024-05-15 09:05:12.640",
+          "SourceProcessId": 3304,
+          "SourceImage": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "SourceParentImage": "C:\\Windows\\explorer.exe",
+          "SourceUser": "ANDES\\mrojas",
+          "TargetProcessId": 5840,
+          "TargetImage": "C:\\Windows\\System32\\notepad.exe",
+          "TargetUser": "ANDES\\mrojas",
+          "NewThreadId": 9120,
+          "StartAddress": "0x000001F3C2A10000",
+          "StartModule": "",
+          "StartFunction": ""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "powershell.exe started by CompatTelRunner.exe for compatibility telemetry (removed by filter_main_compattelrunner)",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 03:10:02.004",
+          "SourceProcessId": 2216,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "SourceParentImage": "C:\\Windows\\System32\\CompatTelRunner.exe",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetProcessId": 1504,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "TargetUser": "NT AUTHORITY\\SYSTEM",
+          "NewThreadId": 3388,
+          "StartAddress": "0x00007FFB1C2E5A10",
+          "StartModule": "C:\\Windows\\System32\\kernel32.dll",
+          "StartFunction": "LoadLibraryW"
+        }
+      },
+      {
+        "description": "Remote thread created by a source process that is not PowerShell (powershell_ise.exe does not end in powershell.exe)",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 14:01:55.300",
+          "SourceProcessId": 5020,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe",
+          "SourceParentImage": "C:\\Windows\\explorer.exe",
+          "SourceUser": "ANDES\\jperez",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "TargetUser": "ANDES\\jperez",
+          "NewThreadId": 6604,
+          "StartAddress": "0x00007FFB1C2E5A10",
+          "StartModule": "C:\\Windows\\System32\\kernel32.dll",
+          "StartFunction": "LoadLibraryW"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

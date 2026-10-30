@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "acf2807c-805b-4042-aab9-f86b6ba9cb2b",
+    "title": "Dynamic .NET Compilation Via Csc.EXE - Hunting",
+    "level": "medium",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/process_creation/proc_creation_win_csc_compilation.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_csc_compilation.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.004"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó csc.exe con el patrón \"/noconfig /fullpaths @\", que es típico de la compilación dinámica de código C# mediante CodeDOM (por ejemplo, Add-Type de PowerShell). Es una regla de hunting: muchas aplicaciones legítimas lo generan, así que hay que buscar anomalías.",
+      "what_it_detects": "Eventos de creación de procesos en los que Image termina en \\csc.exe y CommandLine contiene \"/noconfig /fullpaths @\". Este patrón aparece cuando un proceso .NET compila código en tiempo de ejecución y le pasa a csc.exe un archivo de respuesta .cmdline, normalmente ubicado en %TEMP%.",
+      "why_it_matters": "Los atacantes entregan código fuente o scripts en lugar de binarios y los compilan en el endpoint para evadir controles basados en archivos (T1027.004, compilación después de la entrega). Familias como Agent Tesla han usado este método para cargar etapas posteriores en memoria.",
+      "triage_steps": [
+        "Identifique ParentImage y su línea de comandos: powershell.exe, wscript.exe, mshta.exe, procesos de Office o binarios en carpetas de usuario son más sospechosos que w3wp.exe o herramientas de desarrollo conocidas.",
+        "Revise la ruta del archivo .cmdline en CommandLine y, si todavía existe, recupere el .cmdline y el .cs de esa carpeta temporal para revisar el código fuente.",
+        "Busque los DLL o EXE generados en esa carpeta (archivos nuevos en %TEMP% del mismo usuario) y obtenga sus hashes para buscarlos en inteligencia de amenazas.",
+        "Si el padre es PowerShell, revise los logs de Script Block (evento 4104) del mismo host en una ventana de +/- 15 minutos para buscar Add-Type, ofuscación o descargas.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, procesos hijos de cvtres.exe y del padre, así como conexiones de red y carga de módulos.",
+        "Compare con la línea base: ¿este usuario, este host y este proceso padre generan este patrón habitualmente? Revise también alertas previas sobre la misma entidad."
+      ],
+      "false_positives": [
+        "Aplicaciones legítimas que usan compilación dinámica (CodeDOM, XmlSerializer) y generan este patrón con regularidad.",
+        "Scripts de administración en PowerShell que usan Add-Type, como módulos de inventario, de despliegue o de agentes de gestión.",
+        "Sitios ASP.NET en IIS (w3wp.exe) que compilan páginas o vistas la primera vez que se solicitan.",
+        "Herramientas de desarrollo, como Visual Studio o LINQPad, o instaladores que compilan componentes durante la instalación."
+      ],
+      "response_steps": [
+        "Valide con el dueño del sistema o de la aplicación si la compilación es esperada; si es así, documente la línea base y ajuste el hunting.",
+        "Si el proceso padre o el código fuente son sospechosos, aísle el endpoint y preserve los artefactos de %TEMP% y la memoria del proceso padre.",
+        "Bloquee los hashes de los ensamblados generados y busque en toda la flota el mismo hash, la misma cadena padre-hijo o el mismo código fuente.",
+        "Elimine el mecanismo de persistencia o el script que originó la compilación, restablezca las credenciales expuestas y supervise el host después de la remediación."
+      ],
+      "severity_rationale": "Medium es adecuado porque el patrón es un indicador común de carga de código en tiempo de ejecución, pero también es muy frecuente en software legítimo y requiere contexto para confirmarlo."
+    },
+    "en": {
+      "summary": "csc.exe ran with the \"/noconfig /fullpaths @\" pattern, which is typical of dynamic C# compilation through CodeDOM (for example PowerShell Add-Type). This is a hunting rule: plenty of legitimate software triggers it, so look for anomalies.",
+      "what_it_detects": "Process creation events where Image ends with \\csc.exe and CommandLine contains \"/noconfig /fullpaths @\". You see this pattern when a .NET process compiles code at runtime and passes csc.exe a .cmdline response file, usually stored in %TEMP%.",
+      "why_it_matters": "Attackers deliver source code or scripts instead of binaries and compile them on the endpoint to get past file-based controls (T1027.004, Compile After Delivery). Families such as Agent Tesla have used this method to load later stages in memory.",
+      "triage_steps": [
+        "Identify ParentImage and its command line. powershell.exe, wscript.exe, mshta.exe, Office apps or binaries in user folders are more suspicious than w3wp.exe or known dev tools.",
+        "Note the .cmdline path in CommandLine. If the temporary folder still exists, collect the .cmdline and .cs files and review the source code.",
+        "Look for the DLL or EXE written to that folder, meaning new files in the same user's %TEMP%. Hash them and check the hashes against threat intelligence.",
+        "If the parent is PowerShell, review Script Block logs (event 4104) on the host within +/- 15 minutes for Add-Type, obfuscation or downloads.",
+        "On the same host within +/- 15 minutes, check cvtres.exe, any child processes of the parent, and network connections and module loads.",
+        "Compare against the baseline: does this user, host or parent process normally produce this pattern? Check earlier alerts for the same entity."
+      ],
+      "false_positives": [
+        "Legitimate applications that use dynamic compilation (CodeDOM, XmlSerializer) and produce this pattern routinely.",
+        "Admin PowerShell scripts that use Add-Type, such as inventory, deployment or management-agent modules.",
+        "ASP.NET sites on IIS (w3wp.exe) that compile pages or views on first request.",
+        "Developer tools such as Visual Studio or LINQPad, or installers that compile components during setup."
+      ],
+      "response_steps": [
+        "Ask the system or application owner whether the compilation is expected. If it is, document the baseline and tune the hunt.",
+        "If the parent or the source code looks suspicious, isolate the endpoint and preserve the %TEMP% artifacts and the parent process memory.",
+        "Block the hashes of the generated assemblies. Search the fleet for the same hash, the same parent-child chain or the same source code.",
+        "Remove the persistence or script that started the compilation, reset exposed credentials and monitor the host after remediation."
+      ],
+      "severity_rationale": "Medium fits because the pattern is a common sign of runtime code loading, but it is also frequent in legitimate software and needs context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PowerShell launched from a user's Downloads folder compiles C# on the fly through Add-Type, so csc.exe receives a .cmdline response file from %TEMP%.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+          "CommandLine": "\"C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe\" /noconfig /fullpaths @\"C:\\Users\\jperez\\AppData\\Local\\Temp\\k3fq0vzl\\k3fq0vzl.cmdline\"",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ParentCommandLine": "powershell.exe -NoProfile -WindowStyle Hidden -File C:\\Users\\jperez\\Downloads\\update.ps1",
+          "CurrentDirectory": "C:\\Users\\jperez\\",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "An unknown binary in AppData uses CodeDOM to compile with the 32-bit csc.exe.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe",
+          "CommandLine": "\"C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe\" /noconfig /fullpaths @\"C:\\Users\\mrojas\\AppData\\Local\\Temp\\ab12cd34.cmdline\"",
+          "ParentImage": "C:\\Users\\mrojas\\AppData\\Roaming\\svcupd\\svcupd.exe",
+          "ParentCommandLine": "\"C:\\Users\\mrojas\\AppData\\Roaming\\svcupd\\svcupd.exe\"",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A developer build runs csc.exe through MSBuild with explicit options and no '/noconfig /fullpaths @' sequence.",
+        "event": {
+          "EventID": 1,
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\Roslyn\\csc.exe",
+          "CommandLine": "\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\Roslyn\\csc.exe\" /noconfig /unsafe- /nowarn:1701,1702 /optimize+ /out:obj\\Release\\Inventario.dll /target:library Program.cs",
+          "ParentImage": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "The command line contains the pattern, but the image is cvtres.exe, not csc.exe.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\cvtres.exe",
+          "CommandLine": "\"C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\cvtres.exe\" /noconfig /fullpaths @\"C:\\Users\\jperez\\AppData\\Local\\Temp\\RES1A2B.tmp\"",
+          "ParentImage": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

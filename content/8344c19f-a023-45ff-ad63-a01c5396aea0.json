@@ -1,0 +1,125 @@
+{
+  "rule": {
+    "id": "8344c19f-a023-45ff-ad63-a01c5396aea0",
+    "title": "Access To Sysvol Policies Share By Uncommon Process",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/file/file_access/file_access_win_susp_gpo_access_uncommon_process.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/file/file_access/file_access_win_susp_gpo_access_uncommon_process.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1552.006"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de las rutas habituales del sistema y de Program Files accedió por UNC a la carpeta Policies del recurso compartido SYSVOL. Es una regla de threat hunting y podría tratarse de enumeración de GPO o de búsqueda de credenciales en Group Policy Preferences.",
+      "what_it_detects": "Eventos de acceso a archivos (proveedor ETW Microsoft-Windows-Kernel-File) en los que FileName empieza con una ruta UNC (\\\\) y contiene \\sysvol\\ y \\Policies\\, mientras que Image no está en Program Files, Program Files (x86), System32, SysWOW64 ni es explorer.exe.",
+      "why_it_matters": "SYSVOL puede ser leído por cualquier usuario del dominio. Los atacantes y herramientas de auditoría como PingCastle lo recorren para enumerar GPO y buscar contraseñas en archivos de Group Policy Preferences, como Groups.xml con cpassword (ATT&CK T1552.006, credenciales no protegidas en Group Policy Preferences).",
+      "triage_steps": [
+        "Revise Image: ruta, nombre, firma digital y hash. Las carpetas Downloads, Temp, ProgramData o Users\\Public son más sospechosas.",
+        "Revise FileName: identifique el GUID de la GPO y el archivo leído. Groups.xml, Services.xml, ScheduledTasks.xml, Drives.xml o DataSources.xml apuntan a búsqueda de cpassword.",
+        "Determine el usuario y el host que ejecutaron el proceso y confirme si se trata de un administrador o auditor autorizado.",
+        "Revise el proceso padre y la línea de comandos en Sysmon o EDR para buscar parámetros de herramientas de enumeración de AD.",
+        "Pivote en el mismo host +/- 15 minutos: consultas LDAP masivas, otros accesos a SYSVOL o NETLOGON, descargas y conexiones de red nuevas.",
+        "Busque alertas previas para el mismo host, usuario o hash de Image, y si hubo inicios de sesión posteriores con cuentas que aparecen en las GPO."
+      ],
+      "false_positives": [
+        "Auditorías de seguridad de AD autorizadas con herramientas portables como PingCastle ejecutadas desde carpetas de usuario.",
+        "Scripts o utilidades de administración de GPO ejecutados desde rutas no estándar, como recursos compartidos o carpetas de herramientas.",
+        "Agentes de inventario, backup o cumplimiento instalados fuera de Program Files que leen las políticas del dominio."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o con el equipo de AD si la actividad fue autorizada; si lo fue, documente la excepción por hash o ruta.",
+        "Si no fue autorizada, aísle el endpoint, conserve el binario y la memoria, y bloquee el hash en el EDR.",
+        "Busque cpassword en todos los XML de SYSVOL; elimine esas preferencias y rote de inmediato las contraseñas que estuvieran expuestas.",
+        "Revise el uso de las cuentas expuestas en el dominio, restablezca las credenciales del usuario implicado y vigile si hay movimiento lateral."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: las herramientas legítimas de auditoría generan este acceso, pero en manos de un atacante puede exponer credenciales del dominio."
+    },
+    "en": {
+      "summary": "A process outside the usual system and Program Files paths accessed the Policies folder of the SYSVOL share over UNC. This is a threat-hunting rule, and the access may be GPO enumeration or a search for Group Policy Preferences credentials.",
+      "what_it_detects": "File access events (Microsoft-Windows-Kernel-File ETW provider) where FileName starts with a UNC path (\\\\) and contains \\sysvol\\ and \\Policies\\, and Image is not under Program Files, Program Files (x86), System32 or SysWOW64, and is not explorer.exe.",
+      "why_it_matters": "Any domain user can read SYSVOL. Attackers and audit tools such as PingCastle crawl it to enumerate GPOs and look for passwords in Group Policy Preferences files, such as Groups.xml with cpassword (ATT&CK T1552.006, Unsecured Credentials: Group Policy Preferences).",
+      "triage_steps": [
+        "Check Image: its path, name, signature and hash. Downloads, Temp, ProgramData or Users\\Public are more suspicious.",
+        "Check FileName: find the GPO GUID and the file that was read. Groups.xml, Services.xml, ScheduledTasks.xml, Drives.xml or DataSources.xml suggest a cpassword hunt.",
+        "Identify the user and host behind the process, and confirm whether they are an authorized admin or auditor.",
+        "Check the parent process and command line in Sysmon or EDR for parameters of AD enumeration tools.",
+        "Pivot on the same host within +/- 15 minutes: bulk LDAP queries, other SYSVOL or NETLOGON access, downloads and new network connections.",
+        "Look for earlier alerts for the same host, user or Image hash, and for later logons by accounts referenced in the GPOs."
+      ],
+      "false_positives": [
+        "Authorized AD security audits with portable tools such as PingCastle, run from user folders.",
+        "GPO admin scripts or utilities run from non-standard paths, such as shares or tool folders.",
+        "Inventory, backup or compliance agents installed outside Program Files that read domain policies."
+      ],
+      "response_steps": [
+        "Ask the user or AD team whether the activity was authorized. If it was, document an exception by hash or path.",
+        "If it was not, isolate the endpoint, keep the binary and memory, and block the hash in EDR.",
+        "Search all SYSVOL XML files for cpassword. Remove those preferences and rotate any exposed passwords right away.",
+        "Review how exposed accounts were used, reset the involved user's credentials, and watch for lateral movement."
+      ],
+      "severity_rationale": "Medium fits: legitimate audit tools cause this access, but in an attacker's hands it can expose domain credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PingCastle run from a user's Downloads folder reads Groups.xml from SYSVOL Policies over UNC",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\Downloads\\PingCastle\\PingCastle.exe",
+          "ProcessId": 6120,
+          "FileName": "\\\\andes.example.com\\SYSVOL\\andes.example.com\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\MACHINE\\Preferences\\Groups\\Groups.xml"
+        }
+      },
+      {
+        "description": "Unknown binary in ProgramData accesses scheduled task preferences in SYSVOL on a domain controller",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0217.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "Image": "C:\\ProgramData\\svcupd\\gppscan.exe",
+          "ProcessId": 4388,
+          "FileName": "\\\\DC01.andes.example.com\\sysvol\\andes.example.com\\Policies\\{6AC1786C-016F-11D2-945F-00C04FB984F9}\\Machine\\Preferences\\ScheduledTasks\\ScheduledTasks.xml"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Group Policy client (svchost.exe in System32) reads SYSVOL Policies; the filter excludes it",
+        "event": {
+          "EventID": 12,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ProcessId": 1236,
+          "FileName": "\\\\andes.example.com\\SysVol\\andes.example.com\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\gpt.ini"
+        }
+      },
+      {
+        "description": "Uncommon process reads the local SYSVOL path on a DC, not a UNC path, so FileName does not start with \\\\",
+        "event": {
+          "EventID": 12,
+          "Computer": "DC01.andes.example.com",
+          "User": "ANDES\\adm.rgomez",
+          "Image": "C:\\Tools\\gpreport.exe",
+          "ProcessId": 5012,
+          "FileName": "C:\\Windows\\SYSVOL\\domain\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\gpt.ini"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

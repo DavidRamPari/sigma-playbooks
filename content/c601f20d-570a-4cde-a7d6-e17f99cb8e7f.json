@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "c601f20d-570a-4cde-a7d6-e17f99cb8e7f",
+    "title": "Turla Group Lateral Movement",
+    "level": "critical",
+    "status": "test",
+    "author": "Markus Neis",
+    "path": "2014/TA/Turla/proc_creation_win_apt_turla_commands_critical.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2014/TA/Turla/proc_creation_win_apt_turla_commands_critical.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.002",
+      "T1059",
+      "T1083",
+      "T1135"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso en Windows ejecutó una de las líneas de comando literales que usaba la automatización de movimiento lateral de Turla en la operación Epic Turla. Puede indicar que hay un operador o un script activo en el endpoint.",
+      "what_it_detects": "Eventos de creación de procesos cuyo CommandLine coincide exactamente con alguno de estos patrones: 'net use \\\\%DomainController%\\C$ \"P@ssw0rd\" ...', 'dir c:\\*.doc* /s' o 'dir %TEMP%\\*.exe'. No hay modificadores, así que la coincidencia es exacta y solo admite comodines.",
+      "why_it_matters": "Estos comandos montan el recurso administrativo C$ de un controlador de dominio con una credencial embebida (T1021.002, SMB/recursos administrativos de Windows). También buscan documentos y ejecutables (T1083, T1135) mediante el intérprete de comandos (T1059). Si son genuinos, hay compromiso con intención de moverse lateralmente hacia el dominio.",
+      "triage_steps": [
+        "Revise CommandLine, Image, ParentImage, User y el host. Determine si el padre es cmd.exe, un script o un proceso inusual, como un binario en %TEMP%.",
+        "Reconstruya el árbol de procesos: el padre, el abuelo y los hijos. Busque en el mismo host, dentro de +/- 15 minutos, los otros dos comandos de la regla y comandos como net view o systeminfo.",
+        "Esta regla usa coincidencia exacta, así que 'cmd.exe /c dir c:\\*.doc* /s' no genera alerta. Busque manualmente variantes con prefijo cmd.exe /c o con rutas completas a net.exe.",
+        "Si hay net use, revise si el host se autenticó contra los controladores de dominio: eventos 4624 con tipo de inicio 3, 4625 y acceso a C$ con el evento 5140.",
+        "Compruebe si alguna cuenta del dominio usa la contraseña 'P@ssw0rd' o si hubo intentos fallidos con ella desde este host.",
+        "Busque alertas previas del mismo usuario y host, ejecutables recientes en %TEMP% y sus hash, y conexiones salientes hacia destinos poco comunes."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos.",
+        "Ejercicios de red team o emulación de adversarios que reproducen los comandos de Turla. Confirme con el equipo responsable y la ventana autorizada.",
+        "Pruebas de detección del propio SOC, por ejemplo con Atomic Red Team, en equipos de laboratorio."
+      ],
+      "response_steps": [
+        "Valide el contexto con el dueño del equipo y con el equipo de red team antes de actuar.",
+        "Si no está autorizado, aísle el endpoint desde el EDR y conserve la memoria y los artefactos de %TEMP%.",
+        "Restablezca la credencial de toda cuenta con 'P@ssw0rd' y la del usuario implicado. Revise sesiones abiertas en los controladores de dominio.",
+        "Busque los mismos comandos y hash en todo el parque, elimine la persistencia y los binarios maliciosos, y restaure el host desde una imagen confiable."
+      ],
+      "severity_rationale": "El nivel crítico es adecuado porque son cadenas literales de una herramienta de Turla que apuntan al C$ de un controlador de dominio y casi no tienen uso legítimo."
+    },
+    "en": {
+      "summary": "A Windows process ran one of the literal command lines used by Turla's automated lateral-movement tooling in the Epic Turla operation. An operator or script may be active on the endpoint.",
+      "what_it_detects": "Process creation events whose CommandLine exactly matches one of these patterns: 'net use \\\\%DomainController%\\C$ \"P@ssw0rd\" ...', 'dir c:\\*.doc* /s' or 'dir %TEMP%\\*.exe'. The rule uses no modifiers, so matching is exact apart from wildcards.",
+      "why_it_matters": "These commands mount a domain controller's C$ admin share with a hardcoded password (T1021.002, SMB/Windows Admin Shares). They also sweep for documents and executables (T1083, T1135) through the command shell (T1059). If genuine, the host is compromised and the attacker is trying to reach the domain.",
+      "triage_steps": [
+        "Review CommandLine, Image, ParentImage, User and host. Check whether the parent is cmd.exe, a script or something unusual, such as a binary in %TEMP%.",
+        "Rebuild the process tree: parent, grandparent and children. Search the same host within +/- 15 minutes for the other two rule commands and for net view or systeminfo.",
+        "This rule matches exactly, so 'cmd.exe /c dir c:\\*.doc* /s' will not alert. Hunt manually for variants with a cmd.exe /c prefix or a full net.exe path.",
+        "For net use, check this host's authentication to domain controllers: 4624 logon type 3, 4625 failures and 5140 access to C$.",
+        "Check whether any domain account uses the password 'P@ssw0rd', or whether this host made failed logons with it.",
+        "Pivot on the same user and host for earlier alerts, recent executables in %TEMP% and their hashes, and unusual outbound connections."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives.",
+        "Red team or adversary emulation exercises that replay Turla commands. Confirm with the owning team and the authorized window.",
+        "SOC detection tests, for example with Atomic Red Team, on lab machines."
+      ],
+      "response_steps": [
+        "Check the context with the host owner and the red team before acting.",
+        "If the activity is unauthorized, isolate the endpoint via EDR and preserve memory and the contents of %TEMP%.",
+        "Reset the credentials of any account using 'P@ssw0rd' and of the involved user. Review open sessions on domain controllers.",
+        "Hunt fleet-wide for the same commands and hashes, remove persistence and malicious binaries, and rebuild the host from a trusted image."
+      ],
+      "severity_rationale": "Critical fits because these are literal strings from Turla tooling that target a domain controller's C$ share and have almost no legitimate use."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "net.exe mounts the DC C$ share with the hardcoded Turla password; the %DomainController% variable stays unexpanded in the logged command line",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\net.exe",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "net use \\\\%DomainController%\\C$ \"P@ssw0rd\" /user:ANDES\\administrator",
+          "ProcessId": 4412
+        }
+      },
+      {
+        "description": "Recursive document sweep logged with the exact Turla command line",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ParentImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\svchost32.exe",
+          "CommandLine": "dir c:\\*.doc* /s",
+          "ProcessId": 5120
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate net use mapping a departmental file share without the Turla pattern",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\net.exe",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "net use Z: \\\\fs-01.example.com\\finanzas /persistent:yes",
+          "ProcessId": 3988
+        }
+      },
+      {
+        "description": "Admin lists log files in TEMP; does not end in .exe so the dir %TEMP% pattern does not match",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\soporte",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "dir %TEMP%\\*.log",
+          "ProcessId": 2764
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

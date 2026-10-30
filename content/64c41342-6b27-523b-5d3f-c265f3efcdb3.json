@@ -1,0 +1,137 @@
+{
+  "rule": {
+    "id": "64c41342-6b27-523b-5d3f-c265f3efcdb3",
+    "title": "Terminate Linux Process Via Kill",
+    "level": "medium",
+    "status": "test",
+    "author": "Tuan Le (NCSGroup)",
+    "path": "linux/process_creation/proc_creation_lnx_susp_process_termination_via_kill.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/linux/process_creation/proc_creation_lnx_susp_process_termination_via_kill.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó un binario kill, killall, pkill o xkill en un host Linux para terminar o enviar una señal a un proceso. Es una regla de threat hunting, por lo que muchas alertas serán actividad administrativa normal.",
+      "what_it_detects": "Eventos de creación de procesos cuyo Image termina en /kill, /killall, /pkill o /xkill. No cubre el kill integrado (builtin) de bash, que no crea un proceso nuevo.",
+      "why_it_matters": "Un atacante puede detener agentes EDR, auditd, syslog, backups o procesos de la competencia para operar sin ser visto. Corresponde a ATT&CK T1685, debilitamiento de defensas (defense impairment).",
+      "triage_steps": [
+        "Revise el CommandLine: identifique la señal (-9, -KILL, -STOP) y el objetivo (PID, nombre o patrón -f).",
+        "Determine qué proceso fue afectado: busque si el PID o nombre corresponde a auditd, rsyslog, agentes EDR, cron o servicios de seguridad.",
+        "Examine ParentImage y la cadena de procesos padre: es sospechoso un padre en /tmp, /dev/shm, un web server o un script desconocido.",
+        "Verifique el usuario y si la ejecución fue interactiva (SSH, sudo) o automatizada (systemd, cron, logrotate, gestor de configuración).",
+        "Pivotee en el mismo host +/- 15 minutos: descargas, cambios de persistencia, borrado de logs o nuevas conexiones salientes.",
+        "Confirme si el servicio afectado sigue detenido y si hubo una brecha en la telemetría del host.",
+        "Busque alertas previas para el mismo host, usuario o hash del proceso padre."
+      ],
+      "false_positives": [
+        "Administradores que detienen procesos colgados manualmente.",
+        "Scripts de logrotate, systemd o init que envían SIGHUP para recargar servicios.",
+        "Herramientas de despliegue o gestión de configuración (Ansible, Puppet) que reinician aplicaciones.",
+        "Usuarios de escritorio que cierran ventanas con xkill."
+      ],
+      "response_steps": [
+        "Verifique con el responsable del host si la acción fue autorizada y documentada.",
+        "Si se detuvo una herramienta de seguridad sin justificación, aísle el host y reinicie el servicio afectado.",
+        "Identifique y elimine el binario o script padre malicioso tras preservar evidencia (hash, copia, timeline).",
+        "Revise credenciales del usuario implicado y restablézcalas si hay indicios de compromiso.",
+        "Recupere la telemetría faltante y considere alertas de mayor severidad cuando el objetivo sea un agente de seguridad."
+      ],
+      "severity_rationale": "Medium es adecuado: terminar procesos es muy común en operación legítima, pero puede indicar desactivación de defensas según el objetivo y el proceso padre."
+    },
+    "en": {
+      "summary": "A kill, killall, pkill or xkill binary was run on a Linux host to terminate or signal a process. This is a threat-hunting rule, so many alerts will be normal administration.",
+      "what_it_detects": "Process creation events where Image ends with /kill, /killall, /pkill or /xkill. The bash builtin kill does not spawn a process and is not covered.",
+      "why_it_matters": "Attackers may stop EDR agents, auditd, syslog, backups or competing malware to operate unseen. Maps to ATT&CK T1685, defense impairment.",
+      "triage_steps": [
+        "Read CommandLine: note the signal (-9, -KILL, -STOP) and the target (PID, name, or -f pattern).",
+        "Identify the targeted process: check whether it is auditd, rsyslog, an EDR agent, cron or another security service.",
+        "Inspect ParentImage and the process tree; parents in /tmp, /dev/shm, web servers or unknown scripts are suspicious.",
+        "Check the user and whether execution was interactive (SSH, sudo) or automated (systemd, cron, logrotate, config management).",
+        "Pivot on the same host +/- 15 minutes: downloads, persistence changes, log deletion, new outbound connections.",
+        "Confirm whether the affected service is still down and whether host telemetry has a gap.",
+        "Look for earlier alerts on the same host, user or parent process hash."
+      ],
+      "false_positives": [
+        "Administrators manually killing hung processes.",
+        "logrotate, systemd or init scripts sending SIGHUP to reload services.",
+        "Deployment or configuration tools (Ansible, Puppet) restarting applications.",
+        "Desktop users closing windows with xkill."
+      ],
+      "response_steps": [
+        "Confirm with the host owner whether the action was authorized and documented.",
+        "If a security tool was stopped without justification, isolate the host and restart the affected service.",
+        "Preserve evidence (hash, copy, timeline), then remove the malicious parent binary or script.",
+        "Review the involved user's credentials and reset them if compromise is suspected.",
+        "Recover missing telemetry and escalate severity when the target was a security agent."
+      ],
+      "severity_rationale": "Medium fits: terminating processes is common in legitimate operations, but depending on target and parent it can indicate defense impairment."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "pkill used to force-stop auditd from a script in /tmp",
+        "event": {
+          "Image": "/usr/bin/pkill",
+          "CommandLine": "pkill -9 auditd",
+          "ParentImage": "/tmp/.cache/update.sh",
+          "User": "root",
+          "ProcessId": 48213,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/tmp/.cache",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "Explicit /usr/bin/kill sending SIGKILL to a PID from an interactive shell",
+        "event": {
+          "Image": "/usr/bin/kill",
+          "CommandLine": "/usr/bin/kill -9 1873",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 50211,
+          "ParentProcessId": 50002,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "web-02"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "killall5 run by the shutdown sequence; Image ends with killall5, not /killall",
+        "event": {
+          "Image": "/usr/sbin/killall5",
+          "CommandLine": "killall5 -15",
+          "ParentImage": "/usr/lib/systemd/systemd-shutdown",
+          "User": "root",
+          "ProcessId": 1,
+          "ParentProcessId": 0,
+          "Computer": "web-02"
+        }
+      },
+      {
+        "description": "pgrep used only to list processes, no kill binary involved",
+        "event": {
+          "Image": "/usr/bin/pgrep",
+          "CommandLine": "pgrep -a nginx",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 50240,
+          "ParentProcessId": 50002,
+          "Computer": "web-02"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

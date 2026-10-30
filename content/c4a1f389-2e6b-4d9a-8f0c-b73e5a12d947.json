@@ -1,0 +1,122 @@
+{
+  "rule": {
+    "id": "c4a1f389-2e6b-4d9a-8f0c-b73e5a12d947",
+    "title": "ADCS - Certighost CDC Chase Certificate Request (CVE-2026-54121)",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_cdc_chase_request.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_cdc_chase_request.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1649"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "La CA de ADCS registró una solicitud de certificado (evento 4886) cuyo atributo 'cdc' apunta a un host o IP que no figura entre los Domain Controllers conocidos. Puede indicar la explotación de Certighost (CVE-2026-54121) para obtener un certificado a nombre de un DC.",
+      "what_it_detects": "Eventos 4886 del log Security de la CA cuyo campo Attributes contiene 'cdc:' con un valor que no aparece en la lista %known_cdcs% de hostnames e IP de DC legítimos.",
+      "why_it_matters": "Si la CA sigue un 'cdc' controlado por el atacante, este responde con una identidad de DC falsificada y obtiene un certificado del DC. Con él puede autenticarse como el DC y escalar a dominio completo (T1649, robo o falsificación de certificados).",
+      "triage_steps": [
+        "En Attributes, extraiga el valor de cdc, el de rmd y la plantilla. Anote RequestId, Requester y el host de la CA.",
+        "Verifique si el valor de cdc resuelve a un objeto de computadora en AD con el bit SERVER_TRUST_ACCOUNT (0x2000). Si no lo hace, trate la alerta como sospechosa.",
+        "Revise el Requester: las cuentas de máquina con nombres GHOST<random>$ o creadas hace poco (evento 4741 en los DC) son un indicador fuerte.",
+        "Busque el evento 4887 con el mismo RequestId en la CA. Confirme si se emitió el certificado y si el SAN incluye el FQDN de un DC.",
+        "Revise la telemetría de red de la CA en un rango de +/- 15 minutos: conexiones SMB (445) o LDAP (389/636) hacia la IP del cdc.",
+        "En los DC, busque eventos 4768 con autenticación por certificado (PKINIT) para cuentas de DC y señales de DCSync (evento 4662 con permisos de replicación).",
+        "Busque alertas previas sobre el mismo Requester, la misma IP de cdc o el host desde el que se creó la cuenta de máquina."
+      ],
+      "false_positives": [
+        "Escenarios legítimos entre dominios o bosques que usan cdc con un DC nuevo o renombrado que todavía no está en %known_cdcs%.",
+        "Una lista %known_cdcs% incompleta o vacía (por ejemplo, sin las IP de los DC) genera alertas en todas las solicitudes cdc legítimas."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de AD si el destino de cdc es un DC legítimo. Si lo es, agréguelo a %known_cdcs%.",
+        "Si es malicioso, revoque el certificado emitido (certutil -revoke con el número de serie) y deshabilite la cuenta de máquina solicitante.",
+        "Bloquee la IP de cdc y aísle el endpoint que creó la cuenta GHOST, previa validación.",
+        "Si hubo autenticación como DC o DCSync, trate el incidente como compromiso del dominio: rote las credenciales afectadas y planifique el reseteo de krbtgt.",
+        "Aplique el parche de julio de 2026 en todas las CA y confirme que la auditoría (AuditFilter y Certification Services) siga activa."
+      ],
+      "severity_rationale": "El nivel high es apropiado porque un cdc no reconocido es poco común y su explotación permite suplantar a un DC, lo que lleva a comprometer todo el dominio."
+    },
+    "en": {
+      "summary": "The ADCS CA logged a certificate request (event 4886) whose 'cdc' attribute points to a host or IP that is not a known Domain Controller. This may mean someone is exploiting Certighost (CVE-2026-54121) to get a certificate issued for a DC.",
+      "what_it_detects": "Event 4886 entries in the CA's Security log where Attributes contains 'cdc:' with a value that does not appear in the %known_cdcs% list of legitimate DC hostnames and IPs.",
+      "why_it_matters": "If the CA follows an attacker-controlled cdc, the rogue server returns a forged DC identity and the attacker gets a certificate for the DC. They can then authenticate as the DC and take over the domain (T1649, stealing or forging authentication certificates).",
+      "triage_steps": [
+        "From Attributes, pull out the cdc value, the rmd value and the template. Note the RequestId, the Requester and the CA host.",
+        "Check whether the cdc value resolves to an AD computer object with the SERVER_TRUST_ACCOUNT (0x2000) bit set. If it does not, treat the alert as suspicious.",
+        "Review the Requester. Machine accounts named GHOST<random>$ or created recently (event 4741 on the DCs) are a strong indicator.",
+        "Find event 4887 with the same RequestId on the CA. Confirm whether the certificate was issued and whether its SAN contains a DC FQDN.",
+        "Review the CA's network telemetry within +/- 15 minutes for SMB (445) or LDAP (389/636) connections to the cdc IP.",
+        "On the DCs, look for event 4768 with certificate (PKINIT) authentication for DC accounts, and for DCSync signs (event 4662 with replication rights).",
+        "Look for earlier alerts on the same Requester, the same cdc IP, or the host that created the machine account."
+      ],
+      "false_positives": [
+        "Legitimate cross-domain or cross-forest enrollment that uses cdc with a new or renamed DC not yet listed in %known_cdcs%.",
+        "An incomplete or empty %known_cdcs% list (for example, one missing the DC IPs) makes every legitimate cdc request alert."
+      ],
+      "response_steps": [
+        "Ask the AD team to confirm whether the cdc target is a legitimate DC. If it is, add it to %known_cdcs%.",
+        "If it is malicious, revoke the issued certificate (certutil -revoke with its serial number) and disable the requesting machine account.",
+        "After validation, block the cdc IP and isolate the endpoint that created the GHOST account.",
+        "If anyone authenticated as a DC or ran DCSync, handle it as a domain compromise: rotate the affected credentials and plan a krbtgt reset.",
+        "Apply the July 2026 patch on every CA and confirm that auditing (AuditFilter and Certification Services) is still enabled."
+      ],
+      "severity_rationale": "High fits because an unrecognized cdc value is rare, and exploiting it lets an attacker impersonate a DC, which leads to full domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "A newly created GHOST machine account requests a certificate with cdc pointing to an attacker IP and rmd/SAN targeting a DC.",
+        "event": {
+          "EventID": 4886,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4127",
+          "Requester": "ANDES\\GHOST7KQ2X$",
+          "Attributes": "cdc:203.0.113.50\nrmd:dc01.andes.example.com\nCertificateTemplate:Machine",
+          "SubjectUserName": "GHOST7KQ2X$",
+          "SubjectDomainName": "ANDES"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "A normal workstation machine certificate request with no cdc attribute.",
+        "event": {
+          "EventID": 4886,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4120",
+          "Requester": "ANDES\\WS-0142$",
+          "Attributes": "CertificateTemplate:Machine\nccm:WS-0142.andes.example.com",
+          "SubjectUserName": "WS-0142$",
+          "SubjectDomainName": "ANDES"
+        }
+      },
+      {
+        "description": "A user certificate request whose attributes include rmd but no 'cdc:' attribute, so it is a partial near-miss.",
+        "event": {
+          "EventID": 4886,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4122",
+          "Requester": "ANDES\\jperez",
+          "Attributes": "CertificateTemplate:User\nrmd:ws-0142.andes.example.com",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

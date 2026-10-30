@@ -1,0 +1,153 @@
+{
+  "rule": {
+    "id": "a9d4d3fa-8fc0-41bc-80b1-30b9fda79d6f",
+    "title": "Remote Thread Created In Shell Application",
+    "level": "medium",
+    "status": "test",
+    "author": "Splunk Research Team",
+    "path": "windows/create_remote_thread/create_remote_thread_win_susp_target_shell_application.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/create_remote_thread/create_remote_thread_win_susp_target_shell_application.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso ubicado fuera de las rutas del sistema y de Program Files creó un hilo remoto dentro de cmd.exe, powershell.exe o pwsh.exe. Esto puede indicar inyección de código en una shell legítima y requiere revisión.",
+      "what_it_detects": "Eventos de creación de hilo remoto (Sysmon Event ID 8) cuyo TargetImage termina en \\cmd.exe, \\powershell.exe o \\pwsh.exe, y cuyo SourceImage no empieza en C:\\Windows\\System32\\, C:\\Windows\\SysWOW64\\, C:\\Program Files\\ ni C:\\Program Files (x86)\\, excluyendo MsMpEng.exe de Defender. Es una regla de threat hunting y puede coincidir con actividad benigna.",
+      "why_it_matters": "La inyección en procesos (T1055) permite ejecutar código malicioso dentro de una shell confiable para evadir controles y heredar sus privilegios. Malware como IcedID usa esta técnica para ocultar su ejecución.",
+      "triage_steps": [
+        "Revise SourceImage: ruta, firma digital, hash y reputación. Las rutas en AppData, Temp, ProgramData o Users\\Public son más sospechosas.",
+        "Revise StartAddress, StartModule y StartFunction: un StartModule vacío o una dirección fuera de módulos conocidos sugiere shellcode inyectado.",
+        "Identifique el proceso padre y la línea de comandos de SourceImage (Sysmon Event ID 1) para saber cómo llegó al endpoint.",
+        "Analice la actividad del proceso destino (TargetProcessId): procesos hijos, conexiones de red, archivos creados y comandos ejecutados después del hilo remoto.",
+        "Pivote en el mismo host +/- 15 minutos: descargas, adjuntos abiertos, tareas programadas, claves Run o carga de DLL inusuales.",
+        "Compare SourceUser y TargetUser; un cambio de contexto o privilegios elevados aumenta la gravedad.",
+        "Busque el mismo hash de SourceImage y alertas previas en otros hosts y para el mismo usuario."
+      ],
+      "false_positives": [
+        "Agentes de EDR, antivirus o monitoreo instalados fuera de Program Files que instrumentan shells.",
+        "Depuradores o herramientas de desarrollo ejecutadas desde el perfil del usuario.",
+        "Aplicaciones portables o instaladas por usuario en AppData\\Local\\Programs que interactúan con consolas.",
+        "Herramientas de accesibilidad o automatización de terceros que se enganchan a ventanas de consola."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo y con el equipo de TI si SourceImage es software autorizado; documente y ajuste exclusiones solo para binarios firmados y conocidos.",
+        "Si es malicioso o no se puede explicar, aísle el endpoint y preserve memoria de los procesos origen y destino antes de terminarlos.",
+        "Elimine el binario y sus mecanismos de persistencia tras recolectar evidencia; bloquee el hash en el EDR.",
+        "Restablezca credenciales del usuario afectado y busque el mismo indicador en toda la flota antes de restaurar el equipo."
+      ],
+      "severity_rationale": "Nivel medio porque la inyección en shells es una señal fuerte de malware, pero la regla es de hunting y software legítimo fuera de rutas estándar puede generar coincidencias."
+    },
+    "en": {
+      "summary": "A process outside system and Program Files paths created a remote thread inside cmd.exe, powershell.exe or pwsh.exe. This may indicate code injection into a legitimate shell and needs review.",
+      "what_it_detects": "Remote thread creation events (Sysmon Event ID 8) where TargetImage ends with \\cmd.exe, \\powershell.exe or \\pwsh.exe and SourceImage does not start with C:\\Windows\\System32\\, C:\\Windows\\SysWOW64\\, C:\\Program Files\\ or C:\\Program Files (x86)\\, excluding Defender's MsMpEng.exe. It is a threat-hunting rule and may match benign activity.",
+      "why_it_matters": "Process injection (T1055) lets attackers run malicious code inside a trusted shell to evade defenses and inherit its privileges. Malware such as IcedID uses this technique to hide execution.",
+      "triage_steps": [
+        "Review SourceImage: path, signature, hash and reputation. Paths under AppData, Temp, ProgramData or Users\\Public are more suspicious.",
+        "Check StartAddress, StartModule and StartFunction: an empty StartModule or address outside known modules suggests injected shellcode.",
+        "Find the parent process and command line of SourceImage (Sysmon Event ID 1) to learn how it reached the endpoint.",
+        "Examine the target process (TargetProcessId): child processes, network connections, files written and commands run after the remote thread.",
+        "Pivot on the same host +/- 15 minutes: downloads, opened attachments, scheduled tasks, Run keys or unusual DLL loads.",
+        "Compare SourceUser and TargetUser; a context change or elevated privileges raises severity.",
+        "Search for the same SourceImage hash and earlier alerts on other hosts and for the same user."
+      ],
+      "false_positives": [
+        "EDR, antivirus or monitoring agents installed outside Program Files that instrument shells.",
+        "Debuggers or developer tools run from the user profile.",
+        "Portable or per-user apps in AppData\\Local\\Programs that interact with consoles.",
+        "Third-party accessibility or automation tools hooking console windows."
+      ],
+      "response_steps": [
+        "Confirm with the host owner and IT whether SourceImage is authorized; document it and tune exclusions only for known, signed binaries.",
+        "If malicious or unexplained, isolate the endpoint and capture memory of source and target processes before terminating them.",
+        "Remove the binary and its persistence after collecting evidence; block the hash in the EDR.",
+        "Reset the affected user's credentials and hunt for the same indicator fleet-wide before restoring the host."
+      ],
+      "severity_rationale": "Medium because shell injection is a strong malware signal, but this is a hunting rule and legitimate software in non-standard paths can match."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder injects a remote thread into cmd.exe with no start module.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd_4471.exe",
+          "TargetProcessId": 7344,
+          "TargetImage": "C:\\Windows\\System32\\cmd.exe",
+          "NewThreadId": 9012,
+          "StartAddress": "0x000001F2A3B40000",
+          "StartModule": "",
+          "StartFunction": "",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Executable in C:\\Users\\Public creates a remote thread in PowerShell 7 (pwsh.exe).",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 4410,
+          "SourceImage": "C:\\Users\\Public\\Libraries\\svcupdate.exe",
+          "TargetProcessId": 5528,
+          "TargetImage": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "NewThreadId": 6630,
+          "StartAddress": "0x00007FF6C1A20000",
+          "StartModule": "",
+          "StartFunction": "",
+          "SourceUser": "ANDES\\mgomez",
+          "TargetUser": "ANDES\\mgomez"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Security agent installed under Program Files creates a thread in powershell.exe; excluded by filter_main_system.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 2210,
+          "SourceImage": "C:\\Program Files\\ExampleEDR\\agent.exe",
+          "TargetProcessId": 7788,
+          "TargetImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "NewThreadId": 8120,
+          "StartAddress": "0x00007FFB12340000",
+          "StartModule": "C:\\Program Files\\ExampleEDR\\hook64.dll",
+          "StartFunction": "HookInit",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Microsoft Defender MsMpEng.exe from its ProgramData platform folder scans cmd.exe; excluded by filter_optional_defender.",
+        "event": {
+          "EventID": 8,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 3120,
+          "SourceImage": "C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.24060.7-0\\MsMpEng.exe",
+          "TargetProcessId": 6044,
+          "TargetImage": "C:\\Windows\\System32\\cmd.exe",
+          "NewThreadId": 7001,
+          "StartAddress": "0x00007FFB55AA0000",
+          "StartModule": "C:\\Windows\\System32\\ntdll.dll",
+          "StartFunction": "RtlUserThreadStart",
+          "SourceUser": "NT AUTHORITY\\SYSTEM",
+          "TargetUser": "ANDES\\mgomez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

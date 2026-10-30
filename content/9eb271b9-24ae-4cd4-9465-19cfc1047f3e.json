@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "9eb271b9-24ae-4cd4-9465-19cfc1047f3e",
+    "title": "Potential Proxy Execution Via Explorer.EXE From Shell Process",
+    "level": "low",
+    "status": "test",
+    "author": "Furkan CALISKAN, @caliskanfurkan_, @oscd_initiative",
+    "path": "windows/process_creation/proc_creation_win_explorer_child_of_shell_process.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_explorer_child_of_shell_process.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso cmd.exe, powershell.exe o pwsh.exe inició explorer.exe con explorer.exe en su línea de comandos. Es un indicio de threat hunting: suele ser benigno, pero un atacante puede usarlo para ejecutar un payload a través de explorer.exe (ejecución por proxy).",
+      "what_it_detects": "Eventos de creación de procesos donde ParentImage termina en \\cmd.exe, \\powershell.exe o \\pwsh.exe, Image termina en \\explorer.exe y CommandLine contiene 'explorer.exe'.",
+      "why_it_matters": "Si se lanza un archivo mediante explorer.exe, el payload queda como hijo de explorer y no del shell. Así se rompe la cadena padre-hijo que usan los defensores (ATT&CK T1218, System Binary Proxy Execution). Según la descripción de la regla, MuddyWater ha usado esta técnica.",
+      "triage_steps": [
+        "Lea la CommandLine completa: identifique qué archivo, carpeta, URL o argumento /root recibió explorer.exe y si apunta a rutas escribibles como %TEMP%, %APPDATA%, Downloads o C:\\Users\\Public.",
+        "Revise la línea de comandos del shell padre y de su propio padre. Es sospechoso que antes aparezcan aplicaciones de Office, intérpretes de scripts, navegadores o tareas programadas.",
+        "Liste los procesos que generó explorer.exe en el mismo host en +/- 15 minutos. Busque scripts, LOLBins o binarios sin firma que coincidan con el destino indicado en CommandLine.",
+        "Analice el archivo destino: hash, firma, fecha de creación, Mark-of-the-Web y reputación. Si es desconocido, envíelo a un sandbox.",
+        "Pivote por el usuario: confirme si es una sesión interactiva de un administrador o desarrollador, o una cuenta de servicio o inusual. Verifique el tipo y el origen del inicio de sesión.",
+        "Busque conexiones de red, escrituras de archivos o persistencia en el registro de los procesos resultantes, y alertas previas del mismo host o usuario."
+      ],
+      "false_positives": [
+        "Usuarios o administradores que abren una carpeta desde el shell, por ejemplo 'explorer.exe .' o 'explorer.exe C:\\Logs'.",
+        "Scripts, instaladores o herramientas de TI que abren una carpeta o un documento para el usuario al terminar.",
+        "Reinicio del shell tras una falla o un cambio de configuración, por ejemplo 'taskkill /f /im explorer.exe & start explorer.exe'."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del activo si la acción fue intencional. Si el destino es una carpeta o un documento conocido, cierre la alerta como benigna.",
+        "Si el destino es sospechoso, aísle el endpoint y preserve el archivo, el árbol de procesos y, si es posible, la memoria.",
+        "Tras confirmar el alcance, detenga los procesos hijos maliciosos y elimine el payload y la persistencia. Si se confirma el compromiso, restablezca las credenciales.",
+        "Busque el mismo patrón de CommandLine y el mismo hash en otros hosts. Ajuste exclusiones para los scripts administrativos que se verifiquen como benignos."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque los shells inician explorer.exe con frecuencia de forma legítima. Una coincidencia aislada solo es un indicio de hunting hasta que el destino o el árbol de procesos muestren actividad maliciosa."
+    },
+    "en": {
+      "summary": "A cmd.exe, powershell.exe or pwsh.exe process started explorer.exe with explorer.exe in its command line. This is a threat-hunting lead: it is often benign, but attackers can use it to proxy execution of a payload.",
+      "what_it_detects": "Process creation events where ParentImage ends with \\cmd.exe, \\powershell.exe or \\pwsh.exe, Image ends with \\explorer.exe, and CommandLine contains 'explorer.exe'.",
+      "why_it_matters": "Launching a file through explorer.exe makes the payload a child of explorer rather than of the shell. This breaks the parent-child chain that defenders rely on (ATT&CK T1218, System Binary Proxy Execution). The rule's description says MuddyWater has used the technique.",
+      "triage_steps": [
+        "Read the full CommandLine: note which file, folder, URL or /root argument explorer.exe received, and whether it points to user-writable paths like %TEMP%, %APPDATA%, Downloads or C:\\Users\\Public.",
+        "Review the parent shell's own command line and its parent (grandparent). Office apps, script hosts, browsers or scheduled tasks upstream are suspicious.",
+        "List processes spawned by explorer.exe on the same host within +/- 15 minutes. Look for scripts, LOLBins or unsigned binaries that match the target in CommandLine.",
+        "Check the target file: hash, signature, creation time, Mark-of-the-Web and reputation. Submit it to sandbox analysis if it is unknown.",
+        "Pivot on the user: is this an interactive admin or developer session, or a service or unusual account? Check logon type and source.",
+        "Look for network connections, file writes or registry persistence from the resulting processes, and for earlier alerts on the same host or user."
+      ],
+      "false_positives": [
+        "Users or admins opening a folder from a shell, for example 'explorer.exe .' or 'explorer.exe C:\\Logs'.",
+        "Scripts, installers or IT tools that open a folder or document for the user when they finish.",
+        "Restarting the shell after a crash or configuration change, for example 'taskkill /f /im explorer.exe & start explorer.exe'."
+      ],
+      "response_steps": [
+        "Verify with the user or asset owner whether the action was intended. Close the alert as benign if the target is a known folder or document.",
+        "If the target is suspicious, isolate the endpoint and preserve the file, the process tree and memory if feasible.",
+        "Stop malicious child processes, remove the payload and any persistence after confirming their scope; reset credentials if compromise is confirmed.",
+        "Hunt for the same CommandLine pattern and hash across other hosts, and tune exclusions for verified benign admin scripts."
+      ],
+      "severity_rationale": "Low fits because shells legitimately start explorer.exe often, so a single match is only a hunting lead until the target or process tree shows malicious behavior."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "cmd.exe launched by a script host uses explorer.exe to proxy-execute a script dropped in C:\\Users\\Public",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "ParentCommandLine": "cmd.exe /c explorer.exe C:\\Users\\Public\\update.js",
+          "Image": "C:\\Windows\\explorer.exe",
+          "CommandLine": "explorer.exe C:\\Users\\Public\\update.js",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "PowerShell starts explorer.exe with /root pointing to an executable in AppData",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mgarcia",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ParentCommandLine": "powershell.exe -nop -w hidden -c \"Start-Process explorer.exe -ArgumentList '/root,C:\\Users\\mgarcia\\AppData\\Roaming\\svc\\agent.exe'\"",
+          "Image": "C:\\Windows\\explorer.exe",
+          "CommandLine": "\"C:\\Windows\\explorer.exe\" /root,C:\\Users\\mgarcia\\AppData\\Roaming\\svc\\agent.exe",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal logon: explorer.exe started by userinit.exe, not by a shell",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ParentImage": "C:\\Windows\\System32\\userinit.exe",
+          "ParentCommandLine": "C:\\Windows\\system32\\userinit.exe",
+          "Image": "C:\\Windows\\explorer.exe",
+          "CommandLine": "C:\\Windows\\Explorer.EXE",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "Reverse relationship: explorer.exe spawns cmd.exe when the user opens a console",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "ParentCommandLine": "C:\\Windows\\Explorer.EXE",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "\"C:\\Windows\\system32\\cmd.exe\"",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

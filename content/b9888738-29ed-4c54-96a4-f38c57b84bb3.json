@@ -1,0 +1,145 @@
+{
+  "rule": {
+    "id": "b9888738-29ed-4c54-96a4-f38c57b84bb3",
+    "title": "Exploitation of CVE-2021-26814 in Wazuh",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "2021/Exploits/CVE-2021-26814/web_cve_2021_26814_wzuh_rce.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Exploits/CVE-2021-26814/web_cve_2021_26814_wzuh_rce.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1190"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró una solicitud a la API de Wazuh con un recorrido de directorios (path traversal) en el parámetro path del endpoint /manager/files, patrón de explotación de CVE-2021-26814. Puede indicar un intento de escribir archivos arbitrarios en el manager y lograr ejecución remota de código.",
+      "what_it_detects": "Solicitudes web cuyo cs-uri-query contiene '/manager/files?path=etc/lists/../../../../..', es decir, una ruta que parte de etc/lists y sale de ese directorio con secuencias '../' repetidas, como en la PoC pública.",
+      "why_it_matters": "CVE-2021-26814 permite a un usuario autenticado de la API de Wazuh escribir archivos fuera de etc/lists y ejecutar código en el manager. Es explotación de una aplicación expuesta (T1190, acceso inicial) sobre un componente central de seguridad.",
+      "triage_steps": [
+        "Revise cs-uri-query completo: identifique la ruta de destino tras los '../' y si incluye overwrite=true o apunta a scripts, binarios o archivos de configuración de Wazuh.",
+        "Verifique el método HTTP (PUT indica escritura) y el código de respuesta; un 200 sugiere que la operación tuvo éxito.",
+        "Identifique la IP de origen y el usuario de la API; busque solicitudes a /security/user/authenticate desde esa IP en los 15 minutos previos.",
+        "Confirme la versión del manager de Wazuh y si está afectada según el aviso del fabricante.",
+        "En el host del manager, revise archivos creados o modificados cerca de la hora del evento en la ruta de destino y en /var/ossec.",
+        "Busque procesos anómalos ejecutados por el usuario wazuh o hijos de wazuh-apid en +/- 15 minutos, incluidas conexiones salientes.",
+        "Revise alertas previas o posteriores de la misma IP de origen y del mismo usuario de la API."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos; el patrón no aparece en el uso normal de la API.",
+        "Escaneos de vulnerabilidades autorizados o pruebas de penetración contra la API de Wazuh; confirme con el equipo responsable y la ventana de pruebas."
+      ],
+      "response_steps": [
+        "Si la respuesta fue exitosa o hay archivos modificados, aísle el manager de Wazuh o restrinja el acceso a la API (puerto 55000) a redes de administración.",
+        "Bloquee la IP de origen y deshabilite o rote las credenciales del usuario de la API utilizado.",
+        "Preserve logs de la API y del servidor web, y una copia de los archivos alterados, antes de restaurarlos desde una fuente confiable.",
+        "Actualice Wazuh a una versión corregida y revise otros hosts por actividad del mismo origen."
+      ],
+      "severity_rationale": "Alta: el patrón es específico de explotación y un éxito otorga ejecución de código en la plataforma que supervisa la seguridad de la organización."
+    },
+    "en": {
+      "summary": "A request to the Wazuh API used directory traversal in the path parameter of /manager/files, the exploitation pattern for CVE-2021-26814. It may be an attempt to write arbitrary files on the manager and gain remote code execution.",
+      "what_it_detects": "Web requests whose cs-uri-query contains '/manager/files?path=etc/lists/../../../../..', a path that starts in etc/lists and escapes it with repeated '../' sequences, as in the public PoC.",
+      "why_it_matters": "CVE-2021-26814 lets an authenticated Wazuh API user write files outside etc/lists and execute code on the manager. This is exploitation of a public-facing application (T1190, initial access) against a core security component.",
+      "triage_steps": [
+        "Read the full cs-uri-query: identify the target path after the '../' sequences and whether it sets overwrite=true or targets Wazuh scripts, binaries or configuration.",
+        "Check the HTTP method (PUT means a write) and the status code; a 200 suggests the operation succeeded.",
+        "Identify the source IP and API user; look for /security/user/authenticate requests from that IP in the preceding 15 minutes.",
+        "Confirm the Wazuh manager version and whether the vendor advisory lists it as affected.",
+        "On the manager, look for files created or modified around the event time at the target path and under /var/ossec.",
+        "Look for unusual processes run by the wazuh user or children of wazuh-apid within +/- 15 minutes, including outbound connections.",
+        "Review earlier and later alerts for the same source IP and API user."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives; the pattern does not occur in normal API use.",
+        "Authorized vulnerability scans or penetration tests against the Wazuh API; confirm with the owning team and test window."
+      ],
+      "response_steps": [
+        "If the request succeeded or files changed, isolate the Wazuh manager or restrict API access (port 55000) to admin networks.",
+        "Block the source IP and disable or rotate the credentials of the API user involved.",
+        "Preserve API and web server logs plus copies of altered files before restoring them from a trusted source.",
+        "Upgrade Wazuh to a fixed version and check other hosts for activity from the same source."
+      ],
+      "severity_rationale": "High: the pattern is exploit-specific, and success grants code execution on the platform that monitors the organization's security."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "PUT request writing a file outside etc/lists via path traversal, as in the public PoC",
+        "event": {
+          "date": "2021-05-22",
+          "time": "10:14:07",
+          "c-ip": "203.0.113.45",
+          "s-ip": "192.0.2.10",
+          "s-port": 55000,
+          "cs-method": "PUT",
+          "cs-uri-stem": "/manager/files",
+          "cs-uri-query": "/manager/files?path=etc/lists/../../../../../tmp/test.txt&overwrite=true",
+          "sc-status": 200,
+          "cs-user-agent": "python-requests/2.25.1",
+          "cs-host": "wazuh-mgr.example.com"
+        }
+      },
+      {
+        "description": "GET request reading a file via deep traversal from etc/lists",
+        "event": {
+          "date": "2021-05-22",
+          "time": "10:12:51",
+          "c-ip": "203.0.113.45",
+          "s-ip": "192.0.2.10",
+          "s-port": 55000,
+          "cs-method": "GET",
+          "cs-uri-stem": "/manager/files",
+          "cs-uri-query": "/manager/files?path=etc/lists/../../../../../../etc/hostname",
+          "sc-status": 200,
+          "cs-user-agent": "python-requests/2.25.1",
+          "cs-host": "wazuh-mgr.example.com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate retrieval of a CDB list file from etc/lists by an administrator",
+        "event": {
+          "date": "2021-05-22",
+          "time": "09:02:33",
+          "c-ip": "198.51.100.20",
+          "s-ip": "192.0.2.10",
+          "s-port": 55000,
+          "cs-method": "GET",
+          "cs-uri-stem": "/manager/files",
+          "cs-uri-query": "/manager/files?path=etc/lists/audit-keys",
+          "sc-status": 200,
+          "cs-user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "cs-host": "wazuh-mgr.example.com"
+        }
+      },
+      {
+        "description": "Single parent-directory step to a rules file; lacks the repeated traversal sequence",
+        "event": {
+          "date": "2021-05-22",
+          "time": "09:05:10",
+          "c-ip": "198.51.100.20",
+          "s-ip": "192.0.2.10",
+          "s-port": 55000,
+          "cs-method": "GET",
+          "cs-uri-stem": "/manager/files",
+          "cs-uri-query": "/manager/files?path=etc/lists/../rules/local_rules.xml",
+          "sc-status": 400,
+          "cs-user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          "cs-host": "wazuh-mgr.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

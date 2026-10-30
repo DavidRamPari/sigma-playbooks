@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "ad856965-f44d-42a8-945e-bbf7bd03d05a",
+    "title": "Invocation Of Crypto-Classes From The \"Cryptography\" PowerShell Namespace",
+    "level": "medium",
+    "status": "test",
+    "author": "Andreas Braathen (mnemonic.io)",
+    "path": "windows/process_creation/proc_creation_win_powershell_crypto_namespace.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_powershell_crypto_namespace.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1027.010",
+      "T1059.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "PowerShell se ejecutó con una línea de comandos que instancia una clase de cifrado del namespace System.Security.Cryptography. Es una pista de hunting que puede indicar el descifrado en memoria de un payload.",
+      "what_it_detects": "Creación de powershell.exe o pwsh.exe (por Image u OriginalFileName) cuyo CommandLine contiene 'System.Security.Cryptography.' y una clase de cifrado como AesCryptoServiceProvider, DESCryptoServiceProvider, TripleDESCryptoServiceProvider, RC2CryptoServiceProvider, Rijndael, RSACryptoServiceProvider o DSACryptoServiceProvider.",
+      "why_it_matters": "Los loaders, como el infostealer Jupyter citado en las referencias, descifran un payload cifrado dentro de PowerShell para no dejar contenido legible en disco (T1027.010, ofuscación de comandos) y luego lo ejecutan (T1059.001, PowerShell).",
+      "triage_steps": [
+        "Lea el CommandLine completo: busque descifrado (CreateDecryptor, TransformFinalBlock), Key/IV fijos, FromBase64String, Invoke-Expression o carga reflectiva con Assembly.Load.",
+        "Revise ParentImage y el proceso abuelo. Office, navegadores, wscript, mshta o padres poco comunes son más sospechosos que un agente de SCCM o una consola administrativa conocida.",
+        "Identifique los datos de entrada: archivos leídos desde %TEMP%, %APPDATA%, Descargas o el registro, o un blob cifrado incrustado en el comando.",
+        "Revise el usuario y el host. ¿Es una cuenta administrativa o de build que normalmente ejecuta scripts de cifrado?",
+        "En el mismo host, +/- 15 minutos: revise procesos hijos, escritura de archivos, conexiones de red y logs ScriptBlock (4104) con el contenido descifrado.",
+        "Verifique la prevalencia: cuántos hosts ejecutan esa misma línea de comandos o el mismo hash de script. Un caso aislado pesa más.",
+        "Busque alertas previas del mismo usuario, host o proceso padre, sobre todo de persistencia como tareas programadas o claves Run."
+      ],
+      "false_positives": [
+        "Scripts de administración o despliegue que cifran credenciales o archivos de configuración con AES o RSA.",
+        "Instaladores, agentes de actualización o herramientas de monitoreo que llaman a las clases criptográficas de .NET desde PowerShell.",
+        "Desarrolladores o personal de seguridad que prueban código de cifrado o manejo de certificados."
+      ],
+      "response_steps": [
+        "Si el script es malicioso o no tiene explicación, aísle el endpoint y preserve la línea de comandos, los logs ScriptBlock y los archivos referenciados.",
+        "Descifre o extraiga el payload en un sandbox y obtenga IOCs: hashes, dominios, IPs y rutas.",
+        "Elimine la persistencia y los archivos dejados, termine los procesos relacionados y restablezca las credenciales del usuario si se sospecha robo.",
+        "Busque los mismos IOCs y patrón de comando en toda la flota. Documente los scripts legítimos y ajuste con exclusiones por padre o ruta."
+      ],
+      "severity_rationale": "Medium es adecuado porque estas clases tienen usos legítimos frecuentes, pero el descifrado en memoria desde un padre inusual o una carpeta temporal es un indicador fuerte de loader."
+    },
+    "en": {
+      "summary": "PowerShell started with a command line that creates a symmetric or asymmetric cipher class from the System.Security.Cryptography namespace. This is a hunting lead that can indicate in-memory decryption of a payload.",
+      "what_it_detects": "Process creation of powershell.exe or pwsh.exe (by Image or OriginalFileName) where CommandLine contains 'System.Security.Cryptography.' and a cipher class such as AesCryptoServiceProvider, DESCryptoServiceProvider, TripleDESCryptoServiceProvider, RC2CryptoServiceProvider, Rijndael, RSACryptoServiceProvider or DSACryptoServiceProvider.",
+      "why_it_matters": "Loaders, including the Jupyter infostealer cited in the references, decrypt an encrypted payload inside PowerShell so that nothing readable reaches disk (T1027.010, command obfuscation) and then run it (T1059.001, PowerShell).",
+      "triage_steps": [
+        "Read the full CommandLine: look for decryption (CreateDecryptor, TransformFinalBlock), hardcoded Key/IV, FromBase64String, Invoke-Expression or reflective Assembly.Load.",
+        "Check ParentImage and the grandparent. Office apps, browsers, wscript, mshta or rare parents are more suspicious than an SCCM agent or a known admin console.",
+        "Identify input data: files read from %TEMP%, %APPDATA%, Downloads or the registry, and whether an encrypted blob is embedded in the command.",
+        "Review the user and host. Is this an admin or build account expected to run crypto scripts?",
+        "Pivot on the same host +/- 15 minutes for child processes, file writes, network connections and PowerShell ScriptBlock logs (4104) showing decrypted content.",
+        "Check prevalence: how many hosts run this exact command line or script hash. One rare instance carries more weight.",
+        "Search for earlier alerts on the same user, host or parent process, especially persistence such as scheduled tasks or Run keys."
+      ],
+      "false_positives": [
+        "Admin or deployment scripts that encrypt credentials or configuration files with AES or RSA.",
+        "Software installers, update agents or monitoring tools that wrap .NET crypto calls in PowerShell.",
+        "Developers or security staff testing encryption code or certificate handling."
+      ],
+      "response_steps": [
+        "If the script is malicious or unexplained, isolate the endpoint and preserve the command line, ScriptBlock logs and the referenced files.",
+        "Decrypt or extract the payload in a sandbox and collect IOCs: hashes, domains, IPs, file paths.",
+        "Remove persistence and dropped files, kill related processes and reset credentials of the affected user if theft is suspected.",
+        "Search the fleet for the same IOCs and command pattern. Document benign scripts and tune with parent or path exclusions."
+      ],
+      "severity_rationale": "Medium fits because these classes are often used legitimately, but in-memory decryption from an unusual parent or temp folder is a strong loader indicator that needs review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Hidden PowerShell launched by wscript decrypts a file from %TEMP% with AesCryptoServiceProvider",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "OriginalFileName": "PowerShell.EXE",
+          "ParentImage": "C:\\Windows\\System32\\wscript.exe",
+          "CommandLine": "powershell.exe -w hidden -c \"$a=New-Object System.Security.Cryptography.AesCryptoServiceProvider;$a.Key=[Convert]::FromBase64String('UExBQ0VIT0xERVJLRVk=');$d=[IO.File]::ReadAllBytes('C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.dat');$a.CreateDecryptor().TransformFinalBlock($d,0,$d.Length)\"",
+          "CurrentDirectory": "C:\\Users\\jperez\\AppData\\Local\\Temp\\"
+        }
+      },
+      {
+        "description": "pwsh.exe instantiates RijndaelManaged to decrypt an embedded blob",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "OriginalFileName": "pwsh.dll",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "pwsh.exe -NoProfile -Command \"$r=[System.Security.Cryptography.RijndaelManaged]::new();$r.IV=[byte[]]::new(16);$r.CreateDecryptor()\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PowerShell computing a SHA256 hash: namespace present but no cipher class from the list",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "OriginalFileName": "PowerShell.EXE",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "powershell.exe -c \"$h=[System.Security.Cryptography.SHA256]::Create();$h.ComputeHash([IO.File]::ReadAllBytes('C:\\Tools\\setup.msi'))\""
+        }
+      },
+      {
+        "description": "A .NET tool (not PowerShell) using AesCryptoServiceProvider in its arguments",
+        "event": {
+          "EventID": 1,
+          "Computer": "BUILD-01.andes.example.com",
+          "User": "ANDES\\svc_build",
+          "Image": "C:\\Tools\\CryptoTest\\cryptotest.exe",
+          "OriginalFileName": "cryptotest.exe",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "cryptotest.exe --provider System.Security.Cryptography.AesCryptoServiceProvider --selftest"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

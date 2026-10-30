@@ -1,0 +1,127 @@
+{
+  "rule": {
+    "id": "6df07c3b-8456-4f8b-87bb-fe31ec964cae",
+    "title": "SMB over QUIC Via PowerShell Script",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_new_smbmapping_quic.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/powershell/powershell_script/posh_ps_new_smbmapping_quic.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1570"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado por Script Block Logging usó New-SmbMapping con -TransportType QUIC para montar un recurso compartido SMB sobre QUIC (UDP 443). Es una regla de threat hunting: es un indicio para investigar y no confirma actividad maliciosa.",
+      "what_it_detects": "Eventos 4104 cuyo ScriptBlockText contiene a la vez 'New-SmbMapping' y '-TransportType QUIC', es decir, el mapeo de una unidad o ruta SMB por QUIC en lugar de TCP 445.",
+      "why_it_matters": "SMB over QUIC viaja por UDP 443 y puede saltarse los controles que bloquean TCP 445. Un atacante puede usarlo para transferir herramientas entre equipos o hacia un servidor externo (ATT&CK T1570, Lateral Tool Transfer).",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo: extraiga RemotePath (servidor y recurso), LocalPath y si se pasan credenciales en texto claro (-UserName/-Password).",
+        "Resuelva el servidor de RemotePath: ¿es un servidor de archivos corporativo con SMB over QUIC aprobado o un host externo o desconocido?",
+        "Identifique el usuario y el host (Computer); confirme si el usuario suele administrar recursos compartidos o trabaja en remoto.",
+        "Reconstruya el script usando ScriptBlockId y los fragmentos relacionados; revise la Path del script y el proceso padre de powershell.exe.",
+        "Busque conexiones UDP 443 salientes desde el host hacia la IP del servidor en +/- 15 minutos en logs de firewall o EDR.",
+        "Revise en el mismo host y periodo copias de archivos hacia o desde la unidad mapeada, nuevos ejecutables y otras alertas de PowerShell.",
+        "Consulte alertas previas del mismo usuario, host o servidor remoto, y si el mismo script aparece en otros equipos."
+      ],
+      "false_positives": [
+        "Scripts de administración o de inicio de sesión que mapean unidades por SMB over QUIC para usuarios remotos sin VPN.",
+        "Pruebas de TI o ejercicios de Atomic Red Team (T1570) que usan este comando.",
+        "Scripts que solo contienen o documentan el texto, como módulos, ayudas o plantillas, sin ejecutarlo."
+      ],
+      "response_steps": [
+        "Valide con el usuario y con el equipo de TI si el mapeo QUIC y el servidor destino están autorizados.",
+        "Si no está autorizado, aísle el endpoint, elimine el mapeo (Remove-SmbMapping) tras preservar evidencia y bloquee la IP o dominio del servidor.",
+        "Restablezca las credenciales usadas en el mapeo y revise los archivos transferidos, con su hash, para detectar herramientas maliciosas.",
+        "Considere restringir SMB over QUIC por política a servidores aprobados y documente las excepciones legítimas para afinar la búsqueda."
+      ],
+      "severity_rationale": "Medium es adecuado: SMB over QUIC es inusual y facilita transferencias que evaden controles de TCP 445, pero también tiene usos administrativos legítimos."
+    },
+    "en": {
+      "summary": "A PowerShell script captured by Script Block Logging ran New-SmbMapping with -TransportType QUIC to mount an SMB share over QUIC (UDP 443). This is a threat-hunting rule: it gives you a lead to investigate and does not confirm malicious activity.",
+      "what_it_detects": "Event 4104 records whose ScriptBlockText contains both 'New-SmbMapping' and '-TransportType QUIC'. This means a drive or path was mapped over QUIC instead of TCP 445.",
+      "why_it_matters": "SMB over QUIC runs over UDP 443 and can get past controls that block TCP 445. Attackers can use it to move tools between hosts or pull them from an external server (ATT&CK T1570, Lateral Tool Transfer).",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Extract RemotePath (server and share), LocalPath and any plaintext credentials (-UserName/-Password).",
+        "Resolve the RemotePath server. Is it an approved corporate SMB over QUIC file server, or an external or unknown host?",
+        "Identify the user and host (Computer). Check whether this user normally manages shares or works remotely.",
+        "Rebuild the script using ScriptBlockId and related fragments. Check the script Path and the parent process of powershell.exe.",
+        "Search firewall or EDR logs for outbound UDP 443 from the host to the server IP within +/- 15 minutes.",
+        "On the same host and time window, look for file copies to or from the mapped drive, new executables and other PowerShell alerts.",
+        "Check earlier alerts for the same user, host or remote server, and whether the same script ran on other machines."
+      ],
+      "false_positives": [
+        "Admin or logon scripts that map drives over SMB over QUIC for remote users without VPN.",
+        "IT testing or Atomic Red Team (T1570) exercises that use this command.",
+        "Scripts that only contain or document the string, such as modules, help text or templates, without running it."
+      ],
+      "response_steps": [
+        "Ask the user and IT whether the QUIC mapping and the target server are authorized.",
+        "If it is not authorized, isolate the endpoint. Preserve evidence, then remove the mapping (Remove-SmbMapping) and block the server IP or domain.",
+        "Reset the credentials used for the mapping. Hash and review any transferred files for malicious tools.",
+        "Consider a policy that limits SMB over QUIC to approved servers. Document legitimate exceptions so you can tune future hunts."
+      ],
+      "severity_rationale": "Medium fits because SMB over QUIC is unusual and enables transfers that get around TCP 445 controls, but it also has legitimate admin uses."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script block maps a drive to an unknown external server over QUIC",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "3f1c2a9e-7b4d-4e21-9c55-1a2b3c4d5e6f",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\m.ps1",
+          "ScriptBlockText": "New-SmbMapping -LocalPath 'Y:' -RemotePath '\\\\files.example.org\\drop' -TransportType QUIC -UserName 'svc' -Password 'P@ssw0rd!'"
+        }
+      },
+      {
+        "description": "Atomic-style test mapping a share over QUIC, written in lowercase",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS02.andes.example.com",
+          "ScriptBlockId": "9a8b7c6d-5e4f-4a3b-8c2d-0e1f2a3b4c5d",
+          "Path": "",
+          "ScriptBlockText": "new-smbmapping -remotepath \\\\quicsrv.example.com\\share -transporttype quic"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate drive mapping with New-SmbMapping over TCP, not QUIC",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
+          "Path": "\\\\andes.example.com\\NETLOGON\\map-drives.ps1",
+          "ScriptBlockText": "New-SmbMapping -LocalPath 'H:' -RemotePath '\\\\fs01.andes.example.com\\home$\\jperez' -TransportType Tcp -Persistent $true"
+        }
+      },
+      {
+        "description": "Script references QUIC client settings but does not run New-SmbMapping",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockId": "6e5d4c3b-2a1f-4e0d-9c8b-7a6f5e4d3c2b",
+          "Path": "C:\\Scripts\\audit-smb.ps1",
+          "ScriptBlockText": "Get-SmbClientConfiguration | Select-Object EnableSMBQUIC; Get-SmbMapping"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "35a7dc42-bc6f-46e0-9f83-81f8e56c8d4b",
+    "title": "Pingback Backdoor DLL Loading Activity",
+    "level": "high",
+    "status": "test",
+    "author": "Bhabesh Raj",
+    "path": "2021/Malware/Pingback/image_load_malware_pingback_backdoor.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Malware/Pingback/image_load_malware_pingback_backdoor.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1574.001"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "El servicio MSDTC (msdtc.exe) cargó C:\\Windows\\oci.dll, que es el patrón de secuestro de DLL que usa el backdoor Pingback. Trate la alerta como un posible compromiso activo con C2 sobre ICMP.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon EID 7) donde Image termina en \\msdtc.exe e ImageLoaded es exactamente C:\\Windows\\oci.dll. MSDTC busca una oci.dll de Oracle que normalmente no existe, y Pingback coloca la suya en C:\\Windows para que el servicio la cargue.",
+      "why_it_matters": "Es secuestro del orden de búsqueda de DLL (T1574.001). El código malicioso corre dentro de un servicio de Windows legítimo, normalmente como SYSTEM. Logra persistencia si MSDTC arranca de forma automática y usa un túnel ICMP para C2, que muchos firewalls no inspeccionan.",
+      "triage_steps": [
+        "Confirme en el evento los campos Image e ImageLoaded, el host, el usuario y la hora. Verifique que msdtc.exe esté en C:\\Windows\\System32 y que su padre sea services.exe.",
+        "Obtenga el hash de C:\\Windows\\oci.dll y revise la firma. Una DLL sin firmar o que no es de Oracle en esa ruta es muy sospechosa.",
+        "Busque la creación del archivo (Sysmon EID 11) y el proceso que escribió oci.dll. Revise ese proceso y su árbol en una ventana de +/- 15 minutos.",
+        "Revise la configuración del servicio MSDTC (sc qc msdtc). Un cambio reciente del inicio de manual a automático indica persistencia.",
+        "Revise el tráfico ICMP del host: pings frecuentes, payloads grandes o de tamaño variable, o destinos externos poco comunes.",
+        "Busque alertas previas para el mismo host y usuario, por ejemplo las reglas relacionadas de Pingback por archivo o por creación de procesos.",
+        "Busque el mismo hash de oci.dll en otros endpoints para medir el alcance."
+      ],
+      "false_positives": [
+        "Poco probable según la regla.",
+        "Un cliente Oracle mal instalado que copió una oci.dll legítima y firmada en C:\\Windows. Valide la firma, el hash y el registro de cambios antes de descartar la alerta."
+      ],
+      "response_steps": [
+        "Si la DLL no es legítima, aísle el endpoint de la red y conserve la evidencia (memoria, oci.dll, logs) antes de tocar nada.",
+        "Bloquee el hash de oci.dll y revise el tráfico ICMP saliente hacia los destinos que identificó.",
+        "Detenga MSDTC, mueva oci.dll a cuarentena y vuelva a dejar el inicio del servicio como estaba, siempre con autorización.",
+        "Busque cuentas comprometidas y el vector de entrada, cambie las credenciales afectadas y restaure el host desde una imagen confiable si es necesario."
+      ],
+      "severity_rationale": "El nivel high se justifica porque la combinación de msdtc.exe y C:\\Windows\\oci.dll casi no tiene uso legítimo y apunta a un backdoor persistente que corre como SYSTEM."
+    },
+    "en": {
+      "summary": "The MSDTC service (msdtc.exe) loaded C:\\Windows\\oci.dll, which is the DLL hijack pattern used by the Pingback backdoor. Treat the alert as a possible active compromise with C2 over ICMP.",
+      "what_it_detects": "Image load events (Sysmon EID 7) where Image ends with \\msdtc.exe and ImageLoaded is exactly C:\\Windows\\oci.dll. MSDTC looks for an Oracle oci.dll that is normally absent, and Pingback drops its own copy in C:\\Windows so the service loads it.",
+      "why_it_matters": "This is DLL search order hijacking (T1574.001). The malicious code runs inside a legitimate Windows service, usually as SYSTEM. It persists if MSDTC is set to start automatically, and it uses an ICMP tunnel for C2, which many firewalls do not inspect.",
+      "triage_steps": [
+        "Confirm the Image, ImageLoaded, host, user and time in the event. Check that msdtc.exe runs from C:\\Windows\\System32 and that its parent is services.exe.",
+        "Get the hash of C:\\Windows\\oci.dll and check its signature. An unsigned or non-Oracle DLL at this path is highly suspicious.",
+        "Find the file creation event (Sysmon EID 11) and the process that wrote oci.dll. Review that process and its tree within +/- 15 minutes.",
+        "Check the MSDTC service configuration (sc qc msdtc). A recent change from manual to automatic start points to persistence.",
+        "Review ICMP traffic from the host: frequent pings, large or variable payloads, or unusual external destinations.",
+        "Look for earlier alerts for the same host and user, such as the related Pingback file and process creation rules.",
+        "Search for the same oci.dll hash on other endpoints to find out how far it has spread."
+      ],
+      "false_positives": [
+        "Unlikely, according to the rule.",
+        "A misconfigured Oracle client install that copied a legitimate, signed oci.dll into C:\\Windows. Check the signature, the hash and change records before closing the alert."
+      ],
+      "response_steps": [
+        "If the DLL is not legitimate, isolate the endpoint and preserve evidence (memory, oci.dll, logs) before you change anything.",
+        "Block the oci.dll hash and investigate outbound ICMP traffic to the destinations you identified.",
+        "With approval, stop MSDTC, quarantine oci.dll and set the service start type back to its baseline value.",
+        "Find compromised accounts and the initial access vector, reset the affected credentials, and rebuild the host from a trusted image if needed."
+      ],
+      "severity_rationale": "High fits because msdtc.exe loading C:\\Windows\\oci.dll has almost no legitimate use and points to a persistent backdoor running as SYSTEM."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "MSDTC service loads an unsigned oci.dll dropped in C:\\Windows (Pingback DLL hijack).",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "ProcessId": 2368,
+          "Image": "C:\\Windows\\System32\\msdtc.exe",
+          "ImageLoaded": "C:\\Windows\\oci.dll",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable"
+        }
+      },
+      {
+        "description": "Same hijack with different path casing, which still matches because comparison is case-insensitive.",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-DB-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\WINDOWS\\system32\\MSDTC.EXE",
+          "ImageLoaded": "c:\\windows\\OCI.DLL",
+          "Signed": "false"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "MSDTC loads the legitimate signed Oracle client oci.dll from the Oracle install directory, not from C:\\Windows.",
+        "event": {
+          "EventID": 7,
+          "Computer": "SRV-DB-02.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\msdtc.exe",
+          "ImageLoaded": "C:\\oracle\\product\\19.0.0\\client_1\\bin\\oci.dll",
+          "Signed": "true",
+          "Signature": "Oracle America, Inc.",
+          "SignatureStatus": "Valid"
+        }
+      },
+      {
+        "description": "MSDTC loads its normal proxy DLL from System32.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "NT AUTHORITY\\NETWORK SERVICE",
+          "Image": "C:\\Windows\\System32\\msdtc.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\msdtcprx.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

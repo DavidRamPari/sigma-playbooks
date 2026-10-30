@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "0c2f8629-7129-4a8a-9897-7e0768f13ff2",
+    "title": "Diskshadow Script Mode Execution",
+    "level": "medium",
+    "status": "test",
+    "author": "Ivan Dyachkov, oscd.community",
+    "path": "windows/process_creation/proc_creation_win_diskshadow_script_mode.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_diskshadow_script_mode.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1218"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó diskshadow.exe en modo script (/s), es decir, procesó comandos desde un archivo. Es una regla de hunting: a menudo será un respaldo legítimo, pero hay que revisar el script y su origen.",
+      "what_it_detects": "Procesos cuya Image termina en \\diskshadow.exe o cuyo OriginalFileName es diskshadow.exe (incluye binarios renombrados), con una CommandLine que contiene '-s ' o '/s ' u otras variantes de guion.",
+      "why_it_matters": "Diskshadow es un binario firmado de Windows que gestiona Volume Shadow Copy. Un atacante puede usarlo con un script para borrar instantáneas, exponer una copia de NTDS.dit o ejecutar comandos con la directiva exec. Esto corresponde a T1218, ejecución mediante un binario del sistema.",
+      "triage_steps": [
+        "Lea la CommandLine, identifique la ruta del script que sigue a /s y anote su ubicación (Temp, Public, ProgramData, perfil de usuario) y su extensión.",
+        "Obtenga el contenido del script desde el endpoint o desde los eventos de creación de archivos. Busque delete shadows, expose, set context persistent, add volume y exec.",
+        "Revise ParentImage, la línea de comandos del proceso padre y el usuario. Una tarea programada de respaldo es esperable; cmd, PowerShell, wmiprvse o una sesión remota son sospechosos.",
+        "Si Image no está en System32 pero OriginalFileName es diskshadow.exe, se trata de un binario renombrado: suba la prioridad.",
+        "Revise los procesos hijos de diskshadow y la actividad del host en +/- 15 minutos: copias de ntds.dit, reg save de SYSTEM, robocopy o letras de unidad nuevas.",
+        "Determine el rol del host. En un controlador de dominio, la exposición de una instantánea indica posible robo de credenciales.",
+        "Busque alertas previas del mismo usuario u host, como vssadmin o wmic shadowcopy delete, y compare con la línea base de ejecuciones de diskshadow."
+      ],
+      "false_positives": [
+        "Scripts de respaldo legítimos que usan diskshadow /s desde tareas programadas.",
+        "Mantenimiento de VSS hecho por administradores en servidores de archivos o de bases de datos.",
+        "Software de respaldo o recuperación ante desastres que llama a diskshadow con scripts propios."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del sistema si el script y la tarea están documentados y autorizados.",
+        "Si es malicioso, aísle el host, conserve el script y la memoria, y bloquee la cuenta implicada.",
+        "Si se expuso NTDS.dit, trate el caso como compromiso de credenciales: rote cuentas privilegiadas y restablezca krbtgt dos veces.",
+        "Después de reunir la evidencia, elimine el script, las instantáneas persistentes y las unidades expuestas, y restaure las copias borradas si es posible.",
+        "Restrinja diskshadow con AppLocker o WDAC en equipos sin función de respaldo. Excluya los scripts verificados por ruta, proceso padre y hash."
+      ],
+      "severity_rationale": "El nivel medium es adecuado porque es una regla de hunting con muchos casos benignos, pero el abuso de diskshadow facilita el robo de NTDS.dit y la destrucción de copias de seguridad."
+    },
+    "en": {
+      "summary": "diskshadow.exe ran in script mode (/s), so it executed commands from a file. This is a hunting rule: the cause is often a legitimate backup, but check the script and where it came from.",
+      "what_it_detects": "Processes whose Image ends in \\diskshadow.exe or whose OriginalFileName is diskshadow.exe (this includes renamed copies), with a CommandLine containing '-s ', '/s ' or another dash variant.",
+      "why_it_matters": "Diskshadow is a signed Windows binary that manages Volume Shadow Copy. With a script, attackers can delete shadow copies, expose a copy of NTDS.dit or run commands through the exec directive. This maps to T1218, execution through a system binary.",
+      "triage_steps": [
+        "Read the CommandLine, find the script path after /s, and note its location (Temp, Public, ProgramData, user profile) and its extension.",
+        "Get the script content from the endpoint or from file creation events. Look for delete shadows, expose, set context persistent, add volume and exec.",
+        "Check ParentImage, the parent's command line and the user. A backup scheduled task is expected; cmd, PowerShell, wmiprvse or a remote session is suspicious.",
+        "If Image is outside System32 but OriginalFileName is diskshadow.exe, the binary was renamed: escalate.",
+        "Check diskshadow's child processes and host activity within +/- 15 minutes: ntds.dit copies, reg save of SYSTEM, robocopy or new drive letters.",
+        "Identify the host's role. On a domain controller, an exposed shadow copy points to possible credential theft.",
+        "Look for earlier alerts for the same user or host, such as vssadmin or wmic shadowcopy delete, and compare against the baseline of diskshadow runs."
+      ],
+      "false_positives": [
+        "Legitimate backup scripts that run diskshadow /s from scheduled tasks.",
+        "VSS maintenance by administrators on file or database servers.",
+        "Backup or disaster recovery software that calls diskshadow with its own scripts."
+      ],
+      "response_steps": [
+        "Confirm with the system owner that the script and the task are documented and authorized.",
+        "If it is malicious, isolate the host, preserve the script and memory, and disable the account involved.",
+        "If NTDS.dit was exposed, treat this as credential compromise: rotate privileged accounts and reset krbtgt twice.",
+        "After collecting evidence, remove the script, persistent shadows and exposed drives, and restore deleted copies where possible.",
+        "Restrict diskshadow with AppLocker or WDAC on hosts with no backup role. Exclude verified scripts by path, parent and hash."
+      ],
+      "severity_rationale": "Medium fits because this hunting rule matches a lot of benign activity, but diskshadow abuse makes NTDS.dit theft and backup destruction possible."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "diskshadow.exe from System32, started by cmd.exe, running a script from C:\\Users\\Public with /s",
+        "event": {
+          "Image": "C:\\Windows\\System32\\diskshadow.exe",
+          "OriginalFileName": "diskshadow.exe",
+          "CommandLine": "diskshadow.exe /s C:\\Users\\Public\\shadow.txt",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "DC-01.andes.example.com",
+          "CurrentDirectory": "C:\\Users\\Public\\"
+        }
+      },
+      {
+        "description": "Renamed diskshadow binary in ProgramData, caught by OriginalFileName, using the -s flag",
+        "event": {
+          "Image": "C:\\ProgramData\\ds.exe",
+          "OriginalFileName": "diskshadow.exe",
+          "CommandLine": "ds.exe -s C:\\ProgramData\\cfg.dsh",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\svc-backup",
+          "Computer": "WS-0142.andes.example.com",
+          "CurrentDirectory": "C:\\ProgramData\\"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "diskshadow started in interactive mode with only a log file (/l) and no /s flag",
+        "event": {
+          "Image": "C:\\Windows\\System32\\diskshadow.exe",
+          "OriginalFileName": "diskshadow.exe",
+          "CommandLine": "diskshadow.exe /l C:\\Logs\\ds.log",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "User": "ANDES\\admin.ops",
+          "Computer": "FS-02.andes.example.com"
+        }
+      },
+      {
+        "description": "robocopy run with /S: the command line has '/S ' but the binary is not diskshadow",
+        "event": {
+          "Image": "C:\\Windows\\System32\\Robocopy.exe",
+          "OriginalFileName": "robocopy.exe",
+          "CommandLine": "robocopy.exe C:\\Data \\\\fs-02.example.com\\backup /S /R:1",
+          "ParentImage": "C:\\Windows\\System32\\svchost.exe",
+          "User": "ANDES\\svc-backup",
+          "Computer": "FS-02.andes.example.com"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

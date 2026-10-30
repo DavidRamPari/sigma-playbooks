@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "45eb2ae2-9aa2-4c3a-99a5-6e5077655466",
+    "title": "Suspicious Computer Account Name Change CVE-2021-42287",
+    "level": "high",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "2021/Exploits/CVE-2021-42287/win_security_samaccountname_spoofing_cve_2021_42287.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Exploits/CVE-2021-42287/win_security_samaccountname_spoofing_cve_2021_42287.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1036",
+      "T1098"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una cuenta de equipo cuyo nombre terminaba en $ fue renombrada a un nombre sin $ (evento 4781). Este patrón coincide con la suplantación de sAMAccountName usada para explotar CVE-2021-42287 y suplantar a un controlador de dominio.",
+      "what_it_detects": "Eventos 4781 del log Security en los que OldTargetUserName contiene '$' (cuenta de equipo) y NewTargetUserName no lo contiene, es decir, una cuenta de máquina que pasa a tener un nombre de apariencia de usuario o de DC sin $.",
+      "why_it_matters": "Un atacante con permiso para crear o modificar cuentas de equipo renombra una cuenta para que coincida con el nombre de un DC sin $, pide un TGT y luego obtiene tickets como el DC. Esto puede dar privilegios de Domain Admin (T1098 manipulación de cuentas, T1036 enmascaramiento).",
+      "triage_steps": [
+        "Compare NewTargetUserName con los nombres de los controladores de dominio. Si coincide con un DC sin $, trate la alerta como crítica.",
+        "Identifique SubjectUserName, SubjectDomainName y SubjectLogonId. Confirme si esa cuenta tiene un motivo legítimo para renombrar equipos.",
+        "Busque un evento 4741 (creación de equipo) previo para TargetSid, sobre todo si lo creó el mismo usuario sin privilegios mediante MachineAccountQuota.",
+        "Busque en el mismo DC, +/- 15 minutos, un segundo 4781 que devuelva la cuenta a su nombre original o a otro nombre.",
+        "Revise eventos 4768 y 4769 del nombre sin $ y del DC suplantado, y anote la IP de origen y los tickets de servicio solicitados.",
+        "Pivote por SubjectLogonId hacia el evento 4624 para obtener la IP y el equipo de origen, y revise alertas previas de esa IP y de ese usuario.",
+        "Verifique si los DC tienen instalados los parches de seguridad de noviembre de 2021 o posteriores que corrigen CVE-2021-42287."
+      ],
+      "false_positives": [
+        "La regla no documenta falsos positivos conocidos (Unknown).",
+        "Un administrador renombra a mano, por error, una cuenta de equipo con ADUC o PowerShell y omite el $.",
+        "Scripts de aprovisionamiento o herramientas de migración de AD que manipulan sAMAccountName de forma incorrecta."
+      ],
+      "response_steps": [
+        "Confirme con el dueño de SubjectUserName y con el equipo de AD si el cambio fue autorizado antes de actuar.",
+        "Si no fue autorizado, deshabilite la cuenta de equipo afectada y la cuenta que hizo el cambio, y aísle el endpoint de origen.",
+        "Si hubo suplantación del DC, trátelo como compromiso del dominio: busque DCSync y cambios en grupos privilegiados, y restablezca dos veces la contraseña de krbtgt.",
+        "Fije ms-DS-MachineAccountQuota en 0, aplique los parches a todos los DC y documente el incidente."
+      ],
+      "severity_rationale": "El nivel high se justifica porque renombrar una cuenta de equipo quitando el $ casi nunca es legítimo y puede llevar a la toma total del dominio."
+    },
+    "en": {
+      "summary": "A computer account whose name ended in $ was renamed to a name without $ (event 4781). This matches the sAMAccountName spoofing pattern used to exploit CVE-2021-42287 and impersonate a domain controller.",
+      "what_it_detects": "Security log event 4781 where OldTargetUserName contains '$' (a machine account) and NewTargetUserName does not, so a machine account now has a user-like or DC-like name with no $.",
+      "why_it_matters": "An attacker who can create or modify computer accounts renames one to match a DC name without $, requests a TGT, and then gets tickets as the DC. This can lead to Domain Admin rights (T1098 account manipulation, T1036 masquerading).",
+      "triage_steps": [
+        "Compare NewTargetUserName with your domain controller names. If it matches a DC name without $, treat the alert as critical.",
+        "Identify SubjectUserName, SubjectDomainName and SubjectLogonId. Confirm whether that account has a legitimate reason to rename computers.",
+        "Look for an earlier 4741 (computer created) event for TargetSid, especially one created by the same unprivileged user through MachineAccountQuota.",
+        "Search the same DC within +/- 15 minutes for a second 4781 that renames the account back to its original name or to another name.",
+        "Review 4768 and 4769 events for the $-less name and the impersonated DC. Note the source IP and the service tickets requested.",
+        "Pivot on SubjectLogonId to the 4624 logon to get the source IP and host, then check earlier alerts for that IP and user.",
+        "Check whether DCs have the November 2021 or later security updates that fix CVE-2021-42287."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives (Unknown).",
+        "An administrator manually renames a computer account in ADUC or PowerShell and leaves out the $ by mistake.",
+        "Provisioning scripts or AD migration tools that set sAMAccountName incorrectly."
+      ],
+      "response_steps": [
+        "Before acting, confirm with the owner of SubjectUserName and the AD team whether the change was authorized.",
+        "If it was not, disable the affected computer account and the account that made the change, and isolate the source endpoint.",
+        "If DC impersonation happened, treat it as domain compromise: hunt for DCSync and privileged group changes, then reset krbtgt twice.",
+        "Set ms-DS-MachineAccountQuota to 0, patch all DCs and document the incident."
+      ],
+      "severity_rationale": "High fits because stripping the $ from a computer account name is almost never legitimate and can lead to full domain takeover."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Attacker-created machine account renamed to the domain controller name without the trailing $",
+        "event": {
+          "EventID": 4781,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "OldTargetUserName": "WS-0142$",
+          "NewTargetUserName": "DC-01",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1604",
+          "SubjectUserName": "jperez",
+          "SubjectDomainName": "ANDES",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectLogonId": "0x3E7A21"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate computer rename where the new name keeps the trailing $",
+        "event": {
+          "EventID": 4781,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "OldTargetUserName": "WS-0142$",
+          "NewTargetUserName": "WS-0199$",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1604",
+          "SubjectUserName": "adm-mlopez",
+          "SubjectDomainName": "ANDES",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1201",
+          "SubjectLogonId": "0x51C0F2"
+        }
+      },
+      {
+        "description": "Ordinary user account rename where the old name has no $",
+        "event": {
+          "EventID": 4781,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "OldTargetUserName": "jperez",
+          "NewTargetUserName": "jperez.old",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "SubjectUserName": "adm-mlopez",
+          "SubjectDomainName": "ANDES",
+          "SubjectUserSid": "S-1-5-21-1111111111-2222222222-3333333333-1201",
+          "SubjectLogonId": "0x51C0F2"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

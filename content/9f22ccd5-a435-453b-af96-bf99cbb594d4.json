@@ -1,0 +1,142 @@
+{
+  "rule": {
+    "id": "9f22ccd5-a435-453b-af96-bf99cbb594d4",
+    "title": "WinAPI Function Calls Via PowerShell Scripts",
+    "level": "medium",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community, Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_win_api_library_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/powershell/powershell_script/posh_ps_win_api_library_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001",
+      "T1106"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado por Script Block Logging (evento 4104) contiene el nombre de una función WinAPI de bajo nivel, como VirtualAlloc, CreateRemoteThread u OpenProcessToken. Es una regla de hunting: por sí sola no confirma actividad maliciosa.",
+      "what_it_detects": "Bloques de script cuyo ScriptBlockText contiene alguno de los 38 nombres de API listados (gestión de memoria, hilos, tokens, handles, carga de librerías, MiniDumpWriteDump). Suelen aparecer al declarar P/Invoke con Add-Type o DllImport, o al resolver funciones por reflexión.",
+      "why_it_matters": "Llamar a la WinAPI directamente desde PowerShell (T1059.001, T1106) permite inyectar o ejecutar shellcode, manipular tokens, volcar LSASS y evadir detecciones basadas en cmdlets habituales. Así funcionan muchos loaders y frameworks ofensivos en memoria.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y anote qué APIs aparecen. VirtualAlloc+CreateThread+WaitForSingleObject o WriteProcessMemory+CreateRemoteThread sugieren un loader o una inyección.",
+        "Si MessageTotal es mayor que 1, reconstruya el script uniendo todos los fragmentos con el mismo ScriptBlockId en el mismo host.",
+        "Revise el campo Path: si está vacío, el código se ejecutó de forma interactiva, codificada o descargada. Si apunta a un archivo, valide la ruta, el firmante y el hash.",
+        "Busque la creación del proceso powershell.exe (4688/Sysmon 1) en el mismo host ±15 minutos y revise ParentImage, CommandLine (-enc, IEX, DownloadString) y el usuario.",
+        "Si aparecen OpenProcess, ReadProcessMemory o MiniDumpWriteDump, busque accesos a lsass.exe (Sysmon 10) y la creación de archivos .dmp.",
+        "Correlacione en la misma ventana las conexiones de red, los procesos hijos y otros scripts del mismo proceso PowerShell.",
+        "Mida la prevalencia: el mismo script o Path en muchos equipos suele ser una herramienta corporativa. Un caso único en un endpoint de usuario merece más atención.",
+        "Revise alertas previas del mismo host y usuario, sobre todo de evasión de AMSI, ejecución codificada o robo de credenciales."
+      ],
+      "false_positives": [
+        "Módulos y scripts administrativos legítimos que usan P/Invoke para tareas como la gestión de tokens, ventanas o servicios.",
+        "Agentes de EDR, inventario o monitoreo que ejecutan PowerShell con llamadas a la WinAPI.",
+        "Desarrolladores o equipos de soporte que prueban código de interoperabilidad .NET.",
+        "Pruebas de penetración o ejercicios de red team autorizados y documentados."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del sistema o con el equipo de TI si el script y el usuario son esperados. Documente la evidencia y el hash del script.",
+        "Si hay indicios de un loader, una inyección o un volcado de LSASS, aísle el endpoint desde el EDR y capture la memoria antes de reiniciar.",
+        "Si se accedió a LSASS o se manipularon tokens, restablezca las credenciales de las cuentas con sesión en el host y revise su uso posterior.",
+        "Elimine la persistencia y los artefactos identificados, y bloquee el hash, la ruta o el dominio de origen del script.",
+        "Para scripts legítimos recurrentes, cree exclusiones acotadas por Path, firmante y usuario. No excluya los nombres de API."
+      ],
+      "severity_rationale": "Medium es adecuado porque estas APIs son típicas de técnicas en memoria, aunque la regla también coincide con mucho código legítimo y requiere contexto adicional."
+    },
+    "en": {
+      "summary": "A PowerShell script block captured by Script Block Logging (event 4104) contains the name of a low-level WinAPI function such as VirtualAlloc, CreateRemoteThread or OpenProcessToken. This is a hunting rule, so a match alone does not prove malicious activity.",
+      "what_it_detects": "Script blocks whose ScriptBlockText contains any of the 38 listed API names, covering memory, thread, token and handle functions, library loading and MiniDumpWriteDump. They typically appear in Add-Type or DllImport P/Invoke definitions or in reflection-based function resolution.",
+      "why_it_matters": "Calling the WinAPI directly from PowerShell (T1059.001, T1106) lets attackers run or inject shellcode, manipulate tokens and dump LSASS while avoiding detections built around common cmdlets. Many in-memory loaders and offensive frameworks work this way.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and note which APIs appear. VirtualAlloc+CreateThread+WaitForSingleObject or WriteProcessMemory+CreateRemoteThread suggests a loader or injection.",
+        "If MessageTotal is greater than 1, rebuild the script from every fragment with the same ScriptBlockId on the host.",
+        "Check Path. If it is empty, the code ran interactively, encoded or downloaded. If it points to a file, validate the location, signer and hash.",
+        "Find the powershell.exe process creation (4688/Sysmon 1) on the same host within ±15 minutes. Review ParentImage, CommandLine (-enc, IEX, DownloadString) and the user.",
+        "If OpenProcess, ReadProcessMemory or MiniDumpWriteDump appear, look for lsass.exe access (Sysmon 10) and new .dmp files.",
+        "Correlate network connections, child processes and other script blocks from the same PowerShell process in that window.",
+        "Check prevalence. The same script or Path on many hosts is usually corporate tooling. A one-off on a user endpoint deserves more scrutiny.",
+        "Review earlier alerts for the same host and user, especially AMSI bypass, encoded execution or credential theft."
+      ],
+      "false_positives": [
+        "Legitimate admin modules and scripts using P/Invoke for token, window or service management.",
+        "EDR, inventory or monitoring agents running PowerShell that calls WinAPI functions.",
+        "Developers or support staff testing .NET interop code.",
+        "Authorized, documented penetration tests or red team exercises."
+      ],
+      "response_steps": [
+        "Ask the system owner or IT whether the script and user are expected. Record the evidence and the script hash.",
+        "If you see signs of a loader, injection or LSASS dump, isolate the endpoint through EDR and capture memory before any reboot.",
+        "If LSASS was accessed or tokens were abused, reset credentials for accounts with sessions on the host and review how those accounts were used afterwards.",
+        "Remove the persistence and artifacts you identified. Block the script's hash, path or source domain.",
+        "For recurring legitimate scripts, add narrow exclusions by Path, signer and user. Never exclude the API names."
+      ],
+      "severity_rationale": "Medium fits because these APIs are typical of in-memory attack techniques, but the rule also matches plenty of legitimate code and needs more context to confirm."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive script block declaring VirtualAlloc, CreateThread and WaitForSingleObject via Add-Type P/Invoke (no payload)",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "5b1e2c3a-7d41-4f0e-9a2b-1c3d4e5f6a70",
+          "Path": "",
+          "ScriptBlockText": "$sig = '[DllImport(\"kernel32.dll\")] public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect); [DllImport(\"kernel32.dll\")] public static extern IntPtr CreateThread(IntPtr a, uint b, IntPtr c, IntPtr d, uint e, IntPtr f); [DllImport(\"kernel32.dll\")] public static extern uint WaitForSingleObject(IntPtr h, uint ms);'; $w = Add-Type -MemberDefinition $sig -Name Win32 -Namespace Native -PassThru"
+        }
+      },
+      {
+        "description": "Script file resolving functions through reflection with GetModuleHandle, GetProcAddress and GetDelegateForFunctionPointer",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "a9c4d2e1-3b6f-4c8a-8e1d-2f7b9c0d1e22",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "$u = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.Location -like '*System.dll' }; $m = $u.GetType('Microsoft.Win32.UnsafeNativeMethods'); $h = $m.GetMethod('GetModuleHandle').Invoke($null, @('kernel32.dll')); $p = $m.GetMethod('GetProcAddress', [Type[]]@([IntPtr],[String])).Invoke($null, @($h, 'OpenProcess')); $d = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($p, $t)"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine admin script querying services with standard cmdlets, no WinAPI names",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "0d2e4f6a-8b1c-4d3e-9f5a-6b7c8d9e0f11",
+          "Path": "C:\\Scripts\\Check-Spooler.ps1",
+          "ScriptBlockText": "Get-Service -Name Spooler | Select-Object Name, Status, StartType | Export-Csv -Path C:\\Reports\\spooler.csv -NoTypeInformation"
+        }
+      },
+      {
+        "description": "Process inventory using .NET Process class (GetProcessById), which only partially resembles the listed API names",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-07.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a33",
+          "Path": "C:\\Program Files\\Inventory\\collect.ps1",
+          "ScriptBlockText": "$p = [System.Diagnostics.Process]::GetProcessById($PID); $p | Select-Object Id, ProcessName, StartTime, WorkingSet64 | ConvertTo-Json | Out-File C:\\Inventory\\proc.json"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

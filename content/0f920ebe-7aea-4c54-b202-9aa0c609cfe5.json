@@ -1,0 +1,153 @@
+{
+  "rule": {
+    "id": "0f920ebe-7aea-4c54-b202-9aa0c609cfe5",
+    "title": "Potential Credential Dumping Attempt Via PowerShell",
+    "level": "medium",
+    "status": "test",
+    "author": "oscd.community, Natalia Shornikova",
+    "path": "windows/process_access/proc_access_win_lsass_powershell_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_access/proc_access_win_lsass_powershell_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso de PowerShell (powershell.exe o pwsh.exe) abrió un handle hacia lsass.exe. Puede ser un intento de leer la memoria de LSASS para volcar credenciales, aunque scripts y herramientas legítimas también lo provocan.",
+      "what_it_detects": "Eventos de acceso a procesos de Sysmon (Event ID 10) donde SourceImage termina en \\powershell.exe o \\pwsh.exe y TargetImage termina en \\lsass.exe. La regla no filtra por permisos, por lo que GrantedAccess y CallTrace determinan la gravedad.",
+      "why_it_matters": "LSASS guarda hashes de contraseñas, tickets Kerberos y a veces credenciales en texto claro. Los atacantes usan herramientas en PowerShell (por ejemplo Invoke-Mimikatz o wrappers de MiniDumpWriteDump) para volcar esa memoria y moverse lateralmente (ATT&CK T1003.001, volcado de memoria de LSASS).",
+      "triage_steps": [
+        "Revisar GrantedAccess: 0x1000/0x1400 (solo consulta) suele ser benigno; 0x1010, 0x1410, 0x1438, 0x143a o 0x1fffff (lectura de memoria o acceso total) es sospechoso.",
+        "Revisar CallTrace en busca de dbghelp.dll o dbgcore.dll (APIs de minidump) o regiones UNKNOWN, que indican código inyectado o cargado reflectivamente.",
+        "Usar SourceProcessGUID/SourceProcessId para ubicar la creación del proceso PowerShell; revisar CommandLine, ParentImage y usuario buscando contenido codificado o descargado.",
+        "Obtener los logs de Script Block (Event ID 4104) del host en +/- 15 minutos y buscar Mimikatz, MiniDump, Out-Minidump, comsvcs o Add-Type con P/Invoke.",
+        "Buscar archivos .dmp nuevos u otros archivos inusuales escritos por el mismo proceso, y conexiones de red salientes desde él.",
+        "Pivotear por el mismo usuario y host: alertas previas, nuevos inicios de sesión, escalamiento de privilegios o movimiento lateral posterior.",
+        "Confirmar con el responsable del activo si algún script administrativo, de EDR o de escaneo aprobado usa PowerShell contra LSASS en ese host."
+      ],
+      "false_positives": [
+        "Scripts administrativos o de inventario que usan Get-Process o WMI y abren lsass.exe solo con permisos de consulta.",
+        "Herramientas de seguridad, EDR, forenses o escáneres de vulnerabilidades que usan PowerShell para inspeccionar procesos o su protección.",
+        "Ejercicios autorizados de red team o pruebas de penetración.",
+        "Agentes de monitoreo que ejecutan chequeos de salud en PowerShell sobre controladores de dominio o servidores."
+      ],
+      "response_steps": [
+        "Verificar la intención: si GrantedAccess incluye lectura de memoria y ninguna actividad aprobada lo explica, tratarlo como robo de credenciales.",
+        "Aislar el host mediante contención de red del EDR y preservar memoria, logs de Script Block y archivos de volcado antes de limpiar.",
+        "Restablecer contraseñas de las cuentas con sesión en el host y revocar sesiones; si es un controlador de dominio, planificar un reinicio coordinado de krbtgt.",
+        "Eliminar el script o la persistencia maliciosa, buscar el mismo CommandLine o hash en otros hosts y habilitar protección LSA (RunAsPPL) o Credential Guard.",
+        "Si es benigno, documentar el origen y crear una exclusión acotada por ruta del script, usuario y GrantedAccess."
+      ],
+      "severity_rationale": "Medium es adecuado porque esta regla de hunting no filtra permisos y capta consultas benignas, pero un verdadero positivo implica robo de credenciales y requiere revisión pronta."
+    },
+    "en": {
+      "summary": "A PowerShell process (powershell.exe or pwsh.exe) opened a handle to lsass.exe. This may be an attempt to read LSASS memory and dump credentials, but benign scripts and tools can also cause it.",
+      "what_it_detects": "Sysmon process access events (Event ID 10) where SourceImage ends with \\powershell.exe or \\pwsh.exe and TargetImage ends with \\lsass.exe. The rule fires on any access right requested, so GrantedAccess and CallTrace decide how serious the event is.",
+      "why_it_matters": "LSASS holds password hashes, Kerberos tickets and sometimes cleartext credentials. Attackers use PowerShell tooling (for example Invoke-Mimikatz or MiniDumpWriteDump wrappers) to dump this memory and then move laterally (ATT&CK T1003.001, OS Credential Dumping: LSASS Memory).",
+      "triage_steps": [
+        "Check GrantedAccess: 0x1000/0x1400 (query only) is usually benign; 0x1010, 0x1410, 0x1438, 0x143a or 0x1fffff (memory read or full access) is suspicious.",
+        "Review CallTrace for dbghelp.dll or dbgcore.dll (minidump APIs) or UNKNOWN memory regions, which suggest injected or reflectively loaded code.",
+        "Use SourceProcessGUID/SourceProcessId to find the PowerShell process creation event; review its CommandLine, ParentImage and user for encoded or downloaded content.",
+        "Pull PowerShell Script Block logs (Event ID 4104) on the host within +/- 15 minutes and look for Mimikatz, MiniDump, Out-Minidump, comsvcs or Add-Type with P/Invoke.",
+        "Look for newly created .dmp or unusual files written by the same process, and outbound network connections from it.",
+        "Pivot on the same user and host for earlier alerts, new logons, privilege escalation or lateral movement after the access.",
+        "Confirm with the asset owner whether an approved admin, EDR or scanning script runs PowerShell against LSASS on this host."
+      ],
+      "false_positives": [
+        "Administrative or inventory scripts calling Get-Process or WMI that open lsass.exe with query-only access rights.",
+        "Security, EDR, forensic or vulnerability-scanning tools that use PowerShell to inspect process memory or protection status.",
+        "Authorized red team or penetration testing activity.",
+        "Monitoring agents that run PowerShell health checks on domain controllers or servers."
+      ],
+      "response_steps": [
+        "Verify intent: if GrantedAccess includes memory read and no approved activity explains it, treat it as credential theft.",
+        "Isolate the host with EDR network containment and preserve memory, script block logs and any dump files before cleanup.",
+        "Reset passwords for accounts logged on to the host and revoke sessions; on a domain controller, plan a coordinated krbtgt reset.",
+        "Remove the malicious script or persistence, hunt other hosts for the same CommandLine or hashes, and enable LSA protection (RunAsPPL) or Credential Guard.",
+        "If benign, document the source and add a narrow exclusion by script path, user and GrantedAccess."
+      ],
+      "severity_rationale": "Medium fits because this hunting rule ignores access rights and catches benign queries, yet a true positive means credential theft and needs prompt review."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Windows PowerShell opens lsass.exe with memory read rights, call trace through dbghelp.dll (minidump pattern).",
+        "event": {
+          "EventID": 10,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 13:22:41.118",
+          "SourceProcessId": 6412,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1410",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Windows\\SYSTEM32\\dbghelp.dll+1b0f2|UNKNOWN(00007FFB1A2C4E11)",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "PowerShell 7 (pwsh.exe) requests full access to lsass.exe.",
+        "event": {
+          "EventID": 10,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "SRV-APP-03.andes.example.com",
+          "UtcTime": "2024-05-14 15:07:09.502",
+          "SourceProcessId": 9120,
+          "SourceImage": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "TargetProcessId": 684,
+          "TargetImage": "C:\\Windows\\System32\\lsass.exe",
+          "GrantedAccess": "0x1fffff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d4c4|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(000001D3A6F21B40)",
+          "SourceUser": "ANDES\\adm.rgomez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "PowerShell ISE (powershell_ise.exe) accesses lsass.exe; SourceImage does not end with \\powershell.exe or \\pwsh.exe.",
+        "event": {
+          "EventID": 10,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 10:11:03.004",
+          "SourceProcessId": 5520,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1000",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "powershell.exe queries svchost.exe, not lsass.exe.",
+        "event": {
+          "EventID": 10,
+          "Channel": "Microsoft-Windows-Sysmon/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "UtcTime": "2024-05-14 10:15:27.661",
+          "SourceProcessId": 6412,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetProcessId": 1044,
+          "TargetImage": "C:\\Windows\\System32\\svchost.exe",
+          "GrantedAccess": "0x1000",
+          "SourceUser": "ANDES\\jperez",
+          "TargetUser": "NT AUTHORITY\\SYSTEM"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

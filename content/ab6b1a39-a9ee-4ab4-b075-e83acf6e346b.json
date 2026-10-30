@@ -1,0 +1,165 @@
+{
+  "rule": {
+    "id": "ab6b1a39-a9ee-4ab4-b075-e83acf6e346b",
+    "title": "OMIGOD HTTP No Authentication RCE - CVE-2021-38647",
+    "level": "high",
+    "status": "stable",
+    "author": "Nate Guagenti (neu5ron)",
+    "path": "2021/Exploits/CVE-2021-38647/zeek_http_exploit_cve_2021_38647_omigod_no_auth_rce.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Exploits/CVE-2021-38647/zeek_http_exploit_cve_2021_38647_omigod_no_auth_rce.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1021.006",
+      "T1068",
+      "T1190",
+      "T1203",
+      "T1210"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Zeek registró un POST a /wsman sin encabezado Authorization, con cuerpo no vacío, al que el servidor respondió 200. Ese es el patrón de OMIGOD (CVE-2021-38647): ejecución remota de comandos como root en OMI sin autenticación.",
+      "what_it_detects": "Eventos de Zeek http.log con method POST, uri /wsman y status_code 200, donde client_header_names no contiene AUTHORIZATION y request_body_len es distinto de 0. El script header-names de Zeek tiene que estar habilitado.",
+      "why_it_matters": "OMI (Open Management Infrastructure) viene instalado en muchas VM Linux de Azure. Si se omite el encabezado de autenticación, una sola petición SOAP puede ejecutar comandos como root. Corresponde a explotación de aplicaciones expuestas (T1190), escalamiento de privilegios (T1068) y movimiento lateral vía WinRM (T1021.006, T1210).",
+      "triage_steps": [
+        "Identifique el destino (id.resp_h, id.resp_p) y confirme si es un host Linux con OMI/agentes de Azure. Los puertos habituales son 5985, 5986 y 1270.",
+        "Revise el origen (id.orig_h): ¿es interno, una herramienta de gestión conocida o una IP externa? Busque otras conexiones de esa IP a /wsman en otros hosts.",
+        "Recupere el PCAP o el cuerpo de la petición y busque ExecuteShellCommand, ExecuteScript o comandos embebidos en el SOAP.",
+        "Compare request_body_len, response_body_len y user_agent con el tráfico WinRM legítimo de su entorno. Una respuesta grande puede contener la salida de un comando.",
+        "En el host destino, revise los procesos hijos de omiengine/omiagent ejecutados como root en +/- 15 minutos: shells, curl, wget, base64, cambios en cron o usuarios nuevos.",
+        "Verifique la versión instalada del paquete omi. Las versiones anteriores a 1.6.8-1 son vulnerables.",
+        "Busque alertas previas del mismo origen o destino, por ejemplo escaneos, fuerza bruta o descargas posteriores."
+      ],
+      "false_positives": [
+        "Intentos de explotación sin éxito contra hosts parcheados que aun así responden 200.",
+        "Escáneres de vulnerabilidades autorizados que mandan POST a /wsman sin Authorization para detectar versiones sin parche, sin ejecutar comandos.",
+        "Herramientas de gestión mal configuradas que se autentican por un mecanismo distinto del encabezado Authorization."
+      ],
+      "response_steps": [
+        "Confirme con el PCAP y los logs del endpoint si hubo ejecución de comandos antes de escalar el caso como incidente.",
+        "Si se confirma la ejecución, aísle el host o restrinja por NSG/firewall el acceso a los puertos 5985, 5986 y 1270.",
+        "Actualice OMI a la versión 1.6.8-1 o posterior en todos los hosts afectados y bloquee la IP de origen si es externa.",
+        "Busque persistencia (cron, claves SSH, usuarios, servicios), elimínela tras documentarla y rote las credenciales expuestas en el host.",
+        "Restaure desde una imagen confiable si no se puede asegurar la integridad, y monitoree el origen en busca de nuevos intentos."
+      ],
+      "severity_rationale": "La severidad alta corresponde porque una respuesta 200 a un POST sin autenticación con cuerpo puede significar ejecución remota como root, aunque se necesita el PCAP para confirmarla."
+    },
+    "en": {
+      "summary": "Zeek logged a POST to /wsman with a non-empty body and no Authorization header, and the server answered 200. That is the OMIGOD (CVE-2021-38647) pattern: unauthenticated remote command execution as root through OMI.",
+      "what_it_detects": "Zeek http.log events with method POST, uri /wsman and status_code 200, where client_header_names does not contain AUTHORIZATION and request_body_len is not 0. The Zeek header-names script must be enabled.",
+      "why_it_matters": "OMI (Open Management Infrastructure) is installed on many Linux Azure VMs. Leaving out the auth header lets a single SOAP request run commands as root. This maps to exploiting a public-facing application (T1190), privilege escalation (T1068) and lateral movement over WinRM (T1021.006, T1210).",
+      "triage_steps": [
+        "Identify the destination (id.resp_h, id.resp_p) and confirm whether it is a Linux host running OMI or Azure agents. Usual ports are 5985, 5986 and 1270.",
+        "Check the source (id.orig_h): internal, a known management tool, or external? Search for that IP sending requests to /wsman on other hosts.",
+        "Pull the PCAP or the request body and look for ExecuteShellCommand, ExecuteScript or commands embedded in the SOAP.",
+        "Compare request_body_len, response_body_len and user_agent with your normal WinRM traffic. A large response may hold command output.",
+        "On the destination host, review root child processes of omiengine/omiagent within +/- 15 minutes: shells, curl, wget, base64, cron changes or new users.",
+        "Check the installed omi package version. Versions earlier than 1.6.8-1 are vulnerable.",
+        "Look for earlier alerts on the same source or destination, such as scans, brute force or follow-on downloads."
+      ],
+      "false_positives": [
+        "Failed exploitation attempts against patched hosts that still return 200.",
+        "Authorized vulnerability scanners that send POST requests to /wsman without Authorization to find unpatched versions, without running commands.",
+        "Misconfigured management tools that authenticate by some means other than the Authorization header."
+      ],
+      "response_steps": [
+        "Use the PCAP and endpoint logs to confirm command execution before declaring an incident.",
+        "If execution is confirmed, isolate the host or restrict ports 5985, 5986 and 1270 with an NSG or firewall.",
+        "Upgrade OMI to 1.6.8-1 or later on all affected hosts, and block the source IP if it is external.",
+        "Hunt for persistence (cron, SSH keys, users, services), document it before removing it, and rotate credentials exposed on the host.",
+        "Rebuild from a trusted image if integrity cannot be assured, and keep monitoring the source for new attempts."
+      ],
+      "severity_rationale": "High fits because a 200 response to an unauthenticated POST with a body can mean remote execution as root, although the PCAP is needed to confirm it."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "An external host sends an unauthenticated SOAP POST with a body to /wsman on OMI port 5986 and gets 200 back.",
+        "event": {
+          "ts": "2021-09-20T14:03:12.481Z",
+          "uid": "CxT9kq3bZ1aQwE7r2",
+          "id.orig_h": "203.0.113.45",
+          "id.orig_p": 51544,
+          "id.resp_h": "192.0.2.20",
+          "id.resp_p": 5986,
+          "method": "POST",
+          "host": "192.0.2.20:5986",
+          "uri": "/wsman",
+          "user_agent": "python-requests/2.25.1",
+          "status_code": 200,
+          "request_body_len": 1652,
+          "response_body_len": 1478,
+          "client_header_names": "HOST,USER-AGENT,ACCEPT-ENCODING,ACCEPT,CONNECTION,CONTENT-TYPE,CONTENT-LENGTH"
+        }
+      },
+      {
+        "description": "An internal host on port 1270 sends a POST to /wsman with a body and no Authorization header, and the server answers 200.",
+        "event": {
+          "ts": "2021-09-21T09:15:40.112Z",
+          "uid": "CbH2m8Lr0pYvXn4s1",
+          "id.orig_h": "198.51.100.77",
+          "id.orig_p": 40122,
+          "id.resp_h": "192.0.2.31",
+          "id.resp_p": 1270,
+          "method": "POST",
+          "host": "lnx-app-03.example.com:1270",
+          "uri": "/wsman",
+          "user_agent": "curl/7.68.0",
+          "status_code": 200,
+          "request_body_len": 980,
+          "response_body_len": 2210,
+          "client_header_names": "HOST,USER-AGENT,ACCEPT,CONTENT-TYPE,CONTENT-LENGTH"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate authenticated WinRM/OMI management request: an AUTHORIZATION header is present, so the auth_header filter excludes it.",
+        "event": {
+          "ts": "2021-09-20T15:22:05.904Z",
+          "uid": "CqP7d1Nf5sKjLm9u3",
+          "id.orig_h": "192.0.2.10",
+          "id.orig_p": 49822,
+          "id.resp_h": "192.0.2.20",
+          "id.resp_p": 5986,
+          "method": "POST",
+          "host": "192.0.2.20:5986",
+          "uri": "/wsman",
+          "user_agent": "Microsoft WinRM Client",
+          "status_code": 200,
+          "request_body_len": 1324,
+          "response_body_len": 2890,
+          "client_header_names": "CONNECTION,CONTENT-TYPE,AUTHORIZATION,USER-AGENT,CONTENT-LENGTH,HOST"
+        }
+      },
+      {
+        "description": "Probe POST to /wsman without Authorization but with an empty body (request_body_len 0), so the too_small_http_client_body filter excludes it.",
+        "event": {
+          "ts": "2021-09-20T16:01:33.250Z",
+          "uid": "CzR4w6Te8gHbVc2y5",
+          "id.orig_h": "203.0.113.88",
+          "id.orig_p": 60311,
+          "id.resp_h": "192.0.2.20",
+          "id.resp_p": 5985,
+          "method": "POST",
+          "host": "192.0.2.20:5985",
+          "uri": "/wsman",
+          "user_agent": "Mozilla/5.0 (compatible; scanner)",
+          "status_code": 200,
+          "request_body_len": 0,
+          "response_body_len": 0,
+          "client_header_names": "HOST,USER-AGENT,CONTENT-LENGTH"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

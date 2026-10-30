@@ -1,0 +1,151 @@
+{
+  "rule": {
+    "id": "f932f9f9-a6bd-45e3-9a0d-ca613fe7fc40",
+    "title": "Potential Kerberos Pre-Authentication Failure for Machine Accounts",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Panos Gkatziroulis, Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/builtin/security/win_security_susp_failed_logon_for_service_account.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/builtin/security/win_security_susp_failed_logon_for_service_account.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1110.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró un evento 4771 (falla de preautenticación Kerberos) para una cuenta cuyo nombre termina en '$' (equipo, gMSA o dMSA), con Status 0x18 o 0x19. Varias fallas seguidas pueden indicar adivinación de contraseñas de cuentas de máquina o de servicio.",
+      "what_it_detects": "Eventos 4771 del log Security donde TargetUserName termina en '$' y Status es 0x18 (KDC_ERR_PREAUTH_FAILED, contraseña inválida) o 0x19 (KDC_ERR_PREAUTH_REQUIRED, se requiere preautenticación adicional). Es una regla de threat hunting: una sola falla rara vez basta para concluir algo.",
+      "why_it_matters": "Corresponde a ATT&CK T1110.001 (adivinación de contraseñas). Comprometer una cuenta de máquina o de servicio administrada da acceso a sus permisos y servicios. Los autores la asocian con Golden dMSA, una técnica contra contraseñas de cuentas de servicio administradas delegadas.",
+      "triage_steps": [
+        "Revise el Status: 0x18 indica contraseña incorrecta y es más relevante; 0x19 suele ser parte normal del intercambio Kerberos y tiene menor prioridad.",
+        "Cuente los eventos 4771 del mismo IpAddress y del mismo TargetUserName en +/- 15 minutos; muchas fallas o muchas cuentas '$' distintas sugieren fuerza bruta.",
+        "Resuelva el IpAddress por DNS/DHCP y confirme si corresponde al equipo dueño de la cuenta; una IP ajena que se autentica como otra máquina es sospechosa.",
+        "Determine el tipo de cuenta en Active Directory: equipo, gMSA o dMSA; trate con mayor prioridad las cuentas de servicio administradas.",
+        "Busque 4768/4769 exitosos para la misma cuenta después de las fallas, que indicarían que la contraseña se adivinó.",
+        "En el host de origen, identifique el proceso que se conecta a TCP/UDP 88 (Sysmon evento 3, EDR) y busque herramientas Kerberos no habituales.",
+        "Revise eventos 4742 o cambios recientes en la cuenta (restauración de snapshot, reinstalación, unión al dominio) y alertas anteriores del mismo origen."
+      ],
+      "false_positives": [
+        "Contraseña de cuenta de equipo desincronizada tras restaurar un snapshot o backup de una VM.",
+        "Equipo reinstalado o vuelto a unir al dominio con el mismo nombre mientras la instancia anterior sigue activa.",
+        "Canal seguro roto o credenciales en caché obsoletas en servidores o clústeres.",
+        "Status 0x19 generado por clientes que primero solicitan un ticket sin preautenticación."
+      ],
+      "response_steps": [
+        "Verifique con el dueño del equipo o servicio si hubo restauraciones, reinstalaciones o cambios que expliquen las fallas.",
+        "Si se confirma fuerza bruta, aísle el host de origen desde el EDR y bloquee el IpAddress en el firewall interno.",
+        "Restablezca la contraseña de las cuentas de equipo afectadas y rote las de gMSA/dMSA si hubo autenticaciones exitosas sospechosas.",
+        "Investigue en el host de origen la herramienta usada y la cuenta que la ejecutó, y elimínela tras preservar la evidencia.",
+        "Restablezca el canal seguro de los equipos legítimos afectados y vigile nuevos 4771 durante los días siguientes."
+      ],
+      "severity_rationale": "Nivel medio porque las fallas aisladas suelen ser benignas, pero un patrón repetido contra cuentas '$' puede preceder al compromiso de cuentas de servicio con privilegios."
+    },
+    "en": {
+      "summary": "A domain controller logged event 4771 (Kerberos pre-authentication failure) for an account ending in '$' (computer, gMSA or dMSA) with Status 0x18 or 0x19. Repeated failures may indicate password guessing against machine or service accounts.",
+      "what_it_detects": "Security log event 4771 where TargetUserName ends with '$' and Status is 0x18 (KDC_ERR_PREAUTH_FAILED, invalid password) or 0x19 (KDC_ERR_PREAUTH_REQUIRED, additional pre-authentication required). This is a hunting rule; a single failure rarely proves anything.",
+      "why_it_matters": "Maps to ATT&CK T1110.001 (password guessing). Compromising a machine or managed service account grants its permissions and service access. The authors link it to Golden dMSA, a technique targeting delegated managed service account passwords.",
+      "triage_steps": [
+        "Check Status: 0x18 means a wrong password and matters more; 0x19 is often a normal step of the Kerberos exchange and is lower priority.",
+        "Count 4771 events from the same IpAddress and for the same TargetUserName within +/- 15 minutes; many failures or many distinct '$' accounts suggest brute force.",
+        "Resolve IpAddress via DNS/DHCP and confirm it belongs to the host owning the account; a foreign IP authenticating as another machine is suspicious.",
+        "Identify the account type in Active Directory: computer, gMSA or dMSA; prioritize managed service accounts.",
+        "Look for successful 4768/4769 for the same account after the failures, which would suggest the password was guessed.",
+        "On the source host, find the process connecting to TCP/UDP 88 (Sysmon event 3, EDR) and look for unusual Kerberos tooling.",
+        "Review 4742 events or recent account changes (snapshot restore, reimage, domain rejoin) and earlier alerts for the same source."
+      ],
+      "false_positives": [
+        "Computer account password out of sync after restoring a VM snapshot or backup.",
+        "Host reimaged or rejoined with the same name while the old instance is still running.",
+        "Broken secure channel or stale cached credentials on servers or cluster nodes.",
+        "Status 0x19 from clients that first request a ticket without pre-authentication."
+      ],
+      "response_steps": [
+        "Confirm with the host or service owner whether restores, reimages or changes explain the failures.",
+        "If brute force is confirmed, isolate the source host via EDR and block its IpAddress at the internal firewall.",
+        "Reset affected computer account passwords and rotate gMSA/dMSA credentials if suspicious successful logons occurred.",
+        "Investigate the tool and user responsible on the source host, preserve evidence, then remove it.",
+        "Repair the secure channel for affected legitimate hosts and monitor for new 4771 events over the following days."
+      ],
+      "severity_rationale": "Medium because isolated failures are usually benign, but a repeated pattern against '$' accounts can precede compromise of privileged service accounts."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Pre-authentication failed (wrong password) for a computer account from an unrelated workstation IP",
+        "event": {
+          "EventID": 4771,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "SRV-APP01$",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "ServiceName": "krbtgt/ANDES",
+          "TicketOptions": "0x40810010",
+          "Status": "0x18",
+          "PreAuthType": "2",
+          "IpAddress": "::ffff:192.0.2.45",
+          "IpPort": "50122"
+        }
+      },
+      {
+        "description": "Pre-authentication required response logged for a delegated managed service account",
+        "event": {
+          "EventID": 4771,
+          "Channel": "Security",
+          "Computer": "DC-02.andes.example.com",
+          "TargetUserName": "dmsa-sql01$",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-2301",
+          "ServiceName": "krbtgt/ANDES",
+          "TicketOptions": "0x40810010",
+          "Status": "0x19",
+          "PreAuthType": "0",
+          "IpAddress": "::ffff:198.51.100.23",
+          "IpPort": "61544"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Pre-authentication failure for a regular user account (no trailing $)",
+        "event": {
+          "EventID": 4771,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "jperez",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1450",
+          "ServiceName": "krbtgt/ANDES",
+          "TicketOptions": "0x40810010",
+          "Status": "0x18",
+          "PreAuthType": "2",
+          "IpAddress": "::ffff:192.0.2.80",
+          "IpPort": "52011"
+        }
+      },
+      {
+        "description": "Machine account failure caused by clock skew (Status 0x25), not a password failure",
+        "event": {
+          "EventID": 4771,
+          "Channel": "Security",
+          "Computer": "DC-01.andes.example.com",
+          "TargetUserName": "WS-0142$",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1188",
+          "ServiceName": "krbtgt/ANDES",
+          "TicketOptions": "0x40810010",
+          "Status": "0x25",
+          "PreAuthType": "2",
+          "IpAddress": "::ffff:192.0.2.142",
+          "IpPort": "49733"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

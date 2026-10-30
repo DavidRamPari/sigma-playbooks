@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "d85ecdd7-b855-4e6e-af59-d9c78b5b861e",
+    "title": "System Information Discovery Via Wmic.EXE",
+    "level": "low",
+    "status": "test",
+    "author": "Joseliyo Sanchez, @Joseliyo_Jstnk",
+    "path": "windows/process_creation/proc_creation_win_wmic_recon_system_info.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_wmic_recon_system_info.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1082"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "WMIC.exe se ejecutó con una línea de comandos que consulta datos del sistema, como SO, CPU, GPU, discos, memoria, BIOS o placa base. Es una pista de threat hunting de baja severidad, a menudo benigna, pero coincide con el perfilado de hosts que hacen los infostealers.",
+      "what_it_detects": "Creación de procesos de WMIC (por Image, OriginalFileName o Description) cuyo CommandLine contiene 'get', una clase de hardware o SO (os, cpu, bios, diskdrive, path win32_videocontroller, etc.) y un atributo (caption, name, version, size, etc.). Se excluyen los scripts serviceDiscovery de VMware Tools mediante ParentCommandLine.",
+      "why_it_matters": "El descubrimiento de información del sistema (ATT&CK T1082) permite al atacante identificar el host, detectar máquinas virtuales o sandboxes y enviar un perfil a su C2. Stealers como Aurora han usado justamente estas consultas WMIC tras ejecutarse.",
+      "triage_steps": [
+        "Revise el CommandLine completo: identifique las clases y atributos consultados y si hay varias consultas WMIC en ráfaga.",
+        "Revise ParentImage y ParentCommandLine: cmd.exe o powershell.exe lanzados por un binario sin firma en %TEMP%, %APPDATA% o Descargas es sospechoso; un agente de inventario conocido no.",
+        "Identifique el usuario y el host; confirme si ese usuario suele ejecutar herramientas administrativas o de inventario en este endpoint.",
+        "Pivotee en el mismo host +/- 15 minutos buscando otros comandos de descubrimiento (systeminfo, ipconfig, whoami), ejecutables nuevos o conexiones salientes.",
+        "Obtenga el hash de la imagen del proceso padre y verifique su firma y reputación; busque escrituras o descargas recientes que lo hayan creado.",
+        "Busque alertas anteriores del mismo host, usuario y hash del padre para saber si el patrón es habitual o nuevo."
+      ],
+      "false_positives": [
+        "Scripts serviceDiscovery de VMware Tools que se ejecutan desde una ruta padre que el filtro no cubre.",
+        "Agentes de inventario, RMM o gestión de activos que recopilan datos de hardware.",
+        "Administradores o mesa de ayuda que consultan versión del SO, tamaño de disco o BIOS, manualmente o con scripts.",
+        "Instaladores, launchers de juegos o actualizadores de drivers que verifican compatibilidad de GPU, CPU o SO."
+      ],
+      "response_steps": [
+        "Verifique el proceso padre y el contexto del usuario; si es una herramienta de gestión conocida y firmada, cierre como benigno y documente una exclusión.",
+        "Si el padre es desconocido o no está firmado, recolecte el binario y su hash, y revise las conexiones de red de ese árbol de procesos.",
+        "Si es malicioso, aísle el endpoint, termine el árbol de procesos y ponga en cuarentena los binarios tras confirmarlos.",
+        "Si se confirma actividad de stealer, restablezca las credenciales usadas en el host, luego limpie o reinstale y monitoree recurrencias."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque estas consultas WMIC son comunes en la administración legítima y solo cobran relevancia junto con un padre sospechoso u otra actividad del atacante."
+    },
+    "en": {
+      "summary": "WMIC.exe ran with a command line that queries system details such as OS, CPU, GPU, disk, memory, BIOS or baseboard properties. This is a low-severity hunting lead that is often benign but also matches infostealer host profiling.",
+      "what_it_detects": "Process creation of WMIC (by Image, OriginalFileName or Description) whose CommandLine contains 'get', a hardware/OS class (os, cpu, bios, diskdrive, path win32_videocontroller, etc.) and an attribute (caption, name, version, size, etc.). VMware Tools serviceDiscovery scripts are excluded via ParentCommandLine.",
+      "why_it_matters": "System Information Discovery (ATT&CK T1082) lets attackers fingerprint a host, spot virtual machines or sandboxes, and send a profile to their C2. Stealers such as Aurora have used these exact WMIC queries right after execution.",
+      "triage_steps": [
+        "Read the full CommandLine: note which classes and attributes are queried and whether several WMIC queries run in a quick burst.",
+        "Check ParentImage and ParentCommandLine: cmd.exe or powershell.exe started by an unsigned binary in %TEMP%, %APPDATA% or Downloads is suspicious; a known inventory or management agent is not.",
+        "Identify the user and host; confirm whether that user normally runs admin or inventory tooling on this endpoint.",
+        "Pivot on the same host within +/- 15 minutes for other discovery commands (systeminfo, ipconfig, whoami), new executables, or outbound connections.",
+        "Hash the parent process image and check its signature and reputation; look for recent file writes or downloads that created it.",
+        "Search earlier alerts for the same host, user and parent hash to see if this pattern is routine or new."
+      ],
+      "false_positives": [
+        "VMware Tools serviceDiscovery scripts running from a parent path the filter does not cover.",
+        "IT inventory, RMM or asset-management agents collecting hardware data.",
+        "Administrators or helpdesk staff checking OS version, disk size or BIOS manually or in scripts.",
+        "Software installers, game launchers or driver updaters checking GPU, CPU or OS compatibility."
+      ],
+      "response_steps": [
+        "Verify the parent process and user context; close as benign if it is a known, signed management tool and document a tuning exclusion.",
+        "If the parent is unknown or unsigned, collect it and its hash, and review network connections from that process tree.",
+        "If malicious, isolate the endpoint, terminate the process tree and quarantine the dropped binaries after confirming them.",
+        "Reset credentials stored or used on the host if stealer activity is confirmed, then reimage or clean and monitor for recurrence."
+      ],
+      "severity_rationale": "Low fits because these WMIC queries are common in legitimate administration and only become significant when combined with a suspicious parent or other attacker activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "WMIC queries OS caption, architecture and version, launched via cmd.exe by an unsigned binary in the user's Temp folder",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+          "OriginalFileName": "wmic.exe",
+          "Description": "WMI Commandline Utility",
+          "CommandLine": "wmic os get Caption,OSArchitecture,Version /value",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "ParentCommandLine": "C:\\Windows\\system32\\cmd.exe /c wmic os get Caption,OSArchitecture,Version /value",
+          "CurrentDirectory": "C:\\Users\\jperez\\AppData\\Local\\Temp\\"
+        }
+      },
+      {
+        "description": "WMIC queries GPU name and driver version through the win32_videocontroller path",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+          "OriginalFileName": "wmic.exe",
+          "Description": "WMI Commandline Utility",
+          "CommandLine": "wmic path win32_videocontroller get name,driverversion",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ParentCommandLine": "powershell.exe -NoProfile -Command \"wmic path win32_videocontroller get name,driverversion\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same OS query run by VMware Tools serviceDiscovery script, excluded by the ParentCommandLine filter",
+        "event": {
+          "EventID": 1,
+          "Computer": "SRV-APP-07.andes.example.com",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+          "OriginalFileName": "wmic.exe",
+          "Description": "WMI Commandline Utility",
+          "CommandLine": "wmic os get caption,version",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "ParentCommandLine": "C:\\Windows\\system32\\cmd.exe /c \"C:\\Program Files\\VMware\\VMware Tools\\serviceDiscovery\\scripts\\get-versions.bat\""
+        }
+      },
+      {
+        "description": "WMIC listing installed hotfixes without a 'get' clause, so selection_get does not match",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\admin.mrojas",
+          "Image": "C:\\Windows\\System32\\wbem\\WMIC.exe",
+          "OriginalFileName": "wmic.exe",
+          "Description": "WMI Commandline Utility",
+          "CommandLine": "wmic qfe list brief",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "ParentCommandLine": "\"C:\\Windows\\system32\\cmd.exe\""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

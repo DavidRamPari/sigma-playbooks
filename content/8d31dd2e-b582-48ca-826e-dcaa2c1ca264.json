@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "8d31dd2e-b582-48ca-826e-dcaa2c1ca264",
+    "title": "New Windows Firewall Rule Added Via New-NetFirewallRule Cmdlet - ScriptBlock",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_new_netfirewallrule_allow.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/powershell/powershell_script/posh_ps_new_netfirewallrule_allow.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1686.003"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un bloque de script de PowerShell llamó a New-NetFirewallRule con -Action Allow, lo que crea una regla de Firewall de Windows que permite tráfico. Es una regla de threat hunting: suele tratarse de administración legítima, pero también puede indicar que un atacante abrió un puerto o permitió un binario.",
+      "what_it_detects": "Eventos de Script Block Logging (EventID 4104) cuyo ScriptBlockText contiene, en este orden, 'New-NetFirewallRule', '-Action' y 'Allow'. Requiere que Script Block Logging esté habilitado.",
+      "why_it_matters": "Si un atacante agrega reglas de permiso, puede habilitar RDP, SMB, C2 entrante o la salida de un binario malicioso sin desactivar el firewall. Esto debilita las defensas (la regla lo etiqueta como T1686.003) y se ha observado en actividad de ransomware como Rhysida, según las referencias de la regla.",
+      "triage_steps": [
+        "Lee el ScriptBlockText completo: identifica DisplayName, Direction, LocalPort/RemotePort, Program, RemoteAddress y Profile de la regla creada.",
+        "Reconstruye scripts divididos en varias partes uniendo los eventos 4104 que tienen el mismo ScriptBlockId; revisa también Path para conocer el origen del script.",
+        "Identifica al usuario y al proceso padre de PowerShell (Sysmon EventID 1 o 4688 en el mismo host, +/- 15 minutos).",
+        "Valida si el puerto o el programa permitido es esperado: 3389, 445, 5985 o los binarios en Temp, Public o AppData son sospechosos.",
+        "Confirma que la regla existe con Get-NetFirewallRule y revisa el evento de firewall 2004/2097 que registró su creación.",
+        "Busca en el mismo host conexiones entrantes nuevas al puerto abierto y otra actividad sospechosa de PowerShell, servicios o tareas programadas.",
+        "Revisa si hay alertas previas para el host o el usuario y si el mismo script se ejecutó en otros equipos."
+      ],
+      "false_positives": [
+        "Scripts de administradores o de aprovisionamiento que abren puertos para aplicaciones o servicios internos.",
+        "Instaladores y agentes (backup, monitoreo, bases de datos) que crean reglas de permiso mediante PowerShell.",
+        "Herramientas de gestión de configuración como SCCM, Intune, DSC o Ansible aplicando una línea base de firewall."
+      ],
+      "response_steps": [
+        "Confirma con el responsable del sistema o con el registro de cambios si la regla está autorizada.",
+        "Si no está autorizada, deshabilita la regla con Disable-NetFirewallRule y guarda su definición como evidencia antes de eliminarla.",
+        "Si hay indicios de compromiso, aísla el endpoint y revoca o restablece las credenciales del usuario involucrado.",
+        "Busca el script de origen y los artefactos de persistencia relacionados, y elimínalos después de verificarlos.",
+        "Para la recuperación, restaura la política de firewall mediante GPO y agrega a la lista de exclusiones los scripts administrativos legítimos que se repitan."
+      ],
+      "severity_rationale": "El nivel bajo es adecuado porque es una regla de hunting: muchas regla de permiso son administrativas, y solo el contexto (puerto, programa o usuario) indica si es maliciosa."
+    },
+    "en": {
+      "summary": "A PowerShell script block called New-NetFirewallRule with -Action Allow, which creates a Windows Firewall rule that permits traffic. This is a hunting lead and is often legitimate administration, but it can also mean an attacker opened a port or allowed a binary.",
+      "what_it_detects": "Script Block Logging events (EventID 4104) where ScriptBlockText contains 'New-NetFirewallRule', then '-Action', then 'Allow', in that order. Script Block Logging must be enabled.",
+      "why_it_matters": "Attackers can add allow rules to expose RDP, SMB or inbound C2, or to let a malicious binary connect out, without turning the firewall off. This impairs defenses (the rule tags it T1686.003). The rule's references describe this activity in Rhysida ransomware operations.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. Note the new rule's DisplayName, Direction, LocalPort/RemotePort, Program, RemoteAddress and Profile.",
+        "If the script was split across several 4104 events, join the events that share a ScriptBlockId. Check Path to see where the script came from.",
+        "Identify the user and the PowerShell parent process from Sysmon EventID 1 or 4688 on the same host, within +/- 15 minutes.",
+        "Check whether the allowed port or program is expected. Ports 3389, 445 and 5985, or binaries in Temp, Public or AppData, are suspicious.",
+        "Run Get-NetFirewallRule to confirm the rule exists, and review the firewall event (2004/2097) that logged its creation.",
+        "Look on the host for new inbound connections to the opened port, and for related PowerShell, service or scheduled task activity.",
+        "Check for earlier alerts on the host or user, and see whether the same script ran on other machines."
+      ],
+      "false_positives": [
+        "Administrator or provisioning scripts that open ports for internal applications or services.",
+        "Installers and agents (backup, monitoring, databases) that create allow rules through PowerShell.",
+        "Configuration management tools such as SCCM, Intune, DSC or Ansible applying a firewall baseline."
+      ],
+      "response_steps": [
+        "Check with the system owner or the change records whether the rule was authorized.",
+        "If it was not, disable it with Disable-NetFirewallRule. Export its definition as evidence before you remove it.",
+        "If there are signs of compromise, isolate the endpoint and reset the credentials of the user involved.",
+        "Find the source script and any related persistence. Verify these artifacts, then remove them.",
+        "To recover, restore the firewall policy through GPO. Add recurring legitimate admin scripts to the allowlist."
+      ],
+      "severity_rationale": "Low fits because this is a hunting rule. Most allow rules come from administrators, and only the context (port, program, user) shows whether one is malicious."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script opens inbound RDP port with an allow rule",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "New-NetFirewallRule -DisplayName \"Remote Mgmt\" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -Profile Any",
+          "ScriptBlockId": "3f2b6c1e-8a4d-4e2f-9b1a-7c5d2e9f0a11",
+          "Path": "C:\\Users\\Public\\fw.ps1"
+        }
+      },
+      {
+        "description": "Script allows outbound traffic for a binary in a user-writable folder",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ScriptBlockText": "New-NetFirewallRule -DisplayName 'Updater' -Direction Outbound -Program 'C:\\Users\\jperez\\AppData\\Local\\Temp\\svc.exe' -Action allow",
+          "ScriptBlockId": "9a1c0d4e-2b7f-4c3a-8e6d-1f2a3b4c5d6e",
+          "Path": ""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script creates a block rule, not an allow rule",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "New-NetFirewallRule -DisplayName \"Block Telnet\" -Direction Inbound -Protocol TCP -LocalPort 23 -Action Block",
+          "ScriptBlockId": "b7e4d2a1-5c6f-4a8b-9d0e-2f3a4b5c6d7e",
+          "Path": "C:\\Scripts\\hardening.ps1"
+        }
+      },
+      {
+        "description": "Script only lists existing firewall rules",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FS-02.andes.example.com",
+          "ScriptBlockText": "Get-NetFirewallRule -Enabled True -Action Allow | Select-Object DisplayName, Direction",
+          "ScriptBlockId": "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+          "Path": ""
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

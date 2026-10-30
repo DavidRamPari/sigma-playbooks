@@ -1,0 +1,121 @@
+{
+  "rule": {
+    "id": "92b0b372-a939-44ed-a11b-5136cf680e27",
+    "title": "Blue Mockingbird - Registry",
+    "level": "high",
+    "status": "test",
+    "author": "Trent Liffick (@tliffick)",
+    "path": "2020/Malware/Blue-Mockingbird/registry_set_mal_blue_mockingbird.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2020/Malware/Blue-Mockingbird/registry_set_mal_blue_mockingbird.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1047",
+      "T1112"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso escribió el valor ServiceDll del servicio wercplsupport, una técnica de persistencia documentada para el minero de criptomonedas Blue Mockingbird. Hay que confirmar qué DLL quedó registrada y qué proceso hizo el cambio.",
+      "what_it_detects": "Eventos registry_set cuyo TargetObject termina en \\CurrentControlSet\\Services\\wercplsupport\\Parameters\\ServiceDll. Esto incluye cualquier escritura de ese valor, sin importar la ruta de DLL que se registre.",
+      "why_it_matters": "Cuando se cambia el ServiceDll de un servicio alojado en svchost, se ejecuta una DLL arbitraria con privilegios SYSTEM cada vez que el servicio inicia. Corresponde a modificación del registro (T1112) para lograr persistencia. Según Red Canary, Blue Mockingbird lo combina con WMI (T1047) para ejecutar un minero.",
+      "triage_steps": [
+        "Revise el campo Details: la ruta legítima es %SystemRoot%\\System32\\wercplsupport.dll. Cualquier otra ruta o nombre de DLL es muy sospechoso.",
+        "Identifique el Image y el usuario que hicieron el cambio. Las escrituras con reg.exe, cmd.exe, powershell.exe o wmic.exe fuera de una actualización merecen escalar.",
+        "Revise el proceso padre y la línea de comandos del proceso que escribió el valor, buscando 'reg add' o 'sc config wercplsupport'.",
+        "Obtenga el hash de la DLL registrada, compruebe si está firmada por Microsoft y consulte su reputación.",
+        "Busque en el mismo host, en una ventana de +/- 15 minutos, ejecuciones de wmic, cambios de COR_PROFILER, nuevos servicios o tareas programadas.",
+        "Revise el uso de CPU y las conexiones salientes del host hacia pools de minería o puertos poco habituales.",
+        "Busque alertas previas del mismo host o usuario, y la misma ruta de DLL en otros endpoints."
+      ],
+      "false_positives": [
+        "Actualizaciones acumulativas de Windows o reparaciones con DISM/SFC que vuelven a registrar el servicio con la DLL legítima de System32.",
+        "Herramientas de imagen o hardening que reescriben la configuración de servicios con valores estándar."
+      ],
+      "response_steps": [
+        "Verifique la DLL y la línea de comandos antes de actuar. Si la ruta es legítima y el proceso es TrustedInstaller o un instalador, documente el caso y ciérrelo.",
+        "Si confirma actividad maliciosa, aísle el endpoint y conserve una copia de la DLL, el registro y la memoria.",
+        "Restaure ServiceDll a %SystemRoot%\\System32\\wercplsupport.dll, detenga el servicio afectado y elimine los artefactos del minero después de respaldarlos.",
+        "Rote las credenciales usadas en el equipo, revise cómo ingresó el atacante y busque los mismos IOCs en toda la flota."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque es muy raro que este valor cambie de forma legítima, y cambiarlo da ejecución persistente como SYSTEM."
+    },
+    "en": {
+      "summary": "A process wrote the ServiceDll value of the wercplsupport service. Blue Mockingbird cryptominer activity is documented using this persistence technique. Confirm which DLL is now registered and which process made the change.",
+      "what_it_detects": "registry_set events whose TargetObject ends with \\CurrentControlSet\\Services\\wercplsupport\\Parameters\\ServiceDll. Any write to that value matches, whatever DLL path is set.",
+      "why_it_matters": "Changing the ServiceDll of an svchost-hosted service runs an arbitrary DLL as SYSTEM every time the service starts. This is registry modification (T1112) used for persistence. Red Canary reports that Blue Mockingbird pairs it with WMI execution (T1047) to run a miner.",
+      "triage_steps": [
+        "Check Details. The legitimate value is %SystemRoot%\\System32\\wercplsupport.dll, so any other path or file name is highly suspicious.",
+        "Identify the writing Image and the user. Escalate writes by reg.exe, cmd.exe, powershell.exe or wmic.exe that happen outside patching.",
+        "Review the parent process and the writer's command line for 'reg add' or 'sc config wercplsupport'.",
+        "Hash the registered DLL, check whether it has a Microsoft signature, and look up its reputation.",
+        "On the same host within +/- 15 minutes, look for wmic execution, COR_PROFILER changes, new services or scheduled tasks.",
+        "Check the host's CPU usage and its outbound connections to mining pools or unusual ports.",
+        "Search for earlier alerts on this host or user, and for the same DLL path on other endpoints."
+      ],
+      "false_positives": [
+        "Windows cumulative updates or DISM/SFC repairs that re-register the service with the legitimate System32 DLL.",
+        "Imaging or hardening tools that rewrite service configuration to default values."
+      ],
+      "response_steps": [
+        "Verify the DLL and the command line first. If the path is legitimate and the writer is TrustedInstaller or an installer, document it and close.",
+        "If the activity is malicious, isolate the endpoint and preserve the DLL, the registry hive and memory.",
+        "Restore ServiceDll to %SystemRoot%\\System32\\wercplsupport.dll, stop the affected service, and remove the miner artifacts after backing them up.",
+        "Rotate credentials used on the host, find the initial access vector, and hunt for the same IOCs across the fleet."
+      ],
+      "severity_rationale": "High fits because legitimate changes to this value are rare, and changing it gives persistent SYSTEM-level execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "reg.exe sets the wercplsupport ServiceDll to a non-standard DLL path",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\reg.exe",
+          "ProcessId": 4312,
+          "User": "ANDES\\jperez",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\wercplsupport\\Parameters\\ServiceDll",
+          "Details": "C:\\Windows\\Temp\\wercplsupport.dll"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Write to a neighboring value (ServiceDllUnloadOnStop), which does not end with ServiceDll",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 2208,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\wercplsupport\\Parameters\\ServiceDllUnloadOnStop",
+          "Details": "DWORD (0x00000001)"
+        }
+      },
+      {
+        "description": "ServiceDll write for a different service (WerSvc)",
+        "event": {
+          "EventID": 13,
+          "EventType": "SetValue",
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\servicing\\TrustedInstaller.exe",
+          "ProcessId": 2208,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "TargetObject": "HKLM\\System\\CurrentControlSet\\Services\\WerSvc\\Parameters\\ServiceDll",
+          "Details": "%SystemRoot%\\System32\\WerSvc.dll"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

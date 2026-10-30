@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "e80a0fee-1a62-4419-b31e-0d0db6e6013a",
+    "title": "Potential CVE-2021-42287 Exploitation Attempt",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "2021/Exploits/CVE-2021-42287/win_system_exploit_cve_2021_42287.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2021/Exploits/CVE-2021-42287/win_system_exploit_cve_2021_42287.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1558.003"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un controlador de dominio registró un fallo de validación de Directory Services SAM (Event ID 16990 o 16991) mientras se creaba o modificaba una cuenta de equipo. Puede indicar un intento de suplantación de sAMAccountName (CVE-2021-42287) que el DC rechazó.",
+      "what_it_detects": "Eventos del log System con proveedor Microsoft-Windows-Directory-Services-SAM y EventID 16990 (fallo de validación de clase de objeto y UserAccountControl) o 16991 (fallo de validación del nombre de cuenta SAM) en controladores de dominio.",
+      "why_it_matters": "En la suplantación de sAMAccountName, el atacante crea una cuenta de equipo, borra su SPN y le pone el nombre de un DC sin '$'. Kerberos podría emitir tickets como el DC (T1558, abuso de tickets Kerberos) y llevar al compromiso del dominio.",
+      "triage_steps": [
+        "Identifique el DC (campo Computer) y revise en el mensaje del evento la cuenta afectada y el valor rechazado de sAMAccountName o UserAccountControl.",
+        "Compruebe si el nombre rechazado coincide con el hostname de un controlador de dominio sin '$'. Ese patrón indica con fuerza un intento de explotación.",
+        "En el log Security del mismo DC, +/- 15 minutos, busque 4741 (equipo creado), 4742 (equipo modificado), 4781 (cambio de nombre) y 5136.",
+        "Determine qué cuenta creó o modificó el objeto y la IP de origen de su sesión (4624). Verifique si es un usuario común usando MachineAccountQuota.",
+        "Busque solicitudes Kerberos 4768/4769 para el nombre del DC desde esa IP de origen, incluida actividad S4U2self cercana al evento.",
+        "Revise alertas previas del mismo usuario, host de origen y DC, en especial enumeración LDAP o creación de equipos por usuarios no administradores."
+      ],
+      "false_positives": [
+        "Scripts de aprovisionamiento o de unión al dominio que crean cuentas de equipo con nombres o flags de UserAccountControl no estándar.",
+        "Administradores que renombran cuentas de equipo a mano y omiten el '$' final.",
+        "Herramientas de identidad de terceros o de unión de Linux al dominio que escriben atributos inesperados en objetos de equipo."
+      ],
+      "response_steps": [
+        "Confirme la cuenta, quién la creó y el host de origen. Obtenga un ticket de cambio o la confirmación del responsable antes de descartar la alerta.",
+        "Si la actividad es maliciosa, deshabilite la cuenta de equipo y la cuenta de usuario que la creó, y aísle el endpoint de origen.",
+        "Verifique que todos los DC tengan las actualizaciones de seguridad de noviembre de 2021. Evalúe fijar ms-DS-MachineAccountQuota en 0.",
+        "Busque tickets emitidos y acciones privilegiadas posteriores al evento. Si hay posible compromiso, restablezca las credenciales afectadas, incluida krbtgt dos veces, según su plan de IR."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque el evento suele reflejar un intento bloqueado en un DC parcheado, pero aun así revela la intención de escalar a privilegios de dominio."
+    },
+    "en": {
+      "summary": "A domain controller logged a Directory Services SAM validation failure (Event ID 16990 or 16991) while a computer account was being created or modified. This can mean someone tried sAMAccountName spoofing (CVE-2021-42287) and the DC rejected it.",
+      "what_it_detects": "System log events from provider Microsoft-Windows-Directory-Services-SAM with EventID 16990 (object class and UserAccountControl validation failure) or 16991 (SAM account name validation failure) on domain controllers.",
+      "why_it_matters": "In sAMAccountName spoofing, an attacker creates a computer account, clears its SPN and renames it to match a DC name without the trailing '$'. Kerberos may then issue tickets as the DC (T1558, Kerberos ticket abuse), which can lead to domain compromise.",
+      "triage_steps": [
+        "Identify the DC (Computer field) and read the event message for the affected account name and the rejected sAMAccountName or UserAccountControl value.",
+        "Check whether the rejected name matches a domain controller hostname without '$'. That pattern strongly suggests an exploitation attempt.",
+        "In the Security log on the same DC, +/- 15 minutes, look for 4741 (computer created), 4742 (computer changed), 4781 (name changed) and 5136 directory changes.",
+        "Find the account that created or modified the computer object and the source IP of its logon (4624). Check whether it is a normal user using MachineAccountQuota.",
+        "Look for Kerberos 4768/4769 requests for the DC name from that source IP, including S4U2self activity close to the event.",
+        "Review earlier alerts for the same user, source host and DC, especially LDAP enumeration or computer account creation by non-admins."
+      ],
+      "false_positives": [
+        "Provisioning or domain-join scripts that create computer accounts with nonstandard names or UserAccountControl flags.",
+        "Administrators manually renaming computer accounts and leaving out the trailing '$'.",
+        "Third-party identity or Linux domain-join tools that write unexpected attributes on computer objects."
+      ],
+      "response_steps": [
+        "Confirm the account, its creator and the source host. Get a change ticket or owner confirmation before you decide it is benign.",
+        "If the activity is malicious, disable the computer account and the user account that created it, then isolate the source endpoint.",
+        "Verify all DCs have the November 2021 security updates. Consider setting ms-DS-MachineAccountQuota to 0.",
+        "Look for issued tickets and privileged actions after the event. If compromise is possible, reset the affected credentials, including krbtgt twice, following your IR plan."
+      ],
+      "severity_rationale": "Medium fits because the event usually shows a blocked attempt on a patched DC, but it still points to intent to escalate to domain-level privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "SAM account name validation failure (16991) on a DC after an attempt to rename a computer account to the DC name without '$'",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Directory-Services-SAM",
+          "EventID": 16991,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Warning",
+          "TimeCreated": "2024-03-12T14:03:12Z",
+          "Message": "SAM Account Name validation failure. Account: CN=WS-TEMP01,CN=Computers,DC=andes,DC=example,DC=com; requested sAMAccountName: DC-01"
+        }
+      },
+      {
+        "description": "Object class and UserAccountControl validation failure (16990) while a computer account was being created",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Directory-Services-SAM",
+          "EventID": 16990,
+          "Channel": "System",
+          "Computer": "DC-02.andes.example.com",
+          "Level": "Warning",
+          "TimeCreated": "2024-03-12T14:01:47Z",
+          "Message": "Object class and UserAccountControl validation failure. Account: CN=WS-TEMP01,CN=Computers,DC=andes,DC=example,DC=com"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Same SAM provider, but a different event ID for remote SAM call restrictions, not account validation",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Directory-Services-SAM",
+          "EventID": 16962,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Information",
+          "TimeCreated": "2024-03-12T09:15:00Z",
+          "Message": "Remote calls to the SAM database are being restricted using the configured registry security descriptor."
+        }
+      },
+      {
+        "description": "Event ID 16991 from an unrelated provider, so the Provider_Name condition does not match",
+        "event": {
+          "Provider_Name": "Microsoft-Windows-Kerberos-Key-Distribution-Center",
+          "EventID": 16991,
+          "Channel": "System",
+          "Computer": "DC-01.andes.example.com",
+          "Level": "Information",
+          "TimeCreated": "2024-03-12T10:22:31Z",
+          "Message": "Informational KDC event for account ANDES\\jperez."
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

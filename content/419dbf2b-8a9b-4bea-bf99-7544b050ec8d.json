@@ -1,0 +1,131 @@
+{
+  "rule": {
+    "id": "419dbf2b-8a9b-4bea-bf99-7544b050ec8d",
+    "title": "Microsoft Workflow Compiler Execution",
+    "level": "medium",
+    "status": "test",
+    "author": "Nik Seetharaman, frack113",
+    "path": "windows/process_creation/proc_creation_win_microsoft_workflow_compiler_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_microsoft_workflow_compiler_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1127",
+      "T1218"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó Microsoft.Workflow.Compiler.exe, un binario firmado de .NET Framework que puede compilar y ejecutar código C# o VB.NET arbitrario sin firmar a partir de un archivo XML. Es una regla de threat hunting: requiere validar el contexto.",
+      "what_it_detects": "Creación de procesos cuyo Image termina en \\Microsoft.Workflow.Compiler.exe o cuyo OriginalFileName es Microsoft.Workflow.Compiler.exe, lo que también detecta copias renombradas del binario.",
+      "why_it_matters": "Un atacante puede usar este binario de confianza de Microsoft como proxy para compilar y ejecutar código propio, evadiendo controles de lista blanca de aplicaciones (T1127 Trusted Developer Utilities Proxy Execution, T1218 System Binary Proxy Execution).",
+      "triage_steps": [
+        "Revise Image: si el binario no está en C:\\Windows\\Microsoft.NET\\Framework*\\v4.0.30319\\ o fue renombrado (OriginalFileName distinto del nombre), trátelo como altamente sospechoso.",
+        "Analice CommandLine: identifique los dos argumentos (archivo XML de entrada y archivo de resultados) y sus rutas; ubicaciones en %TEMP%, Downloads o AppData son sospechosas.",
+        "Obtenga el archivo XML de entrada y revise el código o los archivos .xoml/.cs que referencia; busque descargas, shellcode, reflexión o llamadas a Process.Start.",
+        "Examine ParentImage y la cadena de procesos: Office, navegadores, wscript, mshta o PowerShell como padre indican abuso.",
+        "Revise procesos hijos y conexiones de red del mismo host en una ventana de +/- 15 minutos, incluyendo DLL temporales compiladas por csc.exe.",
+        "Verifique el usuario: ¿es desarrollador de Windows Workflow Foundation? Busque alertas previas para el mismo usuario y host."
+      ],
+      "false_positives": [
+        "Uso legítimo de Windows Workflow Foundation por desarrolladores o herramientas de build heredadas (poco común en entornos empresariales modernos).",
+        "Pruebas autorizadas de red team o ejercicios con Atomic Red Team (T1218) que ejecutan el binario intencionalmente."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el equipo de desarrollo si la ejecución estaba prevista y preserve el XML, los archivos de código y los resultados.",
+        "Si es malicioso, aísle el endpoint, termine el proceso y sus hijos, y calcule el hash de los artefactos para buscarlos en otros equipos.",
+        "Elimine los artefactos y cualquier persistencia identificada tras recolectar evidencia; restablezca credenciales si hubo actividad posterior.",
+        "Considere bloquear Microsoft.Workflow.Compiler.exe con WDAC o AppLocker donde no se use, según las reglas recomendadas de bloqueo de Microsoft."
+      ],
+      "severity_rationale": "Nivel medio porque el binario rara vez se usa legítimamente y permite ejecutar código sin firmar, pero su ejecución por sí sola no confirma actividad maliciosa."
+    },
+    "en": {
+      "summary": "Microsoft.Workflow.Compiler.exe, a signed .NET Framework binary that can compile and run arbitrary unsigned C# or VB.NET code from an XML file, was executed. This is a threat-hunting rule; context must be validated.",
+      "what_it_detects": "Process creation where Image ends with \\Microsoft.Workflow.Compiler.exe or OriginalFileName is Microsoft.Workflow.Compiler.exe, which also catches renamed copies of the binary.",
+      "why_it_matters": "Attackers can proxy their own code through this trusted Microsoft binary to bypass application allowlisting (T1127 Trusted Developer Utilities Proxy Execution, T1218 System Binary Proxy Execution).",
+      "triage_steps": [
+        "Check Image: if the binary runs outside C:\\Windows\\Microsoft.NET\\Framework*\\v4.0.30319\\ or is renamed (OriginalFileName differs from file name), treat it as highly suspicious.",
+        "Parse CommandLine: identify the two arguments (input XML and results file) and their paths; %TEMP%, Downloads or AppData locations are suspicious.",
+        "Collect the input XML and inspect the code or .xoml/.cs files it references for downloads, shellcode, reflection or Process.Start calls.",
+        "Review ParentImage and the process tree: Office, browsers, wscript, mshta or PowerShell as parent suggest abuse.",
+        "Review child processes and network connections on the same host within +/- 15 minutes, including temporary DLLs compiled via csc.exe.",
+        "Verify the user: are they a Windows Workflow Foundation developer? Look for earlier alerts for the same user and host."
+      ],
+      "false_positives": [
+        "Legitimate Windows Workflow Foundation use by developers or legacy build tooling (unlikely in modern enterprise environments).",
+        "Authorized red team tests or Atomic Red Team (T1218) exercises that run the binary on purpose."
+      ],
+      "response_steps": [
+        "Confirm with the user or development team whether the run was expected; preserve the XML, code files and results file.",
+        "If malicious, isolate the endpoint, kill the process and its children, and hash the artifacts to hunt across other hosts.",
+        "Remove artifacts and any identified persistence after evidence collection; reset credentials if follow-on activity occurred.",
+        "Consider blocking Microsoft.Workflow.Compiler.exe via WDAC or AppLocker where unused, in line with Microsoft's recommended block rules."
+      ],
+      "severity_rationale": "Medium because the binary is rarely used legitimately and enables unsigned code execution, but execution alone does not confirm malicious activity."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Microsoft.Workflow.Compiler.exe launched from PowerShell with an XML input file in the user's Temp folder",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\Microsoft.Workflow.Compiler.exe",
+          "OriginalFileName": "Microsoft.Workflow.Compiler.exe",
+          "CommandLine": "\"C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\Microsoft.Workflow.Compiler.exe\" C:\\Users\\jperez\\AppData\\Local\\Temp\\run.xml C:\\Users\\jperez\\AppData\\Local\\Temp\\results.xml",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ParentCommandLine": "powershell.exe -nop -w hidden",
+          "CurrentDirectory": "C:\\Users\\jperez\\AppData\\Local\\Temp\\"
+        }
+      },
+      {
+        "description": "Renamed copy of the workflow compiler detected via OriginalFileName",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\ProgramData\\svc\\updater.exe",
+          "OriginalFileName": "Microsoft.Workflow.Compiler.exe",
+          "CommandLine": "C:\\ProgramData\\svc\\updater.exe C:\\ProgramData\\svc\\in.xml C:\\ProgramData\\svc\\out.txt",
+          "ParentImage": "C:\\Windows\\System32\\wscript.exe",
+          "CurrentDirectory": "C:\\ProgramData\\svc\\"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Notepad opening a text file whose name mentions the compiler; Image and OriginalFileName do not match",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\notepad.exe",
+          "OriginalFileName": "NOTEPAD.EXE",
+          "CommandLine": "\"C:\\Windows\\System32\\notepad.exe\" C:\\Users\\jperez\\Documents\\Microsoft.Workflow.Compiler.exe.notes.txt",
+          "ParentImage": "C:\\Windows\\explorer.exe"
+        }
+      },
+      {
+        "description": "Legitimate C# compiler run by Visual Studio build, a different .NET binary in the same folder",
+        "event": {
+          "EventID": 1,
+          "Computer": "DEV-0031.andes.example.com",
+          "User": "ANDES\\lgomez",
+          "Image": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+          "OriginalFileName": "csc.exe",
+          "CommandLine": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /noconfig @C:\\Users\\lgomez\\AppData\\Local\\Temp\\build.rsp",
+          "ParentImage": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\MSBuild\\Current\\Bin\\MSBuild.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

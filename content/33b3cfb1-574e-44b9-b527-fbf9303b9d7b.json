@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "33b3cfb1-574e-44b9-b527-fbf9303b9d7b",
+    "title": "Potential Exploitation of CVE-2025-5054 or CVE-2025-4598",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Milad Cheraghi",
+    "path": "2025/Exploits/CVE_2025_4598/proc_creation_lnx_exploit_cve_2025_5054_or_cve_2025_4598.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2025/Exploits/CVE_2025_4598/proc_creation_lnx_exploit_cve_2025_5054_or_cve_2025_4598.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003",
+      "T1548"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se detectó un proceso que modifica fs.suid_dumpable con sysctl o que escribe 1 o 2 en /proc/sys/fs/suid_dumpable desde bash o sh. Esto habilita core dumps de procesos SUID y es un paso previo conocido para explotar CVE-2025-5054 (apport) o CVE-2025-4598 (systemd-coredump).",
+      "what_it_detects": "Procesos sysctl (Image termina en /sbin/sysctl o /bin/sysctl) cuyo CommandLine contiene 'fs.suid_dumpable=', o shells bash/sh cuyo CommandLine contiene variantes de 'echo 1|2 > /proc/sys/fs/suid_dumpable'.",
+      "why_it_matters": "Con suid_dumpable habilitado, los volcados de memoria de binarios SUID pueden exponer contraseñas, claves o hashes. Corresponde a abuso de mecanismos de elevación (T1548) y volcado de credenciales (T1003).",
+      "triage_steps": [
+        "Revise CommandLine y confirme el valor asignado: 1 o 2 es riesgoso; la selección de sysctl también coincide con fs.suid_dumpable=0, que suele ser hardening.",
+        "Identifique el usuario, la sesión (SSH, sudo, cron) y si el cambio se hizo con privilegios root legítimos.",
+        "Revise ParentImage y la cadena de procesos: script desconocido, binario en /tmp o /dev/shm, o una shell interactiva inusual.",
+        "En el mismo host, busque en +/- 15 minutos ejecuciones de binarios SUID (su, passwd, unix_chkpwd), procesos que fallan o se terminan con señales, y uso de coredumpctl.",
+        "Verifique la creación de core dumps nuevos en /var/crash, /var/lib/systemd/coredump o el directorio de trabajo, y quién los leyó.",
+        "Compare con tickets de cambio y alertas previas del mismo usuario o host."
+      ],
+      "false_positives": [
+        "Administradores que habilitan temporalmente core dumps de SUID para depurar un fallo.",
+        "Diagnóstico legítimo de caídas por equipos de soporte o desarrollo.",
+        "Herramientas de gestión de configuración o hardening que fijan fs.suid_dumpable, incluso al valor 0."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del host si el cambio estaba autorizado.",
+        "Si no lo estaba, restablezca fs.suid_dumpable=0 y revise /etc/sysctl.conf y /etc/sysctl.d/ por persistencia.",
+        "Preserve y luego elimine de forma controlada los core dumps generados; trátelos como material sensible.",
+        "Aísle el host si hay evidencia de lectura de dumps y rote credenciales y claves de los usuarios afectados.",
+        "Aplique los parches de apport y systemd-coredump publicados por la distribución."
+      ],
+      "severity_rationale": "Medium es adecuado porque el cambio es un precursor fuerte de robo de credenciales, pero también lo realizan administradores durante depuraciones legítimas."
+    },
+    "en": {
+      "summary": "A process changed fs.suid_dumpable via sysctl or wrote 1 or 2 to /proc/sys/fs/suid_dumpable from bash or sh. This enables core dumps of SUID processes, a known precursor to exploiting CVE-2025-5054 (apport) or CVE-2025-4598 (systemd-coredump).",
+      "what_it_detects": "sysctl processes (Image ending in /sbin/sysctl or /bin/sysctl) whose CommandLine contains 'fs.suid_dumpable=', or bash/sh processes whose CommandLine contains variants of 'echo 1|2 > /proc/sys/fs/suid_dumpable'.",
+      "why_it_matters": "With suid_dumpable enabled, memory dumps of SUID binaries can expose passwords, keys or hashes. This maps to abuse of elevation control mechanisms (T1548) and OS credential dumping (T1003).",
+      "triage_steps": [
+        "Read CommandLine and confirm the value set: 1 or 2 is risky; the sysctl selection also matches fs.suid_dumpable=0, which is usually hardening.",
+        "Identify the user, session type (SSH, sudo, cron) and whether root privileges were legitimately held.",
+        "Review ParentImage and the process tree: unknown scripts, binaries in /tmp or /dev/shm, or unusual interactive shells.",
+        "On the same host within +/- 15 minutes, look for SUID binary executions (su, passwd, unix_chkpwd), crashed or signalled processes, and coredumpctl use.",
+        "Check for new core dumps in /var/crash, /var/lib/systemd/coredump or working directories, and who read them.",
+        "Compare with change tickets and earlier alerts for the same user or host."
+      ],
+      "false_positives": [
+        "Administrators temporarily enabling SUID core dumps to debug a crash.",
+        "Legitimate crash diagnostics by support or development teams.",
+        "Configuration management or hardening tools setting fs.suid_dumpable, including to 0."
+      ],
+      "response_steps": [
+        "Confirm with the user or host owner whether the change was authorized.",
+        "If not, reset fs.suid_dumpable=0 and check /etc/sysctl.conf and /etc/sysctl.d/ for persistence.",
+        "Preserve, then remove in a controlled way, any generated core dumps; treat them as sensitive.",
+        "Isolate the host if dumps were read, and rotate credentials and keys for affected users.",
+        "Apply distribution patches for apport and systemd-coredump."
+      ],
+      "severity_rationale": "Medium fits because the change is a strong precursor to credential theft, yet administrators also make it during legitimate debugging."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "sysctl used to set fs.suid_dumpable to 2",
+        "event": {
+          "Image": "/usr/sbin/sysctl",
+          "CommandLine": "sysctl -w fs.suid_dumpable=2",
+          "ParentImage": "/usr/bin/bash",
+          "User": "root",
+          "ProcessId": 48211,
+          "ParentProcessId": 48190,
+          "CurrentDirectory": "/tmp",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "sh writes 2 directly to /proc/sys/fs/suid_dumpable",
+        "event": {
+          "Image": "/usr/bin/sh",
+          "CommandLine": "sh -c echo 2 > /proc/sys/fs/suid_dumpable",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 51002,
+          "ParentProcessId": 50998,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "web-07"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "sysctl only reads the current value, no assignment",
+        "event": {
+          "Image": "/usr/sbin/sysctl",
+          "CommandLine": "sysctl fs.suid_dumpable",
+          "ParentImage": "/usr/bin/bash",
+          "User": "jperez",
+          "ProcessId": 39120,
+          "ParentProcessId": 39101,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "bastion-01"
+        }
+      },
+      {
+        "description": "bash hardening script writes 0 to suid_dumpable",
+        "event": {
+          "Image": "/usr/bin/bash",
+          "CommandLine": "bash -c echo 0 > /proc/sys/fs/suid_dumpable",
+          "ParentImage": "/usr/lib/systemd/systemd",
+          "User": "root",
+          "ProcessId": 1204,
+          "ParentProcessId": 1,
+          "CurrentDirectory": "/",
+          "Computer": "web-07"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:06+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

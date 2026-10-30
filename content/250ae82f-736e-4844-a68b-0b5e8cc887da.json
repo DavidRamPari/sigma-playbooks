@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "250ae82f-736e-4844-a68b-0b5e8cc887da",
+    "title": "Potential Shellcode Injection",
+    "level": "medium",
+    "status": "test",
+    "author": "Bhabesh Raj",
+    "path": "windows/process_access/proc_access_win_susp_potential_shellcode_injection.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_access/proc_access_win_susp_potential_shellcode_injection.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso abrió otro proceso con derechos de acceso típicos de inyección de código (0x147a o 0x1f3fff), y la pila de llamadas incluye memoria no respaldada por un módulo (UNKNOWN). Es un patrón de shellcode ejecutándose desde memoria, como en migrate de Metasploit o psinject de Empire.",
+      "what_it_detects": "Eventos de acceso a procesos (Sysmon ID 10) donde GrantedAccess es 0x147a o 0x1f3fff y CallTrace contiene 'UNKNOWN'. Se excluyen WmiPrvSE accediendo a lsass y software conocido de Dell, Visual Studio y Avira.",
+      "why_it_matters": "La inyección de procesos (ATT&CK T1055) permite ejecutar código malicioso dentro de un proceso legítimo para evadir defensas, heredar sus privilegios y persistir en memoria. Un CallTrace con UNKNOWN indica que la llamada salió de memoria sin un archivo en disco detrás.",
+      "triage_steps": [
+        "Revise SourceImage y TargetImage: ruta, firma, hash y si el origen se ejecuta desde carpetas de usuario, Temp o ProgramData.",
+        "Analice CallTrace: identifique qué DLL precede a UNKNOWN y si el origen es un proceso conocido como .NET o un motor de scripts (powershell.exe, rundll32.exe).",
+        "Compruebe GrantedAccess: 0x1f3fff es acceso total y 0x147a incluye escritura de memoria y creación de hilos.",
+        "Busque en el mismo host, +/- 15 minutos, eventos CreateRemoteThread (Sysmon ID 8), conexiones de red del TargetImage y procesos hijos inesperados.",
+        "Revise el proceso padre de SourceImage y su línea de comandos, por ejemplo PowerShell codificado o macros de Office.",
+        "Busque alertas previas para el mismo host, usuario y hash del SourceImage, y la frecuencia del par origen-destino en todo el entorno."
+      ],
+      "false_positives": [
+        "Software de seguridad, EDR o antivirus que inspecciona o instrumenta otros procesos.",
+        "Depuradores, profilers y herramientas de desarrollo que usan código JIT.",
+        "Agentes de soporte o actualización de fabricantes no cubiertos por los filtros.",
+        "Aplicaciones .NET o con anti-trampas que generan llamadas desde memoria dinámica."
+      ],
+      "response_steps": [
+        "Valide con el dueño del equipo y con inventario de software si el par origen-destino es legítimo; si lo es, documente un filtro específico.",
+        "Si es sospechoso, aísle el endpoint con el EDR y adquiera un volcado de memoria del TargetImage y del SourceImage antes de terminarlos.",
+        "Bloquee el hash y los destinos de red identificados; revise credenciales del usuario afectado y restablézcalas si hubo acceso a lsass.",
+        "Erradique la persistencia encontrada, reconstruya el equipo si se confirma compromiso y monitoree el host por recurrencia."
+      ],
+      "severity_rationale": "Nivel medio porque el patrón es característico de inyección de shellcode, pero es una regla de hunting que también coincide con software legítimo que genera código en memoria."
+    },
+    "en": {
+      "summary": "A process opened another process with access rights typical of code injection (0x147a or 0x1f3fff) and the call stack includes memory not backed by a module (UNKNOWN). This matches shellcode running from memory, as in Metasploit migrate or Empire psinject.",
+      "what_it_detects": "Process access events (Sysmon ID 10) where GrantedAccess is 0x147a or 0x1f3fff and CallTrace contains 'UNKNOWN'. WmiPrvSE accessing lsass and known Dell, Visual Studio and Avira software are excluded.",
+      "why_it_matters": "Process injection (ATT&CK T1055) lets attackers run malicious code inside a legitimate process to evade defenses, inherit its privileges and live in memory. An UNKNOWN CallTrace frame means the call came from memory with no file on disk behind it.",
+      "triage_steps": [
+        "Review SourceImage and TargetImage: path, signature, hash, and whether the source runs from user folders, Temp or ProgramData.",
+        "Analyze CallTrace: note which DLL precedes UNKNOWN and whether the source is a script host or loader (powershell.exe, rundll32.exe).",
+        "Check GrantedAccess: 0x1f3fff is full access; 0x147a includes memory write and thread creation rights.",
+        "On the same host within +/- 15 minutes, look for CreateRemoteThread (Sysmon ID 8), network connections from TargetImage and unexpected child processes.",
+        "Review the SourceImage parent process and command line, for example encoded PowerShell or Office macros.",
+        "Search earlier alerts for the same host, user and SourceImage hash, and how common this source-target pair is across the fleet."
+      ],
+      "false_positives": [
+        "Security, EDR or antivirus software inspecting or instrumenting other processes.",
+        "Debuggers, profilers and development tools using JIT-generated code.",
+        "Vendor support or update agents not covered by the existing filters.",
+        ".NET or anti-cheat applications calling from dynamically allocated memory."
+      ],
+      "response_steps": [
+        "Confirm with the system owner and software inventory whether the source-target pair is legitimate; if so, document a narrow filter.",
+        "If suspicious, isolate the endpoint via EDR and capture memory of TargetImage and SourceImage before terminating them.",
+        "Block the hash and identified network destinations; review and reset the user's credentials if lsass was accessed.",
+        "Remove any persistence found, rebuild the host if compromise is confirmed, and monitor for recurrence."
+      ],
+      "severity_rationale": "Medium because the pattern is characteristic of shellcode injection, but this hunting rule also matches legitimate software that generates code in memory."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in Temp opens explorer.exe with full access; call originates from unbacked memory.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\update.exe",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "GrantedAccess": "0x1F3FFF",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00000000025A1B3F)",
+          "SourceUser": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "PowerShell opens notepad.exe with 0x147a from an unknown memory region, consistent with psinject.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0207.andes.example.com",
+          "SourceProcessId": 7512,
+          "SourceImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "TargetProcessId": 8020,
+          "TargetImage": "C:\\Windows\\System32\\notepad.exe",
+          "GrantedAccess": "0x147a",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2b8fe|UNKNOWN(00007FFB1C2A0F12)",
+          "SourceUser": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "WmiPrvSE accessing lsass with an UNKNOWN frame is excluded by filter_main_wmiprvse.",
+        "event": {
+          "EventID": 10,
+          "Computer": "SRV-DC01.andes.example.com",
+          "SourceProcessId": 3012,
+          "SourceImage": "C:\\Windows\\System32\\Wbem\\Wmiprvse.exe",
+          "TargetProcessId": 712,
+          "TargetImage": "C:\\Windows\\system32\\lsass.exe",
+          "GrantedAccess": "0x1f3fff",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|UNKNOWN(00000000031C2A10)",
+          "SourceUser": "NT AUTHORITY\\SYSTEM"
+        }
+      },
+      {
+        "description": "Same suspicious-looking source but with limited access 0x1410 and a fully module-backed call stack.",
+        "event": {
+          "EventID": 10,
+          "Computer": "WS-0142.andes.example.com",
+          "SourceProcessId": 6120,
+          "SourceImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\update.exe",
+          "TargetProcessId": 4388,
+          "TargetImage": "C:\\Windows\\explorer.exe",
+          "GrantedAccess": "0x1410",
+          "CallTrace": "C:\\Windows\\SYSTEM32\\ntdll.dll+9d204|C:\\Windows\\System32\\KERNELBASE.dll+2c13e|C:\\Users\\jperez\\AppData\\Local\\Temp\\update.exe+1a2f",
+          "SourceUser": "ANDES\\jperez"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

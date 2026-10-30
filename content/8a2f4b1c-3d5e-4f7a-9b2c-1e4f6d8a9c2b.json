@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "8a2f4b1c-3d5e-4f7a-9b2c-1e4f6d8a9c2b",
+    "title": "WerFaultSecure Loading DbgCore or DbgHelp - EDR-Freeze",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/image_load/image_load_win_werfaultsecure_dbgcore_dbghelp_load.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/image_load/image_load_win_werfaultsecure_dbgcore_dbghelp_load.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1685"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "WerFaultSecure.exe cargó dbgcore.dll o dbghelp.dll, las bibliotecas que generan minidumps. EDR-Freeze usa esto para suspender procesos de seguridad, aunque también ocurre en instalaciones de software.",
+      "what_it_detects": "Eventos de carga de imágenes (Sysmon EID 7 o similar) donde Image termina en \\WerFaultSecure.exe e ImageLoaded termina en \\dbgcore.dll o \\dbghelp.dll. Es una regla de threat hunting, así que se esperan coincidencias benignas.",
+      "why_it_matters": "WerFaultSecure se ejecuta como proceso protegido y puede llamar a MiniDumpWriteDump sobre procesos protegidos. EDR-Freeze lo aprovecha para suspender de forma indefinida procesos de EDR o AV y dejar el monitoreo ciego (deterioro de defensas, ATT&CK T1685).",
+      "triage_steps": [
+        "Confirme que la ruta de Image sea C:\\Windows\\System32\\WerFaultSecure.exe. Una copia en carpetas temporales o con permisos de escritura del usuario es muy sospechosa.",
+        "Ubique el evento de creación de WerFaultSecure y revise ParentImage, usuario y CommandLine. Marque los padres ajenos a WER y los argumentos como /pid que apunten a procesos concretos.",
+        "Determine qué proceso fue el objetivo y verifique si es un agente de EDR, AV o logging, como MsMpEng.exe.",
+        "Revise la salud del agente de seguridad en el host: huecos de heartbeat, telemetría faltante o hilos suspendidos cerca de la hora de la alerta.",
+        "Verifique si WerFaultSecure siguió en ejecución o suspendido mucho tiempo en lugar de terminar enseguida.",
+        "En el mismo host, dentro de +/- 15 minutos, busque procesos nuevos, conexiones de red, cambios de archivos o acceso a credenciales.",
+        "Compruebe si hubo un instalador legítimo o un fallo de aplicación al mismo tiempo, y busque alertas previas del host o del usuario."
+      ],
+      "false_positives": [
+        "Instalaciones o actualizaciones normales de software que activan Windows Error Reporting en procesos protegidos.",
+        "Fallos reales de procesos protegidos en los que WER recopila un volcado seguro.",
+        "Tareas de depuración o diagnóstico de administradores o desarrolladores."
+      ],
+      "response_steps": [
+        "Verifique que el agente de seguridad esté activo y reportando. Si está congelado, restáurelo reiniciando el servicio o el host después de capturar la evidencia volátil.",
+        "Si se confirma el abuso, aísle el host y recolecte el binario lanzador, su hash y el árbol de procesos.",
+        "Elimine las herramientas del atacante e investigue la actividad ocurrida durante el hueco de monitoreo.",
+        "Busque el mismo binario padre o la misma línea de comandos en otros endpoints y configure alertas por pérdida de heartbeat del agente."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: un EDR congelado es grave, pero esta carga también ocurre en instalaciones benignas y requiere contexto antes de escalar."
+    },
+    "en": {
+      "summary": "WerFaultSecure.exe loaded dbgcore.dll or dbghelp.dll, the libraries behind minidump creation. EDR-Freeze uses this to suspend security processes, but software installations can also cause it.",
+      "what_it_detects": "Image load events (Sysmon EID 7 or similar) where Image ends with \\WerFaultSecure.exe and ImageLoaded ends with \\dbgcore.dll or \\dbghelp.dll. This is a threat-hunting rule, so expect benign matches.",
+      "why_it_matters": "WerFaultSecure runs as a protected process and can call MiniDumpWriteDump against protected targets. EDR-Freeze uses this to suspend EDR or AV processes indefinitely, which blinds monitoring (defense impairment, ATT&CK T1685).",
+      "triage_steps": [
+        "Confirm the Image path is C:\\Windows\\System32\\WerFaultSecure.exe. A copy in user-writable or temp folders is highly suspicious.",
+        "Find the process creation event for WerFaultSecure and review its ParentImage, user and CommandLine. Flag non-WER parents and arguments such as /pid pointing at specific processes.",
+        "Work out which process was targeted. Check whether it is an EDR, AV or logging agent, such as MsMpEng.exe.",
+        "Check security agent health for the host: heartbeat gaps, missing telemetry or suspended agent threads around the alert time.",
+        "Check whether WerFaultSecure stayed running or suspended for a long time instead of exiting quickly.",
+        "On the same host within +/- 15 minutes, look for new processes, network connections, file changes or credential access.",
+        "Check whether a legitimate installer or application crash happened at the same time, and look for earlier alerts on this host or user."
+      ],
+      "false_positives": [
+        "Normal software installations or updates that trigger Windows Error Reporting for protected processes.",
+        "Genuine crashes of protected processes where WER collects a secure dump.",
+        "Debugging or diagnostic work by administrators or developers."
+      ],
+      "response_steps": [
+        "Verify the security agent is running and reporting. If it is frozen, restore it by restarting the service or rebooting the host after you capture volatile evidence.",
+        "If misuse is confirmed, isolate the host and collect the launching binary, its hash and the process tree.",
+        "Remove the attacker tooling and investigate any activity that ran during the monitoring gap.",
+        "Hunt for the same parent binary or command line on other endpoints, and alert on agent heartbeat loss."
+      ],
+      "severity_rationale": "Medium fits: a confirmed EDR freeze is serious, but this library load also happens in benign installs and needs context before anyone escalates."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "WerFaultSecure.exe from System32 loads dbgcore.dll, consistent with EDR-Freeze minidump-based suspension",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WerFaultSecure.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\dbgcore.dll",
+          "ProcessId": 6120,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "UtcTime": "2025-11-28 14:03:12.418"
+        }
+      },
+      {
+        "description": "Copied WerFaultSecure.exe in a temp folder loads dbghelp.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0187.andes.example.com",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\WerFaultSecure.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\dbghelp.dll",
+          "ProcessId": 7344,
+          "User": "ANDES\\jperez",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "UtcTime": "2025-11-28 14:05:40.902"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Regular WerFault.exe (not WerFaultSecure) loading dbghelp.dll during a normal crash report",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WerFault.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\dbghelp.dll",
+          "ProcessId": 5012,
+          "User": "ANDES\\jperez",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "UtcTime": "2025-11-28 09:12:03.110"
+        }
+      },
+      {
+        "description": "WerFaultSecure.exe loading wer.dll, not a dump library",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\WerFaultSecure.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\wer.dll",
+          "ProcessId": 6120,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "UtcTime": "2025-11-28 14:03:12.401"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

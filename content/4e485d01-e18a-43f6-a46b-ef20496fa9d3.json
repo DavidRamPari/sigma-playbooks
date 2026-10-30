@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "4e485d01-e18a-43f6-a46b-ef20496fa9d3",
+    "title": "Windows Mail App Mailbox Access Via PowerShell Script",
+    "level": "medium",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/powershell/powershell_script/posh_ps_mailbox_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/powershell/powershell_script/posh_ps_mailbox_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1070.008"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell hizo referencia a la ruta \\Comms\\Unistore\\data, donde la aplicación Correo de Windows guarda los mensajes del usuario. Puede indicar que alguien copia, revisa o borra correos almacenados localmente.",
+      "what_it_detects": "Eventos de Script Block Logging (Event ID 4104) en los que ScriptBlockText contiene la cadena '\\Comms\\Unistore\\data', normalmente bajo %LOCALAPPDATA%. Es una regla de threat hunting, así que el contexto de la actividad es lo que importa.",
+      "why_it_matters": "Un atacante puede copiar este buzón para exfiltrar correos o borrarlo para eliminar evidencia (ATT&CK T1070.008, borrar datos del buzón de correo). Atomic Red Team usa precisamente esta ruta para copiar y luego eliminar los datos.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo. Si el script se registró en varios fragmentos, reconstrúyalo con ScriptBlockId y revise Path para ubicar el archivo .ps1 de origen.",
+        "Identifique la acción: lectura (Get-ChildItem), copia (Copy-Item, Compress-Archive) o borrado (Remove-Item). El borrado y la exfiltración tienen mayor prioridad.",
+        "Determine el usuario y el host. Confirme si la ruta pertenece al perfil del mismo usuario o al de otro, lo que sería más sospechoso.",
+        "Busque en eventos 4688 o Sysmon 1 el proceso powershell.exe de ese momento y su ParentImage (Office, wscript, tarea programada, sesión remota).",
+        "Revise la creación de archivos en el mismo host +/- 15 minutos para encontrar el destino de la copia, archivos .zip o carpetas en Public o Temp.",
+        "Pivotee por conexiones de red salientes del host en esa ventana: cargas a almacenamiento en la nube, uso de SMB o HTTP POST con volumen inusual.",
+        "Consulte alertas previas del mismo usuario y host, sobre todo de acceso inicial, credenciales o borrado de logs."
+      ],
+      "false_positives": [
+        "Scripts de administración que restablecen o reparan la aplicación Correo y Calendario borrando su caché local.",
+        "Herramientas de respaldo o migración de perfiles que copian %LOCALAPPDATA% de forma completa.",
+        "Scripts de recolección forense o de respuesta a incidentes que extraen artefactos de correo.",
+        "Ejercicios autorizados de red team o pruebas de Atomic Red Team."
+      ],
+      "response_steps": [
+        "Verifique con el usuario o con el responsable de TI si el script estaba autorizado y cuál era su propósito.",
+        "Si no está autorizado, aísle el endpoint y preserve el script, los archivos copiados y los registros de PowerShell antes de cambiar nada.",
+        "Si hubo borrado, recupere el buzón desde respaldos o desde el servidor de correo y documente qué mensajes se perdieron.",
+        "Si hubo exfiltración, bloquee el destino identificado, restablezca las credenciales del usuario y revise la cuenta de correo en busca de reglas de reenvío.",
+        "Elimine los mecanismos de persistencia encontrados y agregue a la regla una exclusión documentada si confirma un uso legítimo recurrente."
+      ],
+      "severity_rationale": "El nivel medio es adecuado: acceder al buzón local es poco común y puede implicar robo o destrucción de evidencia, pero como regla de hunting también coincide con mantenimiento legítimo."
+    },
+    "en": {
+      "summary": "A PowerShell script referenced \\Comms\\Unistore\\data, where the Windows Mail app stores a user's mail locally. Someone may be copying, reading or deleting stored emails.",
+      "what_it_detects": "Script Block Logging events (Event ID 4104) whose ScriptBlockText contains '\\Comms\\Unistore\\data', usually under %LOCALAPPDATA%. This is a threat-hunting rule, so the context of the activity decides the verdict.",
+      "why_it_matters": "An attacker can copy this mailbox to exfiltrate email or delete it to remove evidence (ATT&CK T1070.008, clear mailbox data). Atomic Red Team uses this path to copy and then delete the data.",
+      "triage_steps": [
+        "Read the full ScriptBlockText. If it was logged in several parts, rebuild it using ScriptBlockId and check Path for the source .ps1 file.",
+        "Identify the action: listing (Get-ChildItem), copying (Copy-Item, Compress-Archive) or deleting (Remove-Item). Deletion and exfiltration get higher priority.",
+        "Identify the user and host. Check whether the path belongs to that user's own profile or another user's, which is more suspicious.",
+        "Find the powershell.exe process in 4688 or Sysmon 1 events at that time and its ParentImage (Office, wscript, scheduled task, remote session).",
+        "Review file creation on the same host within +/- 15 minutes for the copy destination, .zip archives or folders in Public or Temp.",
+        "Pivot to outbound network connections from the host in that window: cloud storage uploads, SMB, or large HTTP POSTs.",
+        "Check earlier alerts for the same user and host, especially initial access, credential access or log clearing."
+      ],
+      "false_positives": [
+        "Admin scripts that reset or repair the Mail and Calendar app by clearing its local cache.",
+        "Backup or profile migration tools that copy all of %LOCALAPPDATA%.",
+        "Forensic or incident response collection scripts that gather mail artifacts.",
+        "Authorized red team exercises or Atomic Red Team tests."
+      ],
+      "response_steps": [
+        "Confirm with the user or IT owner whether the script was authorized and what it was for.",
+        "If unauthorized, isolate the endpoint and preserve the script, copied files and PowerShell logs before changing anything.",
+        "If data was deleted, restore the mailbox from backups or the mail server and record what was lost.",
+        "If data was exfiltrated, block the destination, reset the user's credentials and check the mail account for forwarding rules.",
+        "Remove any persistence found, and add a documented exclusion if a recurring legitimate use is confirmed."
+      ],
+      "severity_rationale": "Medium fits because local mailbox access is uncommon and may mean theft or evidence destruction, but as a hunting rule it also matches legitimate maintenance."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Script copies the Windows Mail app data folder to a public staging directory, as in the Atomic Red Team T1070.008 test.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Copy-Item -Path \"$env:LOCALAPPDATA\\Comms\\Unistore\\data\\*\" -Destination \"C:\\Users\\Public\\mbx_copy\" -Recurse",
+          "ScriptBlockId": "5f1c2a9e-7b3d-4c11-9a0e-2d8f4b6c1a73",
+          "Path": "C:\\Users\\jperez\\AppData\\Local\\Temp\\sync.ps1",
+          "UserID": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Script force-deletes the Mail app data folder of a user profile.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0207.andes.example.com",
+          "ScriptBlockText": "Remove-Item -Path \"C:\\Users\\mrojas\\AppData\\Local\\Comms\\Unistore\\data\" -Recurse -Force",
+          "ScriptBlockId": "a3e94b10-2c6f-4d8a-b1f7-90c5e2d4f618",
+          "Path": "",
+          "UserID": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Script lists the UnistoreDB folder; the path never contains \\Comms\\Unistore\\data.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockText": "Get-ChildItem -Path \"$env:LOCALAPPDATA\\Comms\\UnistoreDB\" | Measure-Object -Property Length -Sum",
+          "ScriptBlockId": "c8d27f45-91ab-4e30-8f6d-3b7a0e5c9d24",
+          "Path": "C:\\Scripts\\disk_report.ps1",
+          "UserID": "ANDES\\soporte"
+        }
+      },
+      {
+        "description": "Profile cleanup script touching other LOCALAPPDATA folders, not the Mail app store.",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0311.andes.example.com",
+          "ScriptBlockText": "Remove-Item -Path \"$env:LOCALAPPDATA\\Temp\\*\" -Recurse -Force -ErrorAction SilentlyContinue",
+          "ScriptBlockId": "e1b6a0d3-4f72-4c9e-a85b-6d2f3c7e0b91",
+          "Path": "C:\\Scripts\\cleanup.ps1",
+          "UserID": "ANDES\\soporte"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "d8af0da1-2959-40f9-a3e4-37a6aa1228b7",
+    "title": "Clipboard Data Collection Via Pbpaste",
+    "level": "medium",
+    "status": "test",
+    "author": "Daniel Cortez",
+    "path": "macos/process_creation/proc_creation_macos_pbpaste_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/macos/process_creation/proc_creation_macos_pbpaste_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1115"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó la utilidad pbpaste en un endpoint macOS, que lee el contenido del portapapeles (pasteboard) y lo escribe en stdout. Es una regla de threat hunting: la mayoría de las coincidencias serán benignas, pero puede indicar recolección de datos del portapapeles.",
+      "what_it_detects": "Cualquier evento de creación de proceso en macOS cuyo Image termina en '/pbpaste', sin importar el proceso padre ni los argumentos.",
+      "why_it_matters": "El portapapeles suele contener contraseñas copiadas de gestores, tokens o datos sensibles. Un atacante o malware puede leerlo de forma periódica para robar credenciales (MITRE ATT&CK T1115, Clipboard Data; tácticas de recolección y acceso a credenciales).",
+      "triage_steps": [
+        "Revise ParentImage y la cadena de procesos: Terminal o iTerm con un usuario interactivo es habitual; osascript, curl, python, bash lanzado por launchd o binarios en /tmp son sospechosos.",
+        "Examine CommandLine y la línea de comandos del padre: busque redirecciones a archivos ocultos, pipes hacia curl, nc, base64 u otros comandos de red.",
+        "Determine si la ejecución es repetitiva: muchas ejecuciones de pbpaste a intervalos regulares en el mismo host sugieren un bucle de monitoreo del portapapeles.",
+        "Revise el usuario y si había sesión interactiva activa; compare con su rol (desarrollador, administrador) y su actividad habitual.",
+        "Pivote en el mismo host +/- 15 minutos: conexiones de red salientes, archivos creados en /tmp, /Users/Shared o ~/Library, y nuevos LaunchAgents o LaunchDaemons.",
+        "Busque alertas previas para el mismo host o usuario, como ejecución de osascript, descargas sospechosas o persistencia."
+      ],
+      "false_positives": [
+        "Tareas legítimas de administración o soporte que usan pbpaste en la terminal.",
+        "Desarrolladores que canalizan el portapapeles a otros comandos (por ejemplo pbpaste | jq) o scripts personales y atajos de productividad.",
+        "Herramientas y automatizaciones (Alfred, Raycast, Shortcuts, extensiones de editores) que leen el portapapeles mediante pbpaste."
+      ],
+      "response_steps": [
+        "Confirme con el usuario si la actividad fue intencional cuando el padre sea un shell interactivo.",
+        "Si el padre o la cadena de procesos es sospechosa, aísle el endpoint desde el EDR y preserve los artefactos (scripts, plists de persistencia, hashes).",
+        "Elimine el mecanismo de persistencia y los binarios maliciosos solo después de verificarlos y documentarlos.",
+        "Considere comprometidas las credenciales que pudieron copiarse al portapapeles: rote contraseñas y tokens y revise los accesos recientes del usuario."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque pbpaste es común en uso legítimo, pero en una cadena de procesos anómala puede exponer credenciales."
+    },
+    "en": {
+      "summary": "The pbpaste utility ran on a macOS endpoint; it reads the clipboard (pasteboard) and writes it to stdout. This is a hunting rule: most hits are benign, but it can indicate clipboard data collection.",
+      "what_it_detects": "Any macOS process creation event whose Image ends with '/pbpaste', regardless of parent process or arguments.",
+      "why_it_matters": "Clipboards often hold passwords copied from password managers, tokens or sensitive data. Attackers or malware can poll it to steal credentials (MITRE ATT&CK T1115, Clipboard Data; collection and credential access).",
+      "triage_steps": [
+        "Review ParentImage and the process chain: Terminal or iTerm with an interactive user is common; osascript, curl, python, launchd-spawned bash or binaries in /tmp are suspicious.",
+        "Inspect CommandLine and the parent's command line for redirection to hidden files or pipes into curl, nc, base64 or other network tools.",
+        "Check for repetition: many pbpaste runs at regular intervals on the same host suggest a clipboard-monitoring loop.",
+        "Review the user and whether an interactive session was active; compare with their role and normal activity.",
+        "Pivot on the same host +/- 15 minutes: outbound connections, files written to /tmp, /Users/Shared or ~/Library, and new LaunchAgents or LaunchDaemons.",
+        "Look for earlier alerts for the same host or user, such as osascript execution, suspicious downloads or persistence."
+      ],
+      "false_positives": [
+        "Legitimate administration or support work using pbpaste in a terminal.",
+        "Developers piping clipboard content to other commands (for example pbpaste | jq), personal scripts and productivity shortcuts.",
+        "Tools and automations (Alfred, Raycast, Shortcuts, editor plugins) that read the clipboard via pbpaste."
+      ],
+      "response_steps": [
+        "When the parent is an interactive shell, confirm with the user that the activity was intentional.",
+        "If the parent or chain is suspicious, isolate the endpoint via EDR and preserve artifacts (scripts, persistence plists, hashes).",
+        "Remove persistence and malicious binaries only after verifying and documenting them.",
+        "Treat credentials that may have been copied to the clipboard as exposed: rotate passwords and tokens and review the user's recent access."
+      ],
+      "severity_rationale": "Medium fits because pbpaste is common in legitimate use, yet in an anomalous process chain it can expose credentials."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "pbpaste launched by a bash script spawned from a LaunchAgent, writing clipboard to a hidden file",
+        "event": {
+          "Image": "/usr/bin/pbpaste",
+          "CommandLine": "pbpaste",
+          "ParentImage": "/bin/bash",
+          "ParentCommandLine": "/bin/bash /Users/jperez/Library/.cache/sync.sh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 4821,
+          "ParentProcessId": 4790
+        }
+      },
+      {
+        "description": "Interactive developer piping clipboard to jq in Terminal (benign but matches the hunting rule)",
+        "event": {
+          "Image": "/usr/bin/pbpaste",
+          "CommandLine": "pbpaste",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "User": "mlopez",
+          "Computer": "MBP-0217",
+          "ProcessId": 9132,
+          "ParentProcessId": 9001
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "pbcopy (writes to clipboard) does not end with /pbpaste",
+        "event": {
+          "Image": "/usr/bin/pbcopy",
+          "CommandLine": "pbcopy",
+          "ParentImage": "/bin/zsh",
+          "ParentCommandLine": "-zsh",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5100,
+          "ParentProcessId": 5001
+        }
+      },
+      {
+        "description": "Shell whose command line mentions pbpaste, but Image is zsh",
+        "event": {
+          "Image": "/bin/zsh",
+          "CommandLine": "/bin/zsh -c echo pbpaste_backup.txt",
+          "ParentImage": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
+          "User": "jperez",
+          "Computer": "MBP-0142",
+          "ProcessId": 5200,
+          "ParentProcessId": 5199
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

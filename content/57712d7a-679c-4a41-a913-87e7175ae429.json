@@ -1,0 +1,134 @@
+{
+  "rule": {
+    "id": "57712d7a-679c-4a41-a913-87e7175ae429",
+    "title": "SC.EXE Query Execution",
+    "level": "low",
+    "status": "test",
+    "author": "frack113",
+    "path": "windows/process_creation/proc_creation_win_sc_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_sc_query.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1007"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se ejecutó sc.exe con un subcomando query o queryex para listar servicios registrados o consultar su estado. Es una regla de threat hunting: suele ser actividad administrativa, pero también puede ser reconocimiento previo a deshabilitar defensas o moverse lateralmente.",
+      "what_it_detects": "Creación de procesos donde Image termina en \\sc.exe, OriginalFileName es sc.exe y CommandLine contiene ' query' (incluye queryex). Excluye la línea exacta 'sc query dokan1' que genera Keybase.",
+      "why_it_matters": "Enumerar servicios (ATT&CK T1007, System Service Discovery) permite a un atacante identificar antivirus, EDR, herramientas de respaldo o servicios vulnerables antes de detenerlos, abusar de ellos o elegir un mecanismo de persistencia.",
+      "triage_steps": [
+        "Revise CommandLine: identifique si consulta un servicio puntual o enumera todo (type= service state= all, queryex) y si apunta a un host remoto (\\\\nombre).",
+        "Examine ParentImage y la línea de comandos del padre: cmd.exe o powershell.exe lanzados desde Office, navegadores, w3wp.exe o scripts en carpetas temporales son sospechosos.",
+        "Valide el User y el host: ¿es una cuenta administrativa o de servicio conocida, o un usuario estándar en una estación de trabajo?",
+        "Verifique qué servicios se consultaron: nombres de EDR, antivirus, Sysmon, respaldo o VSS elevan la prioridad.",
+        "Pivotee en el mismo host +/- 15 minutos buscando otros comandos de discovery (whoami, net, tasklist, systeminfo) o sc stop/config/create posteriores.",
+        "Busque alertas previas para el mismo usuario y host, y si la consulta remota se repite contra varios equipos."
+      ],
+      "false_positives": [
+        "Administradores que consultan el estado o PID de un servicio durante soporte o mantenimiento.",
+        "Scripts de inventario, monitoreo o instaladores de software que verifican si un servicio existe antes de instalarlo.",
+        "Herramientas de gestión (RMM, SCCM) que ejecutan sc query de forma periódica.",
+        "Keybase (kbfsdokan.exe) con variantes de 'sc query dokan1' no cubiertas por el filtro exacto."
+      ],
+      "response_steps": [
+        "Confirme con el dueño del equipo o el usuario si la ejecución fue legítima y documente la justificación.",
+        "Si es sospechoso, recolecte el árbol de procesos, el hash del padre y la línea de tiempo del host antes de actuar.",
+        "Si hay indicios de compromiso (detención de servicios de seguridad, movimiento lateral), aísle el endpoint y restablezca las credenciales del usuario involucrado.",
+        "Agregue exclusiones acotadas por ParentImage y usuario para scripts legítimos recurrentes, evitando excluir sc.exe por completo."
+      ],
+      "severity_rationale": "El nivel low es adecuado porque consultar servicios es muy común en administración y solo aporta valor combinado con otros indicadores de reconocimiento o evasión."
+    },
+    "en": {
+      "summary": "sc.exe ran with a query or queryex subcommand to list registered services or check their state. This is a threat-hunting rule: usually admin activity, but possibly reconnaissance before tampering with defenses or lateral movement.",
+      "what_it_detects": "Process creation where Image ends with \\sc.exe, OriginalFileName is sc.exe and CommandLine contains ' query' (queryex included). The exact line 'sc query dokan1' from Keybase is excluded.",
+      "why_it_matters": "Service enumeration (ATT&CK T1007, System Service Discovery) lets an attacker find antivirus, EDR, backup or vulnerable services before stopping or abusing them, or choosing a persistence method.",
+      "triage_steps": [
+        "Read CommandLine: is it one specific service or full enumeration (type= service state= all, queryex), and does it target a remote host (\\\\name)?",
+        "Check ParentImage and its command line: cmd.exe or powershell.exe spawned by Office, browsers, w3wp.exe or scripts in temp folders are suspicious.",
+        "Validate User and host: known admin or service account, or a standard user on a workstation?",
+        "Note which services were queried; EDR, antivirus, Sysmon, backup or VSS names raise priority.",
+        "Pivot on the same host +/- 15 minutes for other discovery (whoami, net, tasklist, systeminfo) or follow-up sc stop/config/create.",
+        "Look for earlier alerts on the same user and host, and whether remote queries repeat across multiple machines."
+      ],
+      "false_positives": [
+        "Administrators checking a service's state or PID during support or maintenance.",
+        "Inventory, monitoring scripts or installers checking whether a service exists.",
+        "Management tools (RMM, SCCM) running sc query on a schedule.",
+        "Keybase (kbfsdokan.exe) variants of 'sc query dokan1' not covered by the exact-match filter."
+      ],
+      "response_steps": [
+        "Confirm with the host owner or user whether the execution was legitimate and record the justification.",
+        "If suspicious, collect the process tree, parent hash and host timeline before acting.",
+        "If compromise indicators exist (security services stopped, lateral movement), isolate the endpoint and reset the involved user's credentials.",
+        "Tune with narrow exclusions on ParentImage and user for recurring legitimate scripts; never exclude sc.exe entirely."
+      ],
+      "severity_rationale": "Low fits because service queries are very common in administration and only matter alongside other reconnaissance or defense-evasion signals."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Full service enumeration launched from cmd.exe by a standard user",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\sc.exe",
+          "OriginalFileName": "sc.exe",
+          "CommandLine": "sc query type= service state= all",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "ParentCommandLine": "cmd.exe /c C:\\Users\\jperez\\AppData\\Local\\Temp\\run.bat",
+          "CurrentDirectory": "C:\\Users\\jperez\\AppData\\Local\\Temp\\"
+        }
+      },
+      {
+        "description": "queryex against the Defender service from PowerShell",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\sc.exe",
+          "OriginalFileName": "sc.exe",
+          "CommandLine": "\"C:\\Windows\\system32\\sc.exe\" queryex WinDefend",
+          "ParentImage": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ParentCommandLine": "powershell.exe -NoProfile"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Keybase kbfsdokan.exe querying dokan1, excluded by the filter",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\sc.exe",
+          "OriginalFileName": "sc.exe",
+          "CommandLine": "sc query dokan1",
+          "ParentImage": "C:\\Users\\jperez\\AppData\\Local\\Keybase\\kbfsdokan.exe"
+        }
+      },
+      {
+        "description": "sc.exe qc reading a service config, no ' query' substring",
+        "event": {
+          "EventID": 1,
+          "Computer": "SRV-APP-03.andes.example.com",
+          "User": "ANDES\\adm_lgomez",
+          "Image": "C:\\Windows\\System32\\sc.exe",
+          "OriginalFileName": "sc.exe",
+          "CommandLine": "sc qc Spooler",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

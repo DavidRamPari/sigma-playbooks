@@ -1,0 +1,105 @@
+{
+  "rule": {
+    "id": "4e19528a-f081-40dd-be09-90c39352bd64",
+    "title": "Potential POWERTRASH Script Execution",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "2023/TA/FIN7/posh_ps_apt_fin7_powertrash_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2023/TA/FIN7/posh_ps_apt_fin7_powertrash_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un bloque de script de PowerShell (evento 4104) contiene la combinación de APIs típica del loader en memoria POWERTRASH: descompresión Deflate de Base64, resolución de funciones nativas y ejecución mediante delegado.",
+      "what_it_detects": "Registros de Script Block Logging cuyo ScriptBlockText incluye a la vez IO.Compression.DeflateStream, IO.MemoryStream, ::FromBase64String, GetDelegateForFunctionPointer, .Invoke() y GlobalAssemblyCache, patrón del script ofuscado POWERTRASH.",
+      "why_it_matters": "POWERTRASH es un loader de PowerShell que la regla asocia con FIN7 (G0046), documentado en ataques a servidores Veeam. Descomprime y ejecuta un payload directamente en memoria (T1059.001), lo que evita escribir archivos en disco.",
+      "triage_steps": [
+        "Reconstruya el script completo agrupando los eventos 4104 con el mismo ScriptBlockId (MessageNumber/MessageTotal) y revise el ScriptBlockText.",
+        "Extraiga la cadena Base64 y descomprímala solo en un sandbox aislado para identificar el payload, sin ejecutarla.",
+        "Identifique el host y su función; dé prioridad si es un servidor de respaldo Veeam o un sistema crítico.",
+        "Busque el proceso powershell.exe en los eventos 4688 o Sysmon 1: revise ParentImage, CommandLine, el usuario y el tipo de logon.",
+        "Revise las conexiones de red y los archivos creados en el mismo host en un rango de +/- 15 minutos.",
+        "Revise las alertas anteriores del mismo host y del mismo usuario, y busque el mismo ScriptBlockText o hash en otros endpoints."
+      ],
+      "false_positives": [
+        "No se conocen falsos positivos según la regla; considere un caso legítimo solo si se trata de herramientas de pentest o red team autorizadas y documentadas."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de red team o de cambios si la ejecución estaba autorizada.",
+        "Si no lo estaba, aísle el endpoint de la red y conserve la memoria y los registros de PowerShell.",
+        "Deshabilite o restablezca las credenciales usadas y revise el acceso a las bases de datos de Veeam y las credenciales que almacena.",
+        "Elimine la persistencia y los artefactos identificados, verifique la integridad de los respaldos y restaure el servicio de forma controlada."
+      ],
+      "severity_rationale": "El nivel alto se justifica porque las seis cadenas juntas casi solo aparecen en loaders de shellcode en memoria, y los falsos positivos son muy raros."
+    },
+    "en": {
+      "summary": "A PowerShell script block (event 4104) contains the API combination typical of the POWERTRASH in-memory loader: Deflate decompression of Base64 data, native function resolution and execution through a delegate.",
+      "what_it_detects": "Script Block Logging events whose ScriptBlockText contains all of IO.Compression.DeflateStream, IO.MemoryStream, ::FromBase64String, GetDelegateForFunctionPointer, .Invoke() and GlobalAssemblyCache, the pattern of the obfuscated POWERTRASH script.",
+      "why_it_matters": "POWERTRASH is a PowerShell loader that the rule links to FIN7 (G0046), reported in attacks on Veeam servers. It decompresses and runs a payload in memory (T1059.001), so nothing is written to disk.",
+      "triage_steps": [
+        "Rebuild the full script by grouping 4104 events with the same ScriptBlockId (MessageNumber/MessageTotal) and read the ScriptBlockText.",
+        "Extract the Base64 blob and decompress it only in an isolated sandbox to identify the payload. Never execute it.",
+        "Identify the host and its role. Raise priority for Veeam backup servers and other critical systems.",
+        "Find the powershell.exe process in 4688 or Sysmon 1 events and review ParentImage, CommandLine, the user and the logon type.",
+        "Review network connections and file creations on the same host within +/- 15 minutes.",
+        "Check earlier alerts for the same host and user, and search other endpoints for the same ScriptBlockText or hash."
+      ],
+      "false_positives": [
+        "The rule lists no known false positives. Treat a hit as benign only if it comes from authorized, documented red team or penetration testing tools."
+      ],
+      "response_steps": [
+        "Ask the red team or change management whether the execution was authorized.",
+        "If it was not, isolate the endpoint and preserve memory and PowerShell logs.",
+        "Disable or reset the credentials involved, and review access to Veeam databases and the credentials Veeam stores.",
+        "Remove any persistence and artifacts you found, verify backup integrity and restore service in a controlled way."
+      ],
+      "severity_rationale": "High fits because all six strings together almost only appear in in-memory shellcode loaders, so false positives are very rare."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "POWERTRASH-style loader: Base64 + Deflate decompression, GAC assembly lookup, delegate from function pointer invoked",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "VEEAM-BKP-01.andes.example.com",
+          "ScriptBlockId": "7d2f1c3a-9b4e-4c1a-8f2e-1a2b3c4d5e6f",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "",
+          "UserID": "ANDES\\svc_backup",
+          "ScriptBlockText": "$ms = New-Object IO.MemoryStream(,[Convert]::FromBase64String('UExBQ0VIT0xERVI=')); $ds = New-Object IO.Compression.DeflateStream($ms,[IO.Compression.CompressionMode]::Decompress); $asm = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GlobalAssemblyCache -and $_.Location.Split('\\\\')[-1].Equals('System.dll') }; $fn = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($ptr, $dt); $fn.Invoke()"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate admin script decompressing a Base64 Deflate config blob without native delegate or GAC lookup",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "ScriptBlockId": "0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "Path": "C:\\Scripts\\Expand-Config.ps1",
+          "UserID": "ANDES\\jperez",
+          "ScriptBlockText": "$ms = New-Object IO.MemoryStream(,[Convert]::FromBase64String($blob)); $ds = New-Object IO.Compression.DeflateStream($ms,[IO.Compression.CompressionMode]::Decompress); $sr = New-Object IO.StreamReader($ds); $cfg = $sr.ReadToEnd() | ConvertFrom-Json"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "rule": {
+    "id": "19d65a1c-8540-4140-8062-8eb00db0bba5",
+    "title": "WinAPI Library Calls Via PowerShell Scripts",
+    "level": "medium",
+    "status": "test",
+    "author": "Nikita Nazarov, oscd.community, Nasreddine Bencherchali (Nextron Systems)",
+    "path": "windows/powershell/powershell_script/posh_ps_win_api_functions_access.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/powershell/powershell_script/posh_ps_win_api_functions_access.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059.001",
+      "T1106"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un script de PowerShell registrado mediante Script Block Logging (evento 4104) hace referencia a una librería WinAPI nativa como kernel32.dll, ntdll.dll o advapi32.dll. Es una regla de hunting: indica una pista para investigar, no una intrusión confirmada.",
+      "what_it_detects": "Eventos ps_script cuyo ScriptBlockText contiene Advapi32.dll, kernel32.dll, KernelBase.dll, ntdll.dll, secur32.dll o user32.dll, normalmente en declaraciones DllImport, Add-Type o reflexión para invocar funciones nativas.",
+      "why_it_matters": "Llamar a la API nativa desde PowerShell (T1059.001, T1106) permite inyectar código, asignar memoria ejecutable, manipular tokens o leer credenciales sin usar cmdlets que los controles de seguridad suelen vigilar.",
+      "triage_steps": [
+        "Lea el ScriptBlockText completo y anote qué funciones se importan, por ejemplo VirtualAlloc, CreateRemoteThread, WriteProcessMemory, OpenProcess, LsaCallAuthenticationPackage o SetWindowsHookEx.",
+        "Si el script se registró en varios fragmentos, reconstrúyalo con el ScriptBlockId y revise si contiene contenido ofuscado, Base64 o descargas.",
+        "Revise Path: un archivo .ps1 conocido en una ruta de software gestionado es menos sospechoso que un bloque interactivo o un script ubicado en %TEMP%.",
+        "Identifique el proceso powershell.exe y su ParentImage con Sysmon o EDR en el mismo host +/- 15 minutos; desconfíe de Office, wscript, mshta o servicios web como proceso padre.",
+        "Busque actividad posterior en el host: conexiones de red, accesos a lsass, procesos hijo nuevos o creación de servicios y tareas programadas.",
+        "Valide al usuario: ¿es un administrador, una cuenta de servicio o de despliegue? Revise si el mismo usuario o el mismo script generó alertas anteriores en otros equipos."
+      ],
+      "false_positives": [
+        "Módulo Carbon de PowerShell, que usa P/Invoke para administrar privilegios, servicios y ACL.",
+        "Scripts de instalación de paquetes Chocolatey.",
+        "Herramientas de administración, inventario o despliegue internas que importan funciones de user32.dll o advapi32.dll.",
+        "Scripts de pruebas, desarrollo o de equipos de seguridad documentados."
+      ],
+      "response_steps": [
+        "Si el script coincide con software aprobado, documéntelo y considere una exclusión acotada por Path o hash del script, no por la librería.",
+        "Si hay importaciones de inyección o acceso a memoria sin justificación, aísle el endpoint mediante el EDR y preserve los eventos 4104 y la memoria del proceso.",
+        "Detenga el proceso de PowerShell solo después de capturar la evidencia, y elimine los mecanismos de persistencia que haya verificado.",
+        "Restablezca las credenciales del usuario afectado si se sospecha acceso a lsass o manipulación de tokens, y busque el mismo script en toda la flota."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque estas importaciones son comunes en técnicas ofensivas, pero también aparecen en módulos legítimos de administración, por eso requieren revisión manual."
+    },
+    "en": {
+      "summary": "A PowerShell script captured by Script Block Logging (event 4104) references a native WinAPI library such as kernel32.dll, ntdll.dll or advapi32.dll. This is a hunting rule: a lead to investigate, not a confirmed intrusion.",
+      "what_it_detects": "ps_script events whose ScriptBlockText contains Advapi32.dll, kernel32.dll, KernelBase.dll, ntdll.dll, secur32.dll or user32.dll, typically inside DllImport, Add-Type or reflection code that calls native functions.",
+      "why_it_matters": "Calling the native API from PowerShell (T1059.001, T1106) lets attackers inject code, allocate executable memory, tamper with tokens or read credentials without the cmdlets that defenders usually monitor.",
+      "triage_steps": [
+        "Read the full ScriptBlockText and list the imported functions, for example VirtualAlloc, CreateRemoteThread, WriteProcessMemory, OpenProcess, LsaCallAuthenticationPackage or SetWindowsHookEx.",
+        "If the script was logged in several parts, rebuild it with ScriptBlockId and look for obfuscation, Base64 blobs or download cradles.",
+        "Check Path: a known .ps1 in a managed software folder is less suspicious than an interactive block or a script in %TEMP%.",
+        "Find the powershell.exe process and its ParentImage in Sysmon or EDR on the same host +/- 15 minutes; Office, wscript, mshta or web server parents are red flags.",
+        "Look for follow-on activity on the host: network connections, lsass access, new child processes, service or scheduled task creation.",
+        "Validate the user: admin, service or deployment account? Check for earlier alerts on the same user or script on other hosts."
+      ],
+      "false_positives": [
+        "Carbon PowerShell module, which uses P/Invoke to manage privileges, services and ACLs.",
+        "Chocolatey package installation scripts.",
+        "Internal admin, inventory or deployment tools that import user32.dll or advapi32.dll functions.",
+        "Documented development, testing or security team scripts."
+      ],
+      "response_steps": [
+        "If the script matches approved software, document it and consider a narrow exclusion by Path or script hash, not by library name.",
+        "If injection or memory-access imports appear without justification, isolate the endpoint via EDR and preserve 4104 events and process memory.",
+        "Stop the PowerShell process only after capturing evidence, then remove persistence mechanisms you have verified.",
+        "Reset the affected user's credentials if lsass access or token tampering is suspected, and hunt for the same script across the fleet."
+      ],
+      "severity_rationale": "Medium fits because these imports are common in offensive tradecraft but also appear in legitimate admin modules, so manual review is required."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Interactive script block declaring kernel32.dll P/Invoke signatures for memory allocation and thread creation",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "5b1d2e7a-3c4f-4a8e-9b21-0d6f7a8c9e10",
+          "Path": "",
+          "ScriptBlockText": "$sig = @'\n[DllImport(\"kernel32.dll\")] public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);\n[DllImport(\"kernel32.dll\")] public static extern IntPtr CreateThread(IntPtr a, uint b, IntPtr c, IntPtr d, uint e, IntPtr f);\n'@\n$k = Add-Type -MemberDefinition $sig -Name 'K32' -Namespace 'Win32' -PassThru",
+          "UserID": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Script from a temp folder importing Advapi32.dll token functions",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-FILE-02.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "a7c3e9f1-22b4-4d6a-8f0e-61b2c4d8e3a5",
+          "Path": "C:\\Users\\mrojas\\AppData\\Local\\Temp\\upd.ps1",
+          "ScriptBlockText": "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class T { [DllImport(\"Advapi32.dll\", SetLastError=true)] public static extern bool OpenProcessToken(IntPtr h, uint a, out IntPtr t); }'",
+          "UserID": "ANDES\\mrojas"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin script listing loaded modules by name without the .dll suffix",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "WS-0142.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "0e4f8b2c-7d1a-4c3b-a9e6-3f5d2b1c8a77",
+          "Path": "C:\\Scripts\\Inventory\\Get-ModuleReport.ps1",
+          "ScriptBlockText": "Get-Process -Name explorer | Select-Object -ExpandProperty Modules | Where-Object { $_.ModuleName -like 'kernel32*' } | Select-Object ModuleName, FileVersion",
+          "UserID": "ANDES\\jperez"
+        }
+      },
+      {
+        "description": "Ordinary service check script with no native library references",
+        "event": {
+          "EventID": 4104,
+          "Channel": "Microsoft-Windows-PowerShell/Operational",
+          "Computer": "SRV-APP-01.andes.example.com",
+          "MessageNumber": 1,
+          "MessageTotal": 1,
+          "ScriptBlockId": "c2d9a4e6-5b3f-4e18-8a7c-9d0e1f2a3b4c",
+          "Path": "C:\\Scripts\\Check-Services.ps1",
+          "ScriptBlockText": "Get-Service -Name Spooler, W32Time | Where-Object Status -ne 'Running' | Start-Service -PassThru",
+          "UserID": "ANDES\\svc_monitor"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

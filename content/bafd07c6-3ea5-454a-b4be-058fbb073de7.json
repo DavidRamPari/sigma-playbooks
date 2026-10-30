@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "bafd07c6-3ea5-454a-b4be-058fbb073de7",
+    "title": "Potential Executable Run Itself As Sacrificial Process",
+    "level": "low",
+    "status": "experimental",
+    "author": "frack113",
+    "path": "windows/process_creation/proc_creation_win_susp_parent_execute_itself.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_susp_parent_execute_itself.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1055"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un ejecutable fuera de Program Files inició una copia idéntica de sí mismo (Image igual a ParentImage). Puede ser un proceso de sacrificio creado en estado suspendido para inyectar código, aunque también lo hacen algunos instaladores y actualizadores.",
+      "what_it_detects": "Eventos de creación de procesos en Windows donde Image coincide exactamente con ParentImage. Se excluyen las rutas bajo C:\\Program Files y C:\\Program Files (x86), y una lista de OriginalFileName y Product legítimos conocidos (cmd, PowerShell, msiexec, Explorer, Office, Firefox, entre otros).",
+      "why_it_matters": "Es una técnica habitual de malware para inyectar código en procesos (T1055): crea una instancia suspendida de sí mismo, reemplaza su memoria y la reanuda. Así el payload se ejecuta bajo un proceso de apariencia confiable y evade controles.",
+      "triage_steps": [
+        "Revise Image, ParentImage, CommandLine y ParentCommandLine. Desconfíe de rutas como AppData, Temp, Downloads o ProgramData y de argumentos vacíos o idénticos.",
+        "Verifique hash, firma digital, OriginalFileName y Product del binario. Busque el hash en inteligencia de amenazas y en el inventario de software.",
+        "Compare tiempos: si el padre termina segundos después de crear al hijo, eso indica process hollowing o un proceso de sacrificio.",
+        "En el mismo host, dentro de +/- 15 minutos, busque eventos de Sysmon 8 (CreateRemoteThread) y 10 (ProcessAccess) que tengan como destino al proceso hijo.",
+        "Revise la conexiones de red (Sysmon 3) y consultas DNS (Sysmon 22) del hijo hacia destinos externos poco comunes.",
+        "Reconstruya la ascendencia completa: cómo llegó el binario al equipo (navegador, correo, archivo comprimido) y qué usuario lo ejecutó.",
+        "Busque alertas previas para el mismo host, usuario y hash, y si el mismo binario aparece en otros endpoints."
+      ],
+      "false_positives": [
+        "Instaladores y actualizadores que se relanzan a sí mismos, por ejemplo para elevar privilegios o extraer componentes, sobre todo desde AppData o Temp.",
+        "Aplicaciones Electron o Chromium instaladas por usuario que crean procesos hijos con el mismo ejecutable.",
+        "Herramientas internas o portables que usan un modelo multiproceso o un watchdog de sí mismas."
+      ],
+      "response_steps": [
+        "Si el binario es legítimo y está firmado, documéntelo y agregue una exclusión específica por ruta y hash o Product para reducir el ruido.",
+        "Si hay indicios de inyección o el binario no está firmado y es desconocido, aísle el endpoint con EDR y conserve un volcado de memoria del proceso hijo.",
+        "Termine los procesos maliciosos solo después de capturar la evidencia. Elimine el binario y los mecanismos de persistencia asociados.",
+        "Restablezca las credenciales del usuario si hubo actividad de red sospechosa y busque el hash en toda la flota."
+      ],
+      "severity_rationale": "Es una regla de threat hunting que coincide a menudo con software legítimo, así que el nivel bajo es adecuado hasta ajustarla en el entorno."
+    },
+    "en": {
+      "summary": "An executable outside Program Files launched an identical copy of itself (Image equals ParentImage). This may be a suspended sacrificial process created for code injection, but some installers and updaters do the same.",
+      "what_it_detects": "Windows process creation events where Image exactly matches ParentImage. Paths under C:\\Program Files and C:\\Program Files (x86) are excluded, as is a list of known benign OriginalFileName and Product values (cmd, PowerShell, msiexec, Explorer, Office, Firefox and others).",
+      "why_it_matters": "Malware commonly injects code into processes this way (T1055): it spawns a suspended copy of itself, replaces its memory and resumes it. The payload then runs under a trusted-looking process and evades defenses.",
+      "triage_steps": [
+        "Review Image, ParentImage, CommandLine and ParentCommandLine. Be suspicious of AppData, Temp, Downloads or ProgramData paths and of empty or identical arguments.",
+        "Check the binary's hash, digital signature, OriginalFileName and Product. Look up the hash in threat intelligence and the software inventory.",
+        "Compare timestamps. A parent that exits seconds after creating the child points to process hollowing or a sacrificial process.",
+        "On the same host within +/- 15 minutes, look for Sysmon event 8 (CreateRemoteThread) and event 10 (ProcessAccess) that target the child process.",
+        "Review the child's network connections (Sysmon 3) and DNS queries (Sysmon 22) for unusual external destinations.",
+        "Rebuild the full ancestry: how the binary arrived (browser, email, archive) and which user ran it.",
+        "Search for earlier alerts on the same host, user and hash, and check whether the binary appears on other endpoints."
+      ],
+      "false_positives": [
+        "Installers and updaters that relaunch themselves, for example to elevate or unpack components, especially from AppData or Temp.",
+        "Per-user Electron or Chromium apps that spawn child processes from the same executable.",
+        "Internal or portable tools that use a multi-process model or watch over themselves."
+      ],
+      "response_steps": [
+        "If the binary is legitimate and signed, document it and add a narrow exclusion by path and hash or Product to cut noise.",
+        "If there are signs of injection, or the binary is unsigned and unknown, isolate the endpoint via EDR and capture a memory dump of the child.",
+        "Kill malicious processes only after you capture evidence. Remove the binary and any related persistence.",
+        "If you saw suspicious network activity, reset the user's credentials and hunt for the hash across the fleet."
+      ],
+      "severity_rationale": "This is a threat-hunting rule that often matches benign software, so low fits until it is tuned for the environment."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Unsigned binary in the user's Temp folder spawns an identical copy of itself, consistent with a sacrificial process for injection.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_viewer.exe",
+          "ParentImage": "C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_viewer.exe",
+          "CommandLine": "\"C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_viewer.exe\"",
+          "ParentCommandLine": "\"C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_viewer.exe\"",
+          "OriginalFileName": "stub.exe",
+          "Product": "Invoice Viewer",
+          "Company": "-",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "OneDriveSetup relaunching itself from the user profile; excluded by the OriginalFileName filter.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\OneDrive\\Update\\OneDriveSetup.exe",
+          "ParentImage": "C:\\Users\\jperez\\AppData\\Local\\Microsoft\\OneDrive\\Update\\OneDriveSetup.exe",
+          "CommandLine": "\"C:\\Users\\jperez\\AppData\\Local\\Microsoft\\OneDrive\\Update\\OneDriveSetup.exe\" /update /restart",
+          "OriginalFileName": "OneDriveSetup.exe",
+          "Product": "Microsoft OneDrive",
+          "Company": "Microsoft Corporation"
+        }
+      },
+      {
+        "description": "Binary in Temp launched by a different parent (explorer.exe), so Image does not equal ParentImage.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_viewer.exe",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "\"C:\\Users\\jperez\\AppData\\Local\\Temp\\invoice_viewer.exe\"",
+          "OriginalFileName": "stub.exe",
+          "Product": "Invoice Viewer"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

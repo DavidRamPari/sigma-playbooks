@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "1228f8e2-7e79-4dea-b0ad-c91f1d5016c1",
+    "title": "Turla PNG Dropper Service",
+    "level": "critical",
+    "status": "test",
+    "author": "Florian Roth (Nextron Systems)",
+    "path": "2017/TA/Turla/win_system_apt_turla_service_png.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2017/TA/Turla/win_system_apt_turla_service_png.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1543.003"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se instaló en el host un servicio llamado WerFaultSvc (evento 7045 del Service Control Manager). Ese nombre aparece en el informe de NCC Group sobre el dropper PNG de Turla y no es un servicio estándar de Windows.",
+      "what_it_detects": "Eventos del log System con Provider_Name 'Service Control Manager', EventID 7045 (nuevo servicio instalado) y ServiceName exactamente 'WerFaultSvc', un nombre que imita al servicio legítimo de Informe de errores de Windows (WerSvc).",
+      "why_it_matters": "Crear o modificar un servicio de Windows (ATT&CK T1543.003) da persistencia y suele ejecutarse como SYSTEM, lo que permite escalar privilegios. La regla lo vincula con Turla (G0010), un grupo de espionaje. Un acierto apunta a un compromiso dirigido.",
+      "triage_steps": [
+        "Revise el evento 7045: ImagePath, StartType, ServiceType y AccountName. El WerSvc legítimo corre dentro de svchost.exe, así que un binario propio para WerFaultSvc es sospechoso.",
+        "Ubique el archivo de ImagePath, calcule su hash y verifique firma, fecha de compilación y reputación. No lo ejecute fuera de un sandbox.",
+        "Revise la clave HKLM\\SYSTEM\\CurrentControlSet\\Services\\WerFaultSvc: parámetros, ServiceDll y fecha de última escritura.",
+        "En el mismo host (+/- 15 minutos), busque procesos que crearon el servicio (sc.exe, PowerShell New-Service, instaladores), el evento 4697 y los inicios de sesión asociados.",
+        "Identifique al usuario o la cuenta que instaló el servicio y revise su actividad reciente en otros equipos.",
+        "Busque conexiones de red salientes del binario del servicio y archivos PNG que se hayan leído o escrito cerca de la hora de instalación.",
+        "Busque en toda la flota el mismo ServiceName, ImagePath o hash, y revise alertas previas del host y del usuario."
+      ],
+      "false_positives": [
+        "Ejercicios de red team o de emulación de adversarios que reproducen las técnicas de Turla.",
+        "Pruebas de validación de detecciones que generan este evento a propósito.",
+        "Un software de terceros que por casualidad use el mismo nombre. Es muy improbable y debe confirmarse con el proveedor y la firma del binario."
+      ],
+      "response_steps": [
+        "Confirme con los equipos de red team o de pruebas que no hay un ejercicio autorizado. Si no lo hay, trate el caso como incidente crítico y escálelo.",
+        "Aísle el host de la red y preserve la memoria, el binario, la clave de registro y los logs antes de cambiar algo.",
+        "Cuando tenga la evidencia, deshabilite el servicio y ponga el binario en cuarentena. No borre artefactos hasta terminar el análisis forense.",
+        "Restablezca las credenciales de las cuentas usadas en la instalación y busque movimiento lateral con los IOC obtenidos.",
+        "Reinstale o restaure el host desde una imagen confiable según el proceso de respuesta a incidentes y vigílelo de cerca después."
+      ],
+      "severity_rationale": "El nivel crítico corresponde porque es un indicador específico de un grupo de espionaje, casi sin falsos positivos, y supone persistencia con privilegios de SYSTEM."
+    },
+    "en": {
+      "summary": "A service named WerFaultSvc was installed on the host (Service Control Manager event 7045). NCC Group's report on the Turla PNG dropper lists this service name, and it is not a standard Windows service.",
+      "what_it_detects": "System log events with Provider_Name 'Service Control Manager', EventID 7045 (new service installed) and ServiceName exactly 'WerFaultSvc'. The name mimics the legitimate Windows Error Reporting service (WerSvc).",
+      "why_it_matters": "Creating or modifying a Windows service (ATT&CK T1543.003) gives persistence and usually runs as SYSTEM, which allows privilege escalation. The rule ties this name to Turla (G0010), an espionage group, so a hit suggests a targeted compromise.",
+      "triage_steps": [
+        "Review the 7045 event: ImagePath, StartType, ServiceType and AccountName. The real WerSvc runs inside svchost.exe, so a separate binary for WerFaultSvc is suspicious.",
+        "Find the ImagePath file, hash it and check its signature, compile time and reputation. Never run it outside a sandbox.",
+        "Inspect HKLM\\SYSTEM\\CurrentControlSet\\Services\\WerFaultSvc for parameters, ServiceDll and last write time.",
+        "On the same host (+/- 15 minutes), look for the process that created the service (sc.exe, PowerShell New-Service, installers), event 4697 and related logons.",
+        "Identify the user or account that installed the service and review its recent activity on other hosts.",
+        "Look for outbound connections from the service binary and for PNG files read or written around install time.",
+        "Search the whole fleet for the same ServiceName, ImagePath or hash, and review earlier alerts for this host and user."
+      ],
+      "false_positives": [
+        "Red team or adversary emulation exercises that copy Turla techniques.",
+        "Detection validation tests that create this event on purpose.",
+        "Third-party software that happens to use the same name. This is very unlikely; confirm it with the vendor and the binary's signature."
+      ],
+      "response_steps": [
+        "Check with red team and testing teams that no authorized exercise is running. If none is, treat this as a critical incident and escalate.",
+        "Isolate the host from the network and preserve memory, the binary, the registry key and the logs before changing anything.",
+        "Once evidence is collected, disable the service and quarantine the binary. Keep all artifacts until forensic analysis is finished.",
+        "Reset credentials for the accounts used in the install and hunt for lateral movement with the IOCs you found.",
+        "Reimage or restore the host from a trusted image under your incident response process, then monitor it closely."
+      ],
+      "severity_rationale": "Critical fits because this is a specific indicator of an espionage group, false positives are near zero, and it means persistence with SYSTEM privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Service Control Manager logs the install of the malicious WerFaultSvc service with its own binary, set to auto start as LocalSystem",
+        "event": {
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "ServiceName": "WerFaultSvc",
+          "ImagePath": "C:\\Windows\\System32\\WerFaultSvc.exe",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "WerFaultSvc installed as a svchost-hosted service on a server",
+        "event": {
+          "Channel": "System",
+          "Computer": "SRV-FILE-03.andes.example.com",
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "ServiceName": "WerFaultSvc",
+          "ImagePath": "%SystemRoot%\\System32\\svchost.exe -k netsvcs",
+          "ServiceType": "user mode service",
+          "StartType": "auto start",
+          "AccountName": "LocalSystem"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate Windows Error Reporting service (WerSvc) installed; the service name does not match exactly",
+        "event": {
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7045,
+          "ServiceName": "WerSvc",
+          "ImagePath": "%SystemRoot%\\System32\\svchost.exe -k WerSvcGroup",
+          "ServiceType": "user mode service",
+          "StartType": "demand start",
+          "AccountName": "LocalSystem"
+        }
+      },
+      {
+        "description": "Service state change event 7036 for an existing service, not a new service install",
+        "event": {
+          "Channel": "System",
+          "Computer": "WS-0142.andes.example.com",
+          "Provider_Name": "Service Control Manager",
+          "EventID": 7036,
+          "ServiceName": "WerFaultSvc",
+          "param1": "WerFaultSvc",
+          "param2": "running"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

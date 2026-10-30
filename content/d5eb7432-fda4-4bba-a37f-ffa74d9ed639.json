@@ -1,0 +1,126 @@
+{
+  "rule": {
+    "id": "d5eb7432-fda4-4bba-a37f-ffa74d9ed639",
+    "title": "Serpent Backdoor Payload Execution Via Scheduled Task",
+    "level": "high",
+    "status": "test",
+    "author": "@kostastsale",
+    "path": "2022/Malware/Serpent-Backdoor/proc_creation_win_malware_serpent_backdoor_payload_execution.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2022/Malware/Serpent-Backdoor/proc_creation_win_malware_serpent_backdoor_payload_execution.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1053.005",
+      "T1059.006"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "cmd.exe o powershell.exe ejecutó una sola línea de comandos que crea una tarea programada llamada \"run\", activada por un evento, genera un evento falso de Windows para dispararla y luego la elimina. Es el método de ejecución de payload documentado para el backdoor Serpent.",
+      "what_it_detects": "Creación de procesos donde Image termina en \\cmd.exe o \\powershell.exe y CommandLine contiene todas estas cadenas: '[System/EventID=', '/create', '/delete', '/ec', '/so' y '/tn run'. Corresponden a schtasks /create /sc onevent, eventcreate /so y schtasks /delete encadenados.",
+      "why_it_matters": "Según Proofpoint, Serpent ejecuta payloads mediante una tarea programada de vida corta (T1053.005) disparada por un evento falso. Así ejecuta código vía el Programador de tareas casi sin dejar artefactos persistentes. Las etiquetas de la regla también relacionan el payload con ejecución de Python (T1059.006).",
+      "triage_steps": [
+        "Revise el CommandLine completo. Extraiga la ruta del payload en /tr, el EventID, el log en /ec y el origen en /so.",
+        "Revise ParentImage y el árbol de procesos. Un padre de Office, wscript, mshta o un intérprete de Python aumenta la sospecha.",
+        "Identifique el usuario y el nivel de integridad. Verifique si aparece /ru SYSTEM u otras opciones con privilegios elevados.",
+        "Analice el payload ejecutado: procesos hijos del servicio Schedule en el mismo host en +/- 15 minutos, su hash y su firma.",
+        "Busque en los logs de Windows el EventID falso con el origen /so, y los eventos 106/141 de Task Scheduler Operational para la tarea 'run'.",
+        "Revise las conexiones de red del host o del proceso del payload cerca de la hora de la alerta, sobre todo hacia dominios o hosts inusuales.",
+        "Busque el mismo patrón en otros hosts y revise alertas previas del mismo usuario y host."
+      ],
+      "false_positives": [
+        "La regla indica que los falsos positivos son poco probables. La causa legítima más plausible es un ejercicio autorizado de red team o de emulación de adversarios que reproduce Serpent.",
+        "Un administrador que prueba tareas activadas por eventos podría generarla, pero es raro que use el nombre 'run' con la secuencia crear/disparar/eliminar."
+      ],
+      "response_steps": [
+        "Confirme con el responsable del activo si había pruebas de red team planificadas. Si no las había, trate la alerta como un compromiso confirmado.",
+        "Aísle el endpoint con la contención de red del EDR y preserve la evidencia de memoria y disco.",
+        "Recolecte y analice el payload, los scripts de Python, el documento señuelo y cualquier persistencia. Bloquee sus hashes e indicadores de C2.",
+        "Restablezca las credenciales del usuario afectado y elimine los artefactos maliciosos tras verificarlos. Si hace falta, restaure el host desde una imagen confiable."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque este patrón encadenado de crear, disparar y eliminar una tarea prácticamente no tiene uso legítimo e indica ejecución de código post-explotación."
+    },
+    "en": {
+      "summary": "cmd.exe or powershell.exe ran a one-line command that creates an event-triggered scheduled task named \"run\", fires a fake Windows event to trigger it, and then deletes the task. This matches the payload execution method documented for the Serpent backdoor.",
+      "what_it_detects": "Process creation where Image ends with \\cmd.exe or \\powershell.exe and CommandLine contains all of: '[System/EventID=', '/create', '/delete', '/ec', '/so' and '/tn run'. Together these are schtasks /create /sc onevent, eventcreate /so and schtasks /delete chained in one command.",
+      "why_it_matters": "Proofpoint reported Serpent running payloads through a short-lived scheduled task (T1053.005) triggered by a fake event, which can run code under the Task Scheduler and leave almost no persistent artifacts. The rule's tags also map the payload to Python execution (T1059.006).",
+      "triage_steps": [
+        "Read the full CommandLine. Pull out the /tr payload path, the EventID, the /ec log name and the /so source name.",
+        "Check ParentImage and the process tree. An Office application, wscript, mshta or a Python interpreter as the parent strengthens suspicion.",
+        "Identify the user and integrity level. Check whether /ru SYSTEM or other elevated options appear.",
+        "Look at the payload the task ran: child processes of taskeng.exe/svchost Schedule service on the same host within +/- 15 minutes, file hash and signature.",
+        "Query Windows event logs for the fake EventID with the /so source, and Task Scheduler Operational events 106/141 for task 'run'.",
+        "Look for network connections from the host or payload process around the alert time, especially to unusual domains or hosts.",
+        "Search for the same command pattern on other hosts and check earlier alerts for this user and host."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unlikely. The most plausible benign source is an authorized red team or adversary emulation run that reproduces Serpent.",
+        "An administrator testing event-triggered tasks could produce it, but the exact 'run' task name plus create/fire/delete sequence is rare."
+      ],
+      "response_steps": [
+        "Confirm with the asset owner whether red team or test activity was planned. If not, treat the alert as a confirmed compromise.",
+        "Isolate the endpoint through EDR network containment and keep its memory and disk evidence.",
+        "Collect and analyze the payload, Python scripts, the original lure document and any persistence. Block their hashes and C2 indicators.",
+        "Reset credentials of the affected user, remove malicious artifacts after verification, and restore the host from a known-good image if needed."
+      ],
+      "severity_rationale": "High fits because this exact chained create/trigger/delete task pattern has essentially no legitimate use and points to active post-exploitation code execution."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "cmd.exe chaining schtasks onevent creation, eventcreate fake event and task deletion (Serpent pattern)",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ParentImage": "C:\\Users\\jperez\\AppData\\Local\\Programs\\Python\\pythonw.exe",
+          "CommandLine": "cmd.exe /c schtasks.exe /create /sc onevent /ec Application /mo *[System/EventID=777] /f /tn run /tr \"C:\\Users\\Public\\payload_placeholder.exe\" & eventcreate /id 777 /l APPLICATION /t INFORMATION /so DummyEvent /d \"Initiating\" & schtasks.exe /delete /tn run /f"
+        }
+      },
+      {
+        "description": "Same technique launched through powershell.exe with uppercase switches",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "ParentImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "CommandLine": "powershell.exe -c \"SCHTASKS /CREATE /SC ONEVENT /EC Application /MO *[System/EventID=777] /F /TN run /TR 'C:\\ProgramData\\placeholder.exe'; EVENTCREATE /ID 777 /L APPLICATION /T INFORMATION /SO DummyEvent /D 'Initiating'; SCHTASKS /DELETE /TN run /F\""
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate admin creating a persistent event-triggered backup task via cmd.exe; no /delete, no /so and task not named 'run'",
+        "event": {
+          "EventID": 1,
+          "Computer": "SRV-FILE-01.andes.example.com",
+          "User": "ANDES\\adm_lgomez",
+          "Image": "C:\\Windows\\System32\\cmd.exe",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "CommandLine": "cmd.exe /c schtasks /create /tn \"BackupOnBoot\" /sc onevent /ec System /mo \"*[System/EventID=6005]\" /tr \"C:\\Tools\\backup.cmd\" /ru SYSTEM"
+        }
+      },
+      {
+        "description": "Same full command line but the process recorded is schtasks.exe itself, so Image does not end with cmd.exe or powershell.exe",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "Image": "C:\\Windows\\System32\\schtasks.exe",
+          "ParentImage": "C:\\Windows\\System32\\cmd.exe",
+          "CommandLine": "schtasks.exe /create /sc onevent /ec Application /mo *[System/EventID=777] /f /tn run /tr \"C:\\Users\\Public\\payload_placeholder.exe\" /so x /delete"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,139 @@
+{
+  "rule": {
+    "id": "0e277796-5f23-4e49-a490-483131d4f6e1",
+    "title": "Dbghelp/Dbgcore DLL Loaded By Uncommon/Suspicious Process",
+    "level": "medium",
+    "status": "test",
+    "author": "Perez Diego (@darkquassar), oscd.community, Ecco",
+    "path": "windows/image_load/image_load_dll_dbghelp_dbgcore_susp_load.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/image_load/image_load_dll_dbghelp_dbgcore_susp_load.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1003.001"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso poco habitual para esta función (shell, intérprete de scripts, binario LOLBin u Office) cargó dbghelp.dll o dbgcore.dll, que exportan MiniDumpWriteDump. Puede indicar un intento de volcar la memoria de un proceso, como lsass.exe.",
+      "what_it_detects": "Eventos de carga de imagen (Sysmon EventID 7) en los que ImageLoaded termina en \\dbghelp.dll o \\dbgcore.dll y el Image es cmd.exe, rundll32.exe, wscript.exe, mshta.exe, msbuild.exe, winword.exe, excel.exe, outlook.exe, wmic.exe, sc.exe, entre otros. Excluye TiWorker.exe, servicios svchost de WER y llamadas conocidas de rundll32 por CommandLine.",
+      "why_it_matters": "MiniDumpWriteDump permite escribir la memoria de un proceso en disco. Los atacantes la usan para volcar LSASS y extraer credenciales (ATT&CK T1003.001, OS Credential Dumping: LSASS Memory). Es una regla de threat hunting: sirve como pista y requiere contexto.",
+      "triage_steps": [
+        "Revise Image, CommandLine y la ruta del proceso: ¿se ejecuta desde System32 o desde rutas de usuario, Temp o ProgramData? ¿Qué DLL o script recibe rundll32 o el intérprete?",
+        "Identifique ParentImage y la cadena de procesos padre e hijos; un documento de Office o mshta lanzando la carga es especialmente sospechoso.",
+        "Busque en el mismo host, +/- 15 minutos, acceso a lsass.exe (Sysmon EventID 10) con GrantedAccess de lectura de memoria desde el mismo ProcessId.",
+        "Busque creación de archivos .dmp, .bin o con nombres extraños (EventID 11) por el mismo proceso, y conexiones de red salientes posteriores (EventID 3).",
+        "Verifique la firma y el hash de ImageLoaded: una dbghelp.dll fuera de System32 o sin firmar de Microsoft indica posible sideloading.",
+        "Revise el usuario: ¿tiene privilegios administrativos o SeDebugPrivilege? ¿Es un administrador o desarrollador conocido?",
+        "Consulte alertas previas del mismo host y usuario, incluidas detecciones de Mimikatz, comsvcs MiniDump o herramientas de C2."
+      ],
+      "false_positives": [
+        "Scripts de depuración o diagnóstico que usan la DLL para volcar memoria con fines de análisis.",
+        "Herramientas de soporte, monitoreo (por ejemplo MonitoringHost.exe) o instaladores que cargan dbghelp para generar informes de fallas.",
+        "Complementos de Office o macros legítimas que provocan un crash y generan un minidump."
+      ],
+      "response_steps": [
+        "Valide con el dueño del host o del usuario si existe una tarea de depuración autorizada antes de actuar.",
+        "Si hay acceso a LSASS o archivos de volcado sospechosos, aísle el endpoint desde el EDR y preserve el volcado y el binario para análisis forense.",
+        "Restablezca las credenciales de las cuentas con sesión en el host, priorizando cuentas privilegiadas, y revise uso lateral de esas cuentas.",
+        "Elimine artefactos maliciosos confirmados, considere habilitar LSA Protection (RunAsPPL) o Credential Guard y documente exclusiones para casos legítimos verificados."
+      ],
+      "severity_rationale": "El nivel medio es adecuado porque la carga es un indicador temprano de volcado de credenciales, pero muchos procesos legítimos cargan estas DLL y la regla es de hunting."
+    },
+    "en": {
+      "summary": "A process that rarely needs memory-dump functions (shell, script host, LOLBin or Office app) loaded dbghelp.dll or dbgcore.dll, which export MiniDumpWriteDump. This may signal an attempt to dump process memory, such as lsass.exe.",
+      "what_it_detects": "Image load events (Sysmon EventID 7) where ImageLoaded ends in \\dbghelp.dll or \\dbgcore.dll and Image is cmd.exe, rundll32.exe, wscript.exe, mshta.exe, msbuild.exe, winword.exe, excel.exe, outlook.exe, wmic.exe, sc.exe and similar. TiWorker.exe, WER svchost services and known rundll32 CommandLines are excluded.",
+      "why_it_matters": "MiniDumpWriteDump writes a process's memory to disk. Attackers use it to dump LSASS and harvest credentials (ATT&CK T1003.001, OS Credential Dumping: LSASS Memory). This is a hunting rule: treat it as a lead needing context.",
+      "triage_steps": [
+        "Review Image, CommandLine and path: is it running from System32 or from user, Temp or ProgramData paths? Which DLL or script does rundll32 or the script host receive?",
+        "Identify ParentImage and the parent/child chain; an Office document or mshta driving the load is especially suspicious.",
+        "On the same host within +/- 15 minutes, look for lsass.exe access (Sysmon EventID 10) with memory-read GrantedAccess from the same ProcessId.",
+        "Look for .dmp, .bin or oddly named files created by the same process (EventID 11) and subsequent outbound connections (EventID 3).",
+        "Check signature and hash of ImageLoaded: a dbghelp.dll outside System32 or not Microsoft-signed suggests DLL sideloading.",
+        "Review the user: admin rights or SeDebugPrivilege? Is it a known administrator or developer?",
+        "Check earlier alerts for the same host and user, including Mimikatz, comsvcs MiniDump or C2 tooling detections."
+      ],
+      "false_positives": [
+        "Debugging or diagnostic scripts using the DLL to dump process memory for analysis.",
+        "Support, monitoring (e.g. MonitoringHost.exe) or installer tools loading dbghelp to produce crash reports.",
+        "Legitimate Office add-ins or macros that crash and generate a minidump."
+      ],
+      "response_steps": [
+        "Confirm with the host or user owner whether an authorized debugging task exists before acting.",
+        "If LSASS access or suspicious dump files are found, isolate the endpoint via EDR and preserve the dump and binary for forensics.",
+        "Reset credentials of accounts logged on to the host, privileged accounts first, and hunt for lateral use of them.",
+        "Remove confirmed malicious artifacts, consider enabling LSA Protection (RunAsPPL) or Credential Guard, and document tuning for verified legitimate cases."
+      ],
+      "severity_rationale": "Medium fits because the load is an early credential-dumping indicator, yet many legitimate processes load these DLLs and the rule is a hunting rule."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "rundll32.exe running a DLL from a user-writable path loads dbghelp.dll",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 6120,
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "CommandLine": "rundll32.exe C:\\Users\\Public\\Libraries\\upd.dll,Start",
+          "ImageLoaded": "C:\\Windows\\System32\\dbghelp.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows"
+        }
+      },
+      {
+        "description": "Word loads dbgcore.dll after opening a document",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mlopez",
+          "ProcessId": 4432,
+          "Image": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+          "CommandLine": "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE\" /n \"C:\\Users\\mlopez\\Downloads\\factura.docm\"",
+          "ImageLoaded": "C:\\Windows\\System32\\dbgcore.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "rundll32.exe with the Open With dialog command line is excluded by filter_main_rundll32",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 7344,
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "CommandLine": "C:\\Windows\\system32\\rundll32.exe C:\\Windows\\system32\\shell32.dll,OpenAs_RunDLL C:\\Users\\jperez\\Desktop\\notas.xyz",
+          "ImageLoaded": "C:\\Windows\\System32\\dbghelp.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows"
+        }
+      },
+      {
+        "description": "powershell.exe loading dbghelp.dll is not in the monitored Image list",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ProcessId": 5012,
+          "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "CommandLine": "powershell.exe -NoProfile",
+          "ImageLoaded": "C:\\Windows\\System32\\dbghelp.dll",
+          "Signed": "true",
+          "Signature": "Microsoft Windows"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

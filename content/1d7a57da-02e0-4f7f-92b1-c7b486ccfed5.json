@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "1d7a57da-02e0-4f7f-92b1-c7b486ccfed5",
+    "title": "Potential COLDSTEEL Persistence Service DLL Load",
+    "level": "high",
+    "status": "test",
+    "author": "Nasreddine Bencherchali (Nextron Systems)",
+    "path": "2023/Malware/COLDSTEEL/image_load_malware_coldsteel_persistence_service_dll.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2023/Malware/COLDSTEEL/image_load_malware_coldsteel_persistence_service_dll.yml",
+    "license": "DRL-1.1",
+    "techniques": [],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un proceso svchost.exe cargó una DLL llamada newdev.dll desde la carpeta AppData\\Roaming de un perfil de usuario. Según el NCSC, el RAT ColdSteel usa este nombre y esta ruta para la DLL de servicio de su mecanismo de persistencia.",
+      "what_it_detects": "Eventos de carga de imagen (por ejemplo, Sysmon ID 7) en los que Image termina en \\svchost.exe e ImageLoaded termina en \\AppData\\Roaming\\newdev.dll. La newdev.dll legítima de Windows está en System32, no en un perfil de usuario.",
+      "why_it_matters": "Si un svchost carga una DLL de servicio desde un perfil de usuario, alguien registró un servicio malicioso que se ejecuta en cada arranque, normalmente como SYSTEM. Es persistencia mediante un servicio de Windows y además da acceso remoto a ColdSteel.",
+      "triage_steps": [
+        "Confirma en ImageLoaded la ruta completa y el perfil afectado. Obtén el hash, el estado de firma (Signed/Signature) y la fecha de creación del archivo.",
+        "Busca el hash en tu inteligencia de amenazas y en el resto de los endpoints para saber si la DLL aparece en otros equipos.",
+        "Revisa la línea de comandos y el usuario del svchost (ProcessId) en los eventos de creación de procesos para identificar el grupo -k y el servicio asociado.",
+        "Busca en el registro valores HKLM\\SYSTEM\\CurrentControlSet\\Services\\*\\Parameters\\ServiceDll que apunten a la DLL, y eventos 7045 o 4697 de servicios nuevos.",
+        "Identifica qué proceso creó newdev.dll (Sysmon ID 11) y revisa la cadena de procesos padre en el mismo host, 15 minutos antes y después.",
+        "Revisa las conexiones de red de ese svchost (Sysmon ID 3, DNS, proxy) y busca destinos poco comunes o tráfico periódico de tipo beacon.",
+        "Revisa alertas previas del mismo host y del mismo usuario, sobre todo de ejecución inicial o de escalamiento de privilegios."
+      ],
+      "false_positives": [
+        "Poco probable, según la regla. Ningún componente legítimo de Windows carga newdev.dll desde AppData\\Roaming.",
+        "Pruebas de red team o simulaciones de adversario autorizadas que reproducen los artefactos de ColdSteel. Pide la confirmación al responsable del ejercicio."
+      ],
+      "response_steps": [
+        "Antes de modificar el equipo, preserva evidencia: copia de la DLL, volcado de memoria del svchost y exportación de la clave del servicio.",
+        "Si se confirma que es malicioso, aísla el endpoint de la red con el EDR y bloquea el hash y los destinos C2 que hayas identificado.",
+        "Deshabilita y elimina el servicio malicioso y la DLL. Luego busca otros mecanismos de persistencia y cuentas creadas por el atacante.",
+        "Restablece las credenciales de las cuentas usadas en el host. Si el compromiso es profundo, reinstala el equipo desde una imagen confiable antes de devolverlo a producción."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque esta combinación de proceso y ruta tiene muy pocas causas legítimas y apunta a persistencia activa de un RAT con privilegios de servicio."
+    },
+    "en": {
+      "summary": "An svchost.exe process loaded a DLL named newdev.dll from a user profile's AppData\\Roaming folder. The NCSC reports that the ColdSteel RAT uses this name and path for the service DLL of its persistence mechanism.",
+      "what_it_detects": "Image load events (for example, Sysmon ID 7) where Image ends with \\svchost.exe and ImageLoaded ends with \\AppData\\Roaming\\newdev.dll. The legitimate Windows newdev.dll is in System32, not in a user profile.",
+      "why_it_matters": "When svchost loads a service DLL from a user profile, someone has registered a malicious service that runs at every boot, usually as SYSTEM. This is persistence through a Windows service, and it also gives ColdSteel remote access.",
+      "triage_steps": [
+        "Confirm the full ImageLoaded path and the affected profile. Get the hash, the signature status (Signed/Signature) and the file creation time.",
+        "Look up the hash in threat intelligence and across all endpoints to see whether the DLL appears on other hosts.",
+        "Check the svchost command line and user (ProcessId) in process creation events to identify its -k group and the hosted service.",
+        "Search the registry for HKLM\\SYSTEM\\CurrentControlSet\\Services\\*\\Parameters\\ServiceDll values that point to the DLL, and for 7045 or 4697 new-service events.",
+        "Find which process created newdev.dll (Sysmon ID 11) and review its parent chain on the same host within +/- 15 minutes.",
+        "Review that svchost's network connections (Sysmon ID 3, DNS, proxy) for rare destinations or periodic beacon-like traffic.",
+        "Check earlier alerts for the same host and user, especially initial execution or privilege escalation."
+      ],
+      "false_positives": [
+        "Unlikely, according to the rule. No legitimate Windows component loads newdev.dll from AppData\\Roaming.",
+        "Authorized red team tests or adversary emulation that reproduce ColdSteel artifacts. Confirm with the owner of the exercise."
+      ],
+      "response_steps": [
+        "Before you change the host, preserve evidence: a copy of the DLL, a memory dump of the svchost process and an export of the service registry key.",
+        "If you confirm it is malicious, isolate the endpoint with the EDR and block the hash and any C2 destinations you found.",
+        "Disable and remove the malicious service and the DLL. Then hunt for other persistence mechanisms and accounts the attacker created.",
+        "Reset the credentials of accounts used on the host. If the compromise is deep, reimage the host from a trusted image before returning it to production."
+      ],
+      "severity_rationale": "High fits because this process and path combination has very few legitimate causes and points to active persistence of a RAT running with service privileges."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "svchost.exe loads an unsigned newdev.dll from a user's AppData\\Roaming folder, matching the ColdSteel service DLL path.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ImageLoaded": "C:\\Users\\jperez\\AppData\\Roaming\\newdev.dll",
+          "ProcessId": 4312,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable",
+          "Hashes": "SHA256=0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      },
+      {
+        "description": "The same pattern with different casing in the path; Sigma matching is case-insensitive.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0207.andes.example.com",
+          "Image": "C:\\WINDOWS\\system32\\SVCHOST.EXE",
+          "ImageLoaded": "C:\\Users\\mrojas\\appdata\\roaming\\NEWDEV.DLL",
+          "ProcessId": 1880,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Legitimate newdev.dll loaded by svchost from System32. The path does not end with \\AppData\\Roaming\\newdev.dll.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\svchost.exe",
+          "ImageLoaded": "C:\\Windows\\System32\\newdev.dll",
+          "ProcessId": 1024,
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Signed": "true",
+          "Signature": "Microsoft Windows",
+          "SignatureStatus": "Valid"
+        }
+      },
+      {
+        "description": "A non-svchost process loads a DLL from AppData\\Roaming\\newdev.dll, so the Image condition fails.",
+        "event": {
+          "EventID": 7,
+          "Computer": "WS-0142.andes.example.com",
+          "Image": "C:\\Windows\\System32\\rundll32.exe",
+          "ImageLoaded": "C:\\Users\\jperez\\AppData\\Roaming\\newdev.dll",
+          "ProcessId": 5520,
+          "User": "ANDES\\jperez",
+          "Signed": "false",
+          "SignatureStatus": "Unavailable"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "rule": {
+    "id": "95724fc1-a258-4674-97db-a30351981c5a",
+    "title": "Manual Execution of Script Inside of a Compressed File",
+    "level": "medium",
+    "status": "test",
+    "author": "@kostastsale",
+    "path": "windows/process_creation/proc_creation_win_susp_script_exec_from_compressed_parent.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/windows/process_creation/proc_creation_win_susp_script_exec_from_compressed_parent.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1059"
+    ],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Un usuario abrió un script (JS, VBS, HTA, PS1, WSF, etc.) directamente desde un archivo comprimido con 7-Zip, WinRAR o el Explorador de Windows, y un intérprete de scripts lo ejecutó desde la carpeta temporal de extracción.",
+      "what_it_detects": "Eventos de creación de procesos donde ParentImage es 7z*.exe, winrar.exe o explorer.exe, Image es cscript, wscript, mshta, powershell o pwsh, y CommandLine apunta a la carpeta temporal de extracción (7z*, rar*, *.zip, *.rar) y termina en una extensión de script.",
+      "why_it_matters": "Los archivos comprimidos adjuntos a correos o descargados son una vía común para entregar scripts maliciosos que evaden filtros. Hacer doble clic ejecuta el código con los permisos del usuario (ATT&CK T1059, intérprete de comandos y scripts), lo que suele derivar en descarga de malware o persistencia.",
+      "triage_steps": [
+        "Revise CommandLine: identifique el nombre del script, la extensión y el nombre del archivo comprimido de origen en la ruta temporal.",
+        "Confirme ParentImage y el usuario; verifique si el usuario abre archivos comprimidos habitualmente y si la ejecución fue interactiva.",
+        "Ubique el archivo comprimido original (Downloads, adjuntos de Outlook, caché del navegador) y obtenga su hash y su Zone.Identifier (Mark of the Web).",
+        "Si el script sigue en AppData\\Local\\Temp, recupérelo y analice su contenido en un entorno aislado; busque URLs, comandos codificados o descargas.",
+        "Busque procesos hijos del intérprete (powershell, cmd, rundll32, regsvr32, curl) en el mismo host dentro de +/- 15 minutos.",
+        "Revise conexiones de red, consultas DNS, archivos creados y cambios en claves Run o tareas programadas en esa ventana.",
+        "Pivote por el hash y nombre del comprimido o script en otros endpoints y en el gateway de correo; revise alertas previas del usuario y host."
+      ],
+      "false_positives": [
+        "Instaladores o paquetes de software distribuidos en ZIP/RAR que incluyen scripts de configuración ejecutados manualmente por el usuario.",
+        "Administradores o desarrolladores que prueban scripts de PowerShell o VBS internos directamente desde un comprimido.",
+        "Herramientas de soporte de proveedores entregadas como comprimido con scripts de diagnóstico; establezca una línea base y excluya solo lo verificado."
+      ],
+      "response_steps": [
+        "Confirme con el usuario el origen del archivo y si esperaba ejecutarlo; valide el contenido del script antes de cerrar la alerta.",
+        "Si es malicioso o dudoso, aísle el endpoint y finalice los procesos del intérprete y sus hijos.",
+        "Elimine el comprimido y los artefactos extraídos tras preservar copias y hashes como evidencia; bloquee hashes, dominios e IPs asociados.",
+        "Retire el correo origen de otros buzones, restablezca credenciales del usuario si hubo ejecución y verifique persistencia antes de restaurar el equipo."
+      ],
+      "severity_rationale": "Nivel medio porque es una regla de hunting: la técnica es habitual en campañas de malware, pero también ocurre en usos legítimos y requiere validación del contexto."
+    },
+    "en": {
+      "summary": "A user opened a script (JS, VBS, HTA, PS1, WSF, etc.) directly from inside an archive using 7-Zip, WinRAR or File Explorer, and a script interpreter ran it from the temporary extraction folder.",
+      "what_it_detects": "Process creation where ParentImage is 7z*.exe, winrar.exe or explorer.exe, Image is cscript, wscript, mshta, powershell or pwsh, and CommandLine points to the archive temp extraction folder (7z*, rar*, *.zip, *.rar) and ends in a script extension.",
+      "why_it_matters": "Archives attached to email or downloaded from the web commonly deliver malicious scripts past content filters. A double-click runs the code with the user's rights (ATT&CK T1059, Command and Scripting Interpreter), often leading to malware download or persistence.",
+      "triage_steps": [
+        "Read CommandLine: note the script name, extension and the source archive name in the temp path.",
+        "Confirm ParentImage and the user; check whether the user normally handles archives and whether execution was interactive.",
+        "Locate the original archive (Downloads, Outlook attachments, browser cache); collect its hash and Zone.Identifier (Mark of the Web).",
+        "If the script remains in AppData\\Local\\Temp, retrieve it and analyze it in a sandbox; look for URLs, encoded commands or downloads.",
+        "Look for child processes of the interpreter (powershell, cmd, rundll32, regsvr32, curl) on the same host within +/- 15 minutes.",
+        "Review network connections, DNS queries, dropped files, Run keys and scheduled tasks in that window.",
+        "Pivot on the archive or script hash and name across endpoints and the mail gateway; check earlier alerts for the user and host."
+      ],
+      "false_positives": [
+        "Software packages shipped as ZIP/RAR with setup scripts that users run manually.",
+        "Administrators or developers testing internal PowerShell or VBS scripts straight from an archive.",
+        "Vendor support tools delivered as archives with diagnostic scripts; baseline the environment and exclude only verified activity."
+      ],
+      "response_steps": [
+        "Confirm with the user where the file came from and whether running it was expected; validate the script content before closing.",
+        "If malicious or unclear, isolate the endpoint and terminate the interpreter and its child processes.",
+        "Preserve copies and hashes as evidence, then remove the archive and extracted artifacts; block related hashes, domains and IPs.",
+        "Purge the source email from other mailboxes, reset the user's credentials if code ran, and check for persistence before restoring the host."
+      ],
+      "severity_rationale": "Medium fits a hunting rule: the technique is common in malware campaigns, but legitimate use also occurs and context must be validated."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "7-Zip File Manager launches wscript on a JavaScript file extracted to the 7z temp folder",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ParentImage": "C:\\Program Files\\7-Zip\\7zFM.exe",
+          "ParentCommandLine": "\"C:\\Program Files\\7-Zip\\7zFM.exe\" \"C:\\Users\\jperez\\Downloads\\invoice_2291.7z\"",
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "CommandLine": "C:\\Windows\\System32\\WScript.exe C:\\Users\\jperez\\AppData\\Local\\Temp\\7zO4C21A3B5\\invoice_2291.js",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "WinRAR opens a VBS file from inside a RAR archive and wscript runs it from the Rar$DI temp extraction folder.",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ParentImage": "C:\\Program Files\\WinRAR\\WinRAR.exe",
+          "ParentCommandLine": "\"C:\\Program Files\\WinRAR\\WinRAR.exe\" \"C:\\Users\\mrojas\\Downloads\\factura_octubre.rar\"",
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "CommandLine": "C:\\Windows\\System32\\WScript.exe C:\\Users\\mrojas\\AppData\\Local\\Temp\\Rar$DIa6212.31564\\factura_octubre.vbs",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "7-Zip opens a .js file from its temp folder in Notepad, not a script interpreter",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0142.andes.example.com",
+          "User": "ANDES\\jperez",
+          "ParentImage": "C:\\Program Files\\7-Zip\\7zFM.exe",
+          "Image": "C:\\Windows\\System32\\notepad.exe",
+          "CommandLine": "C:\\Windows\\System32\\notepad.exe C:\\Users\\jperez\\AppData\\Local\\Temp\\7zO4C21A3B5\\config.js",
+          "IntegrityLevel": "Medium"
+        }
+      },
+      {
+        "description": "User double-clicks a logon VBS script saved on the Desktop, not inside an archive",
+        "event": {
+          "EventID": 1,
+          "Computer": "WS-0207.andes.example.com",
+          "User": "ANDES\\mrojas",
+          "ParentImage": "C:\\Windows\\explorer.exe",
+          "Image": "C:\\Windows\\System32\\wscript.exe",
+          "CommandLine": "C:\\Windows\\System32\\WScript.exe C:\\Users\\mrojas\\Desktop\\map_drives.vbs",
+          "IntegrityLevel": "Medium"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7.",
+    "repairs": [
+      {
+        "tool": "content-pack/1",
+        "model": "claude-opus-5-5",
+        "at": "2026-10-30T20:31:13+00:00",
+        "fixtures": [
+          "positive/1"
+        ]
+      }
+    ]
+  }
+}

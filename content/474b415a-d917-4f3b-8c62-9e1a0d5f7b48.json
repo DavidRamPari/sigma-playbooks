@@ -1,0 +1,132 @@
+{
+  "rule": {
+    "id": "474b415a-d917-4f3b-8c62-9e1a0d5f7b48",
+    "title": "Authencesn Crypto Module Load via Modprobe - Copy-Fail Indicator",
+    "level": "high",
+    "status": "experimental",
+    "author": "Gene Kazimiarovich",
+    "path": "2026/Exploits/CVE-2026-31431/proc_creation_lnx_exploit_cve_2026_31431_copyfail.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2026/Exploits/CVE-2026-31431/proc_creation_lnx_exploit_cve_2026_31431_copyfail.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068",
+      "T1547.006"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "El kernel ejecutó modprobe (kmod) para cargar el módulo crypto authencesn, normalmente porque un proceso de espacio de usuario abrió un socket AF_ALG con ese cifrado AEAD. Es un indicador clave de explotación de CVE-2026-31431 (Copy Fail).",
+      "what_it_detects": "Creación de un proceso cuyo Image termina en /kmod o /modprobe y cuyo CommandLine contiene 'crypto-authencesn(', por ejemplo '/sbin/modprobe -q -- crypto-authencesn(hmac(sha256),cbc(aes))'.",
+      "why_it_matters": "Copy Fail usa authencesn para provocar un desbordamiento en la ruta splice AEAD de AF_ALG y corromper el page cache de binarios SUID. Así un usuario local puede escalar a root (T1068: explotación para escalar privilegios).",
+      "triage_steps": [
+        "Confirma Image, CommandLine, host y hora. La auto-carga del kernel suele tener un ParentImage vacío o un hilo del kernel; eso no excluye actividad maliciosa.",
+        "Busca en el mismo host, +/- 15 minutos, el proceso que abrió el socket AF_ALG: scripts de Python, binarios recién compilados o ejecutados desde /tmp, /dev/shm o directorios home.",
+        "Revisa si justo después se ejecutaron binarios SUID (su, sudo, passwd, mount) por usuarios no privilegiados, o si aparecieron shells con UID 0 cuyo padre pertenece a esos usuarios.",
+        "Identifica al usuario y la sesión (SSH, contenedor, cron) responsables del proceso origen. Revisa logins recientes y la IP de origen.",
+        "Verifica si el host usa IPsec con ESN (strongSwan, Libreswan) o pruebas de crypto que justifiquen el módulo, y si el kernel ya tiene el parche.",
+        "Busca alertas anteriores del mismo host o usuario y la misma cadena 'crypto-authencesn(' en otros hosts de la flota."
+      ],
+      "false_positives": [
+        "Un administrador carga authencesn a mano para benchmarking de crypto del kernel (casi nulo en producción).",
+        "Hosts IPsec que negocian SA con ESN y cargan el módulo bajo demanda; valida contra la configuración y el inventario."
+      ],
+      "response_steps": [
+        "Si no hay una justificación legítima, aísla el endpoint y preserva la evidencia volátil: procesos, conexiones, archivos en /tmp y /dev/shm.",
+        "Ten en cuenta que la corrupción ocurre en el page cache: el hash en disco de los binarios SUID puede verse limpio. Captura memoria antes de reiniciar.",
+        "Aplica el parche del kernel. Si IPsec no es necesario, evalúa bloquear la carga de authencesn en modprobe.d después de validar el impacto.",
+        "Si hubo escalada, considera el host comprometido: rota credenciales, revisa mecanismos de persistencia y reconstrúyelo desde una imagen confiable."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque esta carga del módulo es rara en producción y se asocia directamente con una escalada local de privilegios a root."
+    },
+    "en": {
+      "summary": "The kernel invoked modprobe (kmod) to load the authencesn crypto module, typically because a user-space process bound that AEAD cipher on an AF_ALG socket. This is a key indicator of CVE-2026-31431 (Copy Fail) exploitation.",
+      "what_it_detects": "Process creation where Image ends with /kmod or /modprobe and CommandLine contains 'crypto-authencesn(', e.g. '/sbin/modprobe -q -- crypto-authencesn(hmac(sha256),cbc(aes))'.",
+      "why_it_matters": "Copy Fail uses authencesn to trigger an overflow in the AF_ALG AEAD splice path and corrupt the page cache of SUID binaries. This lets a local user gain root (T1068, exploitation for privilege escalation).",
+      "triage_steps": [
+        "Confirm Image, CommandLine, host and time. Kernel auto-loads often have an empty ParentImage or a kernel thread as parent, and that does not rule out malice.",
+        "On the same host, +/- 15 minutes, find the process that opened the AF_ALG socket: Python scripts, freshly compiled binaries, or executables in /tmp, /dev/shm or home directories.",
+        "Check for SUID binaries (su, sudo, passwd, mount) run by unprivileged users right afterwards, or UID 0 shells whose parent belongs to those users.",
+        "Identify the user and session (SSH, container, cron) behind the originating process. Review recent logins and the source IP.",
+        "Check whether the host runs IPsec with ESN (strongSwan, Libreswan) or crypto testing that would explain the module, and whether the kernel is patched.",
+        "Look for earlier alerts on the same host or user, and hunt for the 'crypto-authencesn(' string on other hosts."
+      ],
+      "false_positives": [
+        "An administrator manually loads authencesn for kernel crypto benchmarking. This is near-zero in production.",
+        "IPsec hosts that negotiate SAs with ESN and load the module on demand. Check against the configuration and asset inventory."
+      ],
+      "response_steps": [
+        "If there is no legitimate reason, isolate the endpoint and preserve volatile evidence: processes, connections, and files in /tmp and /dev/shm.",
+        "The corruption is in the page cache, so on-disk hashes of SUID binaries may look clean. Capture memory before rebooting.",
+        "Patch the kernel. If IPsec is not needed, consider blocking authencesn loading in modprobe.d once you have checked the impact.",
+        "If escalation happened, treat the host as compromised: rotate credentials, review persistence, and rebuild from a trusted image."
+      ],
+      "severity_rationale": "High fits because this module load is rare in production and directly tied to local privilege escalation to root."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Kernel auto-loads authencesn via the modprobe symlink to kmod after a user process binds the AEAD cipher on an AF_ALG socket",
+        "event": {
+          "Image": "/usr/bin/kmod",
+          "CommandLine": "/sbin/modprobe -q -- crypto-authencesn(hmac(sha256),cbc(aes))",
+          "ParentImage": "",
+          "User": "root",
+          "ProcessId": 48213,
+          "ParentProcessId": 2,
+          "CurrentDirectory": "/",
+          "Computer": "web-lnx-07"
+        }
+      },
+      {
+        "description": "Distribution where modprobe is a standalone binary, loading the authencesn crypto module",
+        "event": {
+          "Image": "/usr/sbin/modprobe",
+          "CommandLine": "/sbin/modprobe -q -- crypto-authencesn(hmac(sha256),cbc(aes))",
+          "ParentImage": "",
+          "User": "root",
+          "ProcessId": 31877,
+          "ParentProcessId": 2,
+          "CurrentDirectory": "/",
+          "Computer": "bastion-01"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "kmod auto-loads the plain authenc module (no ESN), as normal IPsec does; 'crypto-authencesn(' is not present",
+        "event": {
+          "Image": "/usr/bin/kmod",
+          "CommandLine": "/sbin/modprobe -q -- crypto-authenc(hmac(sha256),cbc(aes))",
+          "ParentImage": "",
+          "User": "root",
+          "ProcessId": 22104,
+          "ParentProcessId": 2,
+          "CurrentDirectory": "/",
+          "Computer": "vpn-gw-02"
+        }
+      },
+      {
+        "description": "Administrator manually loads the module by name without the crypto- alias, so the rule's string does not match",
+        "event": {
+          "Image": "/usr/sbin/modprobe",
+          "CommandLine": "modprobe authencesn",
+          "ParentImage": "/usr/bin/sudo",
+          "User": "root",
+          "ProcessId": 40991,
+          "ParentProcessId": 40988,
+          "CurrentDirectory": "/home/jperez",
+          "Computer": "lab-crypto-01"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

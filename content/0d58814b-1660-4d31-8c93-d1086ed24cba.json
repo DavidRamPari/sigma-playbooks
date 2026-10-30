@@ -1,0 +1,135 @@
+{
+  "rule": {
+    "id": "0d58814b-1660-4d31-8c93-d1086ed24cba",
+    "title": "Okta Password Health Report Query",
+    "level": "low",
+    "status": "test",
+    "author": "Muhammad Faisal (@faisalusuf)",
+    "path": "cloud/okta/okta_password_health_report_query.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-threat-hunting/cloud/okta/okta_password_health_report_query.yml",
+    "license": "DRL-1.1",
+    "techniques": [],
+    "folder": "rules-threat-hunting"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una solicitud registrada en el System Log de Okta accedió al endpoint /reports/password-health/. Es una pista de hunting y solo resulta sospechosa si no existe un login al Admin Console correspondiente a esa sesión.",
+      "what_it_detects": "Cualquier evento de Okta donde debugContext.debugData.requestUri contiene '/reports/password-health/', por ejemplo async_csv_download_schedule. Estos endpoints sustentan el reporte Password Health del Admin Console de Okta.",
+      "why_it_matters": "El reporte Password Health muestra el estado de las contraseñas de los usuarios. Si alguien lo obtiene con una sesión de administrador robada, puede identificar credenciales débiles o antiguas en todo el tenant (Credential Access). La referencia sobre el incidente de soporte de Okta de octubre de 2023 describe este patrón.",
+      "triage_steps": [
+        "Registre actor.alternateId, client.ipAddress, client.userAgent.rawUserAgent, authenticationContext.externalSessionId y el requestUri completo. Anote si la solicitud programó o descargó un CSV.",
+        "Busque con el mismo ID de sesión y actor un login al Admin Console (eventType user.session.access_admin_app) previo a la solicitud. Si no existe, priorícelo.",
+        "Verifique que client.ipAddress y la geolocalización coincidan con las ubicaciones habituales del administrador y la salida corporativa. Desconfíe de proveedores de hosting o proxies desconocidos.",
+        "Compare el user agent con sesiones anteriores del administrador. Un token de sesión usado desde otro navegador o sistema operativo sugiere secuestro de sesión.",
+        "Pivote por actor e IP en +/- 15 minutos buscando otras acciones administrativas: creación de API tokens, reinicios de MFA, cambios de políticas, nuevos administradores o cambios de IdP.",
+        "Confirme con el administrador o su jefe si tenía intención de ejecutar el reporte.",
+        "Revise resultados de hunting o alertas previas para el mismo actor, IP o sesión."
+      ],
+      "false_positives": [
+        "Administradores que consultan o exportan el reporte Password Health desde la interfaz del Admin Console durante auditorías o revisiones de higiene.",
+        "Exportaciones CSV programadas por los equipos de seguridad o IAM como parte de reportes de cumplimiento.",
+        "Sesiones cuyo login al Admin Console quedó fuera de la ventana de búsqueda o se registró con otro ID de sesión."
+      ],
+      "response_steps": [
+        "Si no hay login de administrador correspondiente o el contexto es anómalo, pida a Okta que cierre las sesiones del actor (user.session.clear) y revoque sus API tokens.",
+        "Restablezca la contraseña del administrador y reinscriba sus factores MFA después de confirmar con el usuario por un canal alterno.",
+        "Revise y revierta los cambios administrativos no autorizados. Ubique y elimine las exportaciones de reportes programadas que haya creado el atacante.",
+        "Considere expuestos los datos del reporte exportado. Priorice el restablecimiento de las contraseñas débiles o comprometidas que lista y audite los accesos administrativos."
+      ],
+      "severity_rationale": "El nivel es bajo porque esta regla de hunting también coincide con el uso rutinario del reporte por parte de los administradores. Solo cobra relevancia al correlacionarse con un login al Admin Console ausente o con un contexto de sesión anómalo."
+    },
+    "en": {
+      "summary": "A request in the Okta System Log hit the /reports/password-health/ endpoint. This is a hunting lead. The request is only suspicious if no matching Admin Console login exists for that session.",
+      "what_it_detects": "Any Okta event where debugContext.debugData.requestUri contains '/reports/password-health/', such as async_csv_download_schedule. These endpoints back the Password Health report in the Okta Admin Console.",
+      "why_it_matters": "The Password Health report shows the password state of user accounts. If someone uses a stolen admin session to pull it, they can map weak or stale credentials across the tenant (Credential Access). The referenced write-up on the October 2023 Okta support incident describes this pattern.",
+      "triage_steps": [
+        "Record actor.alternateId, client.ipAddress, client.userAgent.rawUserAgent, authenticationContext.externalSessionId and the full requestUri. Note whether the request scheduled or downloaded a CSV.",
+        "Search the same session ID and actor for an Admin Console login (eventType user.session.access_admin_app) before the request. Treat a missing login as high priority.",
+        "Check whether client.ipAddress and geolocation match the admin's usual locations and corporate egress. Unknown hosting providers or proxies are suspicious.",
+        "Compare the user agent with the admin's earlier sessions. A session token used from a different browser or OS suggests session hijacking.",
+        "Pivot on the actor and IP within +/- 15 minutes for other admin actions: API token creation, MFA resets, policy changes, new admins or IdP changes.",
+        "Confirm with the admin or their manager whether they meant to run the report.",
+        "Look for earlier hunting results or alerts for the same actor, IP or session."
+      ],
+      "false_positives": [
+        "Admins running or exporting the Password Health report from the Admin Console UI during audits or hygiene reviews.",
+        "Scheduled CSV exports set up by security or IAM teams as part of compliance reporting.",
+        "Sessions where the matching Admin Console login is outside the search window or was logged under a different session ID."
+      ],
+      "response_steps": [
+        "If no admin login matches or the context is anomalous, ask Okta to clear the actor's sessions (user.session.clear) and revoke their API tokens.",
+        "Reset the admin's password and re-enroll their MFA factors after confirming with the user through an out-of-band channel.",
+        "Review and roll back unauthorized admin changes. Find and delete any scheduled report exports the attacker created.",
+        "Treat the exported report data as exposed. Prioritize resetting the weak or compromised passwords it lists, and audit admin access."
+      ],
+      "severity_rationale": "The level is low because this hunting rule also matches routine admin use of the report. It only becomes significant when correlated with a missing Admin Console login or anomalous session context."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Scheduled CSV export of the Password Health report from an unfamiliar IP, with no Admin Console login",
+        "event": {
+          "eventType": "system.reports.export",
+          "actor.alternateId": "jperez@example.com",
+          "actor.type": "User",
+          "client.ipAddress": "203.0.113.45",
+          "client.userAgent.rawUserAgent": "Mozilla/5.0 (X11; Linux x86_64; rv:118.0) Gecko/20100101 Firefox/118.0",
+          "authenticationContext.externalSessionId": "idxA1b2C3d4E5f6",
+          "debugContext.debugData.requestUri": "/reports/password-health/async_csv_download_schedule?locale=en",
+          "outcome.result": "SUCCESS",
+          "published": "2023-10-25T14:03:12.000Z"
+        }
+      },
+      {
+        "description": "Admin viewing Password Health report data from the corporate network",
+        "event": {
+          "eventType": "system.reports.view",
+          "actor.alternateId": "mrodriguez@example.com",
+          "actor.type": "User",
+          "client.ipAddress": "198.51.100.20",
+          "client.userAgent.rawUserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+          "authenticationContext.externalSessionId": "idxZ9y8X7w6V5u4",
+          "debugContext.debugData.requestUri": "/reports/password-health/data?limit=50",
+          "outcome.result": "SUCCESS",
+          "published": "2023-10-25T15:10:40.000Z"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Admin Console login event, which does not touch the password-health endpoint",
+        "event": {
+          "eventType": "user.session.access_admin_app",
+          "actor.alternateId": "mrodriguez@example.com",
+          "actor.type": "User",
+          "client.ipAddress": "198.51.100.20",
+          "authenticationContext.externalSessionId": "idxZ9y8X7w6V5u4",
+          "debugContext.debugData.requestUri": "/admin/sso/callback",
+          "outcome.result": "SUCCESS",
+          "published": "2023-10-25T15:08:02.000Z"
+        }
+      },
+      {
+        "description": "Export of a different Okta report (user lockouts), not Password Health",
+        "event": {
+          "eventType": "system.reports.export",
+          "actor.alternateId": "mrodriguez@example.com",
+          "actor.type": "User",
+          "client.ipAddress": "198.51.100.20",
+          "authenticationContext.externalSessionId": "idxZ9y8X7w6V5u4",
+          "debugContext.debugData.requestUri": "/reports/user-lockouts/async_csv_download_schedule",
+          "outcome.result": "SUCCESS",
+          "published": "2023-10-25T15:20:11.000Z"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:07+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

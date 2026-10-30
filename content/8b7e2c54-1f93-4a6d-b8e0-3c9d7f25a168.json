@@ -1,0 +1,133 @@
+{
+  "rule": {
+    "id": "8b7e2c54-1f93-4a6d-b8e0-3c9d7f25a168",
+    "title": "ADCS - Certighost Certificate Issued via CDC Chase (CVE-2026-54121)",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_cert_issued_via_chase.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-emerging-threats/2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_cert_issued_via_chase.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1649"
+    ],
+    "folder": "rules-emerging-threats"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Una CA de ADCS emitió un certificado (evento 4887) cuyos atributos de solicitud contienen 'cdc:' o 'rmd:' apuntando a un host fuera de la lista de DC conocidos. Esto coincide con la ruta de chase de Certighost (CVE-2026-54121) y puede indicar que un atacante ya tiene un certificado con la identidad de un Domain Controller.",
+      "what_it_detects": "El evento de seguridad 4887 (solicitud aprobada y certificado emitido) en una CA donde el campo Attributes contiene 'cdc:' (Client DC) o 'rmd:' (Remote Domain) y el valor no coincide con ninguna entrada de la lista %known_cdcs% de hostnames e IP de DC legítimos.",
+      "why_it_matters": "Con 'cdc' se puede dirigir la CA a un host malicioso que devuelve una identidad de DC falsificada. El certificado obtenido permite autenticarse por PKINIT como ese DC y luego hacer DCSync de credenciales (T1649, robo o falsificación de certificados de autenticación).",
+      "triage_steps": [
+        "Lea Attributes en el evento 4887: anote los valores cdc: y rmd: y compárelos con el inventario actual de DC y con la lista %known_cdcs%.",
+        "Registre RequestId, Requester, Subject y la plantilla; verifique si el solicitante es una cuenta de usuario o equipo común que nunca debería obtener una identidad de DC.",
+        "En la CA, ejecute certutil -view para ese RequestId y revise el SAN, el nombre DNS y la extensión de SID en busca de la identidad de un Domain Controller.",
+        "Ubique el evento 4886 (solicitud recibida) correspondiente y las conexiones salientes de la CA hacia el host cdc en +/- 15 minutos.",
+        "En los logs de los DC, busque el evento 4768 con preautenticación por certificado para una cuenta de DC desde una IP de origen que no sea DC.",
+        "Busque DCSync: evento 4662 con GUID de replicación, o tráfico DRSUAPI, desde hosts que no son DC.",
+        "Revise alertas previas del mismo solicitante, de la IP de cdc y del host de origen."
+      ],
+      "false_positives": [
+        "Desconocidos según la regla; el uso legítimo de los atributos cdc/rmd es poco común.",
+        "Un DC nuevo o renombrado que todavía no figura en la lista %known_cdcs%.",
+        "Pruebas de penetración o ejercicios de red team autorizados contra ADCS."
+      ],
+      "response_steps": [
+        "Antes de actuar, confirme con los responsables de PKI y AD si el destino de cdc/rmd es un DC legítimo.",
+        "Si es malicioso, revoque el certificado (certutil -revoke <serial>), publique una CRL nueva y aísle el host solicitante y el host cdc.",
+        "Si se confirma PKINIT o DCSync, inicie la respuesta a compromiso del dominio: restablezca la cuenta del DC afectado y krbtgt dos veces, y rote las credenciales privilegiadas.",
+        "Aplique en la CA la corrección del fabricante para CVE-2026-54121, actualice %known_cdcs% y mantenga activa la auditoría de la CA (AuditFilter 0x04 y auditpol)."
+      ],
+      "severity_rationale": "El nivel alto corresponde porque una emisión exitosa significa que el atacante probablemente ya tiene un certificado que suplanta a un DC y puede llevar al compromiso total del dominio."
+    },
+    "en": {
+      "summary": "An ADCS CA issued a certificate (Event 4887) whose request attributes contain 'cdc:' or 'rmd:' pointing to a host not in the known DC list. This matches the Certighost (CVE-2026-54121) chase path and may mean an attacker now holds a certificate with a Domain Controller's identity.",
+      "what_it_detects": "Security Event 4887 (certificate request approved and issued) on a CA where the Attributes field contains 'cdc:' (Client DC) or 'rmd:' (Remote Domain), and the value does not match any entry in the %known_cdcs% list of legitimate DC hostnames and IPs.",
+      "why_it_matters": "Through 'cdc' the CA can be sent to a rogue host that returns a forged DC identity. The resulting certificate allows PKINIT authentication as that DC and then DCSync of domain credentials (T1649, steal or forge authentication certificates).",
+      "triage_steps": [
+        "Read Attributes in the 4887 event: note the cdc: and rmd: values and compare them with the current DC inventory and the %known_cdcs% list.",
+        "Record RequestId, Requester, Subject and the template; check whether the requester is a normal user or computer account that would never enroll for a DC identity.",
+        "On the CA, run certutil -view for that RequestId and inspect the SAN, DNS name and SID extension for a Domain Controller identity.",
+        "Find the matching 4886 (request received) event and any CA outbound connections to the cdc host within +/- 15 minutes.",
+        "Search DC logs for Event 4768 with certificate pre-authentication for a DC account coming from a non-DC source IP.",
+        "Hunt for DCSync: Event 4662 with replication GUIDs, or DRSUAPI traffic, from hosts that are not DCs.",
+        "Review earlier alerts for the same requester, the cdc IP and the source host."
+      ],
+      "false_positives": [
+        "Unknown per the rule; legitimate use of cdc/rmd attributes is uncommon.",
+        "A new or renamed DC missing from the %known_cdcs% list.",
+        "Authorized penetration tests or red team exercises against ADCS."
+      ],
+      "response_steps": [
+        "Confirm with PKI and AD owners whether the cdc/rmd target is a legitimate DC before acting.",
+        "If malicious, revoke the certificate (certutil -revoke <serial>), publish a new CRL and isolate the requesting host and the cdc host.",
+        "If PKINIT or DCSync is confirmed, start domain compromise response: reset the affected DC account and krbtgt twice, then rotate privileged credentials.",
+        "Apply the vendor fix for CVE-2026-54121 on the CA, update %known_cdcs%, and keep CA auditing (AuditFilter 0x04 and auditpol) enabled."
+      ],
+      "severity_rationale": "High fits because a successful issuance means the attacker probably already holds a certificate that impersonates a DC and can lead to full domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Certificate issued with cdc pointing to a rogue IP and rmd naming a DC account",
+        "event": {
+          "EventID": 4887,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4127",
+          "Requester": "ANDES\\jperez",
+          "Subject": "CN=DC-01.andes.example.com",
+          "Disposition": "3",
+          "Attributes": "CertificateTemplate:Machine\ncdc:203.0.113.50\nrmd:ANDES\\DC-01$"
+        }
+      },
+      {
+        "description": "Certificate issued with only rmd pointing to an attacker-controlled domain",
+        "event": {
+          "EventID": 4887,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4130",
+          "Requester": "ANDES\\WS-0142$",
+          "Subject": "CN=DC-02.andes.example.com",
+          "Disposition": "3",
+          "Attributes": "CertificateTemplate:Machine\nrmd:rogue-dc.example.org"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Normal machine certificate issuance without cdc or rmd attributes",
+        "event": {
+          "EventID": 4887,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4101",
+          "Requester": "ANDES\\WS-0142$",
+          "Subject": "CN=WS-0142.andes.example.com",
+          "Disposition": "3",
+          "Attributes": "CertificateTemplate:Machine\nccm:WS-0142.andes.example.com"
+        }
+      },
+      {
+        "description": "Request received event (4886) with cdc attribute; not an issuance event",
+        "event": {
+          "EventID": 4886,
+          "Channel": "Security",
+          "Computer": "CA-01.andes.example.com",
+          "RequestId": "4127",
+          "Requester": "ANDES\\jperez",
+          "Attributes": "CertificateTemplate:Machine\ncdc:203.0.113.50\nrmd:ANDES\\DC-01$"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T20:24:05+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

@@ -1,6 +1,6 @@
 # Sigma playbooks (ES/EN)
 
-Investigation playbooks in Spanish and English, with test events validated by a Sigma engine, for **3,759 of the 3,779 detection rules** in the `rules`, `rules-emerging-threats`, `rules-threat-hunting` and `rules-compliance` folders of [SigmaHQ](https://github.com/SigmaHQ/sigma) (commit `05d1031f`, 2026-10-21). They were made with the generator of [Centinela](https://github.com/DavidRamPari/centinela), a small open-source SIEM, and every test event was run through Centinela's engine.
+Investigation playbooks in Spanish and English, with test events validated by a Sigma engine, for **3,784 of the 3,804 detection rules** in the five rule folders of [SigmaHQ](https://github.com/SigmaHQ/sigma) (`rules`, `rules-emerging-threats`, `rules-threat-hunting`, `rules-compliance` and `rules-placeholder`), at commit `05d1031f` (2026-10-21). They were made with the generator of [Centinela](https://github.com/DavidRamPari/centinela), a small open-source SIEM, and Centinela's engine checked their test events wherever it supports the rule.
 
 ## Coverage
 
@@ -10,9 +10,10 @@ Investigation playbooks in Spanish and English, with test events validated by a 
 | `rules-emerging-threats` | 474 | 474 | 1,821 / 1,821 (100%) | 472 / 472 (100%) |
 | `rules-threat-hunting` | 141 | 141 | 553 / 553 (100%) | 141 / 141 (100%) |
 | `rules-compliance` | 3 | 3 | 12 / 12 (100%) | 3 / 3 (100%) |
-| **Total** | **3,779** | **3,759** | **14,660 / 14,661 (99.9%)** | **3,755 / 3,756 (99.9%)** |
+| `rules-placeholder` | 25 | 25 | not checked | not checked |
+| **Total** | **3,804** | **3,784** | **14,660 / 14,661 (99.9%)** | **3,755 / 3,756 (99.9%)** |
 
-Fixtures are the test events that come with each playbook: positives must match the rule and negatives must not. 3 rules with a playbook use Sigma features Centinela's engine does not support, so their test events were not checked. One failing fixture cannot be fixed by rewriting it: the SigmaHQ rule *COM Object Execution via Xwizard.EXE* asks for a `CommandLine` that equals `RunWizard` and also contains a GUID, which no event can satisfy (it needs `CommandLine|contains`). The validation report of each folder, with every failing fixture and its reason, is in [`reports/`](reports).
+Fixtures are the test events that come with each playbook: positives must match the rule and negatives must not. 28 rules with a playbook use Sigma features Centinela's engine does not support, so their test events were not checked: 3 rules in other folders and the 25 placeholder rules, whose placeholders (such as `%dc_ip_addresses%` or `%Admins_Workstations%`) each organization replaces with its own values through the `expand` modifier. One failing fixture cannot be fixed by rewriting it: the SigmaHQ rule *COM Object Execution via Xwizard.EXE* asks for a `CommandLine` that equals `RunWizard` and also contains a GUID, which no event can satisfy (it needs `CommandLine|contains`). A fix was proposed to SigmaHQ in [SigmaHQ/sigma#6546](https://github.com/SigmaHQ/sigma/pull/6546). The validation report of each folder, with every failing fixture and its reason, is in [`reports/`](reports).
 
 ## What each file contains
 
@@ -29,8 +30,8 @@ Each file in `content/` covers one rule (`content/<rule-id>.json`):
 
 - Generated from 2026-10-25 to 2026-10-30 with `claude-opus-5-5` (effort `high`) through the Message Batches API, with Centinela's generator ([`tools/content-pack`](https://github.com/DavidRamPari/centinela/tree/main/tools/content-pack)).
 - Rules whose answer failed got one retry. Fixtures that failed validation got one repair pass, which sends the rule, the failing fixture and the engine's error back to the model.
-- Every fixture was validated with Centinela's Sigma engine (`npm run content:validate`).
-- Total cost: about $162.
+- Every fixture of a rule the engine supports was validated with Centinela's Sigma engine (`npm run content:validate`).
+- Total cost: about $163.
 - 20 rules have no file because Anthropic's safety filter stopped the answer for all of them (`stop_reason: refusal`): those rules detect offensive techniques, so their test events would have to contain attack command lines, and they were left out instead of working around the filter.
 - The content is AI-generated and has not been reviewed by a person.
 

@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "2a9e4f17-6c3b-4d8a-e1f0-b57c2d94a631",
+    "title": "Certificate Services Outbound SMB or LDAP Connection",
+    "level": "high",
+    "status": "experimental",
+    "author": "Swachchhanda Shrawan Poudel (Nextron Systems)",
+    "path": "windows/network_connection/net_connection_win_certsvc_outbound_smb_ldap.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-placeholder/windows/network_connection/net_connection_win_certsvc_outbound_smb_ldap.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1649"
+    ],
+    "folder": "rules-placeholder"
+  },
+  "playbook": {
+    "es": {
+      "summary": "El proceso de Certificate Services (certsrv.exe) inició una conexión saliente por SMB (445) o LDAP (389) hacia un host que no es loopback ni está en la lista de IPs legítimas. Puede indicar que se forzó a la CA a resolver identidades contra un host controlado por un atacante.",
+      "what_it_detects": "Eventos de conexión de red en Windows donde Image termina en \\certsrv.exe, Initiated es true y DestinationPort es 389 o 445. Se excluyen las conexiones a loopback y a las IPs de la lista %legit_ips% (DCs y servidores LDAP conocidos).",
+      "why_it_matters": "Si se fuerza a la CA a consultar servicios LSA o LDAP falsos, puede emitir un certificado con la identidad de un DC, lo que permite autenticarse como ese DC y escalar privilegios en el dominio (T1649, robo o falsificación de certificados de autenticación). La regla menciona la vía de fallback EDITF_ENABLECHASECLIENTDC y CVE-2026-54121 (Certighost).",
+      "triage_steps": [
+        "Identifique DestinationIp y DestinationHostname, y compárelos con el inventario de DCs y servidores LDAP. Si es un DC legítimo que falta en %legit_ips%, documéntelo y ajuste la lista.",
+        "Determine qué es el host de destino: estación de trabajo, servidor, VPN o IP desconocida. Revise quién tenía sesión iniciada y qué procesos escuchaban en 445/389.",
+        "En la CA, revise los eventos 4886/4887 dentro de +/- 15 minutos: solicitante, plantilla, subject y SAN. Busque solicitudes que incluyan un atributo cdc.",
+        "Busque certificados emitidos con la identidad de un DC o de una cuenta de máquina privilegiada pero solicitados por una cuenta que no corresponde.",
+        "Verifique si EDITF_ENABLECHASECLIENTDC está activo con certutil -getreg policy\\EditFlags y si se modificó hace poco.",
+        "Busque en los DCs autenticaciones PKINIT (4768 con datos de certificado) o actividad de DCSync (4662) posterior a la alerta.",
+        "Revise alertas previas de la CA, del host de destino y de la cuenta solicitante."
+      ],
+      "false_positives": [
+        "Regla con falsos positivos poco probables, según indica la propia regla.",
+        "DCs o servidores LDAP legítimos que no se agregaron a %legit_ips%, como DCs nuevos o de sitios remotos.",
+        "Entornos con varios bosques o con trusts donde la CA consulta DCs de otro dominio.",
+        "Pruebas de penetración o ejercicios de red team autorizados contra AD CS."
+      ],
+      "response_steps": [
+        "Confirme con el equipo de PKI y de AD si el destino es legítimo antes de escalar el incidente.",
+        "Si el host es malicioso, aíslelo de la red y preserve evidencia (memoria, logs, artefactos de servicios SMB/LDAP falsos).",
+        "Después de verificarlos, revoque los certificados emitidos de forma fraudulenta y publique una CRL actualizada.",
+        "Si no se necesita, desactive EDITF_ENABLECHASECLIENTDC y reinicie certsvc en una ventana controlada. Aplique los parches del proveedor.",
+        "Si se usó un certificado falsificado de DC, trate el dominio como comprometido: restablezca las credenciales afectadas, incluida krbtgt, y busque persistencia."
+      ],
+      "severity_rationale": "El nivel high es adecuado porque una CA no debería iniciar conexiones SMB o LDAP hacia hosts arbitrarios y esto puede llevar a falsificar certificados de DC y comprometer el dominio."
+    },
+    "en": {
+      "summary": "The Certificate Services process (certsrv.exe) opened an outbound SMB (445) or LDAP (389) connection to a host that is not loopback and is not on the legitimate IP list. The CA may have been coerced into resolving identities against an attacker-controlled host.",
+      "what_it_detects": "Windows network connection events where Image ends with \\certsrv.exe, Initiated is true and DestinationPort is 389 or 445. Connections to loopback and to IPs in %legit_ips% (known DCs and LDAP servers) are excluded.",
+      "why_it_matters": "A CA coerced into querying rogue LSA or LDAP services can issue a certificate with a DC's identity. That certificate lets an attacker authenticate as the DC and take over the domain (T1649, steal or forge authentication certificates). The rule cites the EDITF_ENABLECHASECLIENTDC fallback and CVE-2026-54121 (Certighost).",
+      "triage_steps": [
+        "Identify DestinationIp and DestinationHostname and compare them with your DC and LDAP server inventory. If it is a real DC missing from %legit_ips%, document it and tune the list.",
+        "Find out what the destination is: workstation, server, VPN pool or unknown IP. Check who was logged on and which processes listened on 445/389.",
+        "On the CA, review events 4886/4887 within +/- 15 minutes: requester, template, subject and SAN. Look for requests that carry a cdc attribute.",
+        "Look for certificates issued with a DC or privileged machine identity but requested by an account that should not have them.",
+        "Check whether EDITF_ENABLECHASECLIENTDC is enabled (certutil -getreg policy\\EditFlags) and whether it changed recently.",
+        "On the DCs, hunt for PKINIT logons (4768 with certificate fields) or DCSync activity (4662) after the alert.",
+        "Review earlier alerts for the CA, the destination host and the requesting account."
+      ],
+      "false_positives": [
+        "The rule lists false positives as unlikely.",
+        "Legitimate DCs or LDAP servers not yet added to %legit_ips%, such as new or remote-site DCs.",
+        "Multi-forest or trust setups where the CA contacts DCs in another domain.",
+        "Authorized penetration tests or red team exercises against AD CS."
+      ],
+      "response_steps": [
+        "Confirm with the PKI and AD owners whether the destination is legitimate before you escalate.",
+        "If the host is malicious, isolate it and preserve evidence (memory, logs, rogue SMB/LDAP service artifacts).",
+        "After verification, revoke the fraudulently issued certificates and publish an updated CRL.",
+        "If EDITF_ENABLECHASECLIENTDC is not needed, disable it and restart certsvc in a controlled window. Apply vendor patches.",
+        "If a forged DC certificate was used, treat the domain as compromised: reset affected credentials, including krbtgt, and hunt for persistence."
+      ],
+      "severity_rationale": "High fits because a CA should not start SMB or LDAP connections to arbitrary hosts, and this can lead to forged DC certificates and full domain compromise."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "certsrv.exe initiates SMB to an unknown workstation IP (rogue LSA via chase fallback)",
+        "event": {
+          "EventID": 3,
+          "Computer": "CA-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\certsrv.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.10",
+          "SourcePort": 51244,
+          "DestinationIp": "198.51.100.23",
+          "DestinationHostname": "WS-0142.andes.example.com",
+          "DestinationPort": 445
+        }
+      },
+      {
+        "description": "certsrv.exe initiates LDAP to an external non-DC address",
+        "event": {
+          "EventID": 3,
+          "Computer": "CA-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\certsrv.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.10",
+          "SourcePort": 51302,
+          "DestinationIp": "203.0.113.50",
+          "DestinationPort": 389
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "certsrv.exe LDAP connection to loopback, excluded by filter_main_loopback",
+        "event": {
+          "EventID": 3,
+          "Computer": "CA-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\certsrv.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "127.0.0.1",
+          "SourcePort": 50110,
+          "DestinationIp": "127.0.0.1",
+          "DestinationPort": 389
+        }
+      },
+      {
+        "description": "certsrv.exe RPC endpoint mapper connection to a DC on port 135, not SMB or LDAP",
+        "event": {
+          "EventID": 3,
+          "Computer": "CA-01.andes.example.com",
+          "Image": "C:\\Windows\\System32\\certsrv.exe",
+          "User": "NT AUTHORITY\\SYSTEM",
+          "Protocol": "tcp",
+          "Initiated": "true",
+          "SourceIp": "192.0.2.10",
+          "SourcePort": 50988,
+          "DestinationIp": "192.0.2.5",
+          "DestinationHostname": "DC-01.andes.example.com",
+          "DestinationPort": 135
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T21:55:01+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

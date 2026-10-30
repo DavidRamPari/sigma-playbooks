@@ -1,0 +1,149 @@
+{
+  "rule": {
+    "id": "313e72de-0c0d-4d65-8c95-87f4d546eceb",
+    "title": "AWS Console Login Monitoring",
+    "level": "medium",
+    "status": "experimental",
+    "author": "Ivan Saakov",
+    "path": "cloud/aws/cloudtrail/aws_cloudtrail_console_login_success_from_susp_locations.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-placeholder/cloud/aws/cloudtrail/aws_cloudtrail_console_login_success_from_susp_locations.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1078.004"
+    ],
+    "folder": "rules-placeholder"
+  },
+  "playbook": {
+    "es": {
+      "summary": "Se registró un inicio de sesión exitoso en la consola de AWS desde un país (src_country) y una IP (src_ip) que no están en las listas de ubicaciones legítimas de la organización. Puede indicar credenciales comprometidas.",
+      "what_it_detects": "Eventos CloudTrail ConsoleLogin con responseElements.ConsoleLogin = Success cuyo src_country no está en %Legitimate_Countries% y cuyo src_ip no está en %Legitimate_IP_Ranges%.",
+      "why_it_matters": "Con una cuenta cloud válida (T1078.004), un atacante entra con los mismos permisos que el usuario legítimo. Así puede escalar privilegios, mantener persistencia y pasar desapercibido en la cuenta AWS.",
+      "triage_steps": [
+        "Identifique la identidad en userIdentity.arn y userIdentity.type. Un login como Root o como usuario IAM con privilegios administrativos requiere prioridad.",
+        "Revise src_ip y src_country: ASN, reputación, si es VPN, proxy, Tor o un proveedor cloud, y si coincide con viajes conocidos del usuario.",
+        "Verifique additionalEventData.MFAUsed. Un login sin MFA desde una ubicación nueva aumenta mucho la sospecha.",
+        "Compare con el historial de ConsoleLogin del mismo usuario: países, IPs y userAgent habituales. Busque viajes imposibles respecto de logins recientes.",
+        "Pivotee en CloudTrail por la misma sesión, el mismo usuario y la misma IP dentro de +/- 15 minutos: CreateAccessKey, CreateUser, AttachUserPolicy, cambios de MFA, StopLogging.",
+        "Busque ConsoleLogin con Failure previos desde la misma IP o contra el mismo usuario, que podrían indicar fuerza bruta o password spraying.",
+        "Contacte al usuario por un canal independiente para confirmar si el acceso fue suyo."
+      ],
+      "false_positives": [
+        "Empleados de viaje o trabajando de forma remota desde países que aún no están en la lista de países legítimos.",
+        "Logins a través de servicios, VPN corporativas o bastiones alojados en proveedores cloud de otras regiones.",
+        "Listas %Legitimate_Countries% o %Legitimate_IP_Ranges% desactualizadas o con una geolocalización de IP imprecisa."
+      ],
+      "response_steps": [
+        "Si el usuario no confirma el acceso, revoque las sesiones activas (política de denegación por aws:TokenIssueTime o una revocación de sesiones del rol) y restablezca la contraseña.",
+        "Desactive las access keys creadas o usadas por esa identidad durante la ventana sospechosa y exija MFA antes de reactivar el acceso.",
+        "Revierta los cambios no autorizados en IAM, recursos y logging después de documentarlos y verificarlos con el equipo responsable.",
+        "Si el acceso es legítimo, agregue el país o rango de IP a las listas de exclusión con una justificación y fecha de revisión."
+      ],
+      "severity_rationale": "Es nivel medio porque un login exitoso desde una ubicación no reconocida suele deberse a viajes o VPN, pero si fuera malicioso daría acceso completo a la consola."
+    },
+    "en": {
+      "summary": "A successful AWS console sign-in came from a country (src_country) and IP (src_ip) that are not on the organization's legitimate location lists. This may indicate compromised credentials.",
+      "what_it_detects": "CloudTrail ConsoleLogin events with responseElements.ConsoleLogin = Success where src_country is not in %Legitimate_Countries% and src_ip is not in %Legitimate_IP_Ranges%.",
+      "why_it_matters": "With a valid cloud account (T1078.004), an attacker gets the same permissions as the real user. That lets them escalate privileges, stay persistent and blend into normal account activity.",
+      "triage_steps": [
+        "Identify the identity from userIdentity.arn and userIdentity.type. Root or admin-level IAM logins come first.",
+        "Check src_ip and src_country: ASN, reputation, whether it is a VPN, proxy, Tor or cloud provider, and whether it fits the user's known travel.",
+        "Check additionalEventData.MFAUsed. A sign-in without MFA from a new location is much more suspicious.",
+        "Compare with the user's ConsoleLogin history: usual countries, IPs and userAgent. Look for impossible travel against recent logins.",
+        "Pivot in CloudTrail on the same user, session and IP within +/- 15 minutes: CreateAccessKey, CreateUser, AttachUserPolicy, MFA changes, StopLogging.",
+        "Look for earlier failed ConsoleLogin events from the same IP or against the same user, which could mean brute force or password spraying.",
+        "Confirm with the user through an out-of-band channel."
+      ],
+      "false_positives": [
+        "Employees traveling or working remotely from countries not yet on the legitimate list.",
+        "Logins through services, corporate VPNs or bastions hosted by cloud providers in other regions.",
+        "Outdated %Legitimate_Countries% or %Legitimate_IP_Ranges% lists, or inaccurate IP geolocation."
+      ],
+      "response_steps": [
+        "If the user does not confirm the login, revoke active sessions (deny policy on aws:TokenIssueTime or role session revocation) and reset the password.",
+        "Deactivate access keys that this identity created or used during the suspicious window, and require MFA before access is restored.",
+        "Document and verify unauthorized IAM, resource or logging changes with the owners, then roll them back.",
+        "If the login is legitimate, add the country or IP range to the exclusion lists with a justification and a review date."
+      ],
+      "severity_rationale": "Medium fits because successful logins from unrecognized locations are often travel or VPN, but a malicious one gives full console access."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Successful IAM user console login from a country and IP outside the configured legitimate lists, without MFA.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "ConsoleLogin",
+          "eventTime": "2025-10-25T03:14:22Z",
+          "awsRegion": "us-east-1",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "responseElements.ConsoleLogin": "Success",
+          "additionalEventData.MFAUsed": "No",
+          "src_ip": "203.0.113.45",
+          "sourceIPAddress": "203.0.113.45",
+          "src_country": "Romania",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+        }
+      },
+      {
+        "description": "Successful root console login from an unlisted country through a hosting provider IP.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "ConsoleLogin",
+          "eventTime": "2025-10-25T22:41:05Z",
+          "awsRegion": "us-east-1",
+          "userIdentity.type": "Root",
+          "userIdentity.arn": "arn:aws:iam::111122223333:root",
+          "responseElements.ConsoleLogin": "Success",
+          "additionalEventData.MFAUsed": "Yes",
+          "src_ip": "198.51.100.77",
+          "sourceIPAddress": "198.51.100.77",
+          "src_country": "Vietnam",
+          "userAgent": "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Failed console login from the same unlisted location: the selection requires ConsoleLogin = Success.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "ConsoleLogin",
+          "eventTime": "2025-10-25T03:12:10Z",
+          "awsRegion": "us-east-1",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "responseElements.ConsoleLogin": "Failure",
+          "errorMessage": "Failed authentication",
+          "additionalEventData.MFAUsed": "No",
+          "src_ip": "203.0.113.45",
+          "sourceIPAddress": "203.0.113.45",
+          "src_country": "Romania"
+        }
+      },
+      {
+        "description": "Sign-in MFA check event (CheckMfa), not ConsoleLogin, so the selection does not match.",
+        "event": {
+          "eventSource": "signin.amazonaws.com",
+          "eventName": "CheckMfa",
+          "eventTime": "2025-10-25T03:14:15Z",
+          "awsRegion": "us-east-1",
+          "userIdentity.type": "IAMUser",
+          "userIdentity.arn": "arn:aws:iam::111122223333:user/jperez",
+          "responseElements.CheckMfa": "Success",
+          "src_ip": "203.0.113.45",
+          "sourceIPAddress": "203.0.113.45",
+          "src_country": "Romania"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T21:55:01+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

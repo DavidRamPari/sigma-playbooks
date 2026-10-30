@@ -1,0 +1,129 @@
+{
+  "rule": {
+    "id": "dd7876d8-0f09-11eb-adc1-0242ac120002",
+    "title": "Potential Zerologon (CVE-2020-1472) Exploitation",
+    "level": "high",
+    "status": "test",
+    "author": "Aleksandr Akhremchik, @aleqs4ndr, ocsd.community",
+    "path": "windows/builtin/security/win_security_exploit_cve_2020_1472.yml",
+    "url": "https://github.com/SigmaHQ/sigma/blob/05d1031f537e830b76da53bae2400c5814c89165/rules-placeholder/windows/builtin/security/win_security_exploit_cve_2020_1472.yml",
+    "license": "DRL-1.1",
+    "techniques": [
+      "T1068"
+    ],
+    "folder": "rules-placeholder"
+  },
+  "playbook": {
+    "es": {
+      "summary": "La cuenta de equipo de un controlador de dominio fue modificada por ANONYMOUS LOGON, con cambio de contraseña. Este patrón coincide con la explotación de Zerologon (CVE-2020-1472), que restablece sin autenticación la contraseña de la cuenta de máquina del DC vía Netlogon.",
+      "what_it_detects": "Evento de seguridad 4742 (cuenta de equipo modificada) con SubjectUserName 'ANONYMOUS LOGON', TargetUserName igual a la cuenta de máquina del DC configurada (termina en '$') y PasswordLastSet distinto de '-'.",
+      "why_it_matters": "Zerologon explota una falla criptográfica de Netlogon para dejar vacía la contraseña de máquina del DC. Luego el atacante puede replicar secretos del dominio (DCSync) y tomar el control del dominio. Es escalamiento de privilegios mediante explotación (T1068).",
+      "triage_steps": [
+        "Confirme Computer, TargetUserName, TargetSid y PasswordLastSet. Verifique que el DC de TargetUserName sea el configurado en %DC-MACHINE-NAME%.",
+        "En el mismo DC, en +/- 15 minutos, busque eventos 4624 de red de ANONYMOUS LOGON. Anote IpAddress y WorkstationName como probable origen del ataque.",
+        "Busque eventos 4624 posteriores con la cuenta DC$ desde una IP que no sea de un DC, y eventos 4662 con derechos de replicación del directorio (DCSync).",
+        "Revise el log System en busca de eventos Netlogon 5805, 5827, 5828 o 5829 que mencionen el host de origen.",
+        "Verifique si el DC tiene las actualizaciones de CVE-2020-1472 y si está activo el modo de aplicación del canal seguro de Netlogon.",
+        "Busque la IP de origen en datos de red y EDR: tráfico RPC de Netlogon hacia el DC, herramientas de explotación, actividad tipo secretsdump o nuevas cuentas privilegiadas."
+      ],
+      "false_positives": [
+        "Rotación automática de la contraseña de máquina del DC. Normalmente aparece como sujeto la propia cuenta del DC o SYSTEM, no ANONYMOUS LOGON.",
+        "Un administrador restablece a propósito la contraseña de la cuenta de equipo del DC. Compare con tickets de cambio y con la cuenta que lo hizo."
+      ],
+      "response_steps": [
+        "Trátelo como posible compromiso del dominio. Escale a respuesta a incidentes y preserve los logs Security, System y Directory Service del DC.",
+        "Bloquee o aísle la IP de origen, tras confirmar que no es un controlador de dominio ni otro servidor crítico.",
+        "Restablezca de forma controlada la contraseña de la cuenta de máquina del DC (por ejemplo, Reset-ComputerMachinePassword) y verifique que la replicación funcione.",
+        "Si se confirma DCSync o robo de credenciales, restablezca krbtgt dos veces y rote las credenciales privilegiadas.",
+        "Aplique las actualizaciones de Netlogon, active el modo de aplicación y busque mecanismos de persistencia que haya creado el atacante."
+      ],
+      "severity_rationale": "El nivel alto es adecuado porque un cambio anónimo de contraseña en una cuenta de DC casi nunca es legítimo y puede llevar rápido a la toma total del dominio."
+    },
+    "en": {
+      "summary": "A domain controller's computer account was changed by ANONYMOUS LOGON and its password was set. That pattern matches the Zerologon (CVE-2020-1472) attack, which resets a DC machine account password over Netlogon without authentication.",
+      "what_it_detects": "Security event 4742 (computer account changed) with SubjectUserName 'ANONYMOUS LOGON', TargetUserName equal to the configured DC machine account (ending in '$') and a PasswordLastSet value other than '-'.",
+      "why_it_matters": "Zerologon abuses a Netlogon cryptographic flaw to set an empty DC machine password. The attacker can then replicate domain secrets (DCSync) and take over the domain. This is privilege escalation through exploitation (T1068).",
+      "triage_steps": [
+        "Confirm Computer, TargetUserName, TargetSid and PasswordLastSet. Check that the DC named in TargetUserName is the one in %DC-MACHINE-NAME%.",
+        "On the same DC within +/- 15 minutes, look for 4624 ANONYMOUS LOGON network logons. Note IpAddress and WorkstationName as the likely attacker source.",
+        "Look for later 4624 logons that use the DC$ account from a non-DC IP, and 4662 events with directory replication rights (DCSync).",
+        "Check the System log for Netlogon events 5805, 5827, 5828 or 5829 that mention the source host.",
+        "Check whether the DC has the CVE-2020-1472 updates and whether Netlogon secure channel enforcement is on.",
+        "Search network and EDR data for the source IP: Netlogon RPC traffic to the DC, exploit tools, then secretsdump-style activity or new privileged accounts."
+      ],
+      "false_positives": [
+        "Automatic DC machine account password rotation. It normally shows the DC's own account or SYSTEM as the subject, not ANONYMOUS LOGON.",
+        "An admin resetting the DC computer account password on purpose. Check against change tickets and the account that did it."
+      ],
+      "response_steps": [
+        "Treat this as a possible domain compromise. Escalate to incident response and keep the DC's Security, System and Directory Service logs.",
+        "Block or isolate the source IP after checking that it is not a domain controller or another critical server.",
+        "Reset the DC machine account password safely (for example, Reset-ComputerMachinePassword) and check that replication works.",
+        "If DCSync or credential theft is confirmed, reset krbtgt twice and rotate privileged credentials.",
+        "Apply the Netlogon updates, turn on enforcement mode, and hunt for persistence the attacker may have created."
+      ],
+      "severity_rationale": "High fits because an anonymous password change on a DC account almost never has a legitimate cause and can quickly lead to full domain takeover."
+    }
+  },
+  "fixtures": {
+    "positive": [
+      {
+        "description": "Zerologon-style reset: ANONYMOUS LOGON changes the DC01$ machine account and sets a new password.",
+        "event": {
+          "EventID": 4742,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-7",
+          "SubjectUserName": "ANONYMOUS LOGON",
+          "SubjectDomainName": "NT AUTHORITY",
+          "SubjectLogonId": "0x8a3f21",
+          "TargetUserName": "DC01$",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1000",
+          "PasswordLastSet": "10/15/2020 3:12:44 PM"
+        }
+      }
+    ],
+    "negative": [
+      {
+        "description": "Routine automatic password rotation done by the DC's own account, not ANONYMOUS LOGON.",
+        "event": {
+          "EventID": 4742,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-18",
+          "SubjectUserName": "DC01$",
+          "SubjectDomainName": "ANDES",
+          "SubjectLogonId": "0x3e7",
+          "TargetUserName": "DC01$",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1000",
+          "PasswordLastSet": "11/02/2020 9:01:10 AM"
+        }
+      },
+      {
+        "description": "ANONYMOUS LOGON changes the DC account but leaves the password alone (PasswordLastSet '-'), so filter_main excludes it.",
+        "event": {
+          "EventID": 4742,
+          "Channel": "Security",
+          "Computer": "DC01.andes.example.com",
+          "SubjectUserSid": "S-1-5-7",
+          "SubjectUserName": "ANONYMOUS LOGON",
+          "SubjectDomainName": "NT AUTHORITY",
+          "SubjectLogonId": "0x8a4010",
+          "TargetUserName": "DC01$",
+          "TargetDomainName": "ANDES",
+          "TargetSid": "S-1-5-21-1111111111-2222222222-3333333333-1000",
+          "PasswordLastSet": "-"
+        }
+      }
+    ]
+  },
+  "generated": {
+    "tool": "content-pack/1",
+    "model": "claude-opus-5-5",
+    "at": "2026-10-30T21:55:01+00:00",
+    "review": "unreviewed",
+    "notice": "AI-generated content. Review it before relying on it. Fixtures are validated by Centinela's engine in session S7."
+  }
+}

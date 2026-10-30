@@ -31,7 +31,7 @@ Each file in `content/` covers one rule (`content/<rule-id>.json`):
 - Rules whose answer failed got one retry. Fixtures that failed validation got one repair pass, which sends the rule, the failing fixture and the engine's error back to the model.
 - Every fixture was validated with Centinela's Sigma engine (`npm run content:validate`).
 - Total cost: about $162.
-- 20 rules have no file. For 20 of them, Anthropic's safety filter stopped the answer (`stop_reason: refusal`): those rules detect offensive techniques, so their test events would have to contain attack command lines, and they were left out instead of working around the filter.
+- 20 rules have no file because Anthropic's safety filter stopped the answer for all of them (`stop_reason: refusal`): those rules detect offensive techniques, so their test events would have to contain attack command lines, and they were left out instead of working around the filter.
 - The content is AI-generated and has not been reviewed by a person.
 
 ## Rules without content
